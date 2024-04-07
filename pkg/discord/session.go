@@ -2,19 +2,15 @@ package discord
 
 import (
 	"github.com/bwmarrin/discordgo"
+	"log"
 )
-
-type DiscordConf struct {
-	Token   string
-	OwnerID string
-}
 
 type Discord struct {
 	session *discordgo.Session
 }
 
-// New returns a new Discord instance, connecting must be handled outside of new.
-func New(cfg DiscordConf) (*Discord, error) {
+// New returns a new Discord instance, connecting must be handled outside new.
+func New(cfg Conf) (*Discord, error) {
 	var (
 		t   Discord
 		err error
@@ -33,7 +29,8 @@ func (t *Discord) Open() error {
 	cReady := make(chan struct{})
 
 	t.session.AddHandlerOnce(func(s *discordgo.Session, e *discordgo.Ready) {
-		cReady <- struct{}{}
+		botUser := e.User
+		log.Printf("Logged in as: %s (%s)", botUser.Username, botUser.ID)
 	})
 
 	err := t.session.Open()
