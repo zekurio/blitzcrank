@@ -1,8 +1,9 @@
 package discord
 
 import (
-	"github.com/bwmarrin/discordgo"
 	"log"
+
+	"github.com/bwmarrin/discordgo"
 )
 
 type Discord struct {
@@ -21,10 +22,12 @@ func New(cfg Conf) (*Discord, error) {
 	return &t, err
 }
 
+// Session returns our discordgo session
 func (t *Discord) Session() *discordgo.Session {
 	return t.session
 }
 
+// Open is used to open the discord connection and login
 func (t *Discord) Open() error {
 	cReady := make(chan struct{})
 

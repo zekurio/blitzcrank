@@ -1,6 +1,6 @@
 module github.com/zekurio/blitzcrank
 
-go 1.22.1
+go 1.22
 
 require (
 	github.com/bwmarrin/discordgo v0.28.1
