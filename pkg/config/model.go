@@ -4,7 +4,7 @@ import "github.com/zekurio/blitzcrank/pkg/discord"
 
 var (
 	DefaultConfig = Config{
-		Discord: discord.Conf{
+		Discord: discord.DiscordConf{
 			Token:   "",
 			OwnerID: "",
 		},
@@ -12,5 +12,5 @@ var (
 )
 
 type Config struct {
-	Discord discord.Conf
+	Discord discord.DiscordConf
 }

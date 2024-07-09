@@ -6,12 +6,17 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
+type DiscordConf struct {
+	Token   string
+	OwnerID string
+}
+
 type Discord struct {
 	session *discordgo.Session
 }
 
 // New returns a new Discord instance, connecting must be handled outside new.
-func New(cfg Conf) (*Discord, error) {
+func New(cfg DiscordConf) (*Discord, error) {
 	var (
 		t   Discord
 		err error
