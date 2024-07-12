@@ -2,10 +2,10 @@ package commands
 
 import (
 	"github.com/bwmarrin/discordgo"
-	"github.com/zekurio/blitzcrank/pkg/discord"
+	"github.com/zekurio/blitzcrank/pkg/commandhandler"
 )
 
-var _ discord.Command = (*Ping)(nil)
+var _ commandhandler.Command = (*Ping)(nil)
 
 // Ping is a command that responds with "Pong!"
 type Ping struct {

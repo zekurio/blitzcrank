@@ -1,4 +1,4 @@
-package discord
+package commandhandler
 
 import "github.com/bwmarrin/discordgo"
 

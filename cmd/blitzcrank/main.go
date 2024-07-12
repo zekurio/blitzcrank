@@ -3,6 +3,8 @@ package main
 import (
 	"flag"
 
+	"github.com/zekurio/blitzcrank/pkg/commandhandler"
+	"github.com/zekurio/blitzcrank/pkg/commandhandler/commands"
 	"github.com/zekurio/blitzcrank/pkg/config"
 	"github.com/zekurio/blitzcrank/pkg/discord"
 )
@@ -25,5 +27,12 @@ func main() {
 		panic("Failed initializing discord")
 	}
 
+	// init command handler
+	cmdHandler := commandhandler.New(d.Session())
+	cmdHandler.RegisterCommand(new(commands.Ping))
+
 	err = d.Open()
+	if err != nil {
+		panic("Failed opening connection to discord")
+	}
 }
