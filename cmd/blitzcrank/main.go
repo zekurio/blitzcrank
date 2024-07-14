@@ -29,7 +29,7 @@ func main() {
 
 	// init command handler
 	cmdHandler := commandhandler.New(d.Session())
-	cmdHandler.RegisterCommand(new(commands.Ping))
+	cmdHandler.RegisterCommands(new(commands.Ping))
 
 	err = d.Open()
 	if err != nil {

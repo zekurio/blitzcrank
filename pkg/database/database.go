@@ -1,5 +1,5 @@
 package database
 
 type Database interface {
-	Close() error
+	Close() (err error)
 }

@@ -1,37 +1,84 @@
 package commandhandler
 
 import (
+	"errors"
+	"regexp"
+	"sync"
+
 	"github.com/bwmarrin/discordgo"
+	"github.com/zekurio/blitzcrank/pkg/commandhandler/store"
 )
 
 type CommandHandler struct {
-	// cmds is a map of command names to their respective command
-	cmds    map[string]Command
-	idCache map[string]string
-
-	// s is our discord session
 	s *discordgo.Session
+
+	cmds     map[string]Command
+	idCache  map[string]string
+	lockCmds sync.RWMutex
+
+	options *Options
 }
 
-func New(s *discordgo.Session) *CommandHandler {
-	h := &CommandHandler{
+type Options struct {
+	CommandStore store.CommandStore
+}
+
+var defaultOptions = Options{
+	CommandStore: store.NewDefault(),
+}
+
+func New(s *discordgo.Session, options ...Options) (h *CommandHandler, err error) {
+	h = &CommandHandler{
 		cmds:    make(map[string]Command),
 		idCache: make(map[string]string),
 		s:       s,
 	}
 
+	h.options = &defaultOptions
+
+	if len(options) > 0 {
+		o := options[0]
+
+		if o.CommandStore != nil {
+			h.options.CommandStore = o.CommandStore
+		}
+	}
+
+	if h.options.CommandStore != nil {
+		h.idCache, err = h.options.CommandStore.Load()
+		if err != nil {
+			return
+		}
+	}
+
 	s.AddHandler(h.onReady)
 	s.AddHandler(h.onInteractionCreate)
 
-	return h
+	return
 }
 
-func (c *CommandHandler) RegisterCommand(cmds ...Command) {
+func (c *CommandHandler) RegisterCommands(cmds ...Command) (err error) {
+	c.lockCmds.Lock()
+	defer c.lockCmds.Unlock()
+
+	regex, _ := regexp.Compile(`^[\-_0-9\p{L}\p{Devanagari}\p{Thai}]{1,32}$`)
+
 	for _, cmd := range cmds {
-		// TODO add checks for duplicate command names
-		// TODO add checks for valid command names
+		if cmd.Name() == "" {
+			err = errors.New("command name cannot be empty")
+			return
+		}
+
+		res := regex.MatchString(cmd.Name())
+
+		if err != nil || !res {
+			return errors.New("command name doesn't parse regex")
+		}
+
 		c.cmds[cmd.Name()] = cmd
 	}
+
+	return
 }
 
 func (c *CommandHandler) HandleInteractionCreate(i *discordgo.InteractionCreate) {

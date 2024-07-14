@@ -33,7 +33,7 @@ func (t *Discord) Session() *discordgo.Session {
 }
 
 // Open is used to open the discord connection and login
-func (t *Discord) Open() error {
+func (t *Discord) Open() (err error) {
 	cReady := make(chan struct{})
 
 	t.session.AddHandlerOnce(func(s *discordgo.Session, e *discordgo.Ready) {
@@ -41,12 +41,12 @@ func (t *Discord) Open() error {
 		log.Printf("Logged in as: %s (%s)", botUser.Username, botUser.ID)
 	})
 
-	err := t.session.Open()
+	err = t.session.Open()
 	if err != nil {
-		return err
+		return
 	}
 
 	<-cReady
 
-	return nil
+	return
 }

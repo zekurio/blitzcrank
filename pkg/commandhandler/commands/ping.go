@@ -7,7 +7,6 @@ import (
 
 var _ commandhandler.SlashCommand = (*Ping)(nil)
 
-// Ping is a command that responds with "Pong!"
 type Ping struct {
 }
 

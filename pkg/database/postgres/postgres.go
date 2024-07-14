@@ -42,6 +42,6 @@ func NewPostgres(c PostgresConf) (*Postgres, error) {
 	return &t, nil
 }
 
-func (p *Postgres) Close() error {
+func (p *Postgres) Close() (err error) {
 	return p.db.Close()
 }
