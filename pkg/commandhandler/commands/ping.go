@@ -5,7 +5,7 @@ import (
 	"github.com/zekurio/blitzcrank/pkg/commandhandler"
 )
 
-var _ commandhandler.Command = (*Ping)(nil)
+var _ commandhandler.SlashCommand = (*Ping)(nil)
 
 // Ping is a command that responds with "Pong!"
 type Ping struct {
@@ -17,6 +17,14 @@ func (p *Ping) Name() string {
 
 func (p *Ping) Description() string {
 	return "Pong!"
+}
+
+func (p *Ping) Version() string {
+	return "1.0.0"
+}
+
+func (p *Ping) Options() []*discordgo.ApplicationCommandOption {
+	return nil
 }
 
 func (p *Ping) Exec(i *discordgo.Interaction) error {

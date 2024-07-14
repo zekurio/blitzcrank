@@ -6,7 +6,8 @@ import (
 
 type CommandHandler struct {
 	// cmds is a map of command names to their respective command
-	cmds map[string]Command
+	cmds    map[string]Command
+	idCache map[string]string
 
 	// s is our discord session
 	s *discordgo.Session
@@ -14,10 +15,12 @@ type CommandHandler struct {
 
 func New(s *discordgo.Session) *CommandHandler {
 	h := &CommandHandler{
-		cmds: make(map[string]Command),
-		s:    s,
+		cmds:    make(map[string]Command),
+		idCache: make(map[string]string),
+		s:       s,
 	}
 
+	s.AddHandler(h.onReady)
 	s.AddHandler(h.onInteractionCreate)
 
 	return h
@@ -38,6 +41,38 @@ func (c *CommandHandler) HandleInteractionCreate(i *discordgo.InteractionCreate)
 	}
 
 	cmd.Exec(i.Interaction)
+}
+
+func (c *CommandHandler) onReady(s *discordgo.Session, e *discordgo.Ready) {
+	var (
+		cachedCommand *discordgo.ApplicationCommand
+		err           error
+		update        = []*discordgo.ApplicationCommand{}
+	)
+
+	for name, cmd := range c.cmds {
+		guildId := "" // TODO handle guild scoped commands
+		if _, ok := c.idCache[name]; ok {
+			appCommand := toApplicationCommand(cmd)
+			update = append(update, appCommand)
+		} else {
+			cachedCommand, err = s.ApplicationCommandCreate(e.User.ID, guildId, toApplicationCommand(cmd))
+			if err != nil {
+				// TODO error handling
+			} else {
+				c.idCache[name] = cachedCommand.ID
+			}
+		}
+	}
+
+	if len(update) > 0 {
+		_, err = s.ApplicationCommandBulkOverwrite(e.User.ID, "", update)
+		if err != nil {
+			// TODO error handling
+		}
+	}
+
+	// TODO handle command cache recovery by saving the command ids to a file
 }
 
 func (c *CommandHandler) onInteractionCreate(s *discordgo.Session, e *discordgo.InteractionCreate) {

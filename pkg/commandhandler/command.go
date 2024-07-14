@@ -1,6 +1,10 @@
 package commandhandler
 
-import "github.com/bwmarrin/discordgo"
+import (
+	"fmt"
+
+	"github.com/bwmarrin/discordgo"
+)
 
 // Command is an interface that all commands must implement
 type Command interface {
@@ -12,4 +16,19 @@ type Command interface {
 
 	// Exec executes the command, pass the discordgo.Interaction
 	Exec(i *discordgo.Interaction) error
+}
+
+func toApplicationCommand(c Command) *discordgo.ApplicationCommand {
+	switch cm := c.(type) {
+	case SlashCommand:
+		return &discordgo.ApplicationCommand{
+			Name:        cm.Name(),
+			Type:        discordgo.ChatApplicationCommand,
+			Description: cm.Description(),
+			Version:     cm.Version(),
+			Options:     cm.Options(),
+		}
+	default:
+		panic(fmt.Sprintf("Command type not implemented for command: %s", cm.Name()))
+	}
 }
