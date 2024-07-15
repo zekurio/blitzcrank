@@ -22,3 +22,6 @@ go.work
 
 # Blitzcrank config
 config/config.toml
+
+# cachedCommands
+.cachedCommands.json

@@ -28,11 +28,12 @@ func (s *SimpleCommandStore) Store(cmds map[string]string) (err error) {
 
 	defer f.Close()
 
-	err = json.NewEncoder(f).Encode(cmds)
-	return
+	return json.NewEncoder(f).Encode(cmds)
 }
 
 func (s *SimpleCommandStore) Load() (cmds map[string]string, err error) {
+	cmds = map[string]string{}
+
 	f, err := os.Open(s.loc)
 	if err != nil {
 		if err != nil {

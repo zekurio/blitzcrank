@@ -21,10 +21,18 @@ type CommandHandler struct {
 	options *Options
 }
 
+type EmbedColors struct {
+	Default int
+
+	Error int
+}
+
 type Options struct {
 	State state.State
 
 	CommandStore store.CommandStore
+
+	EmbedColors EmbedColors
 
 	OnSystemError  func(err error)
 	OnCommandError func(err error)
@@ -32,6 +40,11 @@ type Options struct {
 
 var defaultOptions = Options{
 	State: state.NewSessionWrapped(),
+
+	EmbedColors: EmbedColors{
+		Default: 0xfe640b,
+		Error:   0xd20f39,
+	},
 
 	OnSystemError: func(err error) {
 		log.Printf("command handler - error: %s", err)
