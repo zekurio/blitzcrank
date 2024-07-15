@@ -2,10 +2,12 @@ package commandhandler
 
 import (
 	"errors"
+	"log"
 	"regexp"
 	"sync"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/zekurio/blitzcrank/pkg/commandhandler/state"
 	"github.com/zekurio/blitzcrank/pkg/commandhandler/store"
 )
 
@@ -20,11 +22,26 @@ type CommandHandler struct {
 }
 
 type Options struct {
+	State *discordgo.State
+
 	CommandStore store.CommandStore
+
+	OnSystemError  func(err error)
+	OnCommandError func(err error)
 }
 
 var defaultOptions = Options{
+	State: state.NewSessionWrapped(),
+
 	CommandStore: store.NewDefault(),
+
+	OnSystemError: func(err error) {
+		log.Printf("command handler - error: %s", err)
+	},
+
+	OnCommandError: func(err error) {
+		log.Printf("command handler - command error: %s", err)
+	},
 }
 
 func New(s *discordgo.Session, options ...Options) (h *CommandHandler, err error) {
@@ -42,6 +59,18 @@ func New(s *discordgo.Session, options ...Options) (h *CommandHandler, err error
 		if o.CommandStore != nil {
 			h.options.CommandStore = o.CommandStore
 		}
+
+		if o.State != nil {
+			h.options.State = o.State
+		}
+
+		if o.OnSystemError != nil {
+			h.options.OnSystemError = o.OnSystemError
+		}
+
+		if o.OnCommandError != nil {
+			h.options.OnCommandError = o.OnCommandError
+		}
 	}
 
 	if h.options.CommandStore != nil {
@@ -50,6 +79,7 @@ func New(s *discordgo.Session, options ...Options) (h *CommandHandler, err error
 			return
 		}
 	}
+
 
 	s.AddHandler(h.onReady)
 	s.AddHandler(h.onInteractionCreate)
@@ -81,14 +111,12 @@ func (c *CommandHandler) RegisterCommands(cmds ...Command) (err error) {
 	return
 }
 
-func (c *CommandHandler) HandleInteractionCreate(i *discordgo.InteractionCreate) {
-	cmd, ok := c.cmds[i.ApplicationCommandData().Name]
-	if !ok {
+func (c *CommandHandler) UnregisterCommands() {
+	if c.options.CommandStore != nil {
 		return
 	}
 
-	cmd.Exec(i.Interaction)
-}
+
 
 func (c *CommandHandler) onReady(s *discordgo.Session, e *discordgo.Ready) {
 	var (
@@ -105,7 +133,7 @@ func (c *CommandHandler) onReady(s *discordgo.Session, e *discordgo.Ready) {
 		} else {
 			cachedCommand, err = s.ApplicationCommandCreate(e.User.ID, guildId, toApplicationCommand(cmd))
 			if err != nil {
-				// TODO error handling
+				c.options.OnSystemError(err)
 			} else {
 				c.idCache[name] = cachedCommand.ID
 			}
@@ -115,30 +143,35 @@ func (c *CommandHandler) onReady(s *discordgo.Session, e *discordgo.Ready) {
 	if len(update) > 0 {
 		_, err = s.ApplicationCommandBulkOverwrite(e.User.ID, "", update)
 		if err != nil {
-			// TODO error handling
+			c.options.OnSystemError(err)
 		}
 	}
 
-	// TODO handle command cache recovery by saving the command ids to a file
+	if c.options.CommandStore != nil {
+		err = c.options.CommandStore.Store(c.idCache)
+		if err != nil {
+			c.options.OnSystemError(err)
+		}
+	}
 }
 
 func (c *CommandHandler) onInteractionCreate(s *discordgo.Session, e *discordgo.InteractionCreate) {
 	switch e.Type {
 	case discordgo.InteractionApplicationCommand:
-		c.onInteractionApplicationCommand(s, e)
+		c.appCommandInteraction(s, e)
 	default:
 		return
 	}
 }
 
-func (c *CommandHandler) onInteractionApplicationCommand(s *discordgo.Session, e *discordgo.InteractionCreate) {
+func (c *CommandHandler) appCommandInteraction(s *discordgo.Session, e *discordgo.InteractionCreate) {
 	cmd := c.cmds[e.ApplicationCommandData().Name]
 	if cmd == nil {
 		return
 	}
 
-	err := cmd.Exec(e.Interaction)
+	err := cmd.Exec(s, e.Interaction)
 	if err != nil {
-		// TODO handle error
+		c.options.OnSystemError(err)
 	}
 }

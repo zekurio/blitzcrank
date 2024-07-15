@@ -15,7 +15,7 @@ type Command interface {
 	Description() string
 
 	// Exec executes the command, pass the discordgo.Interaction
-	Exec(i *discordgo.Interaction) error
+	Exec(s *discordgo.Session, i *discordgo.Interaction) (err error)
 }
 
 func toApplicationCommand(c Command) *discordgo.ApplicationCommand {

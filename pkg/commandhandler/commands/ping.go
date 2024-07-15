@@ -26,6 +26,18 @@ func (p *Ping) Options() []*discordgo.ApplicationCommandOption {
 	return nil
 }
 
-func (p *Ping) Exec(i *discordgo.Interaction) error {
-	return nil
+func (p *Ping) Exec(s *discordgo.Session, i *discordgo.Interaction) (err error) {
+	user := i.User
+	if user == nil {
+		user = i.Member.User
+	}
+
+	err = s.InteractionRespond(i, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: "Pong!",
+		},
+	})
+
+	return
 }
