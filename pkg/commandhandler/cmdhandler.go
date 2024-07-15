@@ -22,7 +22,7 @@ type CommandHandler struct {
 }
 
 type Options struct {
-	State *discordgo.State
+	State state.State
 
 	CommandStore store.CommandStore
 
@@ -32,8 +32,6 @@ type Options struct {
 
 var defaultOptions = Options{
 	State: state.NewSessionWrapped(),
-
-	CommandStore: store.NewDefault(),
 
 	OnSystemError: func(err error) {
 		log.Printf("command handler - error: %s", err)
@@ -80,7 +78,6 @@ func New(s *discordgo.Session, options ...Options) (h *CommandHandler, err error
 		}
 	}
 
-
 	s.AddHandler(h.onReady)
 	s.AddHandler(h.onInteractionCreate)
 
@@ -116,7 +113,19 @@ func (c *CommandHandler) UnregisterCommands() {
 		return
 	}
 
+	self, err := c.options.State.SelfUser(c.s)
+	if err != nil {
+		return
+	}
 
+	for name, id := range c.idCache {
+		err = c.s.ApplicationCommandDelete(self.ID, "", id)
+		if err != nil {
+			c.options.OnSystemError(err)
+		}
+		delete(c.idCache, name)
+	}
+}
 
 func (c *CommandHandler) onReady(s *discordgo.Session, e *discordgo.Ready) {
 	var (

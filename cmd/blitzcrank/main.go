@@ -2,6 +2,9 @@ package main
 
 import (
 	"flag"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/zekurio/blitzcrank/pkg/commandhandler"
 	"github.com/zekurio/blitzcrank/pkg/commandhandler/commands"
@@ -28,11 +31,29 @@ func main() {
 	}
 
 	// init command handler
-	cmdHandler := commandhandler.New(d.Session())
+	cmdHandler, err := commandhandler.New(d.Session(), commandhandler.Options{
+		//CommandStore: store.NewDefault(),
+	})
+	if err != nil {
+		panic("Failed initializing command handler")
+	}
+
 	cmdHandler.RegisterCommands(new(commands.Ping))
 
 	err = d.Open()
 	if err != nil {
 		panic("Failed opening connection to discord")
 	}
+
+	// Set up signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Block until a signal is received
+	sig := <-sigChan
+	println("Received signal:", sig)
+
+	// Perform cleanup
+	cmdHandler.UnregisterCommands()
+	d.Close()
 }

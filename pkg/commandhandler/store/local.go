@@ -35,7 +35,12 @@ func (s *SimpleCommandStore) Store(cmds map[string]string) (err error) {
 func (s *SimpleCommandStore) Load() (cmds map[string]string, err error) {
 	f, err := os.Open(s.loc)
 	if err != nil {
-		return
+		if err != nil {
+			if os.IsNotExist(err) { // handle first run
+				err = nil
+			}
+			return
+		}
 	}
 
 	defer f.Close()

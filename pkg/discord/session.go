@@ -39,6 +39,7 @@ func (t *Discord) Open() (err error) {
 	t.session.AddHandlerOnce(func(s *discordgo.Session, e *discordgo.Ready) {
 		botUser := e.User
 		log.Printf("Logged in as: %s (%s)", botUser.Username, botUser.ID)
+		close(cReady)
 	})
 
 	err = t.session.Open()
@@ -49,4 +50,8 @@ func (t *Discord) Open() (err error) {
 	<-cReady
 
 	return
+}
+
+func (t *Discord) Close() error {
+	return t.session.Close()
 }
