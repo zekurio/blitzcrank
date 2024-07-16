@@ -1,6 +1,6 @@
 module github.com/zekurio/blitzcrank
 
-go 1.22
+go 1.22.5
 
 require (
 	github.com/bwmarrin/discordgo v0.28.1
@@ -11,6 +11,7 @@ require (
 require (
 	github.com/BurntSushi/toml v1.3.2 // indirect
 	github.com/gorilla/websocket v1.4.2 // indirect
+	github.com/zekurio/kommando v0.0.0-20240716090030-88fec0be0399 // indirect
 	golang.org/x/crypto v0.17.0 // indirect
 	golang.org/x/sys v0.15.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect

@@ -6,11 +6,11 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/zekurio/blitzcrank/pkg/commandhandler"
-	"github.com/zekurio/blitzcrank/pkg/commandhandler/commands"
-	"github.com/zekurio/blitzcrank/pkg/commandhandler/store"
 	"github.com/zekurio/blitzcrank/pkg/config"
 	"github.com/zekurio/blitzcrank/pkg/discord"
+	"github.com/zekurio/blitzcrank/pkg/discord/commands/slashcommands"
+	"github.com/zekurio/kommando"
+	"github.com/zekurio/kommando/store"
 )
 
 var (
@@ -32,14 +32,15 @@ func main() {
 	}
 
 	// init command handler
-	cmdHandler, err := commandhandler.New(d.Session(), commandhandler.Options{
+	kommando, err := kommando.New(d.Session(), kommando.Options{
 		CommandStore: store.NewDefault(),
 	})
 	if err != nil {
 		panic("Failed initializing command handler")
 	}
 
-	cmdHandler.RegisterCommands(new(commands.Ping))
+	// register commands
+	kommando.RegisterCommands(new(slashcommands.Ping))
 
 	err = d.Open()
 	if err != nil {
@@ -55,6 +56,6 @@ func main() {
 	println("Received signal:", sig)
 
 	// perform cleanup
-	cmdHandler.UnregisterCommands()
+	kommando.UnregisterCommands()
 	d.Close()
 }
