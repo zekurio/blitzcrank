@@ -1,9 +1,5 @@
-# If you prefer the allow list template instead of the deny list, see community template:
-# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
-#
 # Binaries for programs and plugins
 *.exe
-*.exe~
 *.dll
 *.so
 *.dylib
@@ -14,14 +10,73 @@
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
 
-# Dependency directories (remove the comment below to include it)
-# vendor/
+# Logs
+*.log
 
-# Go workspace file
+# IDE directories
+.idea/
+
+# Go workspace files
+*.code-workspace
+*.workspace
+
+# Dependency directories (vendor/)
+vendor/
+
+# Go modules
+/go.sum
+/go.sum.*
+/go.sum.*.old
+/go.sum.*.new
+
+# Local environment and build
+.env
+
+# Git hooks
+/hooks/
+
+# Tool specific
+_tool/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Editor directories and files
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# macOS files
+.DS_Store
+
+# Build artifacts
+bin/
+build/
+dist/
+
+# Cover tool artifacts
+*.coverprofile
+*.cover.out
+*.cov
+
+# Profiling data
+*.pprof
+
+# Go command related
+*.prof
+
+# IntelliJ IDEA and GoLand settings
+.idea/
+*.iml
+
+# Output of the go command
+*.o
+*.a
+
+# Local Go environment files
 go.work
+go.work.sum
 
-# Blitzcrank config
-config/config.toml
-
-# cachedCommands
-.cachedCommands.json
+# Config files
+*.toml
