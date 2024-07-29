@@ -10,7 +10,6 @@ import (
 	"github.com/zekurio/blitzcrank/pkg/discord"
 	"github.com/zekurio/blitzcrank/pkg/discord/commands/slashcommands"
 	"github.com/zekurio/kommando"
-	"github.com/zekurio/kommando/store"
 )
 
 var (
@@ -32,9 +31,7 @@ func main() {
 	}
 
 	// init command handler
-	kommando, err := kommando.New(d.Session(), kommando.Options{
-		CommandStore: store.NewDefault(),
-	})
+	kommando, err := kommando.New(d.Session(), kommando.Options{})
 	if err != nil {
 		panic("Failed initializing command handler")
 	}
