@@ -11,9 +11,15 @@ export interface PostgresConfig {
   connectionString: string;
 }
 
+export interface SonarrConfig {
+  url: string;
+  apiKey: string;
+}
+
 export interface Config {
   discord: DiscordConfig;
   postgres: PostgresConfig;
+  sonarr: SonarrConfig;
 }
 
 export const config: Config = {
@@ -23,5 +29,9 @@ export const config: Config = {
   },
   postgres: {
     connectionString: process.env.POSTGRES_URL ?? "",
+  },
+  sonarr: {
+    url: process.env.SONARR_URL ?? "",
+    apiKey: process.env.SONARR_API_KEY ?? "",
   },
 };

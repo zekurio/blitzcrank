@@ -5,7 +5,7 @@
   "scripts": {
     "start": "bun run src/index.ts",
     "dev": "bun --watch run src/index.ts",
-    "build": "bun build ./src/index.ts --outdir ./dist"
+    "build": "bun build ./src/index.ts --outdir ./dist --target bun"
   },
   "devDependencies": {
     "@types/bun": "latest",
@@ -18,10 +18,13 @@
     "typescript": "^5.6.2"
   },
   "dependencies": {
+    "axios": "^1.7.7",
     "colors": "^1.4.0",
     "discord.js": "^14.16.2",
     "dotenv": "^16.4.5",
+    "inversify": "^6.0.2",
     "pg": "^8.12.0",
+    "tsyringe": "^4.8.0",
     "winston": "^3.14.2",
     "winston-console-format": "^1.0.8"
   }
