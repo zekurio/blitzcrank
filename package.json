@@ -18,6 +18,7 @@
     "typescript": "^5.6.2"
   },
   "dependencies": {
+    "@jellyfin/sdk": "^0.10.0",
     "axios": "^1.7.7",
     "colors": "^1.4.0",
     "discord.js": "^14.16.2",

@@ -1,6 +1,7 @@
 import winston from "winston";
 import { format } from "winston";
 import colors from "colors";
+import { config } from "./config";
 
 const { combine, timestamp, printf } = format;
 
@@ -32,7 +33,7 @@ const customFormat = printf(({ level, message, timestamp, ...metadata }) => {
 });
 
 const logger = winston.createLogger({
-  level: "debug",
+  level: config.logging.level || "info",
   format: combine(timestamp({ format: "YYYY-MM-DD HH:mm:ss" }), customFormat),
   transports: [new winston.transports.Console()],
 });

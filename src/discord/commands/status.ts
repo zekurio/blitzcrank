@@ -5,42 +5,20 @@ import {
   version as discordVersion,
 } from "discord.js";
 import os from "os";
-import { EmbedColors } from "../../static";
-import { sonarrStatus } from "../../arr";
+import { Colors } from "../../static";
+import { jellyfinStatus } from "../../clients/jellyfin";
 
 export const data = new SlashCommandBuilder()
   .setName("status")
-  .setDescription("Get status for different things")
-  .addSubcommand(subcommand =>
-    subcommand
-      .setName("bc")
-      .setDescription("Get status for Blitzcrank")
-  )
-  .addSubcommand(subcommand =>
-    subcommand
-      .setName("sonarr")
-      .setDescription("Get status for Sonarr")
-  );
+  .setDescription("Get status for Blitzcrank and services tied to it");
 
-  export async function execute(interaction: ChatInputCommandInteraction) {
-    const subcommand = interaction.options.getSubcommand();
-  
-    switch (subcommand) {
-      case "bc":
-        await bcExecute(interaction);
-        break;
-      case "sonarr":
-        await sonarrExecute(interaction);
-        break;
-      default:
-        await interaction.reply({ content: "Invalid subcommand.", ephemeral: true });
-    }
-  }
-
-async function bcExecute(interaction: ChatInputCommandInteraction) {
+export async function execute(interaction: ChatInputCommandInteraction) {
   const client = interaction.client;
 
   try {
+    const isJellyfinRunning = await jellyfinStatus();
+    const jellyfinStatusDot = isJellyfinRunning ? "🟢" : "🔴";
+
     const status = {
       Uptime: formatUptime(client.uptime ?? 0),
       Ping: `\`${
@@ -56,10 +34,13 @@ async function bcExecute(interaction: ChatInputCommandInteraction) {
       "Node Version": `\`${process.version}\``,
       "Discord.js Version": `\`${discordVersion}\``,
       "OS Uptime": formatUptime(os.uptime() * 1000),
+      "Jellyfin Status": `${jellyfinStatusDot} \`${
+        isJellyfinRunning ? "Running" : "Not Running"
+      }\``,
     };
 
     const embed = new EmbedBuilder()
-      .setColor(EmbedColors.PRIMARY)
+      .setColor(Colors.PRIMARY)
       .setTitle("Bot Status")
       .setDescription(`Here's the current status of ${client.user?.username}`)
       .setThumbnail(client.user?.displayAvatarURL() ?? "")
@@ -84,30 +65,6 @@ async function bcExecute(interaction: ChatInputCommandInteraction) {
       ephemeral: true,
     });
   }
-}
-
-async function sonarrExecute(interaction: ChatInputCommandInteraction) {
-  const client = interaction.client;
-
-  const embed = new EmbedBuilder()
-    .setColor(EmbedColors.PRIMARY)
-    .setTitle("Sonarr Status")
-    .setDescription(`Here's the current status of Sonarr`)
-    .setTimestamp()
-    .setFooter({
-      text: `Requested by ${interaction.user.tag}`,
-      iconURL: interaction.user.displayAvatarURL(),
-    });
-
-  if (await sonarrStatus()) {
-    embed.setColor(EmbedColors.SUCCESS);
-    embed.setDescription("Sonarr is running");
-  } else {
-    embed.setColor(EmbedColors.ERROR);
-    embed.setDescription("Sonarr is not running");
-  }
-
-  await interaction.reply({ embeds: [embed] });
 }
 
 function formatUptime(ms: number): string {
