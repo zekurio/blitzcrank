@@ -25,7 +25,7 @@
     "dotenv": "^16.4.5",
     "inversify": "^6.0.2",
     "pg": "^8.12.0",
-    "tsyringe": "^4.8.0",
+    "sharp": "^0.33.5",
     "winston": "^3.14.2",
     "winston-console-format": "^1.0.8"
   }

@@ -35,7 +35,20 @@ export const interactionCreateEventHandler = (wrapped: ClientWrapper) => {
           .setDescription("An error occurred while processing your request.")
           .addFields({ name: "Error Details", value: `${error}` });
 
-        await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+        try {
+          if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+          } else if (interaction.deferred) {
+            await interaction.editReply({ embeds: [errorEmbed] });
+          } else {
+            await interaction.followUp({
+              embeds: [errorEmbed],
+              ephemeral: true,
+            });
+          }
+        } catch (replyError) {
+          logger.error(`Failed to send error message: ${replyError}`);
+        }
       }
     }
   });

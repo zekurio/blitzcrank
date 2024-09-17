@@ -20,11 +20,17 @@ export interface JellyfinConfig {
   apiKey: string;
 }
 
+export interface JellyseerrConfig {
+  url: string;
+  apiKey: string;
+}
+
 export interface Config {
   logging: LoggingConfig;
   discord: DiscordConfig;
   postgres: PostgresConfig;
   jellyfin: JellyfinConfig;
+  jellyseerr: JellyseerrConfig;
 }
 
 export const config: Config = {
@@ -41,5 +47,9 @@ export const config: Config = {
   jellyfin: {
     url: process.env.JELLYFIN_URL ?? "",
     apiKey: process.env.JELLYFIN_API_KEY ?? "",
+  },
+  jellyseerr: {
+    url: process.env.JELLYSEERR_URL ?? "",
+    apiKey: process.env.JELLYSEERR_API_KEY ?? "",
   },
 };

@@ -6,7 +6,8 @@ import {
 } from "discord.js";
 import os from "os";
 import { Colors } from "../../static";
-import { jellyfinStatus } from "../../clients/jellyfin";
+import { jellyfinClient } from "../../clients/jellyfin/jellyfin";
+import { jellyseerrClient } from "../../clients/jellyseerr/jellyseerr";
 
 export const data = new SlashCommandBuilder()
   .setName("status")
@@ -16,12 +17,23 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const client = interaction.client;
 
   let isJellyfinReachable = false;
+
   try {
-    isJellyfinReachable = await jellyfinStatus();
+    isJellyfinReachable = await jellyfinClient.jellyfinStatus();
   } catch (error) {
     isJellyfinReachable = false;
   }
+
   const jellyfinStatusDot = isJellyfinReachable ? "🟢" : "🔴";
+
+  let isJellyseerrReachable = false;
+  try {
+    isJellyseerrReachable = await jellyseerrClient.jellyseerrStatus();
+  } catch (error) {
+    isJellyseerrReachable = false;
+  }
+
+  const jellyseerrStatusDot = isJellyseerrReachable ? "🟢" : "🔴";
 
   const status = {
     Uptime: formatUptime(client.uptime ?? 0),
@@ -38,6 +50,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     "OS Uptime": formatUptime(os.uptime() * 1000),
     "Jellyfin Status": `${jellyfinStatusDot} \`${
       isJellyfinReachable ? "Reachable" : "Unreachable"
+    }\``,
+    "Jellyseerr Status": `${jellyseerrStatusDot} \`${
+      isJellyseerrReachable ? "Reachable" : "Unreachable"
     }\``,
   };
 
