@@ -8,7 +8,6 @@ import {
   EmbedBuilder,
 } from "discord.js";
 import { Colors } from "../../static";
-import logger from "../../logger";
 import {
   getAllLibraries,
   getItemDetails,
@@ -105,17 +104,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         await handleMediaCommand(interaction);
         break;
       default:
-        logger.warn(`Unknown subcommand: ${subcommand}`);
-        await interaction.reply({
-          content: "Unknown subcommand",
-          ephemeral: true,
-        });
+        throw new Error(`Unknown subcommand: ${subcommand}`);
     }
   } else if (subcommand === "info") {
     await handleInfoCommand(interaction);
   } else {
-    logger.warn(`Unknown command: ${subcommand}`);
-    await interaction.reply({ content: "Unknown command", ephemeral: true });
+    throw new Error(`Unknown command: ${subcommand}`);
   }
 }
 
@@ -124,47 +118,33 @@ async function handleLibrariesCommand(
 ) {
   await interaction.deferReply();
 
-  try {
-    const libraries = await getAllLibraries();
+  const libraries = await getAllLibraries();
 
-    if (libraries.length === 0) {
-      logger.info("No libraries found in Jellyfin.");
-      await interaction.editReply("No libraries found in Jellyfin.");
-      return;
-    }
-
-    const embed = new EmbedBuilder()
-      .setColor(Colors.JELLYFIN_PURPLE)
-      .setTitle("Jellyfin Libraries")
-      .setTimestamp()
-      .setFooter({
-        text: `Requested by ${interaction.user.tag}`,
-        iconURL: interaction.user.displayAvatarURL(),
-      });
-    for (const library of libraries) {
-      const itemCount = await getLibraryItemCount(library.Id ?? "");
-      embed.addFields({
-        name: `${library.Name}`,
-        value: `Type: ${
-          library.CollectionType || "Unknown"
-        }\nItems: ${itemCount}`,
-        inline: true,
-      });
-    }
-
-    await interaction.editReply({ embeds: [embed] });
-  } catch (error) {
-    logger.error("Error fetching Jellyfin libraries:", error);
-    const errorEmbed = new EmbedBuilder()
-      .setColor(Colors.ERROR)
-      .setTitle("Error")
-      .setDescription("An error occurred while fetching Jellyfin libraries.")
-      .addFields({
-        name: "Error Details",
-        value: `\`\`\`\n${error}\n\`\`\``,
-      });
-    await interaction.editReply({ embeds: [errorEmbed] });
+  if (libraries.length === 0) {
+    await interaction.editReply("No libraries found in Jellyfin.");
+    return;
   }
+
+  const embed = new EmbedBuilder()
+    .setColor(Colors.JELLYFIN_PURPLE)
+    .setTitle("Jellyfin Libraries")
+    .setTimestamp()
+    .setFooter({
+      text: `Requested by ${interaction.user.tag}`,
+      iconURL: interaction.user.displayAvatarURL(),
+    });
+  for (const library of libraries) {
+    const itemCount = await getLibraryItemCount(library.Id ?? "");
+    embed.addFields({
+      name: `${library.Name}`,
+      value: `Type: ${
+        library.CollectionType || "Unknown"
+      }\nItems: ${itemCount}`,
+      inline: true,
+    });
+  }
+
+  await interaction.editReply({ embeds: [embed] });
 }
 
 async function handleMediaCommand(interaction: ChatInputCommandInteraction) {
@@ -172,7 +152,6 @@ async function handleMediaCommand(interaction: ChatInputCommandInteraction) {
 
   const libraryId = interaction.options.getString("library");
   if (!libraryId) {
-    logger.warn("No library ID provided for media command.");
     await interaction.editReply("No library ID provided.");
     return;
   }
@@ -181,60 +160,47 @@ async function handleMediaCommand(interaction: ChatInputCommandInteraction) {
   let currentPage = 0;
 
   async function fetchAndDisplayItems(page: number) {
-    try {
-      if (libraryId === null) {
-        throw new Error("Library ID is null");
-      }
-      const items = await getLibraryItems(libraryId, false);
-      const totalRecordCount = items.length;
-      const startIndex = page * itemsPerPage;
-      const endIndex = Math.min(startIndex + itemsPerPage, totalRecordCount);
-      const pageItems = items.slice(startIndex, endIndex);
-
-      const embed = new EmbedBuilder()
-        .setColor(Colors.JELLYFIN_PURPLE)
-        .setTitle("Jellyfin Library Items")
-        .setFooter({
-          text: `Page ${page + 1}/${Math.ceil(
-            totalRecordCount / itemsPerPage
-          )} • Total items: ${totalRecordCount}`,
-          iconURL: interaction.user.displayAvatarURL(),
-        });
-
-      for (const item of pageItems) {
-        embed.addFields({
-          name: item.Name ?? "Unknown",
-          value: `Type: ${item.Type}\nYear: ${item.ProductionYear || "N/A"}`,
-          inline: true,
-        });
-      }
-
-      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder()
-          .setCustomId("previous")
-          .setLabel("Previous")
-          .setStyle(ButtonStyle.Primary)
-          .setDisabled(page === 0),
-        new ButtonBuilder()
-          .setCustomId("next")
-          .setLabel("Next")
-          .setStyle(ButtonStyle.Primary)
-          .setDisabled(endIndex >= totalRecordCount)
-      );
-
-      return { embeds: [embed], components: [row] };
-    } catch (error) {
-      logger.error("Error fetching library items:", error);
-      const errorEmbed = new EmbedBuilder()
-        .setColor(Colors.ERROR)
-        .setTitle("Error")
-        .setDescription("An error occurred while fetching library items.")
-        .addFields({
-          name: "Error Details",
-          value: `\`\`\`\n${error}\n\`\`\``,
-        });
-      return { embeds: [errorEmbed], components: [] };
+    if (libraryId === null) {
+      throw new Error("Library ID is null");
     }
+    const items = await getLibraryItems(libraryId, false);
+    const totalRecordCount = items.length;
+    const startIndex = page * itemsPerPage;
+    const endIndex = Math.min(startIndex + itemsPerPage, totalRecordCount);
+    const pageItems = items.slice(startIndex, endIndex);
+
+    const embed = new EmbedBuilder()
+      .setColor(Colors.JELLYFIN_PURPLE)
+      .setTitle("Jellyfin Library Items")
+      .setFooter({
+        text: `Page ${page + 1}/${Math.ceil(
+          totalRecordCount / itemsPerPage
+        )} • Total items: ${totalRecordCount}`,
+        iconURL: interaction.user.displayAvatarURL(),
+      });
+
+    for (const item of pageItems) {
+      embed.addFields({
+        name: item.Name ?? "Unknown",
+        value: `Type: ${item.Type}\nYear: ${item.ProductionYear || "N/A"}`,
+        inline: true,
+      });
+    }
+
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId("previous")
+        .setLabel("Previous")
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(page === 0),
+      new ButtonBuilder()
+        .setCustomId("next")
+        .setLabel("Next")
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(endIndex >= totalRecordCount)
+    );
+
+    return { embeds: [embed], components: [row] };
   }
 
   const initialMessage = await fetchAndDisplayItems(currentPage);
@@ -262,104 +228,104 @@ async function handleInfoCommand(interaction: ChatInputCommandInteraction) {
 
   const itemId = interaction.options.getString("item");
   if (!itemId) {
-    logger.warn("No item ID provided for info command.");
     await interaction.editReply("No item ID provided.");
     return;
   }
 
-  try {
-    const itemDetails = await getItemDetails(itemId);
+  const itemDetails = await getItemDetails(itemId);
 
-    if (!itemDetails) {
-      await interaction.editReply("Item not found.");
-      return;
-    }
-
-    const embed = new EmbedBuilder()
-      .setColor(Colors.JELLYFIN_PURPLE)
-      .setTitle(itemDetails.Name ?? "Unknown Title")
-      .setDescription(itemDetails.Overview ?? "No overview available.")
-      .setTimestamp()
-      .setFooter({
-        text: `Requested by ${interaction.user.tag}`,
-        iconURL: interaction.user.displayAvatarURL(),
-      });
-
-    const imageUrl = await getItemImageUrl(itemId);
-    embed.setImage(imageUrl);
-
-    if (itemDetails.ProductionYear) {
-      embed.addFields({
-        name: "Year",
-        value: itemDetails.ProductionYear.toString(),
-        inline: true,
-      });
-    }
-
-    if (itemDetails.OfficialRating) {
-      embed.addFields({
-        name: "Rating",
-        value: itemDetails.OfficialRating,
-        inline: true,
-      });
-    }
-
-    if (itemDetails.CommunityRating) {
-      embed.addFields({
-        name: "Community Rating",
-        value: itemDetails.CommunityRating.toFixed(1),
-        inline: true,
-      });
-    }
-
-    if (itemDetails.Genres && itemDetails.Genres.length > 0) {
-      embed.addFields({
-        name: "Genres",
-        value: itemDetails.Genres.join(", "),
-        inline: false,
-      });
-    }
-
-    if (itemDetails.Studios && itemDetails.Studios.length > 0) {
-      embed.addFields({
-        name: "Studios",
-        value: itemDetails.Studios.map((studio) => studio.Name).join(", "),
-        inline: false,
-      });
-    }
-
-    if (itemDetails.Type === "Series") {
-      embed.addFields({ name: "Type", value: "TV Series", inline: true });
-      if (itemDetails.ChildCount) {
-        embed.addFields({
-          name: "Seasons",
-          value: itemDetails.ChildCount.toString(),
-          inline: true,
-        });
-      }
-    } else if (itemDetails.Type === "Movie") {
-      embed.addFields({ name: "Type", value: "Movie", inline: true });
-      if (itemDetails.RunTimeTicks) {
-        const runtime = Math.floor(itemDetails.RunTimeTicks / (10000000 * 60));
-        embed.addFields({
-          name: "Runtime",
-          value: `${runtime} minutes`,
-          inline: true,
-        });
-      }
-    }
-
-    await interaction.editReply({ embeds: [embed] });
-  } catch (error) {
-    logger.error("Error fetching item details:", error);
-    const errorEmbed = new EmbedBuilder()
-      .setColor(Colors.ERROR)
-      .setTitle("Error")
-      .setDescription("An error occurred while fetching item details.")
-      .addFields({
-        name: "Error Details",
-        value: `\`\`\`\n${error}\n\`\`\``,
-      });
-    await interaction.editReply({ embeds: [errorEmbed] });
+  if (!itemDetails) {
+    await interaction.editReply("Item not found.");
+    return;
   }
+
+  const embed = new EmbedBuilder()
+    .setColor(Colors.JELLYFIN_PURPLE)
+    .setTitle(itemDetails.Name ?? "Unknown Title")
+    .setDescription(itemDetails.Overview ?? "No overview available.")
+    .setTimestamp()
+    .setFooter({
+      text: `Requested by ${interaction.user.tag}`,
+      iconURL: interaction.user.displayAvatarURL(),
+    });
+
+  let imageUrl = await getItemImageUrl(itemId, ImageType.Thumb);
+  if (imageUrl) {
+    embed.setImage(imageUrl);
+  } else {
+    imageUrl = await getItemImageUrl(itemId, ImageType.Primary);
+    if (imageUrl) {
+      embed.setThumbnail(imageUrl);
+    }
+  }
+
+  if (itemDetails.ProductionYear) {
+    embed.addFields({
+      name: "Year",
+      value: itemDetails.ProductionYear.toString(),
+      inline: true,
+    });
+  }
+
+  if (itemDetails.OfficialRating) {
+    embed.addFields({
+      name: "Rating",
+      value: itemDetails.OfficialRating,
+      inline: true,
+    });
+  }
+
+  if (itemDetails.CommunityRating) {
+    embed.addFields({
+      name: "Community Rating",
+      value: itemDetails.CommunityRating.toFixed(1),
+      inline: true,
+    });
+  }
+
+  if (itemDetails.Genres && itemDetails.Genres.length > 0) {
+    embed.addFields({
+      name: "Genres",
+      value: itemDetails.Genres.join(", "),
+      inline: false,
+    });
+  }
+
+  if (itemDetails.Studios && itemDetails.Studios.length > 0) {
+    embed.addFields({
+      name: "Studios",
+      value: itemDetails.Studios.map((studio) => studio.Name).join(", "),
+      inline: false,
+    });
+  }
+
+  if (itemDetails.Type === "Series") {
+    embed.addFields({ name: "Type", value: "TV Series", inline: true });
+    if (itemDetails.ChildCount) {
+      embed.addFields({
+        name: "Seasons",
+        value: itemDetails.ChildCount.toString(),
+        inline: true,
+      });
+    }
+    if (itemDetails.RecursiveItemCount) {
+      embed.addFields({
+        name: "Episodes",
+        value: itemDetails.RecursiveItemCount.toString(),
+        inline: true,
+      });
+    }
+  } else if (itemDetails.Type === "Movie") {
+    embed.addFields({ name: "Type", value: "Movie", inline: true });
+    if (itemDetails.RunTimeTicks) {
+      const runtime = Math.floor(itemDetails.RunTimeTicks / (10000000 * 60));
+      embed.addFields({
+        name: "Runtime",
+        value: `${runtime} minutes`,
+        inline: true,
+      });
+    }
+  }
+
+  await interaction.editReply({ embeds: [embed] });
 }

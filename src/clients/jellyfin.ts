@@ -1,8 +1,8 @@
 import { Jellyfin } from "@jellyfin/sdk";
-import type {
-  BaseItemDto,
-  BaseItemDtoQueryResult,
+import {
   ImageType,
+  type BaseItemDto,
+  type BaseItemDtoQueryResult,
 } from "@jellyfin/sdk/lib/generated-client";
 import {
   getSystemApi,
@@ -79,7 +79,7 @@ export async function getItemDetails(
     const response = await getItemsApi(api).getItems({
       ids: [itemId],
       recursive: true,
-      fields: ["Overview", "Genres", "Studios", "Tags", "SeriesPrimaryImage"],
+      fields: ["Overview", "Genres", "Studios", "Tags"],
     });
     return response.data.Items?.[0] ?? null;
   } catch (error) {
@@ -88,11 +88,36 @@ export async function getItemDetails(
   }
 }
 
-export async function getItemImageUrl(itemId: string): Promise<string> {
-  const response = await getImageApi(api).getItemImage({
-    itemId: itemId,
-    imageType: "Primary",
-  });
+export async function getItemImageUrl(
+  itemId: string,
+  imageType: ImageType = ImageType.Primary
+): Promise<string> {
+  try {
+    const itemResponse = await getItemsApi(api).getItems({
+      ids: [itemId],
+      recursive: true,
+      fields: [],
+    });
+    const item = itemResponse.data.Items?.[0];
+    if (!item) {
+      logger.warn(`Item not found for itemId: ${itemId}`);
+      return "";
+    }
 
-  return response.data.url;
+    const image = item.ImageTags?.[imageType];
+    if (!image) {
+      logger.warn(`No image of type ${imageType} found for itemId: ${itemId}`);
+      return "";
+    }
+
+    const imageUrl = `${config.jellyfin.url}/Items/${itemId}/Images/${ImageType[imageType]}?quality=60`;
+
+    return imageUrl;
+  } catch (error) {
+    logger.error(
+      `Error fetching image URL for itemId: ${itemId}, imageType: ${imageType}:`,
+      error
+    );
+    return "";
+  }
 }

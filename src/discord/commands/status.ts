@@ -15,56 +15,52 @@ export const data = new SlashCommandBuilder()
 export async function execute(interaction: ChatInputCommandInteraction) {
   const client = interaction.client;
 
+  let isJellyfinReachable = false;
   try {
-    const isJellyfinRunning = await jellyfinStatus();
-    const jellyfinStatusDot = isJellyfinRunning ? "🟢" : "🔴";
-
-    const status = {
-      Uptime: formatUptime(client.uptime ?? 0),
-      Ping: `\`${
-        client.ws.ping >= 0 ? `${client.ws.ping}ms` : "I don't fucking know"
-      }\``,
-      Guilds: `\`${client.guilds.cache.size}\``,
-      "Memory Usage": `\`${(
-        process.memoryUsage().heapUsed /
-        1024 /
-        1024
-      ).toFixed(2)} MB\``,
-      "CPU Usage": `\`${os.loadavg()[0].toFixed(2)}%\``,
-      "Node Version": `\`${process.version}\``,
-      "Discord.js Version": `\`${discordVersion}\``,
-      "OS Uptime": formatUptime(os.uptime() * 1000),
-      "Jellyfin Status": `${jellyfinStatusDot} \`${
-        isJellyfinRunning ? "Running" : "Not Running"
-      }\``,
-    };
-
-    const embed = new EmbedBuilder()
-      .setColor(Colors.PRIMARY)
-      .setTitle("Bot Status")
-      .setDescription(`Here's the current status of ${client.user?.username}`)
-      .setThumbnail(client.user?.displayAvatarURL() ?? "")
-      .setTimestamp()
-      .setFooter({
-        text: `Requested by ${interaction.user.tag}`,
-        iconURL: interaction.user.displayAvatarURL(),
-      });
-
-    for (const [key, value] of Object.entries(status)) {
-      embed.addFields({
-        name: key,
-        value: value,
-        inline: true,
-      });
-    }
-
-    await interaction.reply({ embeds: [embed] });
+    isJellyfinReachable = await jellyfinStatus();
   } catch (error) {
-    await interaction.reply({
-      content: "An error occurred while fetching the status.",
-      ephemeral: true,
+    isJellyfinReachable = false;
+  }
+  const jellyfinStatusDot = isJellyfinReachable ? "🟢" : "🔴";
+
+  const status = {
+    Uptime: formatUptime(client.uptime ?? 0),
+    Ping: `\`${
+      client.ws.ping >= 0 ? `${client.ws.ping}ms` : "I don't fucking know"
+    }\``,
+    Guilds: `\`${client.guilds.cache.size}\``,
+    "Memory Usage": `\`${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(
+      2
+    )} MB\``,
+    "CPU Usage": `\`${os.loadavg()[0].toFixed(2)}%\``,
+    "Node Version": `\`${process.version}\``,
+    "Discord.js Version": `\`${discordVersion}\``,
+    "OS Uptime": formatUptime(os.uptime() * 1000),
+    "Jellyfin Status": `${jellyfinStatusDot} \`${
+      isJellyfinReachable ? "Reachable" : "Unreachable"
+    }\``,
+  };
+
+  const embed = new EmbedBuilder()
+    .setColor(Colors.PRIMARY)
+    .setTitle("Bot Status")
+    .setDescription(`Here's the current status of ${client.user?.username}`)
+    .setThumbnail(client.user?.displayAvatarURL() ?? "")
+    .setTimestamp()
+    .setFooter({
+      text: `Requested by ${interaction.user.tag}`,
+      iconURL: interaction.user.displayAvatarURL(),
+    });
+
+  for (const [key, value] of Object.entries(status)) {
+    embed.addFields({
+      name: key,
+      value: value,
+      inline: true,
     });
   }
+
+  await interaction.reply({ embeds: [embed] });
 }
 
 function formatUptime(ms: number): string {
