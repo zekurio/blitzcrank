@@ -5,7 +5,7 @@ import {
 } from "discord.js";
 import { jellyfinClient } from "../../../clients/jellyfin/jellyfin";
 import { execute as executeInfo } from "./info";
-import { execute as executeList } from "./list";
+import { execute as executeList } from "./list/list";
 
 export const data = new SlashCommandBuilder()
   .setName("jellyfin")

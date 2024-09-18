@@ -1,6 +1,6 @@
 import { SlashCommandBuilder } from "@discordjs/builders";
 import { ChatInputCommandInteraction } from "discord.js";
-import { execute as executeRequests } from "./jellyseer/requests/requests";
+import { execute as executeRequests } from "./requests/requests";
 
 export const data = new SlashCommandBuilder()
   .setName("jellyseerr")
