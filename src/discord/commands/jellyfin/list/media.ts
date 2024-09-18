@@ -19,7 +19,7 @@ export async function handleMediaCommand(
     return;
   }
 
-  const itemsPerPage = 6;
+  const itemsPerPage = 24;
   let currentPage = 0;
 
   async function fetchAndDisplayItems(page: number) {

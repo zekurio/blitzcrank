@@ -27,14 +27,23 @@ export async function handleLibrariesCommand(
       iconURL: interaction.user.displayAvatarURL(),
     });
   for (const library of libraries) {
-    const itemCount = await jellyfinClient.getLibraryItemCount(
-      library.Id ?? ""
-    );
+    let itemCount: number;
+    let libraryType: string;
+
+    if (library.CollectionType === "movies") {
+      libraryType = "Movies";
+      itemCount = await jellyfinClient.getLibraryItemCount(library.Id ?? "");
+    } else if (library.CollectionType === "tvshows") {
+      libraryType = "Shows";
+      itemCount = await jellyfinClient.getLibraryShowCount(library.Id ?? "");
+    } else {
+      libraryType = library.CollectionType || "Unknown";
+      itemCount = await jellyfinClient.getLibraryItemCount(library.Id ?? "");
+    }
+
     embed.addFields({
       name: `${library.Name}`,
-      value: `Type: ${
-        library.CollectionType || "Unknown"
-      }\nItems: ${itemCount}`,
+      value: `Type: ${libraryType}\nItems: ${itemCount}`,
       inline: true,
     });
   }
