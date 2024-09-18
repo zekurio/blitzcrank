@@ -8,23 +8,28 @@ import os from "os";
 import { Colors } from "../../static";
 import { jellyfinClient } from "../../clients/jellyfin/jellyfin";
 import { jellyseerrClient } from "../../clients/jellyseerr/jellyseerr";
+import { getLocalization } from "../../utils/localization";
 
 export const data = new SlashCommandBuilder()
-  .setName("status")
-  .setDescription("Get status for Blitzcrank and services tied to it");
+  .setName(getLocalization("status.name"))
+  .setDescription(getLocalization("status.command_description"))
+  .setNameLocalizations({
+    de: getLocalization("status.name", "de"),
+  })
+  .setDescriptionLocalizations({
+    de: getLocalization("status.command_description", "de"),
+  });
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   const client = interaction.client;
+  const lang = interaction.locale;
 
   let isJellyfinReachable = false;
-
   try {
     isJellyfinReachable = await jellyfinClient.jellyfinStatus();
   } catch (error) {
     isJellyfinReachable = false;
   }
-
-  const jellyfinStatusDot = isJellyfinReachable ? "🟢" : "🔴";
 
   let isJellyseerrReachable = false;
   try {
@@ -33,37 +38,57 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     isJellyseerrReachable = false;
   }
 
-  const jellyseerrStatusDot = isJellyseerrReachable ? "🟢" : "🔴";
-
   const status = {
-    Uptime: formatUptime(client.uptime ?? 0),
-    Ping: `\`${
-      client.ws.ping >= 0 ? `${client.ws.ping}ms` : "I don't fucking know"
+    [getLocalization("status.uptime", lang)]: formatUptime(client.uptime ?? 0),
+    [getLocalization("status.ping", lang)]: `\`${
+      client.ws.ping >= 0
+        ? `${client.ws.ping}ms`
+        : getLocalization("status.unknown", lang)
     }\``,
-    Guilds: `\`${client.guilds.cache.size}\``,
-    "Memory Usage": `\`${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(
-      2
-    )} MB\``,
-    "CPU Usage": `\`${os.loadavg()[0].toFixed(2)}%\``,
-    "Node Version": `\`${process.version}\``,
-    "Discord.js Version": `\`${discordVersion}\``,
-    "OS Uptime": formatUptime(os.uptime() * 1000),
-    "Jellyfin Status": `${jellyfinStatusDot} \`${
-      isJellyfinReachable ? "Reachable" : "Unreachable"
+    [getLocalization("status.guilds", lang)]: `\`${client.guilds.cache.size}\``,
+    [getLocalization("status.memoryUsage", lang)]: `\`${(
+      process.memoryUsage().heapUsed /
+      1024 /
+      1024
+    ).toFixed(2)} MB\``,
+    [getLocalization("status.cpuUsage", lang)]: `\`${os
+      .loadavg()[0]
+      .toFixed(2)}%\``,
+    [getLocalization("status.nodeVersion", lang)]: `\`${process.version}\``,
+    [getLocalization("status.discordJsVersion", lang)]: `\`${discordVersion}\``,
+    [getLocalization("status.osUptime", lang)]: formatUptime(
+      os.uptime() * 1000
+    ),
+    [getLocalization("status.jellyfinStatus", lang)]: `${
+      isJellyfinReachable ? "🟢" : "🔴"
+    } \`${
+      isJellyfinReachable
+        ? getLocalization("status.reachable", lang)
+        : getLocalization("status.unreachable", lang)
     }\``,
-    "Jellyseerr Status": `${jellyseerrStatusDot} \`${
-      isJellyseerrReachable ? "Reachable" : "Unreachable"
+    [getLocalization("status.jellyseerrStatus", lang)]: `${
+      isJellyseerrReachable ? "🟢" : "🔴"
+    } \`${
+      isJellyseerrReachable
+        ? getLocalization("status.reachable", lang)
+        : getLocalization("status.unreachable", lang)
     }\``,
   };
 
   const embed = new EmbedBuilder()
     .setColor(Colors.PRIMARY)
-    .setTitle("Bot Status")
-    .setDescription(`Here's the current status of ${client.user?.username}`)
+    .setTitle(getLocalization("status.title", lang))
+    .setDescription(
+      getLocalization("status.embed_description", lang, {
+        username: client.user?.username ?? "Bot",
+      })
+    )
     .setThumbnail(client.user?.displayAvatarURL() ?? "")
     .setTimestamp()
     .setFooter({
-      text: `Requested by ${interaction.user.tag}`,
+      text: getLocalization("status.footer", lang, {
+        user: interaction.user.tag,
+      }),
       iconURL: interaction.user.displayAvatarURL(),
     });
 

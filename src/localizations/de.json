@@ -1,0 +1,72 @@
+{
+  "jellyfin": {
+    "name": "jellyfin",
+    "description": "Jellyfin-bezogene Befehle",
+    "list": {
+      "name": "liste",
+      "description": "Jellyfin-Bibliotheken oder Medien auflisten",
+      "libraries": {
+        "name": "bibliotheken",
+        "description": "Alle Jellyfin-Bibliotheken auflisten"
+      },
+      "media": {
+        "name": "medien",
+        "description": "Alle Medien aus einer Jellyfin-Bibliothek auflisten",
+        "options": {
+          "library": {
+            "name": "bibliothek",
+            "description": "Die Bibliothek, aus der Medien aufgelistet werden sollen"
+          }
+        }
+      }
+    },
+    "info": {
+      "name": "info",
+      "description": "Informationen über einen Film oder eine Serie anzeigen",
+      "options": {
+        "item": {
+          "name": "element",
+          "description": "Der Film oder die Serie, über die Informationen angezeigt werden sollen"
+        }
+      }
+    }
+  },
+  "jellyseerr": {
+    "name": "jellyseerr",
+    "description": "Mit Jellyseerr interagieren",
+    "requests": {
+      "name": "anfragen",
+      "description": "Jellyseerr-Anfragen verwalten",
+      "list": {
+        "name": "liste",
+        "description": "Jellyseerr-Anfragen auflisten",
+        "options": {
+          "status": {
+            "name": "status",
+            "description": "Status der Anfragen"
+          }
+        }
+      }
+    }
+  },
+  "status": {
+    "name": "status",
+    "command_description": "Status von Blitzcrank und damit verbundenen Diensten abrufen",
+    "title": "Bot-Status",
+    "embed_description": "Hier ist der aktuelle Status von {username}",
+    "footer": "Angefordert von {user}",
+    "uptime": "Betriebszeit",
+    "ping": "Ping",
+    "guilds": "Server",
+    "memoryUsage": "Speichernutzung",
+    "cpuUsage": "CPU-Auslastung",
+    "nodeVersion": "Node-Version",
+    "discordJsVersion": "Discord.js-Version",
+    "osUptime": "Betriebssystem-Laufzeit",
+    "jellyfinStatus": "Jellyfin-Status",
+    "jellyseerrStatus": "Jellyseerr-Status",
+    "unknown": "Ich weiß es verdammt nochmal nicht",
+    "reachable": "Erreichbar",
+    "unreachable": "Nicht erreichbar"
+  }
+}
