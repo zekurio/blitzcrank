@@ -82,6 +82,16 @@ export interface RequestsResponse {
   results: Request[];
 }
 
+export type RequestStatus =
+  | "all"
+  | "available"
+  | "unavailable"
+  | "approved"
+  | "pending"
+  | "processing"
+  | "failed"
+  | "declined";
+
 export interface MovieDetails {
   id: number;
   imdbId: string | null;

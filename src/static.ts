@@ -8,5 +8,14 @@ export const Colors = {
   SONARR_BLUE: 0x35c5f4,
   RADARR_RED: 0xed1c24,
   JELLYFIN_PURPLE: 0x6f42c1,
-  JELLYSEERR_PURPLE: 0x8a5cd6,
+  JELLYSEERR: {
+    AVAILABLE: 0x7ac495,
+    UNAVAILABLE: 0xff8080,
+    APPROVED: 0xffc266,
+    PENDING: 0x6699cc,
+    PROCESSING: 0x6699cc,
+    FAILED: 0xff8080,
+    DECLINED: 0xff8080,
+    DEFAULT: 0x8a5cd6,
+  },
 };
