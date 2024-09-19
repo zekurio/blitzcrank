@@ -32,35 +32,62 @@ export class ClientWrapper {
   }
 
   async destroy(): Promise<void> {
-    for (const guild of this.client.guilds.cache.values()) {
-      await this.unregisterCommands(guild.id);
-    }
     await this.client.destroy();
   }
 
-  async registerCommands(guildId: string): Promise<void> {
+  async registerCommands(guildId?: string): Promise<void> {
     try {
-      logger.info("Registering application commands.");
-      await this.rest.put(
-        Routes.applicationGuildCommands(this.config.discord.clientId, guildId),
-        { body: Object.values(commands).map((command) => command.data) }
-      );
-      logger.info("Successfully registered application commands.");
+      if (guildId) {
+        logger.info(`Registering guild-specific commands for guild ${guildId}`);
+        await this.rest.put(
+          Routes.applicationGuildCommands(
+            this.config.discord.clientId,
+            guildId
+          ),
+          { body: Object.values(commands).map((command) => command.data) }
+        );
+        logger.info(
+          `Successfully registered guild-specific commands for guild ${guildId}`
+        );
+      } else {
+        logger.info("Registering global application commands.");
+        await this.rest.put(
+          Routes.applicationCommands(this.config.discord.clientId),
+          { body: Object.values(commands).map((command) => command.data) }
+        );
+        logger.info("Successfully registered global application commands.");
+      }
     } catch (error) {
-      logger.error("Error registering application commands.", error);
+      logger.error("Error registering commands:", error);
     }
   }
 
-  async unregisterCommands(guildId: string): Promise<void> {
+  async unregisterCommands(guildId?: string): Promise<void> {
     try {
-      logger.info("Unregistering application commands.");
-      await this.rest.put(
-        Routes.applicationGuildCommands(this.config.discord.clientId, guildId),
-        { body: [] }
-      );
-      logger.info("Successfully unregistered application commands.");
+      if (guildId) {
+        logger.info(
+          `Unregistering guild-specific commands for guild ${guildId}.`
+        );
+        await this.rest.put(
+          Routes.applicationGuildCommands(
+            this.config.discord.clientId,
+            guildId
+          ),
+          { body: [] }
+        );
+        logger.info(
+          `Successfully unregistered guild-specific commands for guild ${guildId}.`
+        );
+      } else {
+        logger.info("Unregistering global application commands.");
+        await this.rest.put(
+          Routes.applicationCommands(this.config.discord.clientId),
+          { body: [] }
+        );
+        logger.info("Successfully unregistered global application commands.");
+      }
     } catch (error) {
-      logger.error("Error unregistering application commands:", error);
+      logger.error("Error unregistering commands:", error);
     }
   }
 }

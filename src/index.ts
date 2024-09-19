@@ -3,32 +3,34 @@ import { ClientWrapper } from "./discord/client";
 import logger from "./logger";
 import WebhookHandler from "./webhook/webhook";
 
-const wrapped = new ClientWrapper(config);
+const client = new ClientWrapper(config);
 
-wrapped
-  .login()
-  .then(() => {
-    logger.info("Bot started successfully");
+async function cleanUp() {
+  const guilds = client.getClient().guilds.cache;
 
-    const webhookHandler = new WebhookHandler(config, wrapped.getClient());
-    webhookHandler.start();
+  for (const [guildId, guild] of guilds) {
+    try {
+      await client.unregisterCommands(guildId);
+      logger.info(
+        `Unregistered commands for guild: ${guild.name} (${guildId})`
+      );
+    } catch (error) {
+      logger.error(
+        `Failed to unregister commands for guild: ${guild.name} (${guildId})`,
+        error
+      );
+    }
+  }
+}
 
-    const gracefulShutdown = async (signal: string) => {
-      logger.info(`Received ${signal}. Shutting down gracefully...`);
-      try {
-        await wrapped.destroy();
-        logger.info("Bot has been successfully shut down");
-      } catch (error) {
-        logger.error("Error during shutdown:", error);
-      }
-      process.exit();
-    };
-
-    ["SIGTERM", "SIGINT", "SIGHUP"].forEach((signal) =>
-      process.on(signal, () => gracefulShutdown(signal))
-    );
-  })
-  .catch((error) => {
-    logger.error("Failed to start the bot:", error);
-    process.exit(1);
+async function main() {
+  await cleanUp().then(async () => {
+    await client.login().then(() => {
+      const webhookHandler = new WebhookHandler(config, client.getClient());
+      webhookHandler.start();
+      logger.info("Bot is running");
+    });
   });
+}
+
+main();
