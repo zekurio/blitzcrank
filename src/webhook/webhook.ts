@@ -13,11 +13,12 @@ import logger from "../logger";
 
 class WebhookHandler {
   private server: ReturnType<typeof createServer>;
-  private readonly PORT = 80;
+  private readonly port: number;
   private channelId: string;
   private client: Client;
 
   constructor(config: Config, client: Client) {
+    this.port = config.webserver.port;
     this.server = createServer(this.handleRequest.bind(this));
     this.channelId = config.discord.channelId;
     this.client = client;
@@ -46,8 +47,8 @@ class WebhookHandler {
   }
 
   public start() {
-    this.server.listen(this.PORT, () => {
-      logger.info(`Webhook server listening on port ${this.PORT}`);
+    this.server.listen(this.port, () => {
+      logger.info(`Webhook server listening on port ${this.port}`);
     });
   }
 

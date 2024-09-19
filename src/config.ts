@@ -2,6 +2,10 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
+export interface WebserverConfig {
+  port: number;
+}
+
 export interface LoggingConfig {
   level: string;
 }
@@ -28,6 +32,7 @@ export interface JellyseerrConfig {
 
 export interface Config {
   logging: LoggingConfig;
+  webserver: WebserverConfig;
   discord: DiscordConfig;
   postgres: PostgresConfig;
   jellyfin: JellyfinConfig;
@@ -37,6 +42,9 @@ export interface Config {
 export const config: Config = {
   logging: {
     level: process.env.LOG_LEVEL ?? "info",
+  },
+  webserver: {
+    port: parseInt(process.env.LISTEN_PORT ?? "8081"),
   },
   discord: {
     token: process.env.DISCORD_TOKEN ?? "",
