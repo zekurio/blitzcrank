@@ -1,66 +1,108 @@
 {
   "jellyfin": {
-    "name": "jellyfin",
-    "description": "Jellyfin-bezogene Befehle",
+    "command": {
+      "name": "jellyfin",
+      "description": "Jellyfin-bezogene Befehle"
+    },
     "libraries": {
-      "name": "bibliotheken",
-      "description": "Alle Jellyfin-Bibliotheken auflisten",
-      "title": "Jellyfin-Bibliotheken",
-      "noLibrariesFound": "Keine Bibliotheken gefunden.",
-      "requestedBy": "Angefordert von {user}",
-      "type": "Typ",
-      "items": "Elemente"
+      "command": {
+        "name": "bibliotheken",
+        "description": "Alle Jellyfin-Bibliotheken auflisten"
+      },
+      "embeds": {
+        "noLibrariesFound": {
+          "title": "Keine Bibliotheken gefunden",
+          "description": "Es wurden keine Bibliotheken gefunden. Bitte stelle sicher, dass die Jellyfin-Bibliotheken korrekt konfiguriert sind."
+        },
+        "reply": {
+          "title": "Jellyfin-Bibliotheken",
+          "requestedBy": "Angefordert von {user}",
+          "fields": {
+            "type": "Typ",
+            "items": "Elemente",
+            "movie": "Film",
+            "tvSeries": "Fernsehserie",
+            "unknownTitle": "Unbekannter Titel"
+          }
+        }
+      }
     },
     "media": {
-      "name": "medien",
-      "description": "Alle Medien aus einer Jellyfin-Bibliothek auflisten",
-      "options": {
-        "library": {
-          "name": "bibliothek",
-          "description": "Die Bibliothek, aus der Medien aufgelistet werden sollen, oder 'alle' für alle Bibliotheken",
-          "all": "Alle Bibliotheken"
+      "command": {
+        "name": "medien",
+        "description": "Alle Medien aus einer Jellyfin-Bibliothek auflisten",
+        "options": {
+          "library": {
+            "name": "bibliothek",
+            "description": "Die Bibliothek, aus der Medien aufgelistet werden sollen, oder 'alle' für alle Bibliotheken",
+            "all": "Alle Bibliotheken"
+          }
         }
       },
-      "noLibraryProvided": "Keine Bibliotheks-ID angegeben.",
-      "title": "Jellyfin-Bibliothekselemente",
-      "noItemsToDisplay": "Keine Elemente zum Anzeigen",
-      "footer": "Seite {currentPage}/{totalPages} • Gesamtelemente: {totalItems}",
-      "unknownTitle": "Unbekannter Titel",
-      "unknownType": "Unbekannt",
-      "unknownYear": "N/A",
-      "itemDetails": "Typ: {type}\nJahr: {year}",
-      "previous": "Vorherige",
-      "next": "Nächste",
-      "movieType": "Film",
-      "seriesType": "Fernsehserie",
-      "showType": "Serie"
+      "embeds": {
+        "reply": {
+          "title": "Jellyfin-Bibliothekselemente",
+          "footer": "Seite {currentPage}/{totalPages} • Gesamtelemente: {totalItems}",
+          "fields": {
+            "unknownType": "Unbekannt",
+            "unknownYear": "N/A",
+            "unknownTitle": "Unbekannter Titel",
+            "movieType": "Film",
+            "seriesType": "Serie",
+            "showType": "Show",
+            "itemDetails": "Typ: {type}\nJahr: {year}"
+          }
+        },
+        "noItemsToDisplay": {
+          "title": "Keine Elemente zum Anzeigen",
+          "description": "In dieser Bibliothek wurden keine Elemente gefunden."
+        }
+      },
+      "components": {
+        "previous": "Vorherige",
+        "next": "Nächste"
+      }
     },
     "about": {
-      "name": "über",
-      "description": "Informationen über einen Film oder eine Serie anzeigen",
-      "options": {
-        "item": {
-          "name": "element",
-          "description": "Der Film oder die Serie, über die Informationen angezeigt werden sollen"
+      "command": {
+        "name": "über",
+        "description": "Informationen über einen Film oder eine Serie anzeigen",
+        "options": {
+          "item": {
+            "name": "element",
+            "description": "Der Film oder die Serie, über die Informationen angezeigt werden sollen"
+          }
         }
       },
-      "noItemProvided": "Keine Element-ID angegeben.",
-      "itemNotFound": "Element nicht gefunden.",
-      "unknownTitle": "Unbekannter Titel",
-      "noOverview": "Keine Übersicht verfügbar.",
-      "requestedBy": "Angefordert von {user}",
-      "year": "Jahr",
-      "rating": "Bewertung",
-      "communityRating": "Community-Bewertung",
-      "genres": "Genres",
-      "studios": "Studios",
-      "type": "Typ",
-      "tvSeries": "Serie",
-      "seasons": "Staffeln",
-      "episodes": "Episoden",
-      "movie": "Film",
-      "runtime": "Laufzeit",
-      "minutes": "{minutes} Minuten"
+      "embeds": {
+        "reply": {
+          "title": "Jellyfin-Elementdetails",
+          "footer": "Angefordert von {user}",
+          "noOverview": "Keine Übersicht verfügbar",
+          "fields": {
+            "year": "Jahr",
+            "rating": "Bewertung",
+            "communityRating": "Community-Bewertung",
+            "genres": "Genres",
+            "studios": "Studios",
+            "type": "Typ",
+            "tvSeries": "Serie",
+            "seasons": "Staffeln",
+            "episodes": "Episoden",
+            "movie": "Film",
+            "runtime": "Laufzeit",
+            "minutes": "{minutes} Minuten"
+          }
+        },
+        "noItemProvided": {
+          "title": "Kein Element angegeben",
+          "description": "Es wurde keine Element-ID angegeben."
+        },
+        "itemNotFound": {
+          "title": "Element nicht gefunden",
+          "description": "Das Element mit der angegebenen ID wurde nicht gefunden."
+        }
+      }
     }
   },
   "status": {
@@ -68,8 +110,8 @@
       "name": "status",
       "description": "Status von Blitzcrank und damit verbundenen Diensten abrufen"
     },
-    "replies": {
-      "embeds": {
+    "embeds": {
+      "reply": {
         "title": "Bot-Status",
         "description": "Hier ist der aktuelle Status von {username}",
         "footer": "Angefordert von {user}",
@@ -83,14 +125,12 @@
           "discordJsVersion": "Discord.js-Version",
           "osUptime": "Betriebssystem-Laufzeit",
           "jellyfinStatus": "Jellyfin-Status",
-          "jellyseerrStatus": "Jellyseerr-Status"
+          "jellyseerrStatus": "Jellyseerr-Status",
+          "unknown": "Ich habe keine verdammte Ahnung",
+          "reachable": "Erreichbar",
+          "unreachable": "Nicht erreichbar"
         }
       }
-    },
-    "misc": {
-      "unknown": "Ich habe keine verdammte Ahnung",
-      "reachable": "Erreichbar",
-      "unreachable": "Nicht erreichbar"
     }
   },
   "ping": {
@@ -98,9 +138,8 @@
       "name": "ping",
       "description": "Antwortet mit Pong!"
     },
-    "replies": {
-      "pinging": "Pinge...",
-      "embeds": {
+    "embeds": {
+      "reply": {
         "title": "Pong! 🏓",
         "fields": {
           "latency": "Latenz",
@@ -111,6 +150,9 @@
     "values": {
       "latencyValue": "{pingTime}ms",
       "apiLatencyValue": "{apiPing}ms"
+    },
+    "misc": {
+      "pinging": "Pinge..."
     }
   }
 }

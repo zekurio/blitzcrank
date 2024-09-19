@@ -12,7 +12,7 @@ import { getLocalization } from "../../../localization/localization";
 export async function handleMediaCommand(
   interaction: ChatInputCommandInteraction
 ) {
-  await interaction.deferReply();
+  await interaction.deferReply({ ephemeral: true });
 
   const lang = interaction.locale || "en";
   const libraryId = interaction.options.getString("library") || "all";
@@ -43,9 +43,14 @@ export async function handleMediaCommand(
     if (pageItems.length === 0) {
       const errorEmbed = new EmbedBuilder()
         .setColor(Colors.WARNING)
-        .setTitle(getLocalization("jellyfin.media.title", lang))
+        .setTitle(
+          getLocalization("jellyfin.media.embeds.noItemsToDisplay.title", lang)
+        )
         .setDescription(
-          getLocalization("jellyfin.media.noItemsToDisplay", lang)
+          getLocalization(
+            "jellyfin.media.embeds.noItemsToDisplay.description",
+            lang
+          )
         );
 
       return { embeds: [errorEmbed], components: [] };
@@ -53,9 +58,9 @@ export async function handleMediaCommand(
 
     const embed = new EmbedBuilder()
       .setColor(Colors.JELLYFIN_PURPLE)
-      .setTitle(getLocalization("jellyfin.media.title", lang))
+      .setTitle(getLocalization("jellyfin.media.embeds.reply.title", lang))
       .setFooter({
-        text: getLocalization("jellyfin.media.footer", lang, {
+        text: getLocalization("jellyfin.media.embeds.reply.footer", lang, {
           currentPage: (page + 1).toString(),
           totalPages: Math.ceil(totalRecordCount / itemsPerPage).toString(),
           totalItems: totalRecordCount.toString(),
@@ -65,23 +70,41 @@ export async function handleMediaCommand(
 
     for (const item of pageItems) {
       let typeLocalization = getLocalization(
-        "jellyfin.media.unknownType",
+        "jellyfin.media.embeds.reply.fields.unknownType",
         lang
       );
       if (item.Type === "Movie") {
-        typeLocalization = getLocalization("jellyfin.media.movieType", lang);
+        typeLocalization = getLocalization(
+          "jellyfin.media.embeds.reply.fields.movieType",
+          lang
+        );
       } else if (item.Type === "Series") {
-        typeLocalization = getLocalization("jellyfin.media.seriesType", lang);
+        typeLocalization = getLocalization(
+          "jellyfin.media.embeds.reply.fields.seriesType",
+          lang
+        );
       }
 
       embed.addFields({
-        name: item.Name ?? getLocalization("jellyfin.media.unknownTitle", lang),
-        value: getLocalization("jellyfin.media.itemDetails", lang, {
-          type: typeLocalization,
-          year:
-            item.ProductionYear?.toString() ||
-            getLocalization("jellyfin.media.unknownYear", lang),
-        }),
+        name:
+          item.Name ??
+          getLocalization(
+            "jellyfin.media.embeds.reply.fields.unknownTitle",
+            lang
+          ),
+        value: getLocalization(
+          "jellyfin.media.embeds.reply.fields.itemDetails",
+          lang,
+          {
+            type: typeLocalization,
+            year:
+              item.ProductionYear?.toString() ||
+              getLocalization(
+                "jellyfin.media.embeds.reply.fields.unknownYear",
+                lang
+              ),
+          }
+        ),
         inline: true,
       });
     }
@@ -89,12 +112,12 @@ export async function handleMediaCommand(
     const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setCustomId("previous")
-        .setLabel(getLocalization("jellyfin.media.previous", lang))
+        .setLabel(getLocalization("jellyfin.media.components.previous", lang))
         .setStyle(ButtonStyle.Primary)
         .setDisabled(page === 0),
       new ButtonBuilder()
         .setCustomId("next")
-        .setLabel(getLocalization("jellyfin.media.next", lang))
+        .setLabel(getLocalization("jellyfin.media.components.next", lang))
         .setStyle(ButtonStyle.Primary)
         .setDisabled(endIndex >= totalRecordCount)
     );

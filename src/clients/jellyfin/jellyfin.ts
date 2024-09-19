@@ -69,17 +69,6 @@ class JellyfinClient {
     return response.data.TotalRecordCount ?? 0;
   }
 
-  async getLibraryShowCount(
-    libraryId: string,
-    recursive: boolean = true
-  ): Promise<number> {
-    const response = await getItemsApi(this.api).getItems({
-      parentId: libraryId,
-      recursive: recursive,
-    });
-    return response.data.TotalRecordCount ?? 0;
-  }
-
   async getLibraryItems(
     libraryId: string,
     recursive: boolean = true

@@ -7,11 +7,11 @@ import { Colors } from "../../static";
 import { getLocalization } from "../../localization/localization";
 
 export const data = new SlashCommandBuilder()
-  .setName(getLocalization("ping.command.name"))
+  .setName("ping")
   .setNameLocalizations({
     de: getLocalization("ping.command.name", "de"),
   })
-  .setDescription(getLocalization("ping.command.description"))
+  .setDescription("Replies with Pong!")
   .setDescriptionLocalizations({
     de: getLocalization("ping.command.description", "de"),
   });
@@ -20,24 +20,25 @@ export async function execute(interaction: CommandInteraction) {
   const lang = interaction.locale || "en";
 
   const sent = await interaction.reply({
-    content: getLocalization("ping.replies.pinging", lang),
+    content: getLocalization("ping.misc.pinging", lang),
     fetchReply: true,
+    ephemeral: true,
   });
   const pingTime = sent.createdTimestamp - interaction.createdTimestamp;
 
   const embed = new EmbedBuilder()
     .setColor(Colors.PRIMARY)
-    .setTitle(getLocalization("ping.replies.embeds.title", lang))
+    .setTitle(getLocalization("ping.embeds.reply.title", lang))
     .addFields(
       {
-        name: getLocalization("ping.replies.embeds.fields.latency", lang),
+        name: getLocalization("ping.embeds.reply.fields.latency", lang),
         value: getLocalization("ping.values.latencyValue", lang, {
           pingTime: pingTime.toString(),
         }),
         inline: true,
       },
       {
-        name: getLocalization("ping.replies.embeds.fields.apiLatency", lang),
+        name: getLocalization("ping.embeds.reply.fields.apiLatency", lang),
         value: getLocalization("ping.values.apiLatencyValue", lang, {
           apiPing: Math.round(interaction.client.ws.ping).toString(),
         }),

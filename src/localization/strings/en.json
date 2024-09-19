@@ -1,66 +1,109 @@
 {
   "jellyfin": {
-    "name": "jellyfin",
-    "description": "Jellyfin related commands",
+    "command": {
+      "name": "jellyfin",
+      "description": "Jellyfin related commands"
+    },
     "libraries": {
-      "name": "libraries",
-      "description": "List all Jellyfin libraries",
-      "title": "Jellyfin Libraries",
-      "noLibrariesFound": "No libraries found.",
-      "requestedBy": "Requested by {user}",
-      "type": "Type",
-      "items": "Items"
+      "command": {
+        "name": "libraries",
+        "description": "List all Jellyfin libraries"
+      },
+      "embeds": {
+        "noLibrariesFound": {
+          "title": "No libraries found",
+          "description": "No libraries were found. Please ensure that Jellyfin libraries are properly configured."
+        },
+        "reply": {
+          "title": "Jellyfin Libraries",
+          "requestedBy": "Requested by {user}",
+          "fields": {
+            "type": "Type",
+            "items": "Items",
+            "movie": "Movie",
+            "tvSeries": "TV Series",
+            "unknownTitle": "Unknown Title"
+          }
+        }
+      }
     },
     "media": {
-      "name": "media",
-      "description": "List all media from a Jellyfin library",
-      "options": {
-        "library": {
-          "name": "library",
-          "description": "The library to list media from, or 'all' for all libraries",
-          "all": "All Libraries"
+      "command": {
+        "name": "media",
+        "description": "List all media from a Jellyfin library",
+        "options": {
+          "library": {
+            "name": "library",
+            "description": "The library to list media from, or 'all' for all libraries",
+            "all": "All Libraries"
+          }
         }
       },
-      "noLibraryProvided": "No library ID provided.",
-      "title": "Jellyfin Library Items",
-      "noItemsToDisplay": "No items to display",
-      "footer": "Page {currentPage}/{totalPages} • Total items: {totalItems}",
-      "unknownTitle": "Unknown Title",
-      "unknownType": "Unknown",
-      "unknownYear": "N/A",
-      "itemDetails": "Type: {type}\nYear: {year}",
-      "previous": "Previous",
-      "next": "Next",
-      "movieType": "Movie",
-      "seriesType": "TV Series",
-      "showType": "TV Show"
+      "embeds": {
+        "reply": {
+          "title": "Jellyfin Library Items",
+          "footer": "Page {currentPage}/{totalPages} • Total Items: {totalItems}",
+          "fields": {
+            "unknownType": "Unknown",
+            "unknownYear": "N/A",
+            "unknownTitle": "Unknown Title",
+            "movieType": "Movie",
+            "seriesType": "Series",
+            "showType": "Show",
+            "itemDetails": "Type: {type}\nYear: {year}"
+          }
+        },
+        "noItemsToDisplay": {
+          "title": "No items to display",
+          "description": "No items were found in this library."
+        }
+      },
+      "components": {
+        "previous": "Previous",
+        "next": "Next"
+      }
     },
     "about": {
-      "name": "about",
-      "description": "Display information about a movie or show",
-      "options": {
-        "item": {
-          "name": "item",
-          "description": "The movie or show to display information about"
+      "command": {
+        "name": "about",
+        "description": "Display information about a movie or show",
+        "options": {
+          "item": {
+            "name": "item",
+            "description": "The movie or show to display information about"
+          }
         }
       },
-      "noItemProvided": "No item ID provided.",
-      "itemNotFound": "Item not found.",
-      "unknownTitle": "Unknown Title",
-      "noOverview": "No overview available.",
-      "requestedBy": "Requested by {user}",
-      "year": "Year",
-      "rating": "Rating",
-      "communityRating": "Community Rating",
-      "genres": "Genres",
-      "studios": "Studios",
-      "type": "Type",
-      "tvSeries": "Show",
-      "seasons": "Seasons",
-      "episodes": "Episodes",
-      "movie": "Movie",
-      "runtime": "Runtime",
-      "minutes": "{minutes} minutes"
+      "embeds": {
+        "reply": {
+          "title": "Jellyfin Item Details",
+          "footer": "Requested by {user}",
+          "noOverview": "No overview available",
+          "fields": {
+            "year": "Year",
+            "rating": "Rating",
+            "communityRating": "Community Rating",
+            "genres": "Genres",
+            "studios": "Studios",
+            "type": "Type",
+            "tvSeries": "Show",
+            "seasons": "Seasons",
+            "episodes": "Episodes",
+            "movie": "Movie",
+            "runtime": "Runtime",
+            "minutes": "{minutes} minutes"
+          }
+        },
+        "noItemProvided": {
+          "title": "No item provided",
+          "description": "No item ID provided."
+        },
+        "itemNotFound": {
+          "title": "Item not found",
+          "description": "The item with the provided ID was not found."
+        }
+      },
+      "misc": {}
     }
   },
   "status": {
@@ -68,8 +111,8 @@
       "name": "status",
       "description": "Get status for Blitzcrank and services tied to it"
     },
-    "replies": {
-      "embeds": {
+    "embeds": {
+      "reply": {
         "title": "Bot Status",
         "description": "Here's the current status of {username}",
         "footer": "Requested by {user}",
@@ -83,24 +126,22 @@
           "discordJsVersion": "Discord.js Version",
           "osUptime": "OS Uptime",
           "jellyfinStatus": "Jellyfin Status",
-          "jellyseerrStatus": "Jellyseerr Status"
+          "jellyseerrStatus": "Jellyseerr Status",
+          "unknown": "I don't fucking know",
+          "reachable": "Reachable",
+          "unreachable": "Unreachable"
         }
       }
     },
-    "misc": {
-      "unknown": "I don't fucking know",
-      "reachable": "Reachable",
-      "unreachable": "Unreachable"
-    }
+    "misc": {}
   },
   "ping": {
     "command": {
       "name": "ping",
       "description": "Replies with Pong!"
     },
-    "replies": {
-      "pinging": "Pinging...",
-      "embeds": {
+    "embeds": {
+      "reply": {
         "title": "Pong! 🏓",
         "fields": {
           "latency": "Latency",
@@ -111,6 +152,9 @@
     "values": {
       "latencyValue": "{pingTime}ms",
       "apiLatencyValue": "{apiPing}ms"
+    },
+    "misc": {
+      "pinging": "Pinging..."
     }
   }
 }

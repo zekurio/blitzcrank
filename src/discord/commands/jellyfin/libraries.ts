@@ -6,7 +6,7 @@ import { getLocalization } from "../../../localization/localization";
 export async function handleLibrariesCommand(
   interaction: ChatInputCommandInteraction
 ) {
-  await interaction.deferReply();
+  await interaction.deferReply({ ephemeral: true });
 
   const lang = interaction.locale || "en";
 
@@ -16,10 +16,16 @@ export async function handleLibrariesCommand(
     const errorEmbed = new EmbedBuilder()
       .setColor(Colors.WARNING)
       .setTitle(
-        getLocalization("jellyfin.list.libraries.noLibrariesFound", lang)
+        getLocalization(
+          "jellyfin.libraries.embeds.noLibrariesFound.title",
+          lang
+        )
       )
       .setDescription(
-        getLocalization("jellyfin.list.libraries.noLibrariesFound", lang)
+        getLocalization(
+          "jellyfin.libraries.embeds.noLibrariesFound.description",
+          lang
+        )
       );
 
     return { embeds: [errorEmbed], components: [] };
@@ -27,12 +33,16 @@ export async function handleLibrariesCommand(
 
   const embed = new EmbedBuilder()
     .setColor(Colors.JELLYFIN_PURPLE)
-    .setTitle(getLocalization("jellyfin.list.libraries.title", lang))
+    .setTitle(getLocalization("jellyfin.libraries.embeds.reply.title", lang))
     .setTimestamp()
     .setFooter({
-      text: getLocalization("jellyfin.list.libraries.requestedBy", lang, {
-        user: interaction.user.tag,
-      }),
+      text: getLocalization(
+        "jellyfin.libraries.embeds.reply.requestedBy",
+        lang,
+        {
+          user: interaction.user.tag,
+        }
+      ),
       iconURL: interaction.user.displayAvatarURL(),
     });
 
@@ -41,25 +51,34 @@ export async function handleLibrariesCommand(
     let libraryType: string;
 
     if (library.CollectionType === "movies") {
-      libraryType = getLocalization("jellyfin.info.movie", lang);
+      libraryType = getLocalization(
+        "jellyfin.libraries.embeds.reply.fields.movie",
+        lang
+      );
       itemCount = await jellyfinClient.getLibraryItemCount(library.Id ?? "");
     } else if (library.CollectionType === "tvshows") {
-      libraryType = getLocalization("jellyfin.info.tvSeries", lang);
-      itemCount = await jellyfinClient.getLibraryShowCount(library.Id ?? "");
+      libraryType = getLocalization(
+        "jellyfin.libraries.embeds.reply.fields.tvSeries",
+        lang
+      );
+      itemCount = await jellyfinClient.getLibraryItemCount(
+        library.Id ?? "",
+        false
+      );
     } else {
       libraryType =
         library.CollectionType ||
-        getLocalization("jellyfin.info.unknownTitle", lang);
+        getLocalization("jellyfin.libraries.embeds.reply.unknownTitle", lang);
       itemCount = await jellyfinClient.getLibraryItemCount(library.Id ?? "");
     }
 
     embed.addFields({
       name: `${library.Name}`,
       value: `${getLocalization(
-        "jellyfin.list.libraries.type",
+        "jellyfin.libraries.embeds.reply.fields.type",
         lang
       )}: ${libraryType}\n${getLocalization(
-        "jellyfin.list.libraries.items",
+        "jellyfin.libraries.embeds.reply.fields.items",
         lang
       )}: ${itemCount}`,
       inline: true,

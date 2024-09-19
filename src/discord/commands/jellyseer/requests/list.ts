@@ -11,7 +11,7 @@ import { Colors } from "../../../../static";
 import type { RequestStatus } from "../../../../clients/jellyseerr/models";
 
 export async function execute(interaction: ChatInputCommandInteraction) {
-  await interaction.deferReply();
+  await interaction.deferReply({ ephemeral: true });
 
   const status = interaction.options.getString("status") as RequestStatus;
   if (!status) {

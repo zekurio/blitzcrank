@@ -7,38 +7,42 @@ import { jellyfinClient } from "../../../clients/jellyfin/jellyfin";
 import { handleAboutCommand } from "./about";
 import { handleMediaCommand } from "./media";
 import { getLocalization } from "../../../localization/localization";
+import { handleLibrariesCommand } from "./libraries";
 
 export const data = new SlashCommandBuilder()
-  .setName(getLocalization("jellyfin.name"))
-  .setDescription(getLocalization("jellyfin.description"))
+  .setName(getLocalization("jellyfin.command.name"))
+  .setDescription(getLocalization("jellyfin.command.description"))
   .setNameLocalizations({
-    de: getLocalization("jellyfin.name", "de"),
+    de: getLocalization("jellyfin.command.name", "de"),
   })
   .setDescriptionLocalizations({
-    de: getLocalization("jellyfin.description", "de"),
+    de: getLocalization("jellyfin.command.description", "de"),
   })
   .addSubcommand((subcommand) =>
     subcommand
-      .setName(getLocalization("jellyfin.about.name"))
-      .setDescription(getLocalization("jellyfin.about.description"))
+      .setName(getLocalization("jellyfin.about.command.name"))
+      .setDescription(getLocalization("jellyfin.about.command.description"))
       .setNameLocalizations({
-        de: getLocalization("jellyfin.about.name", "de"),
+        de: getLocalization("jellyfin.about.command.name", "de"),
       })
       .setDescriptionLocalizations({
-        de: getLocalization("jellyfin.about.description", "de"),
+        de: getLocalization("jellyfin.about.command.description", "de"),
       })
       .addStringOption((option) =>
         option
-          .setName(getLocalization("jellyfin.about.options.item.name"))
+          .setName(getLocalization("jellyfin.about.command.options.item.name"))
           .setNameLocalizations({
-            de: getLocalization("jellyfin.about.options.item.name", "de"),
+            de: getLocalization(
+              "jellyfin.about.command.options.item.name",
+              "de"
+            ),
           })
           .setDescription(
-            getLocalization("jellyfin.about.options.item.description")
+            getLocalization("jellyfin.about.command.options.item.description")
           )
           .setDescriptionLocalizations({
             de: getLocalization(
-              "jellyfin.about.options.item.description",
+              "jellyfin.about.command.options.item.description",
               "de"
             ),
           })
@@ -48,32 +52,50 @@ export const data = new SlashCommandBuilder()
   )
   .addSubcommand((subcommand) =>
     subcommand
-      .setName(getLocalization("jellyfin.media.name"))
-      .setDescription(getLocalization("jellyfin.media.description"))
+      .setName(getLocalization("jellyfin.media.command.name"))
+      .setDescription(getLocalization("jellyfin.media.command.description"))
       .setNameLocalizations({
-        de: getLocalization("jellyfin.media.name", "de"),
+        de: getLocalization("jellyfin.media.command.name", "de"),
       })
       .setDescriptionLocalizations({
-        de: getLocalization("jellyfin.media.description", "de"),
+        de: getLocalization("jellyfin.media.command.description", "de"),
       })
       .addStringOption((option) =>
         option
-          .setName(getLocalization("jellyfin.media.options.library.name"))
+          .setName(
+            getLocalization("jellyfin.media.command.options.library.name")
+          )
           .setNameLocalizations({
-            de: getLocalization("jellyfin.media.options.library.name", "de"),
+            de: getLocalization(
+              "jellyfin.media.command.options.library.name",
+              "de"
+            ),
           })
           .setDescription(
-            getLocalization("jellyfin.media.options.library.description")
+            getLocalization(
+              "jellyfin.media.command.options.library.description"
+            )
           )
           .setDescriptionLocalizations({
             de: getLocalization(
-              "jellyfin.media.options.library.description",
+              "jellyfin.media.command.options.library.description",
               "de"
             ),
           })
           .setRequired(false)
           .setAutocomplete(true)
       )
+  )
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName(getLocalization("jellyfin.libraries.command.name"))
+      .setDescription(getLocalization("jellyfin.libraries.command.description"))
+      .setNameLocalizations({
+        de: getLocalization("jellyfin.libraries.command.name", "de"),
+      })
+      .setDescriptionLocalizations({
+        de: getLocalization("jellyfin.libraries.command.description", "de"),
+      })
   );
 
 export async function autocomplete(interaction: AutocompleteInteraction) {
@@ -85,7 +107,7 @@ export async function autocomplete(interaction: AutocompleteInteraction) {
     const choices = [
       {
         name: getLocalization(
-          "jellyfin.media.options.library.all",
+          "jellyfin.media.command.options.library.all",
           interaction.locale
         ),
         value: "all",
@@ -131,6 +153,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await handleMediaCommand(interaction);
   } else if (subcommand === "about") {
     await handleAboutCommand(interaction);
+  } else if (subcommand === "libraries") {
+    await handleLibrariesCommand(interaction);
   } else {
     throw new Error(`Unknown command: ${subcommand}`);
   }
