@@ -4,20 +4,29 @@ import { jellyfinClient } from "../../../clients/jellyfin/jellyfin";
 import { ImageType } from "@jellyfin/sdk/lib/generated-client";
 import { config } from "../../../config";
 import { getDominantColor } from "../../../utils/colors";
+import { getLocalization } from "../../../localization/localization";
 
-export async function execute(interaction: ChatInputCommandInteraction) {
+export async function handleAboutCommand(
+  interaction: ChatInputCommandInteraction
+) {
   await interaction.deferReply();
+
+  const lang = interaction.locale || "en";
 
   const itemId = interaction.options.getString("item");
   if (!itemId) {
-    await interaction.editReply("No item ID provided.");
+    await interaction.editReply(
+      getLocalization("jellyfin.about.noItemProvided", lang)
+    );
     return;
   }
 
   const itemDetails = await jellyfinClient.getItemDetails(itemId);
 
   if (!itemDetails) {
-    await interaction.editReply("Item not found.");
+    await interaction.editReply(
+      getLocalization("jellyfin.about.itemNotFound", lang)
+    );
     return;
   }
 
@@ -32,11 +41,17 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   const embed = new EmbedBuilder()
     .setColor(embedColor)
-    .setTitle(itemDetails.Name ?? "Unknown Title")
-    .setDescription(itemDetails.Overview ?? "No overview available.")
+    .setTitle(
+      itemDetails.Name ?? getLocalization("jellyfin.about.unknownTitle", lang)
+    )
+    .setDescription(
+      itemDetails.Overview ?? getLocalization("jellyfin.about.noOverview", lang)
+    )
     .setTimestamp()
     .setFooter({
-      text: `Requested by ${interaction.user.tag}`,
+      text: getLocalization("jellyfin.about.requestedBy", lang, {
+        user: interaction.user.tag,
+      }),
       iconURL: interaction.user.displayAvatarURL(),
     })
     .setImage(imageUrl)
@@ -44,7 +59,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   if (itemDetails.ProductionYear) {
     embed.addFields({
-      name: "Year",
+      name: getLocalization("jellyfin.about.year", lang),
       value: itemDetails.ProductionYear.toString(),
       inline: true,
     });
@@ -52,7 +67,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   if (itemDetails.OfficialRating) {
     embed.addFields({
-      name: "Rating",
+      name: getLocalization("jellyfin.about.rating", lang),
       value: itemDetails.OfficialRating,
       inline: true,
     });
@@ -60,7 +75,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   if (itemDetails.CommunityRating) {
     embed.addFields({
-      name: "Community Rating",
+      name: getLocalization("jellyfin.about.communityRating", lang),
       value: itemDetails.CommunityRating.toFixed(1),
       inline: true,
     });
@@ -68,7 +83,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   if (itemDetails.Genres && itemDetails.Genres.length > 0) {
     embed.addFields({
-      name: "Genres",
+      name: getLocalization("jellyfin.about.genres", lang),
       value: itemDetails.Genres.join(", "),
       inline: false,
     });
@@ -76,35 +91,45 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   if (itemDetails.Studios && itemDetails.Studios.length > 0) {
     embed.addFields({
-      name: "Studios",
+      name: getLocalization("jellyfin.about.studios", lang),
       value: itemDetails.Studios.map((studio) => studio.Name).join(", "),
       inline: false,
     });
   }
 
   if (itemDetails.Type === "Series") {
-    embed.addFields({ name: "Type", value: "TV Series", inline: true });
+    embed.addFields({
+      name: getLocalization("jellyfin.about.type", lang),
+      value: getLocalization("jellyfin.about.tvSeries", lang),
+      inline: true,
+    });
     if (itemDetails.ChildCount) {
       embed.addFields({
-        name: "Seasons",
+        name: getLocalization("jellyfin.about.seasons", lang),
         value: itemDetails.ChildCount.toString(),
         inline: true,
       });
     }
     if (itemDetails.RecursiveItemCount) {
       embed.addFields({
-        name: "Episodes",
+        name: getLocalization("jellyfin.about.episodes", lang),
         value: itemDetails.RecursiveItemCount.toString(),
         inline: true,
       });
     }
   } else if (itemDetails.Type === "Movie") {
-    embed.addFields({ name: "Type", value: "Movie", inline: true });
+    embed.addFields({
+      name: getLocalization("jellyfin.about.type", lang),
+      value: getLocalization("jellyfin.about.movie", lang),
+      inline: true,
+    });
     if (itemDetails.RunTimeTicks) {
       const runtime = Math.floor(itemDetails.RunTimeTicks / (10000000 * 60));
       embed.addFields({
-        name: "Runtime",
-        value: `${runtime} minutes`,
+        name: getLocalization("jellyfin.about.runtime", lang),
+        value: getLocalization("jellyfin.about.minutes", lang, {
+          minutes: runtime.toString(),
+        }),
         inline: true,
       });
     }

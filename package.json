@@ -19,10 +19,12 @@
   },
   "dependencies": {
     "@jellyfin/sdk": "^0.10.0",
+    "@types/express": "^4.17.21",
     "axios": "^1.7.7",
     "colors": "^1.4.0",
     "discord.js": "^14.16.2",
     "dotenv": "^16.4.5",
+    "express": "^4.21.0",
     "inversify": "^6.0.2",
     "pg": "^8.12.0",
     "sharp": "^0.33.5",

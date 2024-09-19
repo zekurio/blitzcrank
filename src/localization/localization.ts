@@ -4,7 +4,7 @@ import path from "path";
 const localizations: { [key: string]: any } = {};
 
 // Load all localization files
-const localizationDir = path.join(__dirname, "..", "localizations");
+const localizationDir = path.join(__dirname, "strings");
 fs.readdirSync(localizationDir).forEach((file) => {
   if (file.endsWith(".json")) {
     const langCode = path.basename(file, ".json");
@@ -19,19 +19,18 @@ export function getLocalization(
   replacements?: Record<string, string>
 ): string {
   const keys = key.split(".");
-  let current = localizations[lang] || localizations["en"]; // Fallback to English if the language is not found
+  let current = localizations[lang] || localizations["en"];
   for (const k of keys) {
     if (current[k] === undefined) {
-      return key; // Return the key if the localization is not found
+      return key;
     }
     current = current[k];
   }
 
   if (typeof current !== "string") {
-    return key; // Return the key if the final value is not a string
+    return key;
   }
 
-  // Replace placeholders with provided values
   if (replacements) {
     return current.replace(
       /\{(\w+)\}/g,

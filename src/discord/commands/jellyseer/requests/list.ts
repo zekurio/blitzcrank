@@ -22,16 +22,15 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const itemsPerPage = 1;
   let currentPage = 0;
 
-  const totalRequests = await jellyseerrClient.getRequestCount(status);
+  let totalRequests = await jellyseerrClient.getRequestCount(status);
 
-  const initialMessage = await fetchAndDisplayItems(
+  const { message, requestId } = await fetchAndDisplayItems(
     interaction,
     status,
     currentPage,
     itemsPerPage,
     totalRequests
   );
-  const message = await interaction.editReply(initialMessage);
 
   setupMessageCollector(
     message,
@@ -39,7 +38,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     status,
     currentPage,
     itemsPerPage,
-    totalRequests
+    totalRequests,
+    requestId
   );
 }
 
@@ -57,7 +57,10 @@ async function fetchAndDisplayItems(
   );
 
   if (requests.results.length === 0) {
-    return createErrorEmbed(status);
+    return {
+      message: await interaction.editReply(createErrorEmbed(status)),
+      requestId: undefined,
+    };
   }
 
   const request = requests.results[0];
@@ -77,7 +80,11 @@ async function fetchAndDisplayItems(
     totalRequests
   );
 
-  return { embeds: [embed], components: [row] };
+  const message = await interaction.editReply({
+    embeds: [embed],
+    components: [row],
+  });
+  return { message, requestId: request.id };
 }
 
 function createErrorEmbed(status: RequestStatus) {
@@ -243,17 +250,14 @@ function setupMessageCollector(
   status: RequestStatus,
   currentPage: number,
   itemsPerPage: number,
-  totalRequests: number
+  totalRequests: number,
+  initialRequestId: number | undefined
 ) {
   const collector = message.createMessageComponentCollector({ time: 60000 });
-  let requestId: number;
-
-  collector.on("collect", () => {
-    collector.resetTimer();
-  });
+  let requestId = initialRequestId;
 
   collector.on("collect", async (i: any) => {
-    await handleCollectorInteraction(
+    const result = await handleCollectorInteraction(
       i,
       interaction,
       status,
@@ -262,7 +266,10 @@ function setupMessageCollector(
       totalRequests,
       requestId
     );
-    await updateRequests(status, currentPage, itemsPerPage, requestId);
+    currentPage = result.currentPage;
+    requestId = result.requestId;
+    totalRequests = result.totalRequests;
+    collector.resetTimer();
   });
 
   collector.on("end", () => {
@@ -277,53 +284,59 @@ async function handleCollectorInteraction(
   currentPage: number,
   itemsPerPage: number,
   totalRequests: number,
-  requestId: number
+  requestId: number | undefined
 ) {
+  let actionTaken = false;
+
   switch (i.customId) {
     case "previous":
-      currentPage--;
+      currentPage = Math.max(0, currentPage - 1);
       break;
     case "next":
-      currentPage++;
+      currentPage = Math.min(
+        Math.ceil(totalRequests / itemsPerPage) - 1,
+        currentPage + 1
+      );
       break;
     case "accept":
-      if (i.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
+      if (
+        i.memberPermissions?.has(PermissionFlagsBits.ManageGuild) &&
+        requestId
+      ) {
         await jellyseerrClient.approveRequest(requestId);
+        actionTaken = true;
       }
       break;
     case "decline":
-      if (i.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
+      if (
+        i.memberPermissions?.has(PermissionFlagsBits.ManageGuild) &&
+        requestId
+      ) {
         await jellyseerrClient.declineRequest(requestId);
+        actionTaken = true;
       }
       break;
   }
 
-  await i.update(
-    await fetchAndDisplayItems(
-      interaction,
-      status,
+  if (actionTaken) {
+    totalRequests = await jellyseerrClient.getRequestCount(status);
+    currentPage = Math.min(
       currentPage,
-      itemsPerPage,
-      totalRequests
-    )
-  );
-}
-
-async function updateRequests(
-  status: RequestStatus,
-  currentPage: number,
-  itemsPerPage: number,
-  requestId: number
-) {
-  const response = await jellyseerrClient.getRequests(
-    itemsPerPage,
-    currentPage * itemsPerPage,
-    status
-  );
-  const requests = response.results;
-  if (requests.length > 0) {
-    requestId = requests[0].id;
+      Math.max(0, Math.ceil(totalRequests / itemsPerPage) - 1)
+    );
   }
+
+  const { message, requestId: newRequestId } = await fetchAndDisplayItems(
+    interaction,
+    status,
+    currentPage,
+    itemsPerPage,
+    totalRequests
+  );
+
+  await i.update(message);
+
+  return { currentPage, requestId: newRequestId, totalRequests };
 }
 
 function getStatusString(status: number): string {

@@ -58,18 +58,24 @@ class JellyfinClient {
     return libraries;
   }
 
-  async getLibraryItemCount(libraryId: string): Promise<number> {
+  async getLibraryItemCount(
+    libraryId: string,
+    recursive: boolean = true
+  ): Promise<number> {
     const response = await getItemsApi(this.api).getItems({
       parentId: libraryId,
-      recursive: true,
+      recursive: recursive,
     });
     return response.data.TotalRecordCount ?? 0;
   }
 
-  async getLibraryShowCount(libraryId: string): Promise<number> {
+  async getLibraryShowCount(
+    libraryId: string,
+    recursive: boolean = true
+  ): Promise<number> {
     const response = await getItemsApi(this.api).getItems({
       parentId: libraryId,
-      recursive: false,
+      recursive: recursive,
     });
     return response.data.TotalRecordCount ?? 0;
   }
