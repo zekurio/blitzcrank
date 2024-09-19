@@ -1,11 +1,13 @@
 import {
   ActionRowBuilder,
   ButtonBuilder,
+  ButtonInteraction,
   ButtonStyle,
   ChatInputCommandInteraction,
   EmbedBuilder,
   Message,
   PermissionFlagsBits,
+  SelectMenuInteraction,
   type Interaction,
 } from "discord.js";
 import { jellyseerrClient } from "../../../../clients/jellyseerr/jellyseerr";
@@ -363,7 +365,7 @@ function setupMessageCollector(
   const collector = message.createMessageComponentCollector({ time: 60000 });
   let requestId = initialRequestId;
 
-  collector.on("collect", async (i: Interaction) => {
+  collector.on("collect", async (i: ButtonInteraction) => {
     const result = await handleCollectorInteraction(
       i,
       interaction,
@@ -385,7 +387,7 @@ function setupMessageCollector(
 }
 
 async function handleCollectorInteraction(
-  i: Interaction,
+  i: ButtonInteraction,
   interaction: ChatInputCommandInteraction,
   status: RequestStatus,
   currentPage: number,
@@ -441,7 +443,7 @@ async function handleCollectorInteraction(
     totalRequests
   );
 
-  await i.update(message);
+  await i.update({ embeds: message.embeds, components: message.components });
 
   return { currentPage, requestId: newRequestId, totalRequests };
 }
