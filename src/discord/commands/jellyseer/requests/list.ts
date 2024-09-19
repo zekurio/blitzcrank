@@ -7,8 +7,6 @@ import {
   EmbedBuilder,
   Message,
   PermissionFlagsBits,
-  SelectMenuInteraction,
-  type Interaction,
 } from "discord.js";
 import { jellyseerrClient } from "../../../../clients/jellyseerr/jellyseerr";
 import { Colors } from "../../../../static";
@@ -306,7 +304,7 @@ function createActionRow(
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId("previous")
+      .setCustomId(`previous_${interaction.id}`)
       .setLabel(
         getLocalization(
           "jellyseerr.requests.list.command.embeds.reply.components.previous",
@@ -316,7 +314,7 @@ function createActionRow(
       .setStyle(ButtonStyle.Primary)
       .setDisabled(page === 0),
     new ButtonBuilder()
-      .setCustomId("next")
+      .setCustomId(`next_${interaction.id}`)
       .setLabel(
         getLocalization(
           "jellyseerr.requests.list.command.embeds.reply.components.next",
@@ -330,7 +328,7 @@ function createActionRow(
   if (status === "pending" && hasManagerPermissions) {
     row.addComponents(
       new ButtonBuilder()
-        .setCustomId("accept")
+        .setCustomId(`accept_${interaction.id}`)
         .setLabel(
           getLocalization(
             "jellyseerr.requests.list.command.embeds.reply.components.accept",
@@ -339,7 +337,7 @@ function createActionRow(
         )
         .setStyle(ButtonStyle.Success),
       new ButtonBuilder()
-        .setCustomId("decline")
+        .setCustomId(`decline_${interaction.id}`)
         .setLabel(
           getLocalization(
             "jellyseerr.requests.list.command.embeds.reply.components.decline",
@@ -398,16 +396,16 @@ async function handleCollectorInteraction(
   let actionTaken = false;
 
   switch (i.customId) {
-    case "previous":
+    case `previous_${interaction.id}`:
       currentPage = Math.max(0, currentPage - 1);
       break;
-    case "next":
+    case `next_${interaction.id}`:
       currentPage = Math.min(
         Math.ceil(totalRequests / itemsPerPage) - 1,
         currentPage + 1
       );
       break;
-    case "accept":
+    case `accept_${interaction.id}`:
       if (
         i.memberPermissions?.has(PermissionFlagsBits.ManageGuild) &&
         requestId
@@ -416,7 +414,7 @@ async function handleCollectorInteraction(
         actionTaken = true;
       }
       break;
-    case "decline":
+    case `decline_${interaction.id}`:
       if (
         i.memberPermissions?.has(PermissionFlagsBits.ManageGuild) &&
         requestId

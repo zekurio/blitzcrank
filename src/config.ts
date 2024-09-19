@@ -9,6 +9,7 @@ export interface LoggingConfig {
 export interface DiscordConfig {
   token: string;
   clientId: string;
+  channelId: string;
 }
 
 export interface PostgresConfig {
@@ -40,6 +41,7 @@ export const config: Config = {
   discord: {
     token: process.env.DISCORD_TOKEN ?? "",
     clientId: process.env.DISCORD_CLIENT_ID ?? "",
+    channelId: process.env.DISCORD_CHANNEL_ID ?? "",
   },
   postgres: {
     connectionString: process.env.POSTGRES_URL ?? "",
