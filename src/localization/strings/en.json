@@ -102,8 +102,7 @@
           "title": "Item not found",
           "description": "The item with the provided ID was not found."
         }
-      },
-      "misc": {}
+      }
     }
   },
   "status": {
@@ -132,8 +131,7 @@
           "unreachable": "Unreachable"
         }
       }
-    },
-    "misc": {}
+    }
   },
   "ping": {
     "command": {
@@ -155,6 +153,71 @@
     },
     "misc": {
       "pinging": "Pinging..."
+    }
+  },
+  "jellyseerr": {
+    "command": {
+      "name": "jellyseerr",
+      "description": "Interact with Jellyseerr"
+    },
+    "requests": {
+      "command": {
+        "name": "requests",
+        "description": "Manage Jellyseerr requests"
+      },
+      "list": {
+        "command": {
+          "name": "list",
+          "description": "List Jellyseerr requests",
+          "options": {
+            "status": {
+              "name": "status",
+              "description": "Status of the requests",
+              "choices": {
+                "all": "All",
+                "available": "Available",
+                "unavailable": "Unavailable",
+                "approved": "Approved",
+                "pending": "Pending",
+                "processing": "Processing",
+                "failed": "Failed",
+                "declined": "Declined"
+              }
+            }
+          },
+          "embeds": {
+            "reply": {
+              "title": "{status} Requests",
+              "footer": "Page {currentPage}/{totalPages} • Total requests: {totalRequests}",
+              "fields": {
+                "mediaTitle": "Title",
+                "mediaType": "Type",
+                "requestedBy": "Requested by",
+                "requestStatus": "Status",
+                "requestDate": "Requested at",
+                "updatedAt": "Updated at",
+                "overview": "Overview",
+                "status": {
+                  "pending": "Pending",
+                  "approved": "Approved",
+                  "declined": "Declined",
+                  "unknown": "Unknown"
+                }
+              },
+              "noRequests": {
+                "title": "{status} Requests",
+                "description": "No requests to display"
+              },
+              "components": {
+                "previous": "Previous",
+                "next": "Next",
+                "accept": "Accept",
+                "decline": "Decline"
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

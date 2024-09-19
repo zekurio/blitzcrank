@@ -4,18 +4,31 @@ import {
   ButtonStyle,
   ChatInputCommandInteraction,
   EmbedBuilder,
+  Message,
   PermissionFlagsBits,
+  type Interaction,
 } from "discord.js";
 import { jellyseerrClient } from "../../../../clients/jellyseerr/jellyseerr";
 import { Colors } from "../../../../static";
-import type { RequestStatus } from "../../../../clients/jellyseerr/models";
+import type {
+  MovieDetails,
+  Request,
+  RequestStatus,
+  TvDetails,
+} from "../../../../clients/jellyseerr/models";
+import { getLocalization } from "../../../../localization/localization";
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
   const status = interaction.options.getString("status") as RequestStatus;
   if (!status) {
-    await interaction.editReply("No status provided.");
+    await interaction.editReply(
+      getLocalization(
+        "jellyseerr.requests.list.command.embeds.reply.noStatus",
+        interaction.locale
+      )
+    );
     return;
   }
 
@@ -58,7 +71,9 @@ async function fetchAndDisplayItems(
 
   if (requests.results.length === 0) {
     return {
-      message: await interaction.editReply(createErrorEmbed(status)),
+      message: await interaction.editReply(
+        createErrorEmbed(status, interaction.locale)
+      ),
       requestId: undefined,
     };
   }
@@ -87,11 +102,22 @@ async function fetchAndDisplayItems(
   return { message, requestId: request.id };
 }
 
-function createErrorEmbed(status: RequestStatus) {
+function createErrorEmbed(status: RequestStatus, locale: string) {
   const errorEmbed = new EmbedBuilder()
     .setColor(Colors.WARNING)
-    .setTitle(`${status.charAt(0).toUpperCase() + status.slice(1)} Requests`)
-    .setDescription("No requests to display");
+    .setTitle(
+      getLocalization(
+        `jellyseerr.requests.list.command.embeds.reply.title`,
+        locale,
+        { status: status.charAt(0).toUpperCase() + status.slice(1) }
+      )
+    )
+    .setDescription(
+      getLocalization(
+        "jellyseerr.requests.list.command.embeds.reply.noRequests.description",
+        locale
+      )
+    );
 
   return { embeds: [errorEmbed], components: [] };
 }
@@ -99,26 +125,39 @@ function createErrorEmbed(status: RequestStatus) {
 async function createRequestEmbed(
   interaction: ChatInputCommandInteraction,
   status: RequestStatus,
-  request: any,
+  request: Request,
   page: number,
   itemsPerPage: number,
   totalRequests: number
 ) {
+  const locale = interaction.locale;
   const embed = new EmbedBuilder()
     .setColor(getColorForStatus(status))
-    .setTitle(`${status.charAt(0).toUpperCase() + status.slice(1)} Requests`)
+    .setTitle(
+      getLocalization(
+        `jellyseerr.requests.list.command.embeds.reply.title`,
+        locale,
+        { status: status.charAt(0).toUpperCase() + status.slice(1) }
+      )
+    )
     .setFooter({
-      text: `Page ${page + 1}/${Math.ceil(
-        totalRequests / itemsPerPage
-      )} • Total requests: ${totalRequests}`,
+      text: getLocalization(
+        "jellyseerr.requests.list.command.embeds.reply.footer",
+        locale,
+        {
+          currentPage: (page + 1).toString(),
+          totalPages: Math.ceil(totalRequests / itemsPerPage).toString(),
+          totalRequests: totalRequests.toString(),
+        }
+      ),
       iconURL: interaction.user.displayAvatarURL(),
     });
 
-  const mediaDetails = await getMediaDetails(request);
+  const mediaDetails: TvDetails | MovieDetails = await getMediaDetails(request);
   const mediaTitle = getMediaTitle(mediaDetails);
   const mediaType = getMediaType(request);
   const requestedBy = request.requestedBy.displayName;
-  const requestStatus = getStatusString(request.status);
+  const requestStatus = getStatusString(request.status, locale);
 
   addFieldsToEmbed(
     embed,
@@ -127,12 +166,16 @@ async function createRequestEmbed(
     requestedBy,
     requestStatus,
     request,
-    status
+    status,
+    locale
   );
 
   if (mediaDetails && mediaDetails.overview) {
     embed.addFields({
-      name: "Overview",
+      name: getLocalization(
+        "jellyseerr.requests.list.command.embeds.reply.fields.overview",
+        locale
+      ),
       value: mediaDetails.overview.slice(0, 1024),
     });
   }
@@ -146,15 +189,27 @@ async function createRequestEmbed(
   return embed;
 }
 
-async function getMediaDetails(request: any) {
+async function getMediaDetails(
+  request: Request
+): Promise<TvDetails | MovieDetails> {
   if (request.media.mediaType === "movie") {
-    return await jellyseerrClient.getMovieDetails(request.media.tmdbId);
+    const movieDetails = await jellyseerrClient.getMovieDetails(
+      request.media.tmdbId
+    );
+    if (movieDetails === null) {
+      throw new Error("Failed to fetch movie details");
+    }
+    return movieDetails;
   } else {
-    return await jellyseerrClient.getTvDetails(request.media.tmdbId);
+    const tvDetails = await jellyseerrClient.getTvDetails(request.media.tmdbId);
+    if (tvDetails === null) {
+      throw new Error("Failed to fetch TV show details");
+    }
+    return tvDetails;
   }
 }
 
-function getMediaTitle(mediaDetails: any) {
+function getMediaTitle(mediaDetails: TvDetails | MovieDetails) {
   return mediaDetails
     ? "title" in mediaDetails
       ? mediaDetails.title
@@ -162,7 +217,7 @@ function getMediaTitle(mediaDetails: any) {
     : "Unknown Title";
 }
 
-function getMediaType(request: any) {
+function getMediaType(request: Request) {
   const type = request.media.mediaType === "movie" ? "Movie" : "Show";
   return type.charAt(0).toUpperCase() + type.slice(1);
 }
@@ -173,18 +228,43 @@ function addFieldsToEmbed(
   mediaType: string,
   requestedBy: string,
   requestStatus: string,
-  request: any,
-  status: RequestStatus
+  request: Request,
+  status: RequestStatus,
+  locale: string
 ) {
   embed.addFields(
-    { name: "Title", value: mediaTitle, inline: true },
-    { name: "Type", value: mediaType, inline: true },
-    { name: "Requested by", value: requestedBy, inline: true }
+    {
+      name: getLocalization(
+        "jellyseerr.requests.list.command.embeds.reply.fields.mediaTitle",
+        locale
+      ),
+      value: mediaTitle,
+      inline: true,
+    },
+    {
+      name: getLocalization(
+        "jellyseerr.requests.list.command.embeds.reply.fields.mediaType",
+        locale
+      ),
+      value: mediaType,
+      inline: true,
+    },
+    {
+      name: getLocalization(
+        "jellyseerr.requests.list.command.embeds.reply.fields.requestedBy",
+        locale
+      ),
+      value: requestedBy,
+      inline: true,
+    }
   );
 
   if (status === "all") {
     embed.addFields({
-      name: "Status",
+      name: getLocalization(
+        "jellyseerr.requests.list.command.embeds.reply.fields.requestStatus",
+        locale
+      ),
       value: requestStatus,
       inline: true,
     });
@@ -192,13 +272,19 @@ function addFieldsToEmbed(
 
   embed.addFields(
     {
-      name: "Created At",
-      value: new Date(request.createdAt).toLocaleDateString("en-GB"),
+      name: getLocalization(
+        "jellyseerr.requests.list.command.embeds.reply.fields.requestDate",
+        locale
+      ),
+      value: new Date(request.createdAt).toLocaleDateString(locale),
       inline: true,
     },
     {
-      name: "Updated At",
-      value: new Date(request.updatedAt).toLocaleString("en-GB"),
+      name: getLocalization(
+        "jellyseerr.requests.list.command.embeds.reply.fields.updatedAt",
+        locale
+      ),
+      value: new Date(request.updatedAt).toLocaleString(locale),
       inline: true,
     }
   );
@@ -211,6 +297,7 @@ function createActionRow(
   itemsPerPage: number,
   totalRequests: number
 ) {
+  const locale = interaction.locale ?? "en";
   const hasManagerPermissions = interaction.memberPermissions?.has(
     PermissionFlagsBits.ManageGuild
   );
@@ -218,12 +305,22 @@ function createActionRow(
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId("previous")
-      .setLabel("Previous")
+      .setLabel(
+        getLocalization(
+          "jellyseerr.requests.list.command.embeds.reply.components.previous",
+          locale
+        )
+      )
       .setStyle(ButtonStyle.Primary)
       .setDisabled(page === 0),
     new ButtonBuilder()
       .setCustomId("next")
-      .setLabel("Next")
+      .setLabel(
+        getLocalization(
+          "jellyseerr.requests.list.command.embeds.reply.components.next",
+          locale
+        )
+      )
       .setStyle(ButtonStyle.Primary)
       .setDisabled(page >= Math.ceil(totalRequests / itemsPerPage) - 1)
   );
@@ -232,11 +329,21 @@ function createActionRow(
     row.addComponents(
       new ButtonBuilder()
         .setCustomId("accept")
-        .setLabel("Accept")
+        .setLabel(
+          getLocalization(
+            "jellyseerr.requests.list.command.embeds.reply.components.accept",
+            locale
+          )
+        )
         .setStyle(ButtonStyle.Success),
       new ButtonBuilder()
         .setCustomId("decline")
-        .setLabel("Decline")
+        .setLabel(
+          getLocalization(
+            "jellyseerr.requests.list.command.embeds.reply.components.decline",
+            locale
+          )
+        )
         .setStyle(ButtonStyle.Danger)
     );
   }
@@ -245,7 +352,7 @@ function createActionRow(
 }
 
 function setupMessageCollector(
-  message: any,
+  message: Message,
   interaction: ChatInputCommandInteraction,
   status: RequestStatus,
   currentPage: number,
@@ -256,7 +363,7 @@ function setupMessageCollector(
   const collector = message.createMessageComponentCollector({ time: 60000 });
   let requestId = initialRequestId;
 
-  collector.on("collect", async (i: any) => {
+  collector.on("collect", async (i: Interaction) => {
     const result = await handleCollectorInteraction(
       i,
       interaction,
@@ -278,7 +385,7 @@ function setupMessageCollector(
 }
 
 async function handleCollectorInteraction(
-  i: any,
+  i: Interaction,
   interaction: ChatInputCommandInteraction,
   status: RequestStatus,
   currentPage: number,
@@ -339,16 +446,30 @@ async function handleCollectorInteraction(
   return { currentPage, requestId: newRequestId, totalRequests };
 }
 
-function getStatusString(status: number): string {
+function getStatusString(status: number, locale: string): string {
   switch (status) {
     case 1:
-      return "Pending";
+      return getLocalization(
+        "jellyseerr.requests.list.command.embeds.reply.fields.status.pending",
+        locale
+      );
     case 2:
-      return "Approved";
+      return getLocalization(
+        "jellyseerr.requests.list.command.embeds.reply.fields.status.approved",
+        locale
+      );
     case 3:
-      return "Declined";
+      return getLocalization(
+        "jellyseerr.requests.list.command.embeds.reply.fields.status.declined",
+        locale
+      );
+
     default:
-      return status.toString();
+      return getLocalization(
+        "jellyseerr.requests.list.command.embeds.reply.fields.status.unknown",
+        locale,
+        { status: status.toString() }
+      );
   }
 }
 

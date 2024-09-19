@@ -154,5 +154,70 @@
     "misc": {
       "pinging": "Pinge..."
     }
+  },
+  "jellyseerr": {
+    "command": {
+      "name": "jellyseerr",
+      "description": "Mit Jellyseerr interagieren"
+    },
+    "requests": {
+      "command": {
+        "name": "anfragen",
+        "description": "Jellyseerr-Anfragen verwalten"
+      },
+      "list": {
+        "command": {
+          "name": "auflisten",
+          "description": "Jellyseerr-Anfragen auflisten",
+          "options": {
+            "status": {
+              "name": "status",
+              "description": "Status der Anfragen",
+              "choices": {
+                "all": "Alle",
+                "available": "Verfügbar",
+                "unavailable": "Nicht verfügbar",
+                "approved": "Genehmigt",
+                "pending": "Ausstehend",
+                "processing": "In Bearbeitung",
+                "failed": "Fehlgeschlagen",
+                "declined": "Abgelehnt"
+              }
+            }
+          },
+          "embeds": {
+            "reply": {
+              "title": "{status} Anfragen",
+              "footer": "Seite {currentPage}/{totalPages} • Gesamtanfragen: {totalRequests}",
+              "fields": {
+                "mediaTitle": "Titel",
+                "mediaType": "Typ",
+                "requestedBy": "Angefordert von",
+                "requestStatus": "Status",
+                "requestDate": "Angefordert am",
+                "updatedAt": "Aktualisiert am",
+                "overview": "Übersicht",
+                "status": {
+                  "pending": "Ausstehend",
+                  "approved": "Genehmigt",
+                  "declined": "Abgelehnt",
+                  "unknown": "Unbekannt"
+                }
+              },
+              "noRequests": {
+                "title": "{status} Anfragen",
+                "description": "Keine Anfragen zum Anzeigen"
+              },
+              "components": {
+                "previous": "Vorherige",
+                "next": "Nächste",
+                "accept": "Akzeptieren",
+                "decline": "Ablehnen"
+              }
+            }
+          }
+        }
+      }
+    }
   }
 }
