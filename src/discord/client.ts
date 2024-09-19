@@ -43,7 +43,7 @@ export class ClientWrapper {
       logger.info("Registering application commands.");
       await this.rest.put(
         Routes.applicationGuildCommands(this.config.discord.clientId, guildId),
-        { body: Object.values(commands).map(command => command.data) }
+        { body: Object.values(commands).map((command) => command.data) }
       );
       logger.info("Successfully registered application commands.");
     } catch (error) {

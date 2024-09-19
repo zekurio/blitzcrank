@@ -54,9 +54,12 @@ class WebhookHandler {
   private createMediaRequestEmbed(notification: any) {
     const embed = new EmbedBuilder()
       .setColor(Colors.JELLYSEERR.PENDING)
-      .setTitle(notification.subject)
+      .setTitle(notification.subject.replace(/\s*\(\d{4}\)$/, ""))
       .setDescription(notification.message)
       .setThumbnail(notification.image)
+      .setAuthor({
+        name: "Pending Request",
+      })
       .addFields(
         {
           name: "Type",
@@ -67,11 +70,15 @@ class WebhookHandler {
         },
         { name: "Status", value: "Pending", inline: true },
         {
-          name: "Requested By",
+          name: "Requested by",
           value: notification.request.requestedBy_username,
           inline: true,
         },
-        { name: "TMDB ID", value: notification.media.tmdbId, inline: true }
+        {
+          name: "Requested at",
+          value: new Date().toLocaleString(),
+          inline: true,
+        }
       )
       .setTimestamp()
       .setFooter({ text: `Request ID: ${notification.request.request_id}` });

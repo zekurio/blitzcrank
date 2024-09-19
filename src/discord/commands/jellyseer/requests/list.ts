@@ -107,9 +107,8 @@ function createErrorEmbed(status: RequestStatus, locale: string) {
     .setColor(Colors.WARNING)
     .setTitle(
       getLocalization(
-        `jellyseerr.requests.list.command.embeds.reply.title`,
-        locale,
-        { status: status.charAt(0).toUpperCase() + status.slice(1) }
+        `jellyseerr.requests.list.command.embeds.reply.author`,
+        locale
       )
     )
     .setDescription(
@@ -131,15 +130,28 @@ async function createRequestEmbed(
   totalRequests: number
 ) {
   const locale = interaction.locale;
+
+  const mediaDetails: TvDetails | MovieDetails = await getMediaDetails(request);
+  const mediaTitle = getMediaTitle(mediaDetails);
+  const mediaType = getMediaType(request);
+  const requestedBy = request.requestedBy.displayName;
+  const requestStatus = getStatusString(request.status, locale);
+
   const embed = new EmbedBuilder()
     .setColor(getColorForStatus(status))
-    .setTitle(
-      getLocalization(
-        `jellyseerr.requests.list.command.embeds.reply.title`,
+    .setTitle(mediaTitle)
+    .setAuthor({
+      name: getLocalization(
+        `jellyseerr.requests.list.command.embeds.reply.author`,
         locale,
-        { status: status.charAt(0).toUpperCase() + status.slice(1) }
-      )
-    )
+        {
+          status: getLocalization(
+            `jellyseerr.requests.list.command.options.status.choices.${status}`,
+            locale
+          ),
+        }
+      ),
+    })
     .setFooter({
       text: getLocalization(
         "jellyseerr.requests.list.command.embeds.reply.footer",
@@ -153,20 +165,12 @@ async function createRequestEmbed(
       iconURL: interaction.user.displayAvatarURL(),
     });
 
-  const mediaDetails: TvDetails | MovieDetails = await getMediaDetails(request);
-  const mediaTitle = getMediaTitle(mediaDetails);
-  const mediaType = getMediaType(request);
-  const requestedBy = request.requestedBy.displayName;
-  const requestStatus = getStatusString(request.status, locale);
-
   addFieldsToEmbed(
     embed,
-    mediaTitle,
     mediaType,
     requestedBy,
     requestStatus,
     request,
-    status,
     locale
   );
 
@@ -224,23 +228,13 @@ function getMediaType(request: Request) {
 
 function addFieldsToEmbed(
   embed: EmbedBuilder,
-  mediaTitle: string,
   mediaType: string,
   requestedBy: string,
   requestStatus: string,
   request: Request,
-  status: RequestStatus,
   locale: string
 ) {
   embed.addFields(
-    {
-      name: getLocalization(
-        "jellyseerr.requests.list.command.embeds.reply.fields.mediaTitle",
-        locale
-      ),
-      value: mediaTitle,
-      inline: true,
-    },
     {
       name: getLocalization(
         "jellyseerr.requests.list.command.embeds.reply.fields.mediaType",
@@ -259,16 +253,14 @@ function addFieldsToEmbed(
     }
   );
 
-  if (status === "all") {
-    embed.addFields({
-      name: getLocalization(
-        "jellyseerr.requests.list.command.embeds.reply.fields.requestStatus",
-        locale
-      ),
-      value: requestStatus,
-      inline: true,
-    });
-  }
+  embed.addFields({
+    name: getLocalization(
+      "jellyseerr.requests.list.command.embeds.reply.fields.requestStatus",
+      locale
+    ),
+    value: requestStatus,
+    inline: true,
+  });
 
   embed.addFields(
     {

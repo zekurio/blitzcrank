@@ -111,12 +111,12 @@ export async function handleMediaCommand(
 
     const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
-        .setCustomId("previous")
+        .setCustomId(`previous_${interaction.id}`)
         .setLabel(getLocalization("jellyfin.media.components.previous", lang))
         .setStyle(ButtonStyle.Primary)
         .setDisabled(page === 0),
       new ButtonBuilder()
-        .setCustomId("next")
+        .setCustomId(`next_${interaction.id}`)
         .setLabel(getLocalization("jellyfin.media.components.next", lang))
         .setStyle(ButtonStyle.Primary)
         .setDisabled(endIndex >= totalRecordCount)
@@ -135,9 +135,9 @@ export async function handleMediaCommand(
   });
 
   collector.on("collect", async (i) => {
-    if (i.customId === "previous") {
+    if (i.customId === `previous_${interaction.id}`) {
       currentPage--;
-    } else if (i.customId === "next") {
+    } else if (i.customId === `next_${interaction.id}`) {
       currentPage++;
     }
 

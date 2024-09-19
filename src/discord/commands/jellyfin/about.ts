@@ -56,10 +56,10 @@ export async function handleAboutCommand(
 
   const embed = new EmbedBuilder()
     .setColor(embedColor)
-    .setTitle(
-      itemDetails.Name ??
-        getLocalization("jellyfin.about.embeds.reply.title", lang)
-    )
+    .setAuthor({
+      name: getLocalization("jellyfin.about.embeds.reply.author", lang),
+    })
+    .setTitle(itemDetails.Name ?? "")
     .setDescription(
       itemDetails.Overview ??
         getLocalization("jellyfin.about.embeds.reply.noOverview", lang)

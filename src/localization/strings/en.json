@@ -76,7 +76,7 @@
       },
       "embeds": {
         "reply": {
-          "title": "Jellyfin Item Details",
+          "author": "Jellyfin Item Details",
           "footer": "Requested by {user}",
           "noOverview": "No overview available",
           "fields": {
@@ -187,7 +187,7 @@
           },
           "embeds": {
             "reply": {
-              "title": "{status} Requests",
+              "author": "Jellyseerr Requests",
               "footer": "Page {currentPage}/{totalPages} • Total requests: {totalRequests}",
               "fields": {
                 "mediaTitle": "Title",

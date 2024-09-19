@@ -11,7 +11,7 @@ export const Colors = {
   JELLYSEERR: {
     AVAILABLE: 0x7ac495,
     UNAVAILABLE: 0xff8080,
-    APPROVED: 0xffc266,
+    APPROVED: 0x7ac495,
     PENDING: 0x6699cc,
     PROCESSING: 0x6699cc,
     FAILED: 0xff8080,

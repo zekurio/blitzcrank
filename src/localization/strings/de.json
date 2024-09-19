@@ -76,7 +76,7 @@
       },
       "embeds": {
         "reply": {
-          "title": "Jellyfin-Elementdetails",
+          "author": "Jellyfin-Elementdetails",
           "footer": "Angefordert von {user}",
           "noOverview": "Keine Übersicht verfügbar",
           "fields": {
@@ -187,7 +187,7 @@
           },
           "embeds": {
             "reply": {
-              "title": "{status} Anfragen",
+              "author": "Jellyseerr-Anfragen",
               "footer": "Seite {currentPage}/{totalPages} • Gesamtanfragen: {totalRequests}",
               "fields": {
                 "mediaTitle": "Titel",
