@@ -1,10 +1,10 @@
 {
   "components": {
-    "paginator": {
-      "previous": "Previous Page",
-      "next": "Next Page"
-    },
     "buttons": {
+      "paginator": {
+        "previous": "Previous Page",
+        "next": "Next Page"
+      },
       "jellyseerr": {
         "accept": "Accept",
         "decline": "Decline"
