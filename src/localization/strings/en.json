@@ -1,4 +1,19 @@
 {
+  "components": {
+    "paginator": {
+      "previous": "Previous Page",
+      "next": "Next Page"
+    },
+    "buttons": {
+      "jellyseerr": {
+        "accept": "Accept",
+        "decline": "Decline"
+      }
+    }
+  },
+  "paginator": {
+    "pageIndicator": "Page {currentPage}/{totalPages} • Total items: {totalItems}"
+  },
   "jellyfin": {
     "command": {
       "name": "jellyfin",
@@ -41,7 +56,7 @@
       },
       "embeds": {
         "reply": {
-          "title": "Jellyfin Library Items",
+          "author": "Jellyfin Library Items",
           "footer": "Page {currentPage}/{totalPages} • Total Items: {totalItems}",
           "fields": {
             "unknownType": "Unknown",
@@ -57,10 +72,6 @@
           "title": "No items to display",
           "description": "No items were found in this library."
         }
-      },
-      "components": {
-        "previous": "Previous",
-        "next": "Next"
       }
     },
     "about": {
@@ -205,14 +216,8 @@
                 }
               },
               "noRequests": {
-                "title": "{status} Requests",
+                "title": "Jellyseerr Requests",
                 "description": "No requests to display"
-              },
-              "components": {
-                "previous": "Previous",
-                "next": "Next",
-                "accept": "Accept",
-                "decline": "Decline"
               }
             }
           }

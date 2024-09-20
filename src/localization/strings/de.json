@@ -1,4 +1,19 @@
 {
+  "components": {
+    "buttons": {
+      "paginator": {
+        "previous": "Vorherige Seite",
+        "next": "Nächste Seite"
+      },
+      "jellyseerr": {
+        "accept": "Annehmen",
+        "decline": "Ablehnen"
+      }
+    }
+  },
+  "paginator": {
+    "pageIndicator": "Seite {currentPage}/{totalPages} • Gesamtelemente: {totalItems}"
+  },
   "jellyfin": {
     "command": {
       "name": "jellyfin",
@@ -41,7 +56,7 @@
       },
       "embeds": {
         "reply": {
-          "title": "Jellyfin-Bibliothekselemente",
+          "author": "Jellyfin-Bibliothekselemente",
           "footer": "Seite {currentPage}/{totalPages} • Gesamtelemente: {totalItems}",
           "fields": {
             "unknownType": "Unbekannt",
@@ -57,10 +72,6 @@
           "title": "Keine Elemente zum Anzeigen",
           "description": "In dieser Bibliothek wurden keine Elemente gefunden."
         }
-      },
-      "components": {
-        "previous": "Vorherige",
-        "next": "Nächste"
       }
     },
     "about": {
@@ -205,14 +216,8 @@
                 }
               },
               "noRequests": {
-                "title": "{status} Anfragen",
+                "title": "Jellyseerr-Anfragen",
                 "description": "Keine Anfragen zum Anzeigen"
-              },
-              "components": {
-                "previous": "Vorherige",
-                "next": "Nächste",
-                "accept": "Akzeptieren",
-                "decline": "Ablehnen"
               }
             }
           }

@@ -1,13 +1,13 @@
 import {
-  ChatInputCommandInteraction,
-  EmbedBuilder,
   ActionRowBuilder,
   ButtonBuilder,
-  ButtonStyle,
+  ChatInputCommandInteraction,
+  EmbedBuilder,
 } from "discord.js";
 import { jellyfinClient } from "../../../clients/jellyfin/jellyfin";
 import { Colors } from "../../../static";
 import { getLocalization } from "../../../localization/localization";
+import { Paginator, type PaginatorPage } from "../../../utils/paginator";
 
 export async function handleMediaCommand(
   interaction: ChatInputCommandInteraction
@@ -17,55 +17,66 @@ export async function handleMediaCommand(
   const lang = interaction.locale || "en";
   const libraryId = interaction.options.getString("library") || "all";
 
-  const itemsPerPage = 24;
-  let currentPage = 0;
+  const libraries = await jellyfinClient.getAllLibraries();
+  const choices = [
+    {
+      name: getLocalization(
+        "jellyfin.media.command.options.library.all",
+        interaction.locale
+      ),
+      value: "all",
+    },
+    ...libraries.map((lib) => ({
+      name: lib.Name ?? "",
+      value: lib.Id ?? "",
+    })),
+  ];
 
-  async function fetchAndDisplayItems(page: number) {
-    let items;
-    if (libraryId === "all") {
-      const libraries = await jellyfinClient.getAllLibraries();
-      items = (
-        await Promise.all(
-          libraries.map((lib) =>
-            jellyfinClient.getLibraryItems(lib.Id ?? "", false)
-          )
+  const libraryName = choices.find(
+    (choice) => choice.value === libraryId
+  )?.name;
+
+  const itemsPerPage = 6;
+
+  let allItems;
+  if (libraryId === "all") {
+    const libraries = await jellyfinClient.getAllLibraries();
+    allItems = (
+      await Promise.all(
+        libraries.map((lib) =>
+          jellyfinClient.getLibraryItems(lib.Id ?? "", false)
         )
-      ).flat();
-    } else {
-      items = await jellyfinClient.getLibraryItems(libraryId, false);
-    }
+      )
+    ).flat();
+  } else {
+    allItems = await jellyfinClient.getLibraryItems(libraryId, false);
+  }
 
-    const totalRecordCount = items.length;
-    const startIndex = page * itemsPerPage;
-    const endIndex = Math.min(startIndex + itemsPerPage, totalRecordCount);
-    const pageItems = items.slice(startIndex, endIndex);
-
-    if (pageItems.length === 0) {
-      const errorEmbed = new EmbedBuilder()
-        .setColor(Colors.WARNING)
-        .setTitle(
-          getLocalization("jellyfin.media.embeds.noItemsToDisplay.title", lang)
+  if (allItems.length === 0) {
+    const errorEmbed = new EmbedBuilder()
+      .setColor(Colors.WARNING)
+      .setTitle(
+        getLocalization("jellyfin.media.embeds.noItemsToDisplay.title", lang)
+      )
+      .setDescription(
+        getLocalization(
+          "jellyfin.media.embeds.noItemsToDisplay.description",
+          lang
         )
-        .setDescription(
-          getLocalization(
-            "jellyfin.media.embeds.noItemsToDisplay.description",
-            lang
-          )
-        );
+      );
 
-      return { embeds: [errorEmbed], components: [] };
-    }
+    await interaction.editReply({ embeds: [errorEmbed] });
+    return;
+  }
 
+  const pages: PaginatorPage[] = [];
+  for (let i = 0; i < allItems.length; i += itemsPerPage) {
+    const pageItems = allItems.slice(i, i + itemsPerPage);
     const embed = new EmbedBuilder()
       .setColor(Colors.JELLYFIN_PURPLE)
-      .setTitle(getLocalization("jellyfin.media.embeds.reply.title", lang))
-      .setFooter({
-        text: getLocalization("jellyfin.media.embeds.reply.footer", lang, {
-          currentPage: (page + 1).toString(),
-          totalPages: Math.ceil(totalRecordCount / itemsPerPage).toString(),
-          totalItems: totalRecordCount.toString(),
-        }),
-        iconURL: interaction.user.displayAvatarURL(),
+      .setTitle(libraryName ?? "")
+      .setAuthor({
+        name: getLocalization("jellyfin.media.embeds.reply.author", lang),
       });
 
     for (const item of pageItems) {
@@ -109,42 +120,12 @@ export async function handleMediaCommand(
       });
     }
 
-    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`previous_${interaction.id}`)
-        .setLabel(getLocalization("jellyfin.media.components.previous", lang))
-        .setStyle(ButtonStyle.Primary)
-        .setDisabled(page === 0),
-      new ButtonBuilder()
-        .setCustomId(`next_${interaction.id}`)
-        .setLabel(getLocalization("jellyfin.media.components.next", lang))
-        .setStyle(ButtonStyle.Primary)
-        .setDisabled(endIndex >= totalRecordCount)
-    );
-
-    return { embeds: [embed], components: [row] };
+    pages.push({
+      embed: embed,
+      components: [],
+    });
   }
 
-  const initialMessage = await fetchAndDisplayItems(currentPage);
-  const message = await interaction.editReply(initialMessage);
-
-  const collector = message.createMessageComponentCollector({ time: 60000 });
-
-  collector.on("collect", () => {
-    collector.resetTimer();
-  });
-
-  collector.on("collect", async (i) => {
-    if (i.customId === `previous_${interaction.id}`) {
-      currentPage--;
-    } else if (i.customId === `next_${interaction.id}`) {
-      currentPage++;
-    }
-
-    await i.update(await fetchAndDisplayItems(currentPage));
-  });
-
-  collector.on("end", () => {
-    interaction.editReply({ components: [] });
-  });
+  const paginator = new Paginator(interaction, pages, allItems.length);
+  await paginator.start();
 }

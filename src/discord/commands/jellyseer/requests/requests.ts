@@ -1,11 +1,11 @@
 import { ChatInputCommandInteraction } from "discord.js";
-import { execute as executeList } from "./list";
+import { handleListCommand } from "./list";
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   const subcommand = interaction.options.getSubcommand();
 
   if (subcommand === "list") {
-    await executeList(interaction);
+    await handleListCommand(interaction);
   } else {
     throw new Error(`Unknown subcommand: ${subcommand}`);
   }

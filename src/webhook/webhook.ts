@@ -7,9 +7,11 @@ import {
   EmbedBuilder,
   TextChannel,
   Client,
+  ButtonInteraction,
 } from "discord.js";
 import { Colors } from "../static";
 import logger from "../logger";
+import { getLocalization } from "../localization/localization";
 
 class WebhookHandler {
   private server: ReturnType<typeof createServer>;
@@ -59,30 +61,44 @@ class WebhookHandler {
       .setDescription(notification.message)
       .setThumbnail(notification.image)
       .setAuthor({
-        name: "Pending Request",
+        name: getLocalization(
+          `jellyseerr.requests.list.command.embeds.reply.author`
+        ),
       })
       .addFields(
         {
-          name: "Type",
+          name: getLocalization(
+            "jellyseerr.requests.list.command.embeds.reply.fields.mediaType"
+          ),
           value:
             notification.media.media_type.charAt(0).toUpperCase() +
             notification.media.media_type.slice(1),
           inline: true,
         },
-        { name: "Status", value: "Pending", inline: true },
         {
-          name: "Requested by",
+          name: getLocalization(
+            "jellyseerr.requests.list.command.embeds.reply.fields.requestStatus"
+          ),
+          value: getLocalization(
+            `jellyseerr.requests.list.command.options.status.choices.pending`
+          ),
+          inline: true,
+        },
+        {
+          name: getLocalization(
+            "jellyseerr.requests.list.command.embeds.reply.fields.requestedBy"
+          ),
           value: notification.request.requestedBy_username,
           inline: true,
         },
         {
-          name: "Requested at",
+          name: getLocalization(
+            "jellyseerr.requests.list.command.embeds.reply.fields.requestDate"
+          ),
           value: new Date().toLocaleString(),
           inline: true,
         }
-      )
-      .setTimestamp()
-      .setFooter({ text: `Request ID: ${notification.request.request_id}` });
+      );
 
     return embed;
   }
@@ -95,11 +111,11 @@ class WebhookHandler {
         const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
           new ButtonBuilder()
             .setCustomId(`accept_${notification.request.request_id}`)
-            .setLabel("Accept")
+            .setLabel(getLocalization("components.buttons.jellyseerr.accept"))
             .setStyle(ButtonStyle.Success),
           new ButtonBuilder()
             .setCustomId(`decline_${notification.request.request_id}`)
-            .setLabel("Decline")
+            .setLabel(getLocalization("components.buttons.jellyseerr.decline"))
             .setStyle(ButtonStyle.Danger)
         );
 
@@ -109,6 +125,35 @@ class WebhookHandler {
       console.error("Error sending Discord message:", error);
     }
   }
+}
+
+export async function updateEmbed(
+  interaction: ButtonInteraction,
+  color: number,
+  status: string
+) {
+  const message = await interaction.message.fetch();
+  const embed = message.embeds[0];
+  const newEmbed = EmbedBuilder.from(embed);
+
+  newEmbed.setColor(color).setFields(
+    embed.fields.map((field) =>
+      field.name === "Status"
+        ? {
+            name: getLocalization(
+              "jellyseerr.requests.list.command.embeds.reply.fields.requestStatus"
+            ),
+            value: status,
+            inline: true,
+          }
+        : field
+    )
+  );
+
+  await interaction.editReply({
+    embeds: [newEmbed],
+    components: [],
+  });
 }
 
 export default WebhookHandler;
