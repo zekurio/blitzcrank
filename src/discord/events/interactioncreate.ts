@@ -10,6 +10,9 @@ export const interactionCreateEventHandler = (wrapped: ClientWrapper) => {
   wrapped
     .getClient()
     .on("interactionCreate", async (interaction: Interaction) => {
+      logger.debug(`Interaction created: ${interaction.id}`, {
+        interactionType: interaction.type,
+      });
       try {
         if (interaction.isChatInputCommand()) {
           await handleChatCommand(interaction);

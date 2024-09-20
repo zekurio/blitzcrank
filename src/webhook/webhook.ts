@@ -110,11 +110,11 @@ class WebhookHandler {
         const embed = this.createMediaRequestEmbed(notification);
         const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
           new ButtonBuilder()
-            .setCustomId(`accept_${notification.request.request_id}`)
+            .setCustomId(`accept-webhook_${notification.request.request_id}`)
             .setLabel(getLocalization("components.buttons.jellyseerr.accept"))
             .setStyle(ButtonStyle.Success),
           new ButtonBuilder()
-            .setCustomId(`decline_${notification.request.request_id}`)
+            .setCustomId(`decline-webhook_${notification.request.request_id}`)
             .setLabel(getLocalization("components.buttons.jellyseerr.decline"))
             .setStyle(ButtonStyle.Danger)
         );
@@ -150,7 +150,7 @@ export async function updateEmbed(
     )
   );
 
-  await interaction.editReply({
+  await interaction.update({
     embeds: [newEmbed],
     components: [],
   });

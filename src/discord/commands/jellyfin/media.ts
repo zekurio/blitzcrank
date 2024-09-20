@@ -75,6 +75,7 @@ export async function handleMediaCommand(
     const embed = new EmbedBuilder()
       .setColor(Colors.JELLYFIN_PURPLE)
       .setTitle(libraryName ?? "")
+      .setTimestamp()
       .setAuthor({
         name: getLocalization("jellyfin.media.embeds.reply.author", lang),
       });

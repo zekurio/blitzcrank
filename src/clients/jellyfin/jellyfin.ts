@@ -85,7 +85,7 @@ class JellyfinClient {
       const response = await getItemsApi(this.api).getItems({
         ids: [itemId],
         recursive: true,
-        fields: ["Overview", "Genres", "Studios", "Tags"],
+        fields: ["Overview", "Genres", "Studios", "ExternalUrls"],
       });
       return response.data.Items?.[0] ?? null;
     } catch (error) {
@@ -127,6 +127,22 @@ class JellyfinClient {
         error
       );
       return "";
+    }
+  }
+
+  async getAllItems(): Promise<BaseItemDto[]> {
+    try {
+      const items = await getItemsApi(this.api).getItems({
+        sortBy: ["Name"],
+        sortOrder: ["Ascending"],
+        recursive: true,
+        includeItemTypes: ["Movie", "Series"],
+        fields: ["Overview", "Genres", "Studios", "Tags"],
+      });
+      return items.data.Items || [];
+    } catch (error) {
+      console.error("Error fetching all items:", error);
+      return [];
     }
   }
 }

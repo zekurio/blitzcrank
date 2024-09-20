@@ -1,10 +1,17 @@
-import { ChatInputCommandInteraction, EmbedBuilder } from "discord.js";
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ChatInputCommandInteraction,
+  EmbedBuilder,
+} from "discord.js";
 import { Colors } from "../../../static";
 import { jellyfinClient } from "../../../clients/jellyfin/jellyfin";
 import { ImageType } from "@jellyfin/sdk/lib/generated-client";
 import { config } from "../../../config";
 import { getDominantColor } from "../../../utils/colors";
 import { getLocalization } from "../../../localization/localization";
+import logger from "../../../logger";
 
 export async function handleAboutCommand(
   interaction: ChatInputCommandInteraction
@@ -71,8 +78,7 @@ export async function handleAboutCommand(
       }),
       iconURL: interaction.user.displayAvatarURL(),
     })
-    .setImage(imageUrl)
-    .setURL(`${config.jellyfin.url}/web/index.html#!/details?id=${itemId}`);
+    .setImage(imageUrl);
 
   if (itemDetails.ProductionYear) {
     embed.addFields({
@@ -171,5 +177,26 @@ export async function handleAboutCommand(
     }
   }
 
-  await interaction.editReply({ embeds: [embed] });
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setLabel(
+        getLocalization("jellyfin.about.components.jellyfinButton.label", lang)
+      )
+      .setStyle(ButtonStyle.Link)
+      .setURL(config.jellyfin.url),
+    new ButtonBuilder()
+      .setLabel(
+        getLocalization("jellyfin.about.components.imdbButton.label", lang)
+      )
+      .setStyle(ButtonStyle.Link)
+      .setURL(
+        itemDetails.ExternalUrls?.[0]?.Url ??
+          `https://www.imdb.com/search/title/?title=${itemDetails.Name}`
+      )
+  );
+
+  await interaction.editReply({
+    embeds: [embed],
+    components: [row],
+  });
 }

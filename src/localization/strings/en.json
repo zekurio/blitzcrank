@@ -113,6 +113,14 @@
           "title": "Item not found",
           "description": "The item with the provided ID was not found."
         }
+      },
+      "components": {
+        "jellyfinButton": {
+          "label": "To Jellyfin"
+        },
+        "imdbButton": {
+          "label": "To IMDb"
+        }
       }
     }
   },
@@ -203,6 +211,8 @@
               "fields": {
                 "mediaTitle": "Title",
                 "mediaType": "Type",
+                "movie": "Movie",
+                "show": "Show",
                 "requestedBy": "Requested by",
                 "requestStatus": "Status",
                 "requestDate": "Requested at",

@@ -1,17 +1,10 @@
-import {
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  ChatInputCommandInteraction,
-  EmbedBuilder,
-} from "discord.js";
+import { ChatInputCommandInteraction, EmbedBuilder } from "discord.js";
 import { jellyseerrClient } from "../../../../clients/jellyseerr/jellyseerr";
 import { Colors } from "../../../../static";
 import type {
   MovieDetails,
   Request,
   RequestStatus,
-  RequestsResponse,
   TvDetails,
 } from "../../../../clients/jellyseerr/models";
 import { getLocalization } from "../../../../localization/localization";
@@ -38,6 +31,12 @@ export async function handleListCommand(
           .setTitle(
             getLocalization(
               "jellyseerr.requests.list.command.embeds.reply.noRequests.title",
+              interaction.locale
+            )
+          )
+          .setDescription(
+            getLocalization(
+              "jellyseerr.requests.list.command.embeds.reply.noRequests.description",
               interaction.locale
             )
           ),
@@ -131,27 +130,9 @@ export async function handleListCommand(
       );
     }
 
-    let components = [];
-    if (request.status === 1) {
-      const acceptButton = new ButtonBuilder()
-        .setCustomId(`accept_${request.id}`)
-        .setLabel(
-          getLocalization("components.buttons.jellyseerr.accept", locale)
-        )
-        .setStyle(ButtonStyle.Success);
-      const declineButton = new ButtonBuilder()
-        .setCustomId(`decline_${request.id}`)
-        .setLabel(
-          getLocalization("components.buttons.jellyseerr.decline", locale)
-        )
-        .setStyle(ButtonStyle.Danger);
-
-      components.push(acceptButton, declineButton);
-    }
-
     pages.push({
       embed: embed,
-      components: components,
+      components: [],
     });
   }
 

@@ -29,12 +29,13 @@ export class Paginator {
     interaction: ChatInputCommandInteraction,
     pages: PaginatorPage[],
     totalItems: number,
+    initialPage: number = 0,
     timeout: number = 60000
   ) {
     this.interaction = interaction;
     this.pages = pages;
     this.totalItems = totalItems;
-    this.currentPage = 0;
+    this.currentPage = initialPage;
     this.timeout = timeout;
     this.message = null;
   }
@@ -47,14 +48,14 @@ export class Paginator {
     const lang = this.interaction.locale || "en";
     return new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
-        .setCustomId(`paginator-previous_${this.interaction.id}`)
+        .setCustomId(`paginator_previous_${this.interaction.id}`)
         .setLabel(
           getLocalization("components.buttons.paginator.previous", lang)
         )
         .setStyle(ButtonStyle.Primary)
         .setDisabled(this.currentPage === 0),
       new ButtonBuilder()
-        .setCustomId(`paginator-next_${this.interaction.id}`)
+        .setCustomId(`paginator_next_${this.interaction.id}`)
         .setLabel(getLocalization("components.buttons.paginator.next", lang))
         .setStyle(ButtonStyle.Primary)
         .setDisabled(this.currentPage >= this.totalPages() - 1)
@@ -77,17 +78,19 @@ export class Paginator {
       iconURL: this.interaction.user.displayAvatarURL(),
     });
 
-    const components = this.pages[this.currentPage].components;
-
-    const newRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      this.createButtons().components[0],
-      this.createButtons().components[1],
-      ...components
-    );
+    const components: ActionRowBuilder<ButtonBuilder>[] = [
+      this.createButtons(),
+    ];
+    if (this.pages[this.currentPage].components.length > 0) {
+      const additionalRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        this.pages[this.currentPage].components
+      );
+      components.push(additionalRow);
+    }
 
     return {
       embeds: [embed],
-      components: [newRow],
+      components: components,
     };
   }
 
@@ -110,9 +113,9 @@ export class Paginator {
   }
 
   private async handleInteraction(i: ButtonInteraction): Promise<void> {
-    if (i.customId === `paginator-previous_${this.interaction.id}`) {
+    if (i.customId === `paginator_previous_${this.interaction.id}`) {
       this.currentPage = Math.max(0, this.currentPage - 1);
-    } else if (i.customId === `paginator-next_${this.interaction.id}`) {
+    } else if (i.customId === `paginator_next_${this.interaction.id}`) {
       this.currentPage = Math.min(this.totalPages() - 1, this.currentPage + 1);
     }
 

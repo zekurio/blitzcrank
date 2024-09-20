@@ -28,7 +28,7 @@ export class ButtonHandler {
       params,
     });
 
-    if (action.startsWith("paginator_")) {
+    if (action.startsWith("paginator")) {
       return;
     }
 
@@ -44,5 +44,5 @@ export class ButtonHandler {
 
 export const buttonHandler = new ButtonHandler();
 
-buttonHandler.registerButtonHandler("accept", handleAccept);
-buttonHandler.registerButtonHandler("decline", handleDecline);
+buttonHandler.registerButtonHandler("accept-webhook", handleAccept);
+buttonHandler.registerButtonHandler("decline-webhook", handleDecline);
