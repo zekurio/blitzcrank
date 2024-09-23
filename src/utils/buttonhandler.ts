@@ -1,5 +1,4 @@
 import type { ButtonInteraction } from "discord.js";
-import { handleAccept, handleDecline } from "../webhook/buttons";
 import logger from "../logger";
 
 export interface ButtonHandlerFunction {
@@ -43,6 +42,3 @@ export class ButtonHandler {
 }
 
 export const buttonHandler = new ButtonHandler();
-
-buttonHandler.registerButtonHandler("accept-webhook", handleAccept);
-buttonHandler.registerButtonHandler("decline-webhook", handleDecline);
