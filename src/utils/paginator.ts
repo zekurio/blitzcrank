@@ -16,28 +16,44 @@ export interface PaginatorPage {
   components: ButtonBuilder[];
 }
 
+export type ButtonHandler = (
+  interaction: ButtonInteraction,
+  additionalParam?: string
+) => Promise<void>;
+
+export interface PaginatorOptions {
+  interaction: ChatInputCommandInteraction;
+  pages: PaginatorPage[];
+  totalItems: number;
+  initialPage?: number;
+  timeout?: number;
+  additionalButtonHandlers?: Map<
+    string,
+    { handler: ButtonHandler; param?: string }
+  >;
+}
+
 export class Paginator {
   private interaction: ChatInputCommandInteraction;
   private pages: PaginatorPage[];
   private totalItems: number;
   private currentPage: number;
   private timeout: number;
-  private message: Message | null;
+  private message!: Message;
   private collector!: InteractionCollector<ButtonInteraction>;
+  private additionalButtonHandlers: Map<
+    string,
+    { handler: ButtonHandler; param?: string }
+  >;
 
-  constructor(
-    interaction: ChatInputCommandInteraction,
-    pages: PaginatorPage[],
-    totalItems: number,
-    initialPage: number = 0,
-    timeout: number = 60000
-  ) {
-    this.interaction = interaction;
-    this.pages = pages;
-    this.totalItems = totalItems;
-    this.currentPage = initialPage;
-    this.timeout = timeout;
-    this.message = null;
+  constructor(options: PaginatorOptions) {
+    this.interaction = options.interaction;
+    this.pages = options.pages;
+    this.totalItems = options.totalItems;
+    this.currentPage = options.initialPage ?? 0;
+    this.timeout = options.timeout ?? 60000;
+    this.additionalButtonHandlers =
+      options.additionalButtonHandlers ?? new Map();
   }
 
   private totalPages(): number {
@@ -48,14 +64,14 @@ export class Paginator {
     const lang = this.interaction.locale || "en";
     return new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
-        .setCustomId(`paginator_previous_${this.interaction.id}`)
+        .setCustomId(`paginator-previous_${this.interaction.id}`)
         .setLabel(
           getLocalization("components.buttons.paginator.previous", lang)
         )
         .setStyle(ButtonStyle.Primary)
         .setDisabled(this.currentPage === 0),
       new ButtonBuilder()
-        .setCustomId(`paginator_next_${this.interaction.id}`)
+        .setCustomId(`paginator-next_${this.interaction.id}`)
         .setLabel(getLocalization("components.buttons.paginator.next", lang))
         .setStyle(ButtonStyle.Primary)
         .setDisabled(this.currentPage >= this.totalPages() - 1)
@@ -112,16 +128,31 @@ export class Paginator {
     this.collector.on("end", this.handleCollectorEnd.bind(this));
   }
 
+  public async updateCurrentPageEmbed(newEmbed: EmbedBuilder): Promise<void> {
+    this.pages[this.currentPage].embed = newEmbed;
+    if (this.message) {
+      await this.interaction.editReply(this.getPageContent());
+    }
+  }
+
   private async handleInteraction(i: ButtonInteraction): Promise<void> {
-    if (i.customId === `paginator_previous_${this.interaction.id}`) {
+    const [action, id, ...params] = i.customId.split("_");
+
+    if (action === "paginator-previous" && id === this.interaction.id) {
       this.currentPage = Math.max(0, this.currentPage - 1);
-    } else if (i.customId === `paginator_next_${this.interaction.id}`) {
+      await i.update(this.getPageContent());
+    } else if (action === "paginator-next" && id === this.interaction.id) {
       this.currentPage = Math.min(this.totalPages() - 1, this.currentPage + 1);
+      await i.update(this.getPageContent());
+    } else {
+      const handlerInfo = this.additionalButtonHandlers.get(action);
+      if (handlerInfo) {
+        await handlerInfo.handler(i, ...params);
+        await i.update(this.getPageContent());
+      }
     }
 
     this.refreshTimer();
-
-    await i.update(this.getPageContent());
   }
 
   private async handleCollectorEnd(): Promise<void> {
