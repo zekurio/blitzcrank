@@ -4,10 +4,6 @@
       "paginator": {
         "previous": "Previous Page",
         "next": "Next Page"
-      },
-      "jellyseerr": {
-        "accept": "Accept",
-        "decline": "Decline"
       }
     }
   },
@@ -144,7 +140,6 @@
           "discordJsVersion": "Discord.js Version",
           "osUptime": "OS Uptime",
           "jellyfinStatus": "Jellyfin Status",
-          "jellyseerrStatus": "Jellyseerr Status",
           "unknown": "I don't fucking know",
           "reachable": "Reachable",
           "unreachable": "Unreachable"
@@ -172,67 +167,6 @@
     },
     "misc": {
       "pinging": "Pinging..."
-    }
-  },
-  "jellyseerr": {
-    "command": {
-      "name": "jellyseerr",
-      "description": "Interact with Jellyseerr"
-    },
-    "requests": {
-      "command": {
-        "name": "requests",
-        "description": "Manage Jellyseerr requests"
-      },
-      "list": {
-        "command": {
-          "name": "list",
-          "description": "List Jellyseerr requests",
-          "options": {
-            "status": {
-              "name": "status",
-              "description": "Status of the requests",
-              "choices": {
-                "all": "All",
-                "available": "Available",
-                "unavailable": "Unavailable",
-                "approved": "Approved",
-                "pending": "Pending",
-                "processing": "Processing",
-                "failed": "Failed",
-                "declined": "Declined"
-              }
-            }
-          },
-          "embeds": {
-            "reply": {
-              "author": "Jellyseerr Requests",
-              "footer": "Page {currentPage}/{totalPages} • Total requests: {totalRequests}",
-              "fields": {
-                "mediaTitle": "Title",
-                "mediaType": "Type",
-                "movie": "Movie",
-                "show": "Show",
-                "requestedBy": "Requested by",
-                "requestStatus": "Status",
-                "requestDate": "Requested at",
-                "updatedAt": "Updated at",
-                "overview": "Overview",
-                "status": {
-                  "pending": "Pending",
-                  "approved": "Approved",
-                  "declined": "Declined",
-                  "unknown": "Unknown"
-                }
-              },
-              "noRequests": {
-                "title": "Jellyseerr Requests",
-                "description": "No requests to display"
-              }
-            }
-          }
-        }
-      }
     }
   }
 }

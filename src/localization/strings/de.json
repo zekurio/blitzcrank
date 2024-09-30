@@ -4,10 +4,6 @@
       "paginator": {
         "previous": "Vorherige Seite",
         "next": "Nächste Seite"
-      },
-      "jellyseerr": {
-        "accept": "Annehmen",
-        "decline": "Ablehnen"
       }
     }
   },
@@ -144,7 +140,6 @@
           "discordJsVersion": "Discord.js-Version",
           "osUptime": "Betriebssystem-Laufzeit",
           "jellyfinStatus": "Jellyfin-Status",
-          "jellyseerrStatus": "Jellyseerr-Status",
           "unknown": "Ich habe keine verdammte Ahnung",
           "reachable": "Erreichbar",
           "unreachable": "Nicht erreichbar"
@@ -172,67 +167,6 @@
     },
     "misc": {
       "pinging": "Pinge..."
-    }
-  },
-  "jellyseerr": {
-    "command": {
-      "name": "jellyseerr",
-      "description": "Mit Jellyseerr interagieren"
-    },
-    "requests": {
-      "command": {
-        "name": "anfragen",
-        "description": "Jellyseerr-Anfragen verwalten"
-      },
-      "list": {
-        "command": {
-          "name": "auflisten",
-          "description": "Jellyseerr-Anfragen auflisten",
-          "options": {
-            "status": {
-              "name": "status",
-              "description": "Status der Anfragen",
-              "choices": {
-                "all": "Alle",
-                "available": "Verfügbar",
-                "unavailable": "Nicht verfügbar",
-                "approved": "Genehmigt",
-                "pending": "Ausstehend",
-                "processing": "In Bearbeitung",
-                "failed": "Fehlgeschlagen",
-                "declined": "Abgelehnt"
-              }
-            }
-          },
-          "embeds": {
-            "reply": {
-              "author": "Jellyseerr-Anfragen",
-              "footer": "Seite {currentPage}/{totalPages} • Gesamtanfragen: {totalRequests}",
-              "fields": {
-                "mediaTitle": "Titel",
-                "mediaType": "Typ",
-                "movie": "Film",
-                "show": "Show",
-                "requestedBy": "Angefordert von",
-                "requestStatus": "Status",
-                "requestDate": "Angefordert am",
-                "updatedAt": "Aktualisiert am",
-                "overview": "Übersicht",
-                "status": {
-                  "pending": "Ausstehend",
-                  "approved": "Genehmigt",
-                  "declined": "Abgelehnt",
-                  "unknown": "Unbekannt"
-                }
-              },
-              "noRequests": {
-                "title": "Jellyseerr-Anfragen",
-                "description": "Keine Anfragen zum Anzeigen"
-              }
-            }
-          }
-        }
-      }
     }
   }
 }

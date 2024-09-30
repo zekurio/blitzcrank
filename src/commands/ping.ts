@@ -3,8 +3,8 @@ import {
   EmbedBuilder,
   SlashCommandBuilder,
 } from "discord.js";
-import { Colors } from "../../static";
-import { getLocalization } from "../../localization/localization";
+import { Colors } from "../static";
+import { getLocalization } from "../localization/localization";
 
 export const data = new SlashCommandBuilder()
   .setName("ping")

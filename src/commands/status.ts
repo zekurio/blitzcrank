@@ -5,10 +5,9 @@ import {
   version as discordVersion,
 } from "discord.js";
 import os from "os";
-import { Colors } from "../../static";
-import { jellyfinClient } from "../../clients/jellyfin/jellyfin";
-import { jellyseerrClient } from "../../clients/jellyseerr/jellyseerr";
-import { getLocalization } from "../../localization/localization";
+import { Colors } from "../static";
+import { jellyfinClient } from "../clients/jellyfin/jellyfin";
+import { getLocalization } from "../localization/localization";
 
 export const data = new SlashCommandBuilder()
   .setName(getLocalization("status.command.name"))
@@ -29,13 +28,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     isJellyfinReachable = await jellyfinClient.jellyfinStatus();
   } catch (error) {
     isJellyfinReachable = false;
-  }
-
-  let isJellyseerrReachable = false;
-  try {
-    isJellyseerrReachable = await jellyseerrClient.jellyseerrStatus();
-  } catch (error) {
-    isJellyseerrReachable = false;
   }
 
   const status = {
@@ -73,13 +65,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       isJellyfinReachable ? "🟢" : "🔴"
     } \`${
       isJellyfinReachable
-        ? getLocalization("status.embeds.reply.fields.reachable", lang)
-        : getLocalization("status.embeds.reply.fields.unreachable", lang)
-    }\``,
-    [getLocalization("status.embeds.reply.fields.jellyseerrStatus", lang)]: `${
-      isJellyseerrReachable ? "🟢" : "🔴"
-    } \`${
-      isJellyseerrReachable
         ? getLocalization("status.embeds.reply.fields.reachable", lang)
         : getLocalization("status.embeds.reply.fields.unreachable", lang)
     }\``,

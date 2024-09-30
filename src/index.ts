@@ -1,36 +1,28 @@
+import {
+  Client,
+  Events,
+  GatewayIntentBits,
+  Guild,
+  type Interaction,
+} from "discord.js";
 import { config } from "./config";
-import { ClientWrapper } from "./discord/client";
 import logger from "./logger";
-import WebhookHandler from "./webhook/webhook";
+import { readyEventHandler } from "./events/ready";
+import { interactionCreateEventHandler } from "./events/interactioncreate";
+import { guildCreateEventHandler } from "./events/guildcreate";
 
-const client = new ClientWrapper(config);
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-async function cleanUp() {
-  const guilds = client.getClient().guilds.cache;
+client.once(Events.ClientReady, (client: Client) => {
+  readyEventHandler(client);
+});
 
-  for (const [guildId, guild] of guilds) {
-    try {
-      await client.unregisterCommands(guildId);
-      logger.info(
-        `Unregistered commands for guild: ${guild.name} (${guildId})`
-      );
-    } catch (error) {
-      logger.error(
-        `Failed to unregister commands for guild: ${guild.name} (${guildId})`,
-        error
-      );
-    }
-  }
-}
+client.on(Events.InteractionCreate, (interaction: Interaction) => {
+  interactionCreateEventHandler(interaction);
+});
 
-async function main() {
-  await cleanUp().then(async () => {
-    await client.login().then(() => {
-      const webhookHandler = new WebhookHandler(config, client.getClient());
-      webhookHandler.start();
-      logger.info("Bot is running");
-    });
-  });
-}
+client.on(Events.GuildCreate, (guild: Guild) => {
+  guildCreateEventHandler(guild);
+});
 
-main();
+client.login(config.discord.token);

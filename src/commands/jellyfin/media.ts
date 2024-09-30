@@ -4,10 +4,10 @@ import {
   ChatInputCommandInteraction,
   EmbedBuilder,
 } from "discord.js";
-import { jellyfinClient } from "../../../clients/jellyfin/jellyfin";
-import { Colors } from "../../../static";
-import { getLocalization } from "../../../localization/localization";
-import { Paginator, type PaginatorPage } from "../../../utils/paginator";
+import { jellyfinClient } from "../../clients/jellyfin/jellyfin";
+import { Colors } from "../../static";
+import { getLocalization } from "../../localization/localization";
+import { Paginator, type PaginatorPage } from "../../utils/paginator";
 
 export async function handleMediaCommand(
   interaction: ChatInputCommandInteraction
@@ -127,6 +127,11 @@ export async function handleMediaCommand(
     });
   }
 
-  const paginator = new Paginator(interaction, pages, allItems.length);
+  const options = {
+    interaction,
+    pages,
+    totalItems: allItems.length,
+  };
+  const paginator = new Paginator(options);
   await paginator.start();
 }

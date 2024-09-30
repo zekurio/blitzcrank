@@ -1,7 +1,7 @@
 import { ChatInputCommandInteraction, EmbedBuilder } from "discord.js";
-import { jellyfinClient } from "../../../clients/jellyfin/jellyfin";
-import { Colors } from "../../../static";
-import { getLocalization } from "../../../localization/localization";
+import { jellyfinClient } from "../../clients/jellyfin/jellyfin";
+import { Colors } from "../../static";
+import { getLocalization } from "../../localization/localization";
 
 export async function handleLibrariesCommand(
   interaction: ChatInputCommandInteraction

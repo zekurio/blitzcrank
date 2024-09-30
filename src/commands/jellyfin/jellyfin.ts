@@ -3,10 +3,10 @@ import {
   AutocompleteInteraction,
   ChatInputCommandInteraction,
 } from "discord.js";
-import { jellyfinClient } from "../../../clients/jellyfin/jellyfin";
+import { jellyfinClient } from "../../clients/jellyfin/jellyfin";
 import { handleAboutCommand } from "./about";
 import { handleMediaCommand } from "./media";
-import { getLocalization } from "../../../localization/localization";
+import { getLocalization } from "../../localization/localization";
 import { handleLibrariesCommand } from "./libraries";
 
 export const data = new SlashCommandBuilder()
