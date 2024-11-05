@@ -6,7 +6,6 @@ import {
   type Interaction,
 } from "discord.js";
 import { config } from "./config";
-import logger from "./logger";
 import { readyEventHandler } from "./events/ready";
 import { interactionCreateEventHandler } from "./events/interactioncreate";
 import { guildCreateEventHandler } from "./events/guildcreate";

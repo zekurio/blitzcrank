@@ -1,19 +1,14 @@
-// StarboardMessage is a message that is being starred and stored in the database
-export interface StarboardEntry {
-  messageId: string;
-  starboardId: string;
+import { type Emoji } from "discord.js";
+
+// ServerEmote is a model for an emote on a discord guild
+export interface ServerEmote {
   guildId: string;
-  channelId: string;
-  authorId: string;
-  score: number;
+  sevenTvEmote: SevenTVEmote;
+  discordEmoji: Emoji;
 }
 
-// StarboardConfig is a configuration for a starboard in a specific guild and channel
-export interface StarboardConfig {
+// 7TVEmote is a model for an emote in the database
+export interface SevenTVEmote {
   id: string;
-  guildId: string;
-  channelId: string;
-  threshold: number;
-  emoji: string;
-  messages: StarboardEntry[];
+  name: string;
 }

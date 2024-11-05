@@ -2,7 +2,7 @@ import { Pool } from "pg";
 import fs from "fs";
 import path from "path";
 import type { DatabaseInterface } from "../interface";
-import type { StarboardConfig, StarboardEntry } from "../models";
+import type { ServerEmote } from "../models";
 import logger from "../../logger";
 
 export class PostgresDatabase implements DatabaseInterface {
@@ -81,5 +81,24 @@ export class PostgresDatabase implements DatabaseInterface {
         }
       }
     }
+  }
+
+  async getServerEmotes(guildId: string): Promise<ServerEmote[]> {
+    // define empty array
+    const emotes: ServerEmote[] = [];
+
+    const query = `SELECT * FROM server_emotes WHERE guild_id = $1`;
+
+    const result = await this.pool.query(query, [guildId]);
+
+    for (const row of result.rows) {
+      const emote: ServerEmote = {
+        guildId: row.guild_id,
+        sevenTvEmote: row.seven_tv_emote,
+        discordEmoji: row.discord_emoji,
+      };
+    }
+
+    return emotes;
   }
 }
