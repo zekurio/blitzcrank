@@ -10,6 +10,30 @@
   "paginator": {
     "pageIndicator": "Page {currentPage}/{totalPages} • Total items: {totalItems}"
   },
+  "7tv": {
+    "command": {
+      "name": "7tv",
+      "description": "7TV related commands"
+    },
+    "setup": {
+      "command": {
+        "name": "setup",
+        "description": "Setup 7TV emotes for your server"
+      }
+    },
+    "emote": {
+      "command": {
+        "name": "emote",
+        "description": "Manage 7TV emotes for your server"
+      },
+      "commands": {
+        "add": {
+          "name": "add",
+          "description": "Add a 7TV emote to your server"
+        }
+      }
+    }
+  },
   "jellyfin": {
     "command": {
       "name": "jellyfin",

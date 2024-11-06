@@ -84,7 +84,6 @@ export class PostgresDatabase implements DatabaseInterface {
   }
 
   async getServerEmotes(guildId: string): Promise<ServerEmote[]> {
-    // define empty array
     const emotes: ServerEmote[] = [];
 
     const query = `SELECT * FROM server_emotes WHERE guild_id = $1`;
@@ -100,5 +99,14 @@ export class PostgresDatabase implements DatabaseInterface {
     }
 
     return emotes;
+  }
+
+  async addUpdateServerEmote(emote: ServerEmote): Promise<void> {
+    const query = `INSERT INTO server_emotes (guild_id, seven_tv_emote, discord_emoji) VALUES ($1, $2, $3) ON CONFLICT (guild_id, seven_tv_emote) DO UPDATE SET discord_emoji = $3`;
+    await this.pool.query(query, [
+      emote.guildId,
+      emote.sevenTvEmote,
+      emote.discordEmoji,
+    ]);
   }
 }

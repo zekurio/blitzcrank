@@ -168,5 +168,29 @@
     "misc": {
       "pinging": "Pinge..."
     }
+  },
+  "7tv": {
+    "command": {
+      "name": "7tv",
+      "description": "7TV-bezogene Befehle"
+    },
+    "setup": {
+      "command": {
+        "name": "setup",
+        "description": "7TV-Emotes für deinen Server einrichten"
+      }
+    },
+    "emote": {
+      "command": {
+        "name": "emote",
+        "description": "7TV-Emotes für deinen Server verwalten"
+      },
+      "commands": {
+        "add": {
+          "name": "hinzufügen",
+          "description": "Füge einen 7TV-Emote zu deinem Server hinzu"
+        }
+      }
+    }
   }
 }
