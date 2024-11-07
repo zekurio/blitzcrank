@@ -1,5 +1,5 @@
 import { ChatInputCommandInteraction, EmbedBuilder } from "discord.js";
-import { jellyfinClient } from "../../clients/jellyfin/jellyfin";
+import { jellyfinClient } from "../../clients/jellyfin/api";
 import { Colors } from "../../static";
 import { getLocalization } from "../../localization/localization";
 

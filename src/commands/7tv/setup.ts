@@ -4,6 +4,4 @@ export async function handleSetupCommand(
   interaction: ChatInputCommandInteraction
 ) {
   await interaction.deferReply({ ephemeral: true });
-
-  const lang = interaction.locale || "en";
 }

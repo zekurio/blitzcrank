@@ -6,7 +6,7 @@ import {
 } from "discord.js";
 import os from "os";
 import { Colors } from "../static";
-import { jellyfinClient } from "../clients/jellyfin/jellyfin";
+import { jellyfinClient } from "../clients/jellyfin/api";
 import { getLocalization } from "../localization/localization";
 
 export const data = new SlashCommandBuilder()

@@ -4,6 +4,7 @@ import {
   GatewayIntentBits,
   Guild,
   type Interaction,
+  ActivityType,
 } from "discord.js";
 import { config } from "./config";
 import { readyEventHandler } from "./events/ready";
@@ -13,6 +14,10 @@ import { guildCreateEventHandler } from "./events/guildcreate";
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 client.once(Events.ClientReady, (client: Client) => {
+  if (config.logging.level === "debug") {
+    client.user?.setActivity("Debugging...", { type: ActivityType.Playing });
+    client.user?.setStatus("invisible");
+  }
   readyEventHandler(client);
 });
 

@@ -1,48 +1,33 @@
 import { ChatInputCommandInteraction, SlashCommandBuilder } from "discord.js";
-import { getLocalization } from "../../localization/localization";
 import { handleSetupCommand } from "./setup";
 import { handleEmoteCommandGroup } from "./emote/emote";
 
 export const data = new SlashCommandBuilder()
-  .setName(getLocalization("7tv.command.name"))
-  .setDescription(getLocalization("7tv.command.description"))
-  .setNameLocalizations({
-    de: getLocalization("7tv.command.name", "de"),
-  })
-  .setDescriptionLocalizations({
-    de: getLocalization("7tv.command.description", "de"),
-  })
+  .setName("7tv")
+  .setDescription("Manage 7TV emotes")
   .addSubcommand((subcommand) =>
-    subcommand
-      .setName(getLocalization("7tv.setup.command.name"))
-      .setDescription(getLocalization("7tv.setup.command.description"))
-      .setNameLocalizations({
-        de: getLocalization("7tv.setup.command.name", "de"),
-      })
-      .setDescriptionLocalizations({
-        de: getLocalization("7tv.setup.command.description", "de"),
-      })
+    subcommand.setName("setup").setDescription("Setup 7TV integration")
   )
   .addSubcommandGroup((group) =>
     group
-      .setName(getLocalization("7tv.emote.command.name"))
-      .setDescription(getLocalization("7tv.emote.command.description"))
-      .setNameLocalizations({
-        de: getLocalization("7tv.emote.command.name", "de"),
-      })
-      .setDescriptionLocalizations({
-        de: getLocalization("7tv.emote.command.description", "de"),
-      })
+      .setName("emote")
+      .setDescription("Manage emotes")
       .addSubcommand((subcommand) =>
         subcommand
-          .setName(getLocalization("7tv.emote.commands.add.name"))
-          .setDescription(getLocalization("7tv.emote.commands.add.description"))
-          .setNameLocalizations({
-            de: getLocalization("7tv.emote.commands.add.name", "de"),
-          })
-          .setDescriptionLocalizations({
-            de: getLocalization("7tv.emote.commands.add.description", "de"),
-          })
+          .setName("add")
+          .setDescription("Add a new emote")
+          .addStringOption((option) =>
+            option
+              .setName("url")
+              .setDescription("URL of the emote to add")
+              .setRequired(true)
+          )
+          .addStringOption((option) =>
+            option
+              .setName("name")
+              .setDescription("Name of the emote to add")
+              .setRequired(true)
+          )
       )
   );
 

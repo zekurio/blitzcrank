@@ -3,7 +3,7 @@ import {
   AutocompleteInteraction,
   ChatInputCommandInteraction,
 } from "discord.js";
-import { jellyfinClient } from "../../clients/jellyfin/jellyfin";
+import { jellyfinClient } from "../../clients/jellyfin/api";
 import { handleAboutCommand } from "./about";
 import { handleMediaCommand } from "./media";
 import { getLocalization } from "../../localization/localization";

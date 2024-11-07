@@ -6,12 +6,11 @@ import {
   EmbedBuilder,
 } from "discord.js";
 import { Colors } from "../../static";
-import { jellyfinClient } from "../../clients/jellyfin/jellyfin";
+import { jellyfinClient } from "../../clients/jellyfin/api";
 import { ImageType } from "@jellyfin/sdk/lib/generated-client";
 import { config } from "../../config";
 import { getDominantColor } from "../../utils/colors";
 import { getLocalization } from "../../localization/localization";
-import logger from "../../logger";
 
 export async function handleAboutCommand(
   interaction: ChatInputCommandInteraction
