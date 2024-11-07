@@ -1,4 +1,5 @@
 import sharp from "sharp";
+import logger from "../logger";
 
 export interface SlicedImage {
   parts: EmoteImage[];
@@ -11,13 +12,18 @@ export interface EmoteImage {
   height: number;
 }
 
-export async function getEmoteImage(emoteId: string): Promise<EmoteImage> {
-  const cdnBaseUrl = "https://cdn.7tv.app/emotes/";
-  const cdnUrl = `${cdnBaseUrl}${emoteId}/2x.png`;
+export async function getEmoteImage(emoteUrl: string): Promise<EmoteImage> {
+  // extract the emote id from the url, e.g https://7tv.app/emotes/01F6MA6Y100002B6P5MWZ5D916
+  const emoteId = emoteUrl.split("/").pop();
+
+  const cdnBaseUrl = "https://cdn.7tv.app/emote/";
+  const cdnUrl = `${cdnBaseUrl}${emoteId}/2x.webp`;
+
+  logger.debug(`Fetching emote image from ${cdnUrl}`);
 
   const response = await fetch(cdnUrl);
   const buffer = await response.arrayBuffer();
-  const metadata = await sharp(buffer).metadata();
+  const metadata = await sharp(Buffer.from(buffer)).metadata();
 
   return {
     image: Buffer.from(buffer),

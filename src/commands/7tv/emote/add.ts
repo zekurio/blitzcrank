@@ -12,35 +12,11 @@ export async function handleAddEmoteCommand(
   const lang = interaction.locale || "en";
 
   const url = interaction.options.getString("url");
-  if (!url) {
-    const errorEmbed = new EmbedBuilder()
-      .setColor(Colors.WARNING)
-      .setTitle(
-        getLocalization("7tv.emote.add.embeds.noUrlProvided.title", lang)
-      )
-      .setDescription(
-        getLocalization("7tv.emote.add.embeds.noUrlProvided.description", lang)
-      );
-
-    return interaction.editReply({ embeds: [errorEmbed], components: [] });
-  }
 
   const emoteName = interaction.options.getString("name");
-  if (!emoteName) {
-    const errorEmbed = new EmbedBuilder()
-      .setColor(Colors.WARNING)
-      .setTitle(
-        getLocalization("7tv.emote.add.embeds.noNameProvided.title", lang)
-      )
-      .setDescription(
-        getLocalization("7tv.emote.add.embeds.noNameProvided.description", lang)
-      );
-
-    return interaction.editReply({ embeds: [errorEmbed], components: [] });
-  }
 
   try {
-    const imageBuffer = await getEmoteImage(url);
+    const imageBuffer = await getEmoteImage(url!);
 
     if (imageBuffer.width > 64) {
       const slicedImage = await sliceWideImage(imageBuffer.image);
@@ -49,16 +25,14 @@ export async function handleAddEmoteCommand(
         await addEmote(interaction, image, `${emoteName}_${i + 1}`);
       }
     } else {
-      await addEmote(interaction, imageBuffer, emoteName);
+      await addEmote(interaction, imageBuffer, emoteName!);
     }
   } catch (error) {
     console.error("Error processing emote:", error);
     const errorEmbed = new EmbedBuilder()
       .setColor(Colors.ERROR)
-      .setTitle(getLocalization("7tv.emote.add.embeds.error.title", lang))
-      .setDescription(
-        getLocalization("7tv.emote.add.embeds.error.description", lang)
-      );
+      .setTitle("Something went wrong")
+      .setDescription("I don't have a clue what went wrong");
 
     await interaction.editReply({ embeds: [errorEmbed] });
   }
