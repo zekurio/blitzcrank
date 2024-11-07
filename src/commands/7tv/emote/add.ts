@@ -7,6 +7,8 @@ import type { EmoteImage, SlicedImage } from "../../../utils/emotes";
 export async function handleAddEmoteCommand(
   interaction: ChatInputCommandInteraction
 ) {
+  await interaction.deferReply({ ephemeral: true });
+
   const lang = interaction.locale || "en";
 
   const url = interaction.options.getString("url");
@@ -20,7 +22,7 @@ export async function handleAddEmoteCommand(
         getLocalization("7tv.emote.add.embeds.noUrlProvided.description", lang)
       );
 
-    return { embeds: [errorEmbed], components: [] };
+    return interaction.editReply({ embeds: [errorEmbed], components: [] });
   }
 
   const emoteName = interaction.options.getString("name");
@@ -34,19 +36,31 @@ export async function handleAddEmoteCommand(
         getLocalization("7tv.emote.add.embeds.noNameProvided.description", lang)
       );
 
-    return { embeds: [errorEmbed], components: [] };
+    return interaction.editReply({ embeds: [errorEmbed], components: [] });
   }
 
-  const imageBuffer = await getEmoteImage(url!);
+  try {
+    const imageBuffer = await getEmoteImage(url);
 
-  if (imageBuffer.width > 64) {
-    const slicedImage = await sliceWideImage(imageBuffer.image);
-    for (let i = 0; i < slicedImage.parts.length; i++) {
-      const image = slicedImage.parts[i];
-      addEmote(interaction, image, `${emoteName}_${i + 1}`);
+    if (imageBuffer.width > 64) {
+      const slicedImage = await sliceWideImage(imageBuffer.image);
+      for (let i = 0; i < slicedImage.parts.length; i++) {
+        const image = slicedImage.parts[i];
+        await addEmote(interaction, image, `${emoteName}_${i + 1}`);
+      }
+    } else {
+      await addEmote(interaction, imageBuffer, emoteName);
     }
-  } else {
-    addEmote(interaction, imageBuffer, emoteName);
+  } catch (error) {
+    console.error("Error processing emote:", error);
+    const errorEmbed = new EmbedBuilder()
+      .setColor(Colors.ERROR)
+      .setTitle(getLocalization("7tv.emote.add.embeds.error.title", lang))
+      .setDescription(
+        getLocalization("7tv.emote.add.embeds.error.description", lang)
+      );
+
+    await interaction.editReply({ embeds: [errorEmbed] });
   }
 }
 
@@ -72,8 +86,7 @@ async function addEmote(
         )
       );
 
-    await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
-    return;
+    return interaction.editReply({ embeds: [errorEmbed] });
   }
 
   try {
@@ -98,8 +111,9 @@ async function addEmote(
       )
       .setThumbnail(emoji.url);
 
-    await interaction.reply({ embeds: [successEmbed], ephemeral: true });
+    await interaction.editReply({ embeds: [successEmbed] });
   } catch (error) {
+    console.error("Error creating emoji:", error);
     const errorEmbed = new EmbedBuilder()
       .setColor(Colors.ERROR)
       .setTitle(
@@ -112,6 +126,6 @@ async function addEmote(
         )
       );
 
-    await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+    await interaction.editReply({ embeds: [errorEmbed] });
   }
 }

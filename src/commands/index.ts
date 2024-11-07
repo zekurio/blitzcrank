@@ -7,5 +7,5 @@ export const commands = {
   ping,
   status,
   jellyfin,
-  sevenTv,
+  "7tv": sevenTv,
 };

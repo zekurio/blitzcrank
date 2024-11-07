@@ -5,8 +5,7 @@ export async function handleEmoteCommandGroup(
   interaction: ChatInputCommandInteraction
 ) {
   const subcommand = interaction.options.getSubcommand();
-  switch (subcommand) {
-    case "add":
-      return handleAddEmoteCommand(interaction);
+  if (subcommand === "add") {
+    return handleAddEmoteCommand(interaction);
   }
 }
