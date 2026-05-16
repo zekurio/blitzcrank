@@ -53,6 +53,9 @@ func TestToResponsesRequestConvertsToolOutput(t *testing.T) {
 	if request["instructions"] != "system prompt" {
 		t.Fatalf("instructions = %v, want system prompt", request["instructions"])
 	}
+	if request["store"] != false {
+		t.Fatalf("store = %v, want false", request["store"])
+	}
 	input := request["input"].([]any)
 	if len(input) != 2 {
 		t.Fatalf("input len = %d, want 2", len(input))

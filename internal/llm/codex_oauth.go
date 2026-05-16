@@ -123,6 +123,7 @@ func toResponsesRequest(request ChatRequest, serviceTier string) map[string]any 
 		"model": request.Model,
 		"input": input,
 		"tools": tools,
+		"store": false,
 	}
 	if len(instructions) > 0 {
 		payload["instructions"] = strings.Join(instructions, "\n\n")
