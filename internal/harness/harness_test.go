@@ -155,6 +155,27 @@ func TestHandleWebhookDoesNotPostEmptyFinalComment(t *testing.T) {
 	}
 }
 
+func TestHandleWebhookRejectsUnsafeFinalComment(t *testing.T) {
+	var posted []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		posted = append(posted, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	cfg := testConfig(server.URL, t.TempDir())
+	runner := &fakeRunner{reply: "Validierung: bitte prüfen, ob es jetzt geht."}
+	manager := NewManager(cfg, runner, tools.NewRegistry(cfg), nil)
+
+	if _, err := manager.HandleWebhook(context.Background(), issuePayload("Problem gemeldet", "alice", "file is stuck")); err == nil {
+		t.Fatal("HandleWebhook() error = nil, want validation error")
+	}
+	if len(posted) != 0 {
+		t.Fatalf("posted comments = %#v, want none", posted)
+	}
+}
+
 func TestIssuePromptHighlightsReportedMessage(t *testing.T) {
 	cfg := testConfig("http://127.0.0.1.invalid", t.TempDir())
 	manager := NewManager(cfg, &fakeRunner{}, tools.NewRegistry(cfg), nil)

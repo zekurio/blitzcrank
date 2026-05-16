@@ -45,6 +45,22 @@ func TestModelRuntimeQuestionDetection(t *testing.T) {
 	}
 }
 
+func TestToolInventoryQuestionDetection(t *testing.T) {
+	tests := []string{
+		"<@1503832472671223930> Welche tools kannst du nutzen?",
+		"bitte zähle alle werkzeuge auf.",
+		"please list all tools",
+	}
+	for _, tt := range tests {
+		if !isToolInventoryQuestion(tt) {
+			t.Fatalf("isToolInventoryQuestion(%q) = false", tt)
+		}
+	}
+	if isToolInventoryQuestion("Kannst du Project Hail Mary suchen?") {
+		t.Fatal("isToolInventoryQuestion(media request) = true")
+	}
+}
+
 func TestFallbackIntakeReply(t *testing.T) {
 	reply := fallbackIntakeReply("Kannst du mir mit Mathe helfen?", "unsupported")
 	if !strings.Contains(reply, "Medienserver") {
@@ -53,6 +69,15 @@ func TestFallbackIntakeReply(t *testing.T) {
 	reply = fallbackIntakeReply("Can you help?", "clarify")
 	if !strings.Contains(reply, "What") {
 		t.Fatalf("fallbackIntakeReply(clarify) = %q", reply)
+	}
+}
+
+func TestValidateDiscordReplyRejectsInternalOutput(t *testing.T) {
+	if _, err := validateDiscordReply("Alles gut."); err != nil {
+		t.Fatalf("validateDiscordReply() error = %v", err)
+	}
+	if _, err := validateDiscordReply("tool result: {\"secret\":true}"); err == nil {
+		t.Fatal("validateDiscordReply() error = nil, want internal-output error")
 	}
 }
 

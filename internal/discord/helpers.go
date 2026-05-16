@@ -144,6 +144,25 @@ func isModelRuntimeQuestion(content string) bool {
 	return strings.Contains(text, "?")
 }
 
+func isToolInventoryQuestion(content string) bool {
+	text := normalizeQuestionText(content)
+	if text == "" {
+		return false
+	}
+	hasToolWord := strings.Contains(text, "tool") || strings.Contains(text, "tools") || strings.Contains(text, "werkzeug") || strings.Contains(text, "werkzeuge")
+	if !hasToolWord {
+		return false
+	}
+	for _, signal := range []string{
+		"welche", "welchen", "welches", "was", "what", "which", "list", "liste", "zaehle", "zaehl", "zähle", "zähl", "auffuehren", "aufführen", "anzeigen",
+	} {
+		if strings.Contains(text, signal) {
+			return true
+		}
+	}
+	return strings.Contains(text, "?")
+}
+
 func isOneOffDiscordQuestion(content string, triage agent.DiscordTriageResult) bool {
 	if strings.TrimSpace(triage.Action) != "support_request" || !triage.Actionable || !triage.NeedsAgentRun {
 		return false
@@ -223,7 +242,8 @@ func hasSupportCaseSignal(text string) bool {
 
 func looksGerman(content string) bool {
 	text := strings.ToLower(stripDiscordMentionTokens(content))
-	germanSignals := []string{"welch", "verwend", "gerade", "kannst", "mir", "gehts", "geht's", "modell", "du "}
+	text = strings.NewReplacer("ä", "ae", "ö", "oe", "ü", "ue", "ß", "ss").Replace(text)
+	germanSignals := []string{"welch", "verwend", "gerade", "kannst", "mir", "gehts", "geht's", "modell", "du ", "bitte", "werkzeug", "werkzeuge", "zaehl", "zaehle"}
 	for _, signal := range germanSignals {
 		if strings.Contains(text, signal) {
 			return true
@@ -251,6 +271,71 @@ func fallbackIntakeReply(content, action string) string {
 		}
 		return "I am ready."
 	}
+}
+
+func toolInventoryReply(content string, available, issueOnly []string) string {
+	if looksGerman(content) {
+		reply := "In diesem Discord-Kontext kann ich diese Werkzeuge nutzen: " + inlineCodeList(available) + "."
+		if len(issueOnly) > 0 {
+			reply += "\n\nNur in Jellyseerr-Issue-Läufen mit Reparaturkontext sind zusätzlich verfügbar: " + inlineCodeList(issueOnly) + "."
+		}
+		return reply
+	}
+	reply := "In this Discord context I can use these tools: " + inlineCodeList(available) + "."
+	if len(issueOnly) > 0 {
+		reply += "\n\nOnly in Jellyseerr issue runs with repair context, these additional tools are available: " + inlineCodeList(issueOnly) + "."
+	}
+	return reply
+}
+
+func inlineCodeList(values []string) string {
+	if len(values) == 0 {
+		return "`none`"
+	}
+	quoted := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		quoted = append(quoted, "`"+value+"`")
+	}
+	if len(quoted) == 0 {
+		return "`none`"
+	}
+	return strings.Join(quoted, ", ")
+}
+
+func validateDiscordReply(reply string) (string, error) {
+	reply = strings.TrimSpace(reply)
+	if reply == "" {
+		return "", fmt.Errorf("discord reply is empty")
+	}
+	if len(reply) > 1900 {
+		return "", fmt.Errorf("discord reply is too long: %d bytes", len(reply))
+	}
+	lower := strings.ToLower(reply)
+	for _, marker := range []string{
+		"webhook payload:",
+		"tool result",
+		"tool_results",
+		"```json",
+		"{\"",
+		"api_key",
+		"authorization:",
+	} {
+		if strings.Contains(lower, marker) {
+			return "", fmt.Errorf("discord reply appears to expose internal output")
+		}
+	}
+	return reply, nil
+}
+
+func safeDiscordFailureReply(content string) string {
+	if looksGerman(content) {
+		return "Ich konnte daraus keine sichere Antwort erstellen."
+	}
+	return "I could not produce a safe response for that request."
 }
 
 func emptySummary(summary string) string {

@@ -190,6 +190,13 @@ func (m *Manager) run(ctx context.Context, thread *IssueThread, payload map[stri
 		log.Printf("jellyseerr issue run failed: issue=%s event=%s duration=%s error=%v", thread.IssueID, event, record.CompletedAt.Sub(record.StartedAt).Round(time.Millisecond), err)
 		return err
 	}
+	if err := m.validateFinalIssueComment(comment); err != nil {
+		record.Error = err.Error()
+		record.CompletionReason = "agent final comment failed validation"
+		m.recordRun(thread, record)
+		log.Printf("jellyseerr issue run failed validation: issue=%s event=%s duration=%s error=%v", thread.IssueID, event, record.CompletedAt.Sub(record.StartedAt).Round(time.Millisecond), err)
+		return err
+	}
 
 	comment = m.signedComment(comment, request)
 	record.FinalComment = comment

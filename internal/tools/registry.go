@@ -16,6 +16,12 @@ type toolDef struct {
 	Name        string
 	Description string
 	Parameters  map[string]any
+	Mutating    bool
+}
+
+type ToolPolicy struct {
+	ReadOnly bool
+	Groups   []string
 }
 
 func NewRegistry(cfg config.Config) *Registry {

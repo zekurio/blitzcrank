@@ -42,6 +42,39 @@ func TestWebSearchToolOnlyRegisteredWhenConfigured(t *testing.T) {
 	}
 }
 
+func TestReadOnlyPolicyOmitsMutatingTools(t *testing.T) {
+	registry := NewRegistry(config.Config{ExaAPIKey: "secret"})
+	if hasToolWithPolicy(registry, "sonarr_search_episode", ToolPolicy{ReadOnly: true}) {
+		t.Fatal("read-only policy exposed sonarr_search_episode")
+	}
+	if hasToolWithPolicy(registry, "seerr_resolve_issue", ToolPolicy{ReadOnly: true}) {
+		t.Fatal("read-only policy exposed seerr_resolve_issue")
+	}
+	if !hasToolWithPolicy(registry, "seerr_get_issue", ToolPolicy{ReadOnly: true}) {
+		t.Fatal("read-only policy hid seerr_get_issue")
+	}
+	if !hasToolWithPolicy(registry, "web_search", ToolPolicy{ReadOnly: true}) {
+		t.Fatal("read-only policy hid web_search")
+	}
+}
+
+func TestToolPolicyFiltersByGroup(t *testing.T) {
+	registry := NewRegistry(config.Config{ExaAPIKey: "secret"})
+	policy := ToolPolicy{ReadOnly: true, Groups: []string{"jellyfin", "web"}}
+	if !hasToolWithPolicy(registry, "jellyfin_search_items", policy) {
+		t.Fatal("group policy hid jellyfin_search_items")
+	}
+	if !hasToolWithPolicy(registry, "web_search", policy) {
+		t.Fatal("group policy hid web_search")
+	}
+	if hasToolWithPolicy(registry, "sonarr_get_queue", policy) {
+		t.Fatal("group policy exposed sonarr_get_queue")
+	}
+	if hasToolWithPolicy(registry, "fs_stat_path", policy) {
+		t.Fatal("group policy exposed fs_stat_path")
+	}
+}
+
 func TestFSToolsBlockOutsideAllowedRoot(t *testing.T) {
 	allowed := t.TempDir()
 	outside := t.TempDir()
@@ -601,7 +634,11 @@ func containsQueryPart(query, part string) bool {
 }
 
 func hasTool(registry *Registry, name string) bool {
-	for _, raw := range registry.OpenAITools() {
+	return hasToolWithPolicy(registry, name, ToolPolicy{})
+}
+
+func hasToolWithPolicy(registry *Registry, name string, policy ToolPolicy) bool {
+	for _, raw := range registry.OpenAIToolsForPolicy(policy) {
 		tool := raw.(map[string]any)
 		function := tool["function"].(map[string]any)
 		if function["name"] == name {

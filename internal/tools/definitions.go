@@ -17,6 +17,7 @@ var baseToolDefs = []toolDef{
 		Name:        "seerr_resolve_issue",
 		Description: "Mark a Jellyseerr/Overseerr issue as resolved after the fix has been validated with tools.",
 		Parameters:  objectSchema(map[string]any{"issue_id": stringSchema("Jellyseerr issue id")}, []string{"issue_id"}),
+		Mutating:    true,
 	},
 	{
 		Name:        "jellyfin_search_items",
@@ -57,6 +58,7 @@ var baseToolDefs = []toolDef{
 		Name:        "jellyfin_refresh_item",
 		Description: "Refresh Jellyfin metadata for a known item id.",
 		Parameters:  objectSchema(map[string]any{"item_id": stringSchema("Jellyfin item id")}, []string{"item_id"}),
+		Mutating:    true,
 	},
 	{
 		Name:        "jellyfin_list_libraries",
@@ -123,6 +125,7 @@ var baseToolDefs = []toolDef{
 		Name:        "sonarr_delete_blocklist_item",
 		Description: "Remove one confirmed Sonarr blocklist item by id so Sonarr can search/download another release.",
 		Parameters:  objectSchema(map[string]any{"blocklist_id": stringSchema("Sonarr blocklist item id")}, []string{"blocklist_id"}),
+		Mutating:    true,
 	},
 	{
 		Name:        "sonarr_get_episodes_by_series_id",
@@ -146,6 +149,7 @@ var baseToolDefs = []toolDef{
 		Name:        "sonarr_search_episode",
 		Description: "Trigger a Sonarr search for a specific episode id.",
 		Parameters:  objectSchema(map[string]any{"episode_id": stringSchema("Sonarr episode id")}, []string{"episode_id"}),
+		Mutating:    true,
 	},
 	{
 		Name:        "sonarr_search_season",
@@ -154,21 +158,25 @@ var baseToolDefs = []toolDef{
 			"series_id":     stringSchema("Sonarr series id"),
 			"season_number": stringSchema("Season number to search"),
 		}, []string{"series_id", "season_number"}),
+		Mutating: true,
 	},
 	{
 		Name:        "sonarr_search_series",
 		Description: "Trigger a Sonarr search for all monitored episodes of a known series.",
 		Parameters:  objectSchema(map[string]any{"series_id": stringSchema("Sonarr series id")}, []string{"series_id"}),
+		Mutating:    true,
 	},
 	{
 		Name:        "sonarr_refresh_series",
 		Description: "Trigger a Sonarr refresh/rescan command for a known series id.",
 		Parameters:  objectSchema(map[string]any{"series_id": stringSchema("Sonarr series id")}, []string{"series_id"}),
+		Mutating:    true,
 	},
 	{
 		Name:        "sonarr_retry_queue_item",
 		Description: "Retry/grab a known Sonarr queue item id.",
 		Parameters:  objectSchema(map[string]any{"queue_id": stringSchema("Sonarr queue item id")}, []string{"queue_id"}),
+		Mutating:    true,
 	},
 	{
 		Name:        "radarr_get_movie_by_tmdb_id",
@@ -199,21 +207,25 @@ var baseToolDefs = []toolDef{
 		Name:        "radarr_delete_blocklist_item",
 		Description: "Remove one confirmed Radarr blocklist item by id so Radarr can search/download another release.",
 		Parameters:  objectSchema(map[string]any{"blocklist_id": stringSchema("Radarr blocklist item id")}, []string{"blocklist_id"}),
+		Mutating:    true,
 	},
 	{
 		Name:        "radarr_search_movie",
 		Description: "Trigger a Radarr search for a specific movie id.",
 		Parameters:  objectSchema(map[string]any{"movie_id": stringSchema("Radarr movie id")}, []string{"movie_id"}),
+		Mutating:    true,
 	},
 	{
 		Name:        "radarr_refresh_movie",
 		Description: "Trigger a Radarr refresh/rescan command for a known movie id.",
 		Parameters:  objectSchema(map[string]any{"movie_id": stringSchema("Radarr movie id")}, []string{"movie_id"}),
+		Mutating:    true,
 	},
 	{
 		Name:        "radarr_retry_queue_item",
 		Description: "Retry/grab a known Radarr queue item id.",
 		Parameters:  objectSchema(map[string]any{"queue_id": stringSchema("Radarr queue item id")}, []string{"queue_id"}),
+		Mutating:    true,
 	},
 	{
 		Name:        "sabnzbd_get_queue",
@@ -251,6 +263,10 @@ var baseToolDefs = []toolDef{
 }
 
 func (r *Registry) OpenAITools() []any {
+	return r.OpenAIToolsForPolicy(ToolPolicy{})
+}
+
+func (r *Registry) OpenAIToolsForPolicy(policy ToolPolicy) []any {
 	defs := append([]toolDef{}, baseToolDefs...)
 	if strings.TrimSpace(r.cfg.ExaAPIKey) != "" {
 		defs = append(defs, toolDef{
@@ -264,6 +280,9 @@ func (r *Registry) OpenAITools() []any {
 	}
 	out := make([]any, 0, len(defs))
 	for _, def := range defs {
+		if !r.toolAllowed(def, policy) {
+			continue
+		}
 		out = append(out, map[string]any{
 			"type": "function",
 			"function": map[string]any{
@@ -274,4 +293,90 @@ func (r *Registry) OpenAITools() []any {
 		})
 	}
 	return out
+}
+
+func (r *Registry) ToolNamesForPolicy(policy ToolPolicy) []string {
+	defs := append([]toolDef{}, baseToolDefs...)
+	if strings.TrimSpace(r.cfg.ExaAPIKey) != "" {
+		defs = append(defs, toolDef{Name: "web_search"})
+	}
+	names := make([]string, 0, len(defs))
+	for _, def := range defs {
+		if !r.toolAllowed(def, policy) {
+			continue
+		}
+		names = append(names, def.Name)
+	}
+	return names
+}
+
+func (r *Registry) ToolAllowedForPolicy(name string, policy ToolPolicy) bool {
+	def, ok := r.toolDef(name)
+	if !ok {
+		return false
+	}
+	return r.toolAllowed(def, policy)
+}
+
+func (r *Registry) IsMutatingTool(name string) bool {
+	if name == "seerr_comment_issue" {
+		return true
+	}
+	def, ok := r.toolDef(name)
+	if !ok {
+		return false
+	}
+	return def.Mutating
+}
+
+func (r *Registry) toolAllowed(def toolDef, policy ToolPolicy) bool {
+	if policy.ReadOnly && def.Mutating {
+		return false
+	}
+	if len(policy.Groups) == 0 {
+		return true
+	}
+	return groupAllowed(toolGroup(def.Name), policy.Groups)
+}
+
+func (r *Registry) toolDef(name string) (toolDef, bool) {
+	for _, def := range baseToolDefs {
+		if def.Name == name {
+			return def, true
+		}
+	}
+	if name == "web_search" && strings.TrimSpace(r.cfg.ExaAPIKey) != "" {
+		return toolDef{Name: "web_search"}, true
+	}
+	return toolDef{}, false
+}
+
+func toolGroup(name string) string {
+	switch {
+	case strings.HasPrefix(name, "seerr_"):
+		return "jellyseerr"
+	case strings.HasPrefix(name, "jellyfin_"):
+		return "jellyfin"
+	case strings.HasPrefix(name, "sonarr_"):
+		return "sonarr"
+	case strings.HasPrefix(name, "radarr_"):
+		return "radarr"
+	case strings.HasPrefix(name, "sabnzbd_"):
+		return "sabnzbd"
+	case strings.HasPrefix(name, "fs_"):
+		return "filesystem"
+	case name == "web_search":
+		return "web"
+	default:
+		return ""
+	}
+}
+
+func groupAllowed(group string, allowed []string) bool {
+	for _, value := range allowed {
+		if strings.EqualFold(strings.TrimSpace(value), group) {
+			return true
+		}
+	}
+	return false
 }

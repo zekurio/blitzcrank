@@ -8,7 +8,7 @@ Run the daily media automation health check.
 
 Use available tools to inspect Sonarr queue/blocklist, Radarr queue/blocklist, SABnzbd queue/history, and filesystem disk usage when configured.
 
-Do not perform destructive actions. Use safe corrective actions only when the issue is obvious and low-risk, such as clearing a confirmed stale blocklist item followed by a narrow search. Validate after any action.
+Do not perform mutating or destructive actions. Report confirmed blockers and the safest recommended follow-up, but do not clear blocklists, trigger searches, retry queue items, refresh libraries, or resolve issues from this automation.
 
 Return a concise German operations summary with:
 
