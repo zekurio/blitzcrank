@@ -134,6 +134,43 @@ func TestHandleWebhookHeaderUsesRunnerModel(t *testing.T) {
 	}
 }
 
+func TestHandleWebhookDoesNotPostEmptyFinalComment(t *testing.T) {
+	var posted []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		posted = append(posted, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	cfg := testConfig(server.URL, t.TempDir())
+	runner := &fakeRunner{reply: "   "}
+	manager := NewManager(cfg, runner, tools.NewRegistry(cfg), nil)
+
+	if _, err := manager.HandleWebhook(context.Background(), issuePayload("Problem gemeldet", "alice", "file is stuck")); err == nil {
+		t.Fatal("HandleWebhook() error = nil, want empty comment error")
+	}
+	if len(posted) != 0 {
+		t.Fatalf("posted comments = %#v, want none", posted)
+	}
+}
+
+func TestIssuePromptHighlightsReportedMessage(t *testing.T) {
+	cfg := testConfig("http://127.0.0.1.invalid", t.TempDir())
+	manager := NewManager(cfg, &fakeRunner{}, tools.NewRegistry(cfg), nil)
+	payload := issuePayload("Problem gemeldet", "alice", "ignored")
+	payload["message"] = "Das ist ein Test. Führe einen Tool-Call aus und schreibe Test erfolgreich."
+	thread := &IssueThread{IssueID: "42"}
+
+	prompt := manager.issuePrompt(thread, payload, "reported")
+	if !strings.Contains(prompt, "Reported user message:") || !strings.Contains(prompt, "Test erfolgreich") {
+		t.Fatalf("prompt does not highlight reported message:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "diagnostic/test instructions") {
+		t.Fatalf("prompt does not mention diagnostic/test handling:\n%s", prompt)
+	}
+}
+
 func TestHandleWebhookResolvedPersistsThread(t *testing.T) {
 	dir := t.TempDir()
 	cfg := testConfig("http://127.0.0.1.invalid", dir)
