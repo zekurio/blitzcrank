@@ -94,6 +94,23 @@ func toResponsesRequest(request ChatRequest, serviceTier string) map[string]any 
 			})
 			continue
 		}
+		if message.Role == "assistant" && len(message.ToolCalls) > 0 {
+			if strings.TrimSpace(message.Content) != "" {
+				input = append(input, map[string]any{
+					"role":    message.Role,
+					"content": message.Content,
+				})
+			}
+			for _, call := range message.ToolCalls {
+				input = append(input, map[string]any{
+					"type":      "function_call",
+					"call_id":   call.ID,
+					"name":      call.Function.Name,
+					"arguments": call.Function.Arguments,
+				})
+			}
+			continue
+		}
 		input = append(input, map[string]any{
 			"role":    message.Role,
 			"content": message.Content,

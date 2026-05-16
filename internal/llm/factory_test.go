@@ -43,11 +43,15 @@ func TestFromResponsesResponseToolCall(t *testing.T) {
 }
 
 func TestToResponsesRequestConvertsToolOutput(t *testing.T) {
+	toolCall := ToolCall{ID: "call_1", Type: "function"}
+	toolCall.Function.Name = "seerr_get_issue"
+	toolCall.Function.Arguments = `{"issue_id":"42"}`
 	request := toResponsesRequest(ChatRequest{
 		Model: "gpt-test",
 		Messages: []Message{
 			{Role: "system", Content: "system prompt"},
 			{Role: "user", Content: "hi"},
+			{Role: "assistant", ToolCalls: []ToolCall{toolCall}},
 			{Role: "tool", ToolCallID: "call_1", Content: `{"ok":true}`},
 		},
 	}, "standard")
@@ -61,10 +65,20 @@ func TestToResponsesRequestConvertsToolOutput(t *testing.T) {
 		t.Fatalf("stream = %v, want true", request["stream"])
 	}
 	input := request["input"].([]any)
-	if len(input) != 2 {
-		t.Fatalf("input len = %d, want 2", len(input))
+	if len(input) != 3 {
+		t.Fatalf("input len = %d, want 3", len(input))
 	}
-	toolOutput := input[1].(map[string]any)
+	functionCall := input[1].(map[string]any)
+	if functionCall["type"] != "function_call" {
+		t.Fatalf("type = %v, want function_call", functionCall["type"])
+	}
+	if functionCall["call_id"] != "call_1" {
+		t.Fatalf("call_id = %v", functionCall["call_id"])
+	}
+	if functionCall["name"] != "seerr_get_issue" {
+		t.Fatalf("name = %v", functionCall["name"])
+	}
+	toolOutput := input[2].(map[string]any)
 	if toolOutput["type"] != "function_call_output" {
 		t.Fatalf("type = %v, want function_call_output", toolOutput["type"])
 	}
