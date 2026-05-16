@@ -21,6 +21,18 @@ func TestFSToolsRequireAllowedRoot(t *testing.T) {
 	}
 }
 
+func TestOpenAIToolsRequiredIsAlwaysArray(t *testing.T) {
+	registry := NewRegistry(config.Config{})
+	for _, raw := range registry.OpenAITools() {
+		tool := raw.(map[string]any)
+		function := tool["function"].(map[string]any)
+		parameters := function["parameters"].(map[string]any)
+		if _, ok := parameters["required"].([]string); !ok {
+			t.Fatalf("tool %s required = %#v, want []string", function["name"], parameters["required"])
+		}
+	}
+}
+
 func TestFSToolsBlockOutsideAllowedRoot(t *testing.T) {
 	allowed := t.TempDir()
 	outside := t.TempDir()
