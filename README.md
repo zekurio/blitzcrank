@@ -128,7 +128,7 @@ Run the hourly stale import handler...
 
 Use a robfig/cron descriptor such as `@hourly` or a five-field cron expression prefixed with `cron:`.
 
-Bundled Markdown is compiled into the Go binary. The default prompt and skill config paths (`prompts/*.md` and `skills`) fall back to embedded assets when those files are not present at runtime. Set `AGENT_SYSTEM_PROMPT`, `AGENT_RUNTIME_PROMPT`, `AGENT_DISCORD_TRIAGE_PROMPT`, `AGENT_DISCORD_SUMMARY_PROMPT`, or `AGENT_SKILLS_DIR` to load custom prompt or skill Markdown from disk.
+Bundled prompt and skill Markdown is compiled into the Go binary and loaded from the embedded assets at runtime. Edit `prompts/*.md` or `skills/<name>/SKILL.md` in the repository and rebuild to change built-in agent knowledge.
 
 Automations always include the embedded definitions. Set `AUTOMATIONS_EXTRA_DIRS` to a comma-separated list of directories with additional `.md` automation definitions. The scheduler reloads automation definitions while running, so added or edited extra automation files are picked up without restarting the service.
 

@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -19,13 +18,14 @@ type Skill struct {
 	Path        string
 }
 
+func LoadEmbeddedSkills() ([]Skill, error) {
+	return loadSkillsFromFS(assets.FS, "skills", "skills")
+}
+
 func LoadSkills(root string) ([]Skill, error) {
 	skills, err := loadSkillsFromFS(os.DirFS(root), ".", root)
 	if err == nil {
 		return skills, nil
-	}
-	if errors.Is(err, fs.ErrNotExist) && assets.IsBundledRoot(root, "skills") {
-		return loadSkillsFromFS(assets.FS, "skills", "skills")
 	}
 	return nil, fmt.Errorf("load skills from %s: %w", root, err)
 }

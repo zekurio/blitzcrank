@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadSkillsDeterministic(t *testing.T) {
@@ -65,20 +66,18 @@ func TestLoadSkillsIgnoresRuntimeFrontmatter(t *testing.T) {
 	}
 }
 
-func TestLoadSkillsFallsBackToEmbeddedBundledPath(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "share", "blitzcrank", "skills")
-	skills, err := LoadSkills(root)
+func TestLoadEmbeddedSkills(t *testing.T) {
+	skills, err := LoadEmbeddedSkills()
 	if err != nil {
-		t.Fatalf("LoadSkills() error = %v", err)
+		t.Fatalf("LoadEmbeddedSkills() error = %v", err)
 	}
 	if !skillSliceContains(skills, "jellyfin") || !skillSliceContains(skills, "seerr-issue-solver") {
 		t.Fatalf("embedded skills missing expected entries: %#v", skills)
 	}
 }
 
-func TestLoadPromptTemplateFallsBackToEmbeddedBundledPath(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "share", "blitzcrank", "prompts", "system.md")
-	prompt, err := LoadPromptTemplate(path)
+func TestLoadPromptTemplateReadsEmbeddedPrompt(t *testing.T) {
+	prompt, err := LoadPromptTemplate(systemPromptPath)
 	if err != nil {
 		t.Fatalf("LoadPromptTemplate() error = %v", err)
 	}
@@ -284,7 +283,7 @@ func TestRespondPropagatesSelectedToolsAcrossIterations(t *testing.T) {
 		client:        client,
 		registry:      tools.NewRegistry(config.Config{FSAllowedRoots: []string{root}, ExaAPIKey: "secret"}),
 		system:        "system",
-		runtimePrompt: "model={{model}}; reasoning_effort={{reasoning_effort}}",
+		runtimePrompt: "model={{model}}; reasoning_effort={{reasoning_effort}}; callable={{callable_tools}}; read_only={{read_only}}",
 	}
 
 	reply, err := agent.Respond(context.Background(), Request{Source: "discord_thread", Content: "check file permissions"})
@@ -305,6 +304,10 @@ func TestRespondPropagatesSelectedToolsAcrossIterations(t *testing.T) {
 	}
 	if len(client.requests[1].Messages) == 0 || client.requests[1].Messages[len(client.requests[1].Messages)-1].Role != "tool" {
 		t.Fatalf("second request did not propagate tool result messages: %#v", client.requests[1].Messages)
+	}
+	runtimeMessage := client.requests[0].Messages[3].Content
+	if !strings.Contains(runtimeMessage, "callable=") || !strings.Contains(runtimeMessage, "fs_stat_path") || !strings.Contains(runtimeMessage, "read_only=true") {
+		t.Fatalf("runtime metadata missing selected tool inventory: %q", runtimeMessage)
 	}
 }
 
@@ -339,6 +342,36 @@ func TestRuntimeInfoReturnsModelAndReasoning(t *testing.T) {
 	model, effort := agent.RuntimeInfo(Request{Source: "discord_mention"})
 	if model != "gpt-5.5" || effort != "low" {
 		t.Fatalf("RuntimeInfo() = (%q, %q), want (gpt-5.5, low)", model, effort)
+	}
+}
+
+func TestRuntimeMetadataIncludesAutomationSchedule(t *testing.T) {
+	agent := &Agent{
+		cfg:                config.Config{Model: "gpt-test"},
+		registry:           tools.NewRegistry(config.Config{}),
+		runtimePrompt:      "automations={{automations}}",
+		automationMetadata: fakeAutomationMetadata{},
+	}
+	metadata := agent.runtimeMetadata("gpt-test", "low", tools.ToolPolicy{ReadOnly: true})
+	for _, want := range []string{"hourly-stale-import-handler", "cron: 0 * * * *", "2026-05-16T09:00:00Z"} {
+		if !strings.Contains(metadata, want) {
+			t.Fatalf("runtime metadata missing %q: %q", want, metadata)
+		}
+	}
+}
+
+type fakeAutomationMetadata struct{}
+
+func (fakeAutomationMetadata) AutomationRuntimeMetadata(time.Time) AutomationRuntimeMetadata {
+	return AutomationRuntimeMetadata{
+		Enabled:  true,
+		Timezone: "UTC",
+		Tasks: []AutomationTaskMetadata{{
+			Name:        "hourly-stale-import-handler",
+			Description: "Handle stale imports",
+			Schedule:    "cron: 0 * * * *",
+			NextRun:     time.Date(2026, 5, 16, 9, 0, 0, 0, time.UTC),
+		}},
 	}
 }
 

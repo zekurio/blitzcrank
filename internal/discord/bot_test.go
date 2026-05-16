@@ -61,6 +61,22 @@ func TestToolInventoryQuestionDetection(t *testing.T) {
 	}
 }
 
+func TestAutomationScheduleQuestionDetection(t *testing.T) {
+	tests := []string{
+		"<@1503832472671223930> wann läuft der nächste automation job?",
+		"which scheduled jobs are configured?",
+		"please list automations",
+	}
+	for _, tt := range tests {
+		if !isAutomationScheduleQuestion(tt) {
+			t.Fatalf("isAutomationScheduleQuestion(%q) = false", tt)
+		}
+	}
+	if isAutomationScheduleQuestion("Kannst du Project Hail Mary suchen?") {
+		t.Fatal("isAutomationScheduleQuestion(media request) = true")
+	}
+}
+
 func TestFallbackIntakeReply(t *testing.T) {
 	reply := fallbackIntakeReply("Kannst du mir mit Mathe helfen?", "unsupported")
 	if !strings.Contains(reply, "Medienserver") {
