@@ -142,6 +142,8 @@ func toResponsesRequest(request ChatRequest, serviceTier string) map[string]any 
 
 func fromResponsesStream(r io.Reader) (ChatResponse, error) {
 	var completed []byte
+	var streamedOutput []json.RawMessage
+	var streamedText []string
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 8<<20)
 	for scanner.Scan() {
@@ -156,21 +158,69 @@ func fromResponsesStream(r io.Reader) (ChatResponse, error) {
 		var event struct {
 			Type     string          `json:"type"`
 			Response json.RawMessage `json:"response"`
+			Item     json.RawMessage `json:"item"`
+			Delta    string          `json:"delta"`
 		}
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
 			continue
 		}
-		if event.Type == "response.completed" && len(event.Response) > 0 {
-			completed = event.Response
+		switch event.Type {
+		case "response.output_item.done":
+			if len(event.Item) > 0 {
+				streamedOutput = append(streamedOutput, event.Item)
+			}
+		case "response.output_text.delta":
+			if event.Delta != "" {
+				streamedText = append(streamedText, event.Delta)
+			}
+		case "response.completed":
+			if len(event.Response) > 0 {
+				completed = event.Response
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return ChatResponse{}, err
 	}
+	if len(completed) > 0 {
+		response, err := fromResponsesResponse(completed)
+		if err != nil {
+			return ChatResponse{}, err
+		}
+		choice := response.FirstChoice()
+		if strings.TrimSpace(choice.Message.Content) != "" || len(choice.Message.ToolCalls) > 0 {
+			return response, nil
+		}
+	}
+	if len(streamedOutput) > 0 {
+		data, err := json.Marshal(struct {
+			Output []json.RawMessage `json:"output"`
+		}{Output: streamedOutput})
+		if err != nil {
+			return ChatResponse{}, err
+		}
+		response, err := fromResponsesResponse(data)
+		if err != nil {
+			return ChatResponse{}, err
+		}
+		choice := response.FirstChoice()
+		if strings.TrimSpace(choice.Message.Content) != "" || len(choice.Message.ToolCalls) > 0 {
+			return response, nil
+		}
+	}
+	if len(streamedText) > 0 {
+		message := Message{
+			Role:    "assistant",
+			Content: strings.TrimSpace(strings.Join(streamedText, "")),
+		}
+		return ChatResponse{Choices: []struct {
+			Message Message `json:"message"`
+		}{{Message: message}}}, nil
+	}
 	if len(completed) == 0 {
 		return ChatResponse{}, fmt.Errorf("codex responses stream ended without response.completed")
 	}
-	return fromResponsesResponse(completed)
+	return ChatResponse{}, fmt.Errorf("codex responses completed without assistant output")
 }
 
 func fromResponsesResponse(data []byte) (ChatResponse, error) {

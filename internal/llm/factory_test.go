@@ -86,6 +86,42 @@ func TestFromResponsesStreamUsesCompletedResponse(t *testing.T) {
 	}
 }
 
+func TestFromResponsesStreamFallsBackToStreamedOutputItem(t *testing.T) {
+	stream := strings.NewReader("event: response.output_item.done\n" +
+		"data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"seerr_get_issue\",\"arguments\":\"{\\\"issue_id\\\":\\\"42\\\"}\"}}\n\n" +
+		"event: response.completed\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{\"output\":[]}}\n\n" +
+		"data: [DONE]\n\n")
+	response, err := fromResponsesStream(stream)
+	if err != nil {
+		t.Fatalf("fromResponsesStream() error = %v", err)
+	}
+	choice := response.FirstChoice()
+	if len(choice.Message.ToolCalls) != 1 {
+		t.Fatalf("tool calls = %d, want 1", len(choice.Message.ToolCalls))
+	}
+	if choice.Message.ToolCalls[0].Function.Name != "seerr_get_issue" {
+		t.Fatalf("tool name = %q", choice.Message.ToolCalls[0].Function.Name)
+	}
+}
+
+func TestFromResponsesStreamFallsBackToTextDeltas(t *testing.T) {
+	stream := strings.NewReader("event: response.output_text.delta\n" +
+		"data: {\"type\":\"response.output_text.delta\",\"delta\":\"Test \"}\n\n" +
+		"event: response.output_text.delta\n" +
+		"data: {\"type\":\"response.output_text.delta\",\"delta\":\"erfolgreich\"}\n\n" +
+		"event: response.completed\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{\"output\":[]}}\n\n" +
+		"data: [DONE]\n\n")
+	response, err := fromResponsesStream(stream)
+	if err != nil {
+		t.Fatalf("fromResponsesStream() error = %v", err)
+	}
+	if got := response.FirstChoice().Message.Content; got != "Test erfolgreich" {
+		t.Fatalf("content = %q, want Test erfolgreich", got)
+	}
+}
+
 func TestToResponsesRequestAddsFastServiceTier(t *testing.T) {
 	request := toResponsesRequest(ChatRequest{
 		Model:    "gpt-test",
