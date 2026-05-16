@@ -232,7 +232,7 @@ func (r *Registry) OpenAITools() []any {
 	if strings.TrimSpace(r.cfg.KagiAPIKey) != "" {
 		defs = append(defs, toolDef{
 			Name:        "web_search",
-			Description: "Search the public web for current or external facts using Kagi. Use this only when local media-server tools cannot answer the question.",
+			Description: "Search the public web for current or external facts using Kagi. Use after local media-server tools when an answer depends on outside facts, such as release availability, language/audio-track availability, schedules, or public metadata.",
 			Parameters: objectSchema(map[string]any{
 				"query": stringSchema("Search query"),
 				"limit": numberSchema("Maximum search results to return, from 1 to 10"),

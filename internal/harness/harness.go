@@ -389,9 +389,13 @@ If the reported user message is an explicit diagnostic or test instruction, perf
 
 Required final comment:
 - Write in German.
-- For real issues, explain what caused the issue and what was done to fix it.
+- Return a final, closed-form comment: either the issue was fixed with a short cause/result explanation, or it could not be fixed with a short blocker explanation.
+- Do not include next steps, manual-action guidance, "please check", "try again", "when available", or requests for the user to confirm.
+- For fixed issues, explain what caused the issue and what was done to fix it.
+- For unresolved issues, explain why it could not be fixed; do not instruct the user what to do next.
 - For diagnostic/test instructions, report the diagnostic action and result instead of inventing a cause/fix.
-- Mention validation when a fix or diagnostic action was verified.
+- Mention verification only when a fix or diagnostic action was actually checked, and write it as a normal sentence.
+- Do not use labeled sections such as "Validierung:", "Ursache:", "Fix:", or "Nächste Schritte:".
 - Do not include a signature/header; the harness adds a bracket header with the bot name and model.
 - Keep it concise and readable as a Jellyseerr issue comment.
 
