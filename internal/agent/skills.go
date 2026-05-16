@@ -1,11 +1,15 @@
 package agent
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	assets "blitzcrank"
 )
 
 type Skill struct {
@@ -16,9 +20,20 @@ type Skill struct {
 }
 
 func LoadSkills(root string) ([]Skill, error) {
-	entries, err := os.ReadDir(root)
+	skills, err := loadSkillsFromFS(os.DirFS(root), ".", root)
+	if err == nil {
+		return skills, nil
+	}
+	if errors.Is(err, fs.ErrNotExist) && assets.IsBundledRoot(root, "skills") {
+		return loadSkillsFromFS(assets.FS, "skills", "skills")
+	}
+	return nil, fmt.Errorf("load skills from %s: %w", root, err)
+}
+
+func loadSkillsFromFS(fsys fs.FS, root, displayRoot string) ([]Skill, error) {
+	entries, err := fs.ReadDir(fsys, root)
 	if err != nil {
-		return nil, fmt.Errorf("load skills from %s: %w", root, err)
+		return nil, err
 	}
 
 	var dirs []string
@@ -31,12 +46,12 @@ func LoadSkills(root string) ([]Skill, error) {
 
 	skills := make([]Skill, 0, len(dirs))
 	for _, dir := range dirs {
-		path := filepath.Join(root, dir, "SKILL.md")
-		content, err := os.ReadFile(path)
+		readPath := fsPath(root, dir, "SKILL.md")
+		content, err := fs.ReadFile(fsys, readPath)
 		if err != nil {
 			return nil, fmt.Errorf("load skill %s: %w", dir, err)
 		}
-		skill, err := parseSkill(path, string(content))
+		skill, err := parseSkill(displayPath(displayRoot, dir, "SKILL.md"), string(content))
 		if err != nil {
 			return nil, err
 		}
@@ -46,6 +61,27 @@ func LoadSkills(root string) ([]Skill, error) {
 		return nil, fmt.Errorf("no skills found in %s", root)
 	}
 	return skills, nil
+}
+
+func fsPath(parts ...string) string {
+	var clean []string
+	for _, part := range parts {
+		part = strings.Trim(part, "/")
+		if part != "" && part != "." {
+			clean = append(clean, part)
+		}
+	}
+	if len(clean) == 0 {
+		return "."
+	}
+	return strings.Join(clean, "/")
+}
+
+func displayPath(root string, parts ...string) string {
+	if root == "" || root == "." {
+		return filepath.Join(parts...)
+	}
+	return filepath.Join(append([]string{root}, parts...)...)
 }
 
 func parseSkill(path, content string) (Skill, error) {

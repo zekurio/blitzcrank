@@ -74,12 +74,6 @@
               environment = {
                 DATABASE_PATH = "${cfg.dataDir}/blitzcrank.sqlite";
                 AGENT_THREADS_DIR = "${cfg.dataDir}/threads";
-                AGENT_SYSTEM_PROMPT = "${cfg.package}/share/blitzcrank/prompts/system.md";
-                AGENT_RUNTIME_PROMPT = "${cfg.package}/share/blitzcrank/prompts/runtime-metadata.md";
-                AGENT_DISCORD_TRIAGE_PROMPT = "${cfg.package}/share/blitzcrank/prompts/discord-triage.md";
-                AGENT_DISCORD_SUMMARY_PROMPT = "${cfg.package}/share/blitzcrank/prompts/discord-thread-summary.md";
-                AGENT_SKILLS_DIR = "${cfg.package}/share/blitzcrank/skills";
-                AUTOMATIONS_DIR = "${cfg.package}/share/blitzcrank/automations";
               };
             };
           };
@@ -110,10 +104,6 @@
             "-s"
             "-w"
           ];
-          postInstall = ''
-            install -d $out/share/blitzcrank
-            cp -r prompts skills automations $out/share/blitzcrank/
-          '';
         };
 
         devShells.default = pkgs.mkShell {

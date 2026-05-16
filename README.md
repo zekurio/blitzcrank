@@ -10,7 +10,7 @@ It provides:
 - OpenAI-compatible chat completions, including OpenRouter-compatible headers
 - optional Codex subscription OAuth support
 - service tools for Jellyseerr, Jellyfin, Sonarr, Radarr, SABnzbd, read-only filesystem diagnostics, and optional Exa web search
-- scheduled read-only Markdown automations
+- scheduled Markdown automations, including narrowly scoped repair handlers
 
 ## Configuration
 
@@ -78,7 +78,7 @@ If `SEERR_WEBHOOK_SECRET` is set, Jellyseerr must send either:
 
 Jellyseerr issue webhooks are allowed to use mutating repair tools when the issue context and tool evidence justify it. New and reopened issues start a solver run, user comments append to the stored thread and rerun the solver, and resolved events complete the thread.
 
-Discord support runs and scheduled automations are read-only. They may inspect configured services, filesystem roots, and web search, but they must not trigger searches, refreshes, retries, deletes, or issue resolution.
+Discord support runs are read-only. Scheduled automations are read-only by default; a narrowly scoped automation may use mutating tools only when its prompt explicitly authorizes the exact action, such as importing a verified stale Sonarr/Radarr download.
 
 Final Jellyseerr comments are signed by the harness with `[blitzcrank w/ <model>]`. The agent should return only the final German comment body.
 
@@ -97,7 +97,7 @@ It also writes append-only JSONL traces under `AGENT_THREADS_DIR`:
 - `issues/issue-<id>.jsonl`
 - `automations/<name>.jsonl`
 
-Prompt, skill, and automation Markdown files are runtime inputs, not database state.
+Bundled prompt, skill, and automation Markdown files are embedded in the binary. Override paths and directories are runtime inputs, not database state.
 
 ## Markdown Inputs
 
@@ -118,27 +118,23 @@ Automations live in `automations/*.md`:
 
 ```md
 ---
-name: daily-health-check
-description: Check media automation queues and recent failures.
-schedule: "cron: 0 9 * * *"
+name: hourly-stale-import-handler
+description: Hourly Sonarr/Radarr handler for stale completed downloads that are safe to manually import.
+schedule: "@hourly"
 ---
 
-Run the daily media automation health check...
+Run the hourly stale import handler...
 ```
 
 Use a robfig/cron descriptor such as `@hourly` or a five-field cron expression prefixed with `cron:`.
 
-Markdown inputs are loaded once at startup. Restart the service after editing them.
+Bundled Markdown is compiled into the Go binary. The default prompt and skill config paths (`prompts/*.md` and `skills`) fall back to embedded assets when those files are not present at runtime. Set `AGENT_SYSTEM_PROMPT`, `AGENT_RUNTIME_PROMPT`, `AGENT_DISCORD_TRIAGE_PROMPT`, `AGENT_DISCORD_SUMMARY_PROMPT`, or `AGENT_SKILLS_DIR` to load custom prompt or skill Markdown from disk.
+
+Automations always include the embedded definitions. Set `AUTOMATIONS_EXTRA_DIRS` to a comma-separated list of directories with additional `.md` automation definitions. The scheduler reloads automation definitions while running, so added or edited extra automation files are picked up without restarting the service.
 
 ## Nix
 
-The flake packages the Go binary with immutable Markdown assets installed under:
-
-```text
-$out/share/blitzcrank/prompts
-$out/share/blitzcrank/skills
-$out/share/blitzcrank/automations
-```
+The flake packages the Go binary with bundled Markdown embedded into the executable, so the service does not need prompt, skill, or automation files in its working directory.
 
 Build the package:
 
@@ -146,7 +142,7 @@ Build the package:
 nix build
 ```
 
-The flake also exports `nixosModules.default`, which defines `services.blitzcrank`. The module creates a system user, stores mutable state in `/var/lib/blitzcrank`, points prompt/skill/automation paths at the package assets, and accepts an `environmentFile` for secrets.
+The flake also exports `nixosModules.default`, which defines `services.blitzcrank`. The module creates a system user, stores mutable state in `/var/lib/blitzcrank`, uses the embedded Markdown defaults, and accepts an `environmentFile` for secrets and optional Markdown override paths.
 
 Example:
 

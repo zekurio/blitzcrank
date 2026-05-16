@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -133,6 +134,14 @@ func (r *Registry) callSonarrTool(ctx context.Context, name string, args map[str
 		return handled(r.arr(ctx, "sonarr", http.MethodPost, "/api/v3/command", body))
 	case "sonarr_retry_queue_item":
 		return handled(r.arr(ctx, "sonarr", http.MethodPost, "/api/v3/queue/grab/"+pathID(args, "queue_id"), nil))
+	case "sonarr_list_manual_import":
+		return handled(r.arr(ctx, "sonarr", http.MethodGet, sonarrManualImportPath(args), nil))
+	case "sonarr_import_manual_candidate":
+		body, err := manualImportBody(args)
+		if err != nil {
+			return nil, true, err
+		}
+		return handled(r.arr(ctx, "sonarr", http.MethodPost, "/api/v3/manualimport", body))
 	default:
 		return nil, false, nil
 	}
@@ -162,6 +171,14 @@ func (r *Registry) callRadarrTool(ctx context.Context, name string, args map[str
 		return handled(r.arr(ctx, "radarr", http.MethodDelete, "/api/v3/blocklist/"+pathID(args, "blocklist_id"), nil))
 	case "radarr_retry_queue_item":
 		return handled(r.arr(ctx, "radarr", http.MethodPost, "/api/v3/queue/grab/"+pathID(args, "queue_id"), nil))
+	case "radarr_list_manual_import":
+		return handled(r.arr(ctx, "radarr", http.MethodGet, radarrManualImportPath(args), nil))
+	case "radarr_import_manual_candidate":
+		body, err := manualImportBody(args)
+		if err != nil {
+			return nil, true, err
+		}
+		return handled(r.arr(ctx, "radarr", http.MethodPost, "/api/v3/manualimport", body))
 	default:
 		return nil, false, nil
 	}
@@ -236,6 +253,113 @@ func sonarrEpisodeFilesPath(args map[string]any) (string, error) {
 		values.Set("seasonNumber", seasonNumber)
 	}
 	return "/api/v3/episodefile?" + values.Encode(), nil
+}
+
+func sonarrManualImportPath(args map[string]any) string {
+	values := manualImportValues(args)
+	if seriesID := strings.TrimSpace(stringArg(args, "series_id")); seriesID != "" {
+		values.Set("seriesId", seriesID)
+	}
+	if seasonNumber := strings.TrimSpace(stringArg(args, "season_number")); seasonNumber != "" {
+		values.Set("seasonNumber", seasonNumber)
+	}
+	return "/api/v3/manualimport?" + values.Encode()
+}
+
+func radarrManualImportPath(args map[string]any) string {
+	values := manualImportValues(args)
+	if movieID := strings.TrimSpace(stringArg(args, "movie_id")); movieID != "" {
+		values.Set("movieId", movieID)
+	}
+	return "/api/v3/manualimport?" + values.Encode()
+}
+
+func manualImportValues(args map[string]any) url.Values {
+	values := url.Values{}
+	if folder := strings.TrimSpace(stringArg(args, "folder")); folder != "" {
+		values.Set("folder", folder)
+	}
+	if downloadID := strings.TrimSpace(stringArg(args, "download_id")); downloadID != "" {
+		values.Set("downloadId", downloadID)
+	}
+	if _, ok := args["filter_existing_files"]; ok {
+		values.Set("filterExistingFiles", strconv.FormatBool(boolArg(args, "filter_existing_files")))
+	}
+	return values
+}
+
+func manualImportBody(args map[string]any) ([]map[string]any, error) {
+	raw := stringArg(args, "candidate_json")
+	if raw == "" {
+		return nil, fmt.Errorf("candidate_json is required")
+	}
+	var candidate map[string]any
+	if err := json.Unmarshal([]byte(raw), &candidate); err != nil {
+		return nil, fmt.Errorf("candidate_json must be a JSON object: %w", err)
+	}
+	if len(candidate) == 0 {
+		return nil, fmt.Errorf("candidate_json must not be empty")
+	}
+	if hasExplicitRejections(candidate["rejections"]) {
+		return nil, fmt.Errorf("manual import candidate has explicit rejections")
+	}
+	importMode := strings.TrimSpace(stringArg(args, "import_mode"))
+	if importMode == "" {
+		importMode = "Move"
+	}
+	candidate["importMode"] = importMode
+	normalizeManualImportCandidate(candidate)
+	return []map[string]any{candidate}, nil
+}
+
+func hasExplicitRejections(value any) bool {
+	switch typed := value.(type) {
+	case []any:
+		return len(typed) > 0
+	case []map[string]any:
+		return len(typed) > 0
+	default:
+		return false
+	}
+}
+
+func normalizeManualImportCandidate(candidate map[string]any) {
+	if _, ok := candidate["episodeIds"]; !ok {
+		if episodes, ok := candidate["episodes"].([]any); ok {
+			var ids []int
+			for _, episode := range episodes {
+				if object, ok := episode.(map[string]any); ok {
+					if id := intFromAny(object["id"]); id > 0 {
+						ids = append(ids, id)
+					}
+				}
+			}
+			if len(ids) > 0 {
+				candidate["episodeIds"] = ids
+			}
+		}
+	}
+	if _, ok := candidate["movieId"]; !ok {
+		if movie, ok := candidate["movie"].(map[string]any); ok {
+			if id := intFromAny(movie["id"]); id > 0 {
+				candidate["movieId"] = id
+			}
+		}
+	}
+}
+
+func intFromAny(value any) int {
+	switch typed := value.(type) {
+	case float64:
+		return int(typed)
+	case int:
+		return typed
+	case string:
+		parsed, _ := strconv.Atoi(strings.TrimSpace(typed))
+		return parsed
+	default:
+		return 0
+	}
 }
 
 func sonarrSeasonSearchBody(args map[string]any) (map[string]any, error) {

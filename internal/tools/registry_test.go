@@ -540,6 +540,50 @@ func TestSonarrEpisodeFileRequestShape(t *testing.T) {
 	}
 }
 
+func TestSonarrManualImportRequestShapes(t *testing.T) {
+	var listQuery string
+	var importBody []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/manualimport":
+			listQuery = r.URL.RawQuery
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"id":1,"path":"/downloads/show.mkv","episodes":[{"id":123}],"rejections":[]}]`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v3/manualimport":
+			if err := json.NewDecoder(r.Body).Decode(&importBody); err != nil {
+				t.Fatal(err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(config.Config{SonarrBaseURL: server.URL, SonarrAPIKey: "secret"})
+	if _, err := registry.Call(context.Background(), "sonarr_list_manual_import", map[string]any{
+		"download_id": "abc",
+		"series_id":   "12",
+	}); err != nil {
+		t.Fatalf("sonarr_list_manual_import error = %v", err)
+	}
+	if !containsQueryPart(listQuery, "downloadId=abc") || !containsQueryPart(listQuery, "seriesId=12") {
+		t.Fatalf("query = %q", listQuery)
+	}
+	candidate := `{"id":1,"path":"/downloads/show.mkv","episodes":[{"id":123}],"rejections":[]}`
+	if _, err := registry.Call(context.Background(), "sonarr_import_manual_candidate", map[string]any{"candidate_json": candidate}); err != nil {
+		t.Fatalf("sonarr_import_manual_candidate error = %v", err)
+	}
+	if len(importBody) != 1 || importBody[0]["importMode"] != "Move" {
+		t.Fatalf("import body = %#v", importBody)
+	}
+	ids := importBody[0]["episodeIds"].([]any)
+	if ids[0].(float64) != 123 {
+		t.Fatalf("episodeIds = %#v", importBody[0]["episodeIds"])
+	}
+}
+
 func TestRadarrSearchMovieCommandShape(t *testing.T) {
 	var body map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -564,6 +608,54 @@ func TestRadarrSearchMovieCommandShape(t *testing.T) {
 	ids := body["movieIds"].([]any)
 	if ids[0].(float64) != 456 {
 		t.Fatalf("movieIds = %#v", body["movieIds"])
+	}
+}
+
+func TestRadarrManualImportRequestShapes(t *testing.T) {
+	var listQuery string
+	var importBody []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/manualimport":
+			listQuery = r.URL.RawQuery
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"id":1,"path":"/downloads/movie.mkv","movie":{"id":456},"rejections":[]}]`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v3/manualimport":
+			if err := json.NewDecoder(r.Body).Decode(&importBody); err != nil {
+				t.Fatal(err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(config.Config{RadarrBaseURL: server.URL, RadarrAPIKey: "secret"})
+	if _, err := registry.Call(context.Background(), "radarr_list_manual_import", map[string]any{
+		"download_id": "abc",
+		"movie_id":    "456",
+	}); err != nil {
+		t.Fatalf("radarr_list_manual_import error = %v", err)
+	}
+	if !containsQueryPart(listQuery, "downloadId=abc") || !containsQueryPart(listQuery, "movieId=456") {
+		t.Fatalf("query = %q", listQuery)
+	}
+	candidate := `{"id":1,"path":"/downloads/movie.mkv","movie":{"id":456},"rejections":[]}`
+	if _, err := registry.Call(context.Background(), "radarr_import_manual_candidate", map[string]any{"candidate_json": candidate}); err != nil {
+		t.Fatalf("radarr_import_manual_candidate error = %v", err)
+	}
+	if len(importBody) != 1 || importBody[0]["importMode"] != "Move" || importBody[0]["movieId"].(float64) != 456 {
+		t.Fatalf("import body = %#v", importBody)
+	}
+}
+
+func TestManualImportRejectsExplicitRejections(t *testing.T) {
+	registry := NewRegistry(config.Config{RadarrBaseURL: "http://example.invalid", RadarrAPIKey: "secret"})
+	candidate := `{"id":1,"path":"/downloads/movie.mkv","rejections":[{"reason":"sample"}]}`
+	if _, err := registry.Call(context.Background(), "radarr_import_manual_candidate", map[string]any{"candidate_json": candidate}); err == nil || !strings.Contains(err.Error(), "explicit rejections") {
+		t.Fatalf("radarr_import_manual_candidate error = %v, want explicit rejections error", err)
 	}
 }
 

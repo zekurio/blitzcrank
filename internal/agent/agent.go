@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	assets "blitzcrank"
 	"blitzcrank/internal/config"
 	"blitzcrank/internal/llm"
 	"blitzcrank/internal/tools"
@@ -102,9 +103,11 @@ func (a *Agent) Respond(ctx context.Context, req Request) (string, error) {
 	model := a.ModelName(req)
 	reasoningEffort := a.ReasoningEffort(req, model)
 	toolPolicy := a.toolPolicy(req)
+	availableTools := a.registry.OpenAIToolsForPolicy(toolPolicy)
 	messages := []llm.Message{
 		{Role: "system", Content: a.systemPrompt(req)},
 		{Role: "system", Content: a.workflowPrompt(req, toolPolicy)},
+		{Role: "system", Content: a.toolContextPrompt(toolPolicy)},
 		{Role: "system", Content: a.runtimeMetadata(model, reasoningEffort)},
 		{Role: "user", Content: fmt.Sprintf("Source: %s\nAuthor: %s\n\n%s", req.Source, req.Author, req.Content)},
 	}
@@ -114,7 +117,7 @@ func (a *Agent) Respond(ctx context.Context, req Request) (string, error) {
 			Model:           model,
 			ReasoningEffort: reasoningEffort,
 			Messages:        messages,
-			Tools:           a.registry.OpenAIToolsForPolicy(toolPolicy),
+			Tools:           availableTools,
 		})
 		if err != nil {
 			return "", err
@@ -249,9 +252,17 @@ func (a *Agent) toolPolicy(req Request) tools.ToolPolicy {
 	switch {
 	case strings.HasPrefix(source, "jellyseerr_issue_"):
 		return tools.ToolPolicy{Groups: groups}
+	case source == "automation_cron" && isStaleImportHandler(req.Content):
+		return tools.ToolPolicy{Groups: groups}
 	default:
 		return tools.ToolPolicy{ReadOnly: true, Groups: groups}
 	}
+}
+
+func isStaleImportHandler(content string) bool {
+	text := normalizedCapabilityText(content)
+	return strings.Contains(text, "hourly stale import handler") ||
+		strings.Contains(text, "hourly-stale-import-handler")
 }
 
 func (a *Agent) systemPrompt(req Request) string {
@@ -333,7 +344,7 @@ func (a *Agent) toolGroupsForRequest(req Request) []string {
 	if len(groups) == 0 && strings.HasPrefix(source, "discord") {
 		return []string{"jellyseerr", "jellyfin", "web"}
 	}
-	return uniqueStrings(groups)
+	return uniqueStrings(append(groups, "web"))
 }
 
 func normalizedCapabilityText(content string) string {
@@ -381,6 +392,88 @@ func (a *Agent) workflowPrompt(req Request, policy tools.ToolPolicy) string {
 	default:
 		return "Active workflow: general media-server support. Ignore Jellyseerr issue final-comment rules unless the request explicitly concerns a Jellyseerr issue. " + mutation
 	}
+}
+
+func (a *Agent) toolContextPrompt(policy tools.ToolPolicy) string {
+	names := a.registry.ToolNamesForPolicy(policy)
+	lines := []string{
+		"Tool availability: callable tools are provided through the tool API for this run. Treat them as available capabilities, not a checklist; call a tool only when it materially reduces uncertainty or is required to act.",
+	}
+	if len(names) == 0 {
+		lines = append(lines, "No callable tools are currently configured for the selected capability set.")
+	} else {
+		lines = append(lines, "Selected tools by capability: "+formatToolCapabilities(names)+".")
+	}
+	if policyIncludesGroup(policy, "web") {
+		if containsString(names, "web_search") {
+			lines = append(lines, "web_search is always kept in the selected capability set when configured; prefer it for public or current facts that local media-server tools cannot verify, and cite compact sources when it supports the answer.")
+		} else {
+			lines = append(lines, "Web search is part of the default capability set, but no callable web_search tool is configured in this run; do not claim web verification.")
+		}
+	}
+	if policy.ReadOnly {
+		lines = append(lines, "This selected set is read-only; mutating tools are omitted from the tool API.")
+	}
+	return strings.Join(lines, " ")
+}
+
+func formatToolCapabilities(names []string) string {
+	groups := map[string][]string{}
+	var order []string
+	for _, name := range names {
+		group := toolCapabilityGroup(name)
+		if _, ok := groups[group]; !ok {
+			order = append(order, group)
+		}
+		groups[group] = append(groups[group], name)
+	}
+	var parts []string
+	for _, group := range order {
+		parts = append(parts, fmt.Sprintf("%s (%s)", group, strings.Join(groups[group], ", ")))
+	}
+	return strings.Join(parts, "; ")
+}
+
+func toolCapabilityGroup(name string) string {
+	switch {
+	case strings.HasPrefix(name, "seerr_"):
+		return "jellyseerr"
+	case strings.HasPrefix(name, "jellyfin_"):
+		return "jellyfin"
+	case strings.HasPrefix(name, "sonarr_"):
+		return "sonarr"
+	case strings.HasPrefix(name, "radarr_"):
+		return "radarr"
+	case strings.HasPrefix(name, "sabnzbd_"):
+		return "sabnzbd"
+	case strings.HasPrefix(name, "fs_"):
+		return "filesystem"
+	case name == "web_search":
+		return "web"
+	default:
+		return "other"
+	}
+}
+
+func policyIncludesGroup(policy tools.ToolPolicy, group string) bool {
+	if len(policy.Groups) == 0 {
+		return true
+	}
+	for _, value := range policy.Groups {
+		if strings.EqualFold(strings.TrimSpace(value), group) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func validateDiscordTriageResult(result DiscordTriageResult) error {
@@ -585,6 +678,11 @@ func LoadSystemPrompt(cfg config.Config) (string, error) {
 func LoadPromptTemplate(path string) (string, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
+		if embeddedPath, ok := assets.BundledFilePath(path, "prompts"); ok {
+			if embeddedContent, embeddedErr := assets.FS.ReadFile(embeddedPath); embeddedErr == nil {
+				return strings.TrimSpace(string(embeddedContent)), nil
+			}
+		}
 		return "", fmt.Errorf("load system prompt %s: %w", path, err)
 	}
 	return strings.TrimSpace(string(content)), nil

@@ -94,6 +94,7 @@ Use the trusted runtime metadata for the current time.
 
 - Scheduled automations return concise German operations summaries.
 - Follow the automation prompt for the requested output shape.
+- Mutating automation tools are allowed only when the active workflow is not read-only and the automation prompt explicitly asks for that exact action.
 - If the run is read-only, report findings and blockers only; do not claim repairs, refreshes, retries, searches that alter queues, deletes, or issue resolution.
 - Do not post Jellyseerr issue comments from automation runs.
 - Do not include raw tool output, secrets, private paths, service URLs, or internal implementation details.

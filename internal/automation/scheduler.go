@@ -2,7 +2,9 @@ package automation
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -10,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	assets "blitzcrank"
 	"blitzcrank/internal/agent"
 	"blitzcrank/internal/config"
 	"blitzcrank/internal/store"
@@ -20,16 +23,21 @@ type Reporter interface {
 	SendMessage(context.Context, string) error
 }
 
+type AutomationReporter interface {
+	SendAutomationReport(context.Context, string, string) error
+}
+
 type Runner interface {
 	Respond(context.Context, agent.Request) (string, error)
 }
 
 type Scheduler struct {
-	cfg      config.Config
-	runner   Runner
-	reporter Reporter
-	store    *store.Store
-	tasks    []Task
+	cfg           config.Config
+	runner        Runner
+	reporter      Reporter
+	store         *store.Store
+	tasks         []Task
+	lastLoadError string
 }
 
 type Task struct {
@@ -42,17 +50,14 @@ type Task struct {
 }
 
 func NewScheduler(cfg config.Config, runner Runner, reporter Reporter, state *store.Store) *Scheduler {
-	tasks, err := LoadTasks(cfg.AutomationsDir)
-	if err != nil {
-		log.Printf("load automations: %v", err)
-	}
-	return &Scheduler{
+	scheduler := &Scheduler{
 		cfg:      cfg,
 		runner:   runner,
 		reporter: reporter,
 		store:    state,
-		tasks:    tasks,
 	}
+	scheduler.reloadTasks()
+	return scheduler
 }
 
 func (s *Scheduler) Start(ctx context.Context) {
@@ -61,26 +66,59 @@ func (s *Scheduler) Start(ctx context.Context) {
 		return
 	}
 	if len(s.tasks) == 0 {
-		log.Printf("automation scheduler enabled with no tasks")
-		return
+		log.Printf("automation scheduler enabled with no tasks; watching automation directories")
+	} else {
+		log.Printf("automation scheduler enabled: tasks=%s timezone=%s", taskNames(s.tasks), s.cfg.Timezone)
 	}
 
 	go s.loop(ctx)
-	log.Printf("automation scheduler enabled: tasks=%s timezone=%s", taskNames(s.tasks), s.cfg.Timezone)
 }
 
 func (s *Scheduler) loop(ctx context.Context) {
 	for {
+		s.reloadTasks()
 		next := s.nextRun(time.Now())
-		timer := time.NewTimer(time.Until(next))
+		wakeAt := nextReload(time.Now(), next)
+		timer := time.NewTimer(time.Until(wakeAt))
 		select {
 		case <-ctx.Done():
 			timer.Stop()
 			return
 		case <-timer.C:
+			s.reloadTasks()
 			s.runDue(ctx, time.Now())
 		}
 	}
+}
+
+func nextReload(now, nextRun time.Time) time.Time {
+	nextReload := now.Truncate(time.Minute).Add(time.Minute)
+	if nextRun.IsZero() || nextReload.Before(nextRun) {
+		return nextReload
+	}
+	return nextRun
+}
+
+func (s *Scheduler) reloadTasks() {
+	tasks, err := LoadTaskDirs(s.cfg.AutomationsExtraDirs)
+	if err != nil {
+		message := err.Error()
+		if message != s.lastLoadError {
+			log.Printf("load automations: %v", err)
+			s.lastLoadError = message
+		}
+		return
+	}
+	s.lastLoadError = ""
+	if sameTaskSet(s.tasks, tasks) {
+		return
+	}
+	s.tasks = tasks
+	if len(tasks) == 0 {
+		log.Printf("automation tasks reloaded: none")
+		return
+	}
+	log.Printf("automation tasks reloaded: %s", taskNames(tasks))
 }
 
 func (s *Scheduler) runDue(ctx context.Context, now time.Time) {
@@ -117,7 +155,13 @@ func (s *Scheduler) runDue(ctx context.Context, now time.Time) {
 		log.Printf("automation task %s completed: %s", task.Name, strings.ReplaceAll(result, "\n", " "))
 		if s.reporter != nil {
 			reportCtx, reportCancel := context.WithTimeout(context.Background(), 30*time.Second)
-			if err := s.reporter.SendMessage(reportCtx, "[automation: "+task.Name+"]\n\n"+result); err != nil {
+			var err error
+			if automationReporter, ok := s.reporter.(AutomationReporter); ok {
+				err = automationReporter.SendAutomationReport(reportCtx, task.Name, result)
+			} else {
+				err = s.reporter.SendMessage(reportCtx, "[automation: "+task.Name+"]\n\n"+result)
+			}
+			if err != nil {
 				log.Printf("automation task %s report failed: %v", task.Name, err)
 			}
 			reportCancel()
@@ -180,11 +224,75 @@ func (s *Scheduler) dueTasks(now time.Time) []Task {
 }
 
 func LoadTasks(root string) ([]Task, error) {
-	entries, err := os.ReadDir(root)
+	tasks, err := loadTasksFromFS(os.DirFS(root), ".", root)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
 		}
+		return nil, err
+	}
+	return tasks, nil
+}
+
+func LoadTaskDirs(extraRoots []string) ([]Task, error) {
+	all, err := loadTasksFromFS(assets.FS, "automations", "automations")
+	if err != nil {
+		return nil, err
+	}
+	for _, extraRoot := range extraRoots {
+		extraRoot = strings.TrimSpace(extraRoot)
+		if extraRoot == "" {
+			continue
+		}
+		tasks, err := LoadTasks(extraRoot)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, tasks...)
+	}
+	if err := rejectDuplicateTasks(all); err != nil {
+		return nil, err
+	}
+	sort.SliceStable(all, func(i, j int) bool {
+		if all[i].Name == all[j].Name {
+			return all[i].Path < all[j].Path
+		}
+		return all[i].Name < all[j].Name
+	})
+	return all, nil
+}
+
+func rejectDuplicateTasks(tasks []Task) error {
+	seen := map[string]string{}
+	for _, task := range tasks {
+		name := strings.TrimSpace(task.Name)
+		if previous, ok := seen[name]; ok {
+			return fmt.Errorf("duplicate automation %q in %s and %s", name, previous, task.Path)
+		}
+		seen[name] = task.Path
+	}
+	return nil
+}
+
+func sameTaskSet(a, b []Task) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Name != b[i].Name ||
+			a[i].Description != b[i].Description ||
+			a[i].Schedule != b[i].Schedule ||
+			a[i].Prompt != b[i].Prompt ||
+			a[i].Path != b[i].Path {
+			return false
+		}
+	}
+	return true
+}
+
+func loadTasksFromFS(fsys fs.FS, root, displayRoot string) ([]Task, error) {
+	entries, err := fs.ReadDir(fsys, root)
+	if err != nil {
 		return nil, err
 	}
 
@@ -199,18 +307,39 @@ func LoadTasks(root string) ([]Task, error) {
 
 	var tasks []Task
 	for _, file := range files {
-		path := filepath.Join(root, file)
-		data, err := os.ReadFile(path)
+		readPath := fsPath(root, file)
+		data, err := fs.ReadFile(fsys, readPath)
 		if err != nil {
 			return nil, err
 		}
-		task, err := parseTask(path, string(data))
+		task, err := parseTask(displayPath(displayRoot, file), string(data))
 		if err != nil {
 			return nil, err
 		}
 		tasks = append(tasks, task)
 	}
 	return tasks, nil
+}
+
+func fsPath(parts ...string) string {
+	var clean []string
+	for _, part := range parts {
+		part = strings.Trim(part, "/")
+		if part != "" && part != "." {
+			clean = append(clean, part)
+		}
+	}
+	if len(clean) == 0 {
+		return "."
+	}
+	return strings.Join(clean, "/")
+}
+
+func displayPath(root string, parts ...string) string {
+	if root == "" || root == "." {
+		return filepath.Join(parts...)
+	}
+	return filepath.Join(append([]string{root}, parts...)...)
 }
 
 func parseTask(path, content string) (Task, error) {
