@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"blitzcrank/internal/config"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -111,6 +113,22 @@ func TestReasoningEffortForRequestUsesRecommendedModelDefault(t *testing.T) {
 	}
 }
 
+func TestBuildSystemPromptIsMarkdown(t *testing.T) {
+	prompt := BuildSystemPrompt(configForTest(), []Skill{{Name: "alpha", Body: "# Alpha\n\nUse alpha."}})
+	for _, want := range []string{
+		"# Blitzcrank System Prompt",
+		"## Role",
+		"## Operating Principles",
+		"## Jellyseerr Issue Workflow",
+		"## Skill: alpha",
+		"For explicit diagnostic or test instructions",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("system prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
 func writeSkill(t *testing.T, root, dir, name string) {
 	t.Helper()
 	path := filepath.Join(root, dir)
@@ -121,4 +139,8 @@ func writeSkill(t *testing.T, root, dir, name string) {
 	if err := os.WriteFile(filepath.Join(path, "SKILL.md"), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func configForTest() config.Config {
+	return config.Config{BotPublicName: "Blitzcrank"}
 }
