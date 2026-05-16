@@ -113,7 +113,7 @@ func TestExecuteToolLogsFailureDetail(t *testing.T) {
 	call.Function.Name = "fs_stat_path"
 	call.Function.Arguments = `{"path":"/tmp"}`
 
-	_, err := agent.executeTool(context.Background(), call, tools.ToolPolicy{})
+	_, err := agent.executeTool(context.Background(), Request{}, call, tools.ToolPolicy{})
 	if err == nil {
 		t.Fatal("executeTool() error = nil, want filesystem configuration error")
 	}
@@ -130,13 +130,55 @@ func TestExecuteToolLogsFailureDetail(t *testing.T) {
 	}
 }
 
+func TestExecuteToolEmitsAuditRecord(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "file.txt")
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	agent := &Agent{registry: tools.NewRegistry(config.Config{FSAllowedRoots: []string{root}})}
+	var records []ToolAuditRecord
+	var call llm.ToolCall
+	call.Function.Name = "fs_stat_path"
+	call.Function.Arguments = `{"path":"` + path + `"}`
+
+	_, err := agent.executeTool(context.Background(), Request{ToolAudit: func(record ToolAuditRecord) {
+		records = append(records, record)
+	}}, call, tools.ToolPolicy{})
+	if err != nil {
+		t.Fatalf("executeTool() error = %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("audit records = %d, want 1", len(records))
+	}
+	if records[0].Name != "fs_stat_path" || records[0].ArgumentsSummary == "" || records[0].ResultSummary == "" || records[0].CompletedAt.Before(records[0].StartedAt) {
+		t.Fatalf("audit record = %#v", records[0])
+	}
+}
+
+func TestToolResultMessagePayloadCompactsLargeResults(t *testing.T) {
+	result := map[string]any{"items": strings.Repeat("x", 200)}
+	payload := toolResultMessagePayload(result, 80)
+
+	for _, want := range []string{
+		`"truncated":true`,
+		`"original_bytes"`,
+		`"result_preview"`,
+		`[truncated]`,
+	} {
+		if !strings.Contains(payload, want) {
+			t.Fatalf("payload missing %q: %s", want, payload)
+		}
+	}
+}
+
 func TestReadOnlyPolicyBlocksMutatingTools(t *testing.T) {
 	agent := &Agent{registry: tools.NewRegistry(config.Config{})}
 	var call llm.ToolCall
 	call.Function.Name = "sonarr_search_episode"
 	call.Function.Arguments = `{"episode_id":"42"}`
 
-	_, err := agent.executeTool(context.Background(), call, tools.ToolPolicy{ReadOnly: true})
+	_, err := agent.executeTool(context.Background(), Request{}, call, tools.ToolPolicy{ReadOnly: true})
 	if err == nil || !strings.Contains(err.Error(), "not permitted") {
 		t.Fatalf("executeTool() error = %v, want read-only policy error", err)
 	}

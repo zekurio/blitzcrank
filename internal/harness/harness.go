@@ -2,6 +2,8 @@ package harness
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -24,17 +26,19 @@ type modelNamer interface {
 }
 
 type Manager struct {
-	cfg     config.Config
-	runner  Runner
-	tools   *tools.Registry
-	store   *store.Store
-	mu      sync.Mutex
-	threads map[string]*IssueThread
+	cfg        config.Config
+	runner     Runner
+	tools      *tools.Registry
+	store      *store.Store
+	mu         sync.Mutex
+	threads    map[string]*IssueThread
+	issueLocks sync.Map
 }
 
 type IssueThread struct {
 	IssueID          string          `json:"issue_id"`
 	Status           string          `json:"status"`
+	Summary          string          `json:"summary,omitempty"`
 	CreatedAt        time.Time       `json:"created_at"`
 	UpdatedAt        time.Time       `json:"updated_at"`
 	CompletedAt      *time.Time      `json:"completed_at,omitempty"`
@@ -46,6 +50,7 @@ type IssueThread struct {
 
 type ThreadEvent struct {
 	Type    string          `json:"type"`
+	Key     string          `json:"key,omitempty"`
 	Actor   string          `json:"actor,omitempty"`
 	Message string          `json:"message,omitempty"`
 	Payload json.RawMessage `json:"payload,omitempty"`
@@ -94,7 +99,16 @@ func (m *Manager) HandleWebhook(ctx context.Context, payload map[string]any) (Re
 		return Result{Ignored: true, Reason: "bot-authored comment ignored", IssueID: issueID, Event: event}, nil
 	}
 
-	thread := m.appendEvent(issueID, event, payload)
+	lock := m.issueLock(issueID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	key := webhookEventKey(payload)
+	if m.hasEvent(issueID, key) {
+		return Result{Ignored: true, Reason: "duplicate webhook event", IssueID: issueID, Event: event}, nil
+	}
+
+	thread := m.appendEvent(issueID, event, key, payload)
 	switch event {
 	case "resolved":
 		m.complete(thread, "jellyseerr issue resolved")
@@ -109,7 +123,47 @@ func (m *Manager) HandleWebhook(ctx context.Context, payload map[string]any) (Re
 	}
 }
 
-func (m *Manager) appendEvent(issueID, event string, payload map[string]any) *IssueThread {
+func (m *Manager) issueLock(issueID string) *sync.Mutex {
+	value, _ := m.issueLocks.LoadOrStore(issueID, &sync.Mutex{})
+	return value.(*sync.Mutex)
+}
+
+func (m *Manager) hasEvent(issueID, key string) bool {
+	if strings.TrimSpace(key) == "" {
+		return false
+	}
+	m.mu.Lock()
+	thread := m.threads[issueID]
+	m.mu.Unlock()
+	if thread == nil {
+		if loaded, ok := m.loadThread(context.Background(), issueID); ok {
+			thread = loaded
+			m.mu.Lock()
+			m.threads[issueID] = thread
+			m.mu.Unlock()
+		}
+	}
+	if thread == nil {
+		return false
+	}
+	for _, event := range thread.Events {
+		if event.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+func webhookEventKey(payload map[string]any) string {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func (m *Manager) appendEvent(issueID, event, key string, payload map[string]any) *IssueThread {
 	now := time.Now().UTC()
 	data, _ := json.Marshal(payload)
 	comment := section(payload, "comment")
@@ -139,6 +193,7 @@ func (m *Manager) appendEvent(issueID, event string, payload map[string]any) *Is
 	thread.LastPayload = data
 	thread.Events = append(thread.Events, ThreadEvent{
 		Type:    event,
+		Key:     key,
 		Actor:   actor(payload),
 		Message: stringValue(comment, "comment_message"),
 		Payload: data,
@@ -149,6 +204,7 @@ func (m *Manager) appendEvent(issueID, event string, payload map[string]any) *Is
 	m.appendTrace("issues/issue-"+issueID+".jsonl", map[string]any{
 		"type":    "webhook_event",
 		"issue":   issueID,
+		"key":     key,
 		"event":   event,
 		"actor":   actor(payload),
 		"message": stringValue(comment, "comment_message"),
@@ -170,6 +226,9 @@ func (m *Manager) run(ctx context.Context, thread *IssueThread, payload map[stri
 		Source:  "jellyseerr_issue_" + event,
 		Author:  actor(payload),
 		Content: prompt,
+		ToolAudit: func(toolRecord agent.ToolAuditRecord) {
+			m.recordToolCall(thread.IssueID, event, start, toolRecord)
+		},
 	}
 	log.Printf("jellyseerr issue run started: issue=%s event=%s actor=%q prior_events=%d prior_runs=%d", thread.IssueID, event, request.Author, len(thread.Events), len(thread.Runs))
 
@@ -216,10 +275,31 @@ func (m *Manager) run(ctx context.Context, thread *IssueThread, payload map[stri
 	return nil
 }
 
+func (m *Manager) recordToolCall(issueID, sourceEventType string, runStartedAt time.Time, record agent.ToolAuditRecord) {
+	if m.store == nil {
+		return
+	}
+	if err := m.store.InsertIssueToolCall(context.Background(), store.IssueToolCall{
+		IssueID:          issueID,
+		SourceEventType:  sourceEventType,
+		RunStartedAt:     runStartedAt,
+		ToolName:         record.Name,
+		Mutating:         record.Mutating,
+		ArgumentsSummary: record.ArgumentsSummary,
+		ResultSummary:    record.ResultSummary,
+		Error:            record.Error,
+		StartedAt:        record.StartedAt,
+		CompletedAt:      record.CompletedAt,
+	}); err != nil {
+		log.Printf("insert issue tool call failed: issue=%s tool=%s error=%v", issueID, record.Name, err)
+	}
+}
+
 func (m *Manager) recordRun(thread *IssueThread, record RunRecord) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	thread.Runs = append(thread.Runs, record)
+	thread.Summary = buildIssueSummary(thread)
 	thread.UpdatedAt = time.Now().UTC()
 	m.upsertThread(context.Background(), thread)
 	m.insertRun(context.Background(), thread.IssueID, record, "webhook")

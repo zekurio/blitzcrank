@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -18,6 +20,7 @@ type Store struct {
 type IssueThread struct {
 	IssueID          string
 	Status           string
+	Summary          string
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 	CompletedAt      *time.Time
@@ -30,6 +33,7 @@ type IssueThread struct {
 type IssueEvent struct {
 	ID          int64
 	IssueID     string
+	EventKey    string
 	EventType   string
 	Actor       string
 	Message     string
@@ -48,6 +52,20 @@ type IssueRun struct {
 	Attribution      string
 	Error            string
 	CompletionReason string
+}
+
+type IssueToolCall struct {
+	ID               int64
+	IssueID          string
+	SourceEventType  string
+	RunStartedAt     time.Time
+	ToolName         string
+	Mutating         bool
+	ArgumentsSummary string
+	ResultSummary    string
+	Error            string
+	StartedAt        time.Time
+	CompletedAt      time.Time
 }
 
 type AutomationRun struct {
@@ -136,6 +154,7 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS issue_threads (
   issue_id TEXT PRIMARY KEY,
   status TEXT NOT NULL,
+  summary TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   completed_at TEXT,
@@ -146,6 +165,7 @@ CREATE TABLE IF NOT EXISTS issue_threads (
 CREATE TABLE IF NOT EXISTS issue_thread_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   issue_id TEXT NOT NULL,
+  event_key TEXT,
   event_type TEXT NOT NULL,
   actor TEXT,
   message TEXT,
@@ -153,6 +173,10 @@ CREATE TABLE IF NOT EXISTS issue_thread_events (
   created_at TEXT NOT NULL,
   FOREIGN KEY (issue_id) REFERENCES issue_threads(issue_id)
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_issue_thread_events_issue_event_key
+ON issue_thread_events(issue_id, event_key)
+WHERE event_key IS NOT NULL AND event_key != '';
 
 CREATE TABLE IF NOT EXISTS issue_runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -167,6 +191,24 @@ CREATE TABLE IF NOT EXISTS issue_runs (
   completion_reason TEXT,
   FOREIGN KEY (issue_id) REFERENCES issue_threads(issue_id)
 );
+
+CREATE TABLE IF NOT EXISTS issue_tool_calls (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  issue_id TEXT NOT NULL,
+  source_event_type TEXT NOT NULL,
+  run_started_at TEXT NOT NULL,
+  tool_name TEXT NOT NULL,
+  mutating INTEGER NOT NULL DEFAULT 0,
+  arguments_summary TEXT,
+  result_summary TEXT,
+  error TEXT,
+  started_at TEXT NOT NULL,
+  completed_at TEXT NOT NULL,
+  FOREIGN KEY (issue_id) REFERENCES issue_threads(issue_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_issue_tool_calls_issue_id
+ON issue_tool_calls(issue_id, id);
 
 CREATE TABLE IF NOT EXISTS automation_runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -227,5 +269,79 @@ CREATE TABLE IF NOT EXISTS agent_runs (
   FOREIGN KEY (thread_id) REFERENCES agent_threads(thread_id)
 );
 `)
+	if err != nil {
+		return err
+	}
+	for _, column := range []struct {
+		table string
+		name  string
+		ddl   string
+	}{
+		{table: "issue_threads", name: "summary", ddl: "ALTER TABLE issue_threads ADD COLUMN summary TEXT"},
+		{table: "issue_thread_events", name: "event_key", ddl: "ALTER TABLE issue_thread_events ADD COLUMN event_key TEXT"},
+	} {
+		if err := s.ensureColumn(ctx, column.table, column.name, column.ddl); err != nil {
+			return err
+		}
+	}
+	_, err = s.db.ExecContext(ctx, `
+CREATE UNIQUE INDEX IF NOT EXISTS idx_issue_thread_events_issue_event_key
+ON issue_thread_events(issue_id, event_key)
+WHERE event_key IS NOT NULL AND event_key != '';
+
+CREATE TABLE IF NOT EXISTS issue_tool_calls (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  issue_id TEXT NOT NULL,
+  source_event_type TEXT NOT NULL,
+  run_started_at TEXT NOT NULL,
+  tool_name TEXT NOT NULL,
+  mutating INTEGER NOT NULL DEFAULT 0,
+  arguments_summary TEXT,
+  result_summary TEXT,
+  error TEXT,
+  started_at TEXT NOT NULL,
+  completed_at TEXT NOT NULL,
+  FOREIGN KEY (issue_id) REFERENCES issue_threads(issue_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_issue_tool_calls_issue_id
+ON issue_tool_calls(issue_id, id);
+`)
 	return err
+}
+
+func (s *Store) ensureColumn(ctx context.Context, table, name, ddl string) error {
+	rows, err := s.db.QueryContext(ctx, "PRAGMA table_info("+sanitizeIdentifier(table)+")")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var columnName, columnType string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &columnName, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		if strings.EqualFold(columnName, name) {
+			return rows.Err()
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, ddl)
+	return err
+}
+
+func sanitizeIdentifier(value string) string {
+	value = strings.TrimSpace(value)
+	for _, r := range value {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_' {
+			panic(fmt.Sprintf("unsafe SQL identifier %q", value))
+		}
+	}
+	return value
 }

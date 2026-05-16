@@ -4,12 +4,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"blitzcrank/internal/agent"
 )
 
+const (
+	issuePromptPayloadLimit = 12000
+	issueRecentEventLimit   = 8
+	issueRecentRunLimit     = 5
+	issueLineValueLimit     = 700
+)
+
 func (m *Manager) issuePrompt(thread *IssueThread, payload map[string]any, event string) string {
 	data, _ := json.MarshalIndent(payload, "", "  ")
+	payloadText := truncatePromptText(string(data), issuePromptPayloadLimit)
 	reportedMessage := stringValue(payload, "message")
 	if reportedMessage == "" {
 		reportedMessage = stringValue(section(payload, "comment"), "comment_message")
@@ -18,7 +27,17 @@ func (m *Manager) issuePrompt(thread *IssueThread, payload map[string]any, event
 Issue id: %s
 Prior thread events: %d
 Prior solver runs: %d
+
+Rolling issue summary:
+%s
+
 Reported user message:
+%s
+
+Recent thread events:
+%s
+
+Recent solver outcomes:
 %s
 
 Use the tools to investigate the issue, apply safe fixes when appropriate, validate the result, and return exactly one final Jellyseerr issue comment body.
@@ -40,7 +59,125 @@ Required final comment:
 - Keep it concise and readable as a Jellyseerr issue comment.
 
 Webhook payload:
-%s`, event, thread.IssueID, len(thread.Events), len(thread.Runs), reportedMessage, string(data))
+%s`, event, thread.IssueID, len(thread.Events), len(thread.Runs), emptyIssueSummary(thread.Summary), reportedMessage, formatIssueEvents(thread.Events, issueRecentEventLimit), formatIssueRuns(thread.Runs, issueRecentRunLimit), payloadText)
+}
+
+func emptyIssueSummary(summary string) string {
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		return "(none yet)"
+	}
+	return summary
+}
+
+func formatIssueEvents(events []ThreadEvent, limit int) string {
+	if limit < 1 {
+		limit = issueRecentEventLimit
+	}
+	start := len(events) - limit
+	if start < 0 {
+		start = 0
+	}
+	var lines []string
+	for _, event := range events[start:] {
+		message := strings.TrimSpace(event.Message)
+		if message == "" {
+			message = "(no user message)"
+		}
+		actor := strings.TrimSpace(event.Actor)
+		if actor == "" {
+			actor = "unknown"
+		}
+		lines = append(lines, fmt.Sprintf("- %s at %s by %s: %s", event.Type, formatPromptTime(event.At), actor, truncatePromptText(message, issueLineValueLimit)))
+	}
+	if len(lines) == 0 {
+		return "(none)"
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatIssueRuns(runs []RunRecord, limit int) string {
+	if limit < 1 {
+		limit = issueRecentRunLimit
+	}
+	start := len(runs) - limit
+	if start < 0 {
+		start = 0
+	}
+	var lines []string
+	for _, run := range runs[start:] {
+		status := strings.TrimSpace(run.CompletionReason)
+		if status == "" {
+			status = "completed"
+		}
+		outcome := strings.TrimSpace(run.FinalComment)
+		if outcome == "" {
+			outcome = strings.TrimSpace(run.Error)
+		}
+		if outcome == "" {
+			outcome = "(no final text)"
+		}
+		lines = append(lines, fmt.Sprintf("- %s at %s: %s", status, formatPromptTime(run.StartedAt), truncatePromptText(outcome, issueLineValueLimit)))
+	}
+	if len(lines) == 0 {
+		return "(none)"
+	}
+	return strings.Join(lines, "\n")
+}
+
+func buildIssueSummary(thread *IssueThread) string {
+	var lines []string
+	if len(thread.Events) > 0 {
+		event := thread.Events[len(thread.Events)-1]
+		message := strings.TrimSpace(event.Message)
+		if message == "" {
+			message = "(no user message)"
+		}
+		lines = append(lines, "Latest event: "+event.Type+" by "+nonEmpty(event.Actor, "unknown")+" - "+truncatePromptText(message, 260))
+	}
+	if len(thread.Runs) > 0 {
+		run := thread.Runs[len(thread.Runs)-1]
+		status := nonEmpty(run.CompletionReason, "completed")
+		outcome := strings.TrimSpace(run.FinalComment)
+		if outcome == "" {
+			outcome = strings.TrimSpace(run.Error)
+		}
+		if outcome == "" {
+			outcome = "(no final text)"
+		}
+		lines = append(lines, "Latest solver outcome: "+status+" - "+truncatePromptText(outcome, 500))
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return truncatePromptText(strings.Join(lines, "\n"), 1000)
+}
+
+func nonEmpty(value, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func formatPromptTime(value time.Time) string {
+	if value.IsZero() {
+		return "unknown time"
+	}
+	return value.UTC().Format(time.RFC3339)
+}
+
+func truncatePromptText(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if limit <= 0 {
+		return value
+	}
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit]) + "... [truncated]"
 }
 
 func (m *Manager) signedComment(comment string, request agent.Request) string {
