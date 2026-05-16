@@ -229,17 +229,16 @@ func (r *Registry) OpenAITools() []any {
 			Parameters:  objectSchema(map[string]any{"path": stringSchema("Absolute path under an allowed root")}, []string{"path"}),
 		},
 	}
-	if strings.TrimSpace(r.cfg.KagiAPIKey) != "" {
+	if strings.TrimSpace(r.cfg.ExaAPIKey) != "" {
 		defs = append(defs, toolDef{
 			Name:        "web_search",
-			Description: "Search the public web for current or external facts using Kagi. Use after local media-server tools when an answer depends on outside facts, such as release availability, language/audio-track availability, schedules, or public metadata.",
+			Description: "Search the public web for current or external facts using Exa. Use after local media-server tools when an answer depends on outside facts, such as release availability, language/audio-track availability, schedules, or public metadata.",
 			Parameters: objectSchema(map[string]any{
 				"query": stringSchema("Search query"),
 				"limit": numberSchema("Maximum search results to return, from 1 to 10"),
 			}, []string{"query"}),
 		})
 	}
-
 	out := make([]any, 0, len(defs))
 	for _, def := range defs {
 		out = append(out, map[string]any{
@@ -410,7 +409,7 @@ func (r *Registry) Call(ctx context.Context, name string, args map[string]any) (
 	case "fs_disk_usage":
 		return r.fsDiskUsage(stringArg(args, "path"))
 	case "web_search":
-		return r.kagiSearch(ctx, stringArg(args, "query"), intArg(args, "limit"))
+		return r.exaSearch(ctx, stringArg(args, "query"), intArg(args, "limit"))
 	default:
 		return nil, fmt.Errorf("unknown tool %q", name)
 	}
@@ -507,27 +506,41 @@ func (r *Registry) sabnzbd(ctx context.Context, mode string, values url.Values) 
 	return r.doJSON(ctx, http.MethodGet, r.cfg.SabnzbdBaseURL, path, "configured", "X-Blitzcrank-Internal", nil, nil)
 }
 
-func (r *Registry) kagiSearch(ctx context.Context, query string, limit int) (any, error) {
+func (r *Registry) exaSearch(ctx context.Context, query string, limit int) (any, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil, fmt.Errorf("query is required")
 	}
-	if r.cfg.KagiAPIKey == "" {
-		return nil, fmt.Errorf("Kagi search is not configured; set KAGI_API_KEY")
+	if r.cfg.ExaAPIKey == "" {
+		return nil, fmt.Errorf("Exa search is not configured; set EXA_API_KEY")
 	}
 	if limit <= 0 || limit > 10 {
 		limit = 5
 	}
 
-	values := url.Values{}
-	values.Set("q", query)
-	values.Set("limit", strconv.Itoa(limit))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(r.cfg.KagiBaseURL, "/")+"/search?"+values.Encode(), nil)
+	body := map[string]any{
+		"query":      query,
+		"type":       "auto",
+		"numResults": limit,
+		"contents": map[string]any{
+			"highlights": true,
+		},
+	}
+	data, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bot "+r.cfg.KagiAPIKey)
+	baseURL := strings.TrimSpace(r.cfg.ExaBaseURL)
+	if baseURL == "" {
+		baseURL = "https://api.exa.ai"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/search", bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("x-api-key", r.cfg.ExaAPIKey)
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := r.http.Do(req)
 	if err != nil {
@@ -535,47 +548,59 @@ func (r *Registry) kagiSearch(ctx context.Context, query string, limit int) (any
 	}
 	defer resp.Body.Close()
 
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, fmt.Errorf("Kagi search failed: %s: %s", resp.Status, strings.TrimSpace(string(data)))
+		return nil, fmt.Errorf("Exa search failed: %s: %s", resp.Status, strings.TrimSpace(string(payload)))
 	}
 
 	var envelope struct {
-		Meta map[string]any `json:"meta"`
-		Data []struct {
-			URL       string `json:"url"`
-			Title     string `json:"title"`
-			Snippet   string `json:"snippet"`
-			Published string `json:"published"`
-		} `json:"data"`
-		Error []struct {
-			Code int    `json:"code"`
-			Msg  string `json:"msg"`
-			Ref  string `json:"ref"`
-		} `json:"error"`
+		RequestID   string `json:"requestId"`
+		SearchType  string `json:"searchType"`
+		CostDollars struct {
+			Total float64 `json:"total"`
+		} `json:"costDollars"`
+		Results []struct {
+			Title           string    `json:"title"`
+			URL             string    `json:"url"`
+			PublishedDate   string    `json:"publishedDate"`
+			Author          string    `json:"author"`
+			Highlights      []string  `json:"highlights"`
+			HighlightScores []float64 `json:"highlightScores"`
+			Summary         string    `json:"summary"`
+		} `json:"results"`
+		Error any `json:"error"`
 	}
-	if err := json.Unmarshal(data, &envelope); err != nil {
+	if err := json.Unmarshal(payload, &envelope); err != nil {
 		return nil, err
 	}
-	if len(envelope.Error) > 0 {
-		return nil, fmt.Errorf("Kagi search error %d: %s", envelope.Error[0].Code, envelope.Error[0].Msg)
+	if envelope.Error != nil {
+		return nil, fmt.Errorf("Exa search error: %v", envelope.Error)
 	}
 
-	results := make([]map[string]any, 0, len(envelope.Data))
-	for _, item := range envelope.Data {
+	results := make([]map[string]any, 0, len(envelope.Results))
+	for _, item := range envelope.Results {
 		if strings.TrimSpace(item.URL) == "" && strings.TrimSpace(item.Title) == "" {
 			continue
 		}
 		result := map[string]any{
-			"title":   item.Title,
-			"url":     item.URL,
-			"snippet": item.Snippet,
+			"title":      item.Title,
+			"url":        item.URL,
+			"highlights": item.Highlights,
 		}
-		if item.Published != "" {
-			result["published"] = item.Published
+		if item.PublishedDate != "" {
+			result["published_date"] = item.PublishedDate
+		}
+		if item.Author != "" {
+			result["author"] = item.Author
+		}
+		if len(item.HighlightScores) > 0 {
+			result["highlight_scores"] = item.HighlightScores
+		}
+		if item.Summary != "" {
+			result["summary"] = item.Summary
 		}
 		results = append(results, result)
 	}
@@ -583,8 +608,14 @@ func (r *Registry) kagiSearch(ctx context.Context, query string, limit int) (any
 		"query":   query,
 		"results": results,
 	}
-	if ms, ok := envelope.Meta["ms"]; ok {
-		out["duration_ms"] = ms
+	if envelope.RequestID != "" {
+		out["request_id"] = envelope.RequestID
+	}
+	if envelope.SearchType != "" {
+		out["search_type"] = envelope.SearchType
+	}
+	if envelope.CostDollars.Total > 0 {
+		out["cost_dollars"] = envelope.CostDollars.Total
 	}
 	return out, nil
 }

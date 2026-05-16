@@ -151,7 +151,7 @@ description: Main orchestrator for Jellyseerr issue webhooks.
 - `fs_list_dir`
 - `fs_find_recent`
 - `fs_disk_usage`
-- `web_search` when `KAGI_API_KEY` is configured
+- `web_search` when `EXA_API_KEY` is configured
 
 Filesystem tools are read-only and require `FS_TOOL_ALLOWED_ROOTS` to be set to comma-separated absolute paths, such as `/downloads,/media`.
 

@@ -390,7 +390,10 @@ If the reported user message is an explicit diagnostic or test instruction, perf
 Required final comment:
 - Write in German.
 - Return a final, closed-form comment: either the issue was fixed with a short cause/result explanation, or it could not be fixed with a short blocker explanation.
+- Use at most two short sentences.
+- Answer the latest user message directly and do not repeat earlier bot comments.
 - Do not include next steps, manual-action guidance, "please check", "try again", "when available", or requests for the user to confirm.
+- Do not mention searches, retries, refreshes, or replacement attempts that were not performed.
 - For fixed issues, explain what caused the issue and what was done to fix it.
 - For unresolved issues, explain why it could not be fixed; do not instruct the user what to do next.
 - For diagnostic/test instructions, report the diagnostic action and result instead of inventing a cause/fix.

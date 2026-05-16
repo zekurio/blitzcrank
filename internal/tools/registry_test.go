@@ -35,10 +35,10 @@ func TestOpenAIToolsRequiredIsAlwaysArray(t *testing.T) {
 
 func TestWebSearchToolOnlyRegisteredWhenConfigured(t *testing.T) {
 	if hasTool(NewRegistry(config.Config{}), "web_search") {
-		t.Fatal("web_search registered without KAGI_API_KEY")
+		t.Fatal("web_search registered without EXA_API_KEY")
 	}
-	if !hasTool(NewRegistry(config.Config{KagiAPIKey: "secret"}), "web_search") {
-		t.Fatal("web_search not registered with KAGI_API_KEY")
+	if !hasTool(NewRegistry(config.Config{ExaAPIKey: "secret"}), "web_search") {
+		t.Fatal("web_search not registered with EXA_API_KEY")
 	}
 }
 
@@ -115,36 +115,48 @@ func TestSeerrResolveIssueRequestShape(t *testing.T) {
 	}
 }
 
-func TestKagiWebSearchRequestShape(t *testing.T) {
-	var auth, rawQuery string
+func TestExaWebSearchRequestShape(t *testing.T) {
+	var apiKey string
+	var body map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/search" {
+		if r.Method != http.MethodPost || r.URL.Path != "/search" {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
-		auth = r.Header.Get("Authorization")
-		rawQuery = r.URL.RawQuery
+		apiKey = r.Header.Get("x-api-key")
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
-			"meta":{"ms":42},
-			"data":[{"title":"Example","url":"https://example.test","snippet":"A result","published":"2026-05-16T00:00:00Z"}]
+			"requestId":"req_123",
+			"searchType":"neural",
+			"costDollars":{"total":0.001},
+			"results":[{
+				"title":"Example",
+				"url":"https://example.test",
+				"publishedDate":"2026-05-16",
+				"author":"Author",
+				"highlights":["A relevant result"],
+				"highlightScores":[0.91]
+			}]
 		}`))
 	}))
 	defer server.Close()
 
-	registry := NewRegistry(config.Config{KagiBaseURL: server.URL, KagiAPIKey: "secret"})
+	registry := NewRegistry(config.Config{ExaBaseURL: server.URL, ExaAPIKey: "secret"})
 	out, err := registry.Call(context.Background(), "web_search", map[string]any{"query": "project hail mary release", "limit": float64(3)})
 	if err != nil {
 		t.Fatalf("web_search error = %v", err)
 	}
-	if auth != "Bot secret" {
-		t.Fatalf("Authorization = %q", auth)
+	if apiKey != "secret" {
+		t.Fatalf("x-api-key = %q", apiKey)
 	}
-	values, err := url.ParseQuery(rawQuery)
-	if err != nil {
-		t.Fatal(err)
+	if body["query"] != "project hail mary release" || body["type"] != "auto" || body["numResults"].(float64) != 3 {
+		t.Fatalf("body = %#v", body)
 	}
-	if values.Get("q") != "project hail mary release" || values.Get("limit") != "3" {
-		t.Fatalf("query = %q", rawQuery)
+	contents := body["contents"].(map[string]any)
+	if contents["highlights"] != true {
+		t.Fatalf("contents = %#v", contents)
 	}
 	results := out.(map[string]any)["results"].([]map[string]any)
 	if len(results) != 1 || results[0]["url"] != "https://example.test" {
@@ -152,17 +164,17 @@ func TestKagiWebSearchRequestShape(t *testing.T) {
 	}
 }
 
-func TestKagiWebSearchEnvelopeError(t *testing.T) {
+func TestExaWebSearchHTTPError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":null,"error":[{"code":101,"msg":"Insufficient credit"}]}`))
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"Invalid API key"}`))
 	}))
 	defer server.Close()
 
-	registry := NewRegistry(config.Config{KagiBaseURL: server.URL, KagiAPIKey: "secret"})
+	registry := NewRegistry(config.Config{ExaBaseURL: server.URL, ExaAPIKey: "secret"})
 	_, err := registry.Call(context.Background(), "web_search", map[string]any{"query": "test"})
-	if err == nil || !strings.Contains(err.Error(), "Insufficient credit") {
-		t.Fatalf("error = %v, want Kagi envelope error", err)
+	if err == nil || !strings.Contains(err.Error(), "Invalid API key") {
+		t.Fatalf("error = %v, want Exa HTTP error", err)
 	}
 }
 
