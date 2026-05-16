@@ -188,6 +188,16 @@ func (r *Registry) OpenAITools() []any {
 			Parameters:  objectSchema(map[string]any{"path": stringSchema("Absolute path under an allowed root")}, []string{"path"}),
 		},
 	}
+	if strings.TrimSpace(r.cfg.KagiAPIKey) != "" {
+		defs = append(defs, toolDef{
+			Name:        "web_search",
+			Description: "Search the public web for current or external facts using Kagi. Use this only when local media-server tools cannot answer the question.",
+			Parameters: objectSchema(map[string]any{
+				"query": stringSchema("Search query"),
+				"limit": numberSchema("Maximum search results to return, from 1 to 10"),
+			}, []string{"query"}),
+		})
+	}
 
 	out := make([]any, 0, len(defs))
 	for _, def := range defs {
@@ -321,6 +331,8 @@ func (r *Registry) Call(ctx context.Context, name string, args map[string]any) (
 		return r.fsFindRecent(stringArg(args, "root"), intArg(args, "limit"))
 	case "fs_disk_usage":
 		return r.fsDiskUsage(stringArg(args, "path"))
+	case "web_search":
+		return r.kagiSearch(ctx, stringArg(args, "query"), intArg(args, "limit"))
 	default:
 		return nil, fmt.Errorf("unknown tool %q", name)
 	}
@@ -359,6 +371,88 @@ func (r *Registry) sabnzbd(ctx context.Context, mode string, values url.Values) 
 	values.Set("apikey", r.cfg.SabnzbdAPIKey)
 	path := "/api?" + values.Encode()
 	return r.doJSON(ctx, http.MethodGet, r.cfg.SabnzbdBaseURL, path, "configured", "X-Blitzcrank-Internal", nil, nil)
+}
+
+func (r *Registry) kagiSearch(ctx context.Context, query string, limit int) (any, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, fmt.Errorf("query is required")
+	}
+	if r.cfg.KagiAPIKey == "" {
+		return nil, fmt.Errorf("Kagi search is not configured; set KAGI_API_KEY")
+	}
+	if limit <= 0 || limit > 10 {
+		limit = 5
+	}
+
+	values := url.Values{}
+	values.Set("q", query)
+	values.Set("limit", strconv.Itoa(limit))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(r.cfg.KagiBaseURL, "/")+"/search?"+values.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bot "+r.cfg.KagiAPIKey)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := r.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, fmt.Errorf("Kagi search failed: %s: %s", resp.Status, strings.TrimSpace(string(data)))
+	}
+
+	var envelope struct {
+		Meta map[string]any `json:"meta"`
+		Data []struct {
+			URL       string `json:"url"`
+			Title     string `json:"title"`
+			Snippet   string `json:"snippet"`
+			Published string `json:"published"`
+		} `json:"data"`
+		Error []struct {
+			Code int    `json:"code"`
+			Msg  string `json:"msg"`
+			Ref  string `json:"ref"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return nil, err
+	}
+	if len(envelope.Error) > 0 {
+		return nil, fmt.Errorf("Kagi search error %d: %s", envelope.Error[0].Code, envelope.Error[0].Msg)
+	}
+
+	results := make([]map[string]any, 0, len(envelope.Data))
+	for _, item := range envelope.Data {
+		if strings.TrimSpace(item.URL) == "" && strings.TrimSpace(item.Title) == "" {
+			continue
+		}
+		result := map[string]any{
+			"title":   item.Title,
+			"url":     item.URL,
+			"snippet": item.Snippet,
+		}
+		if item.Published != "" {
+			result["published"] = item.Published
+		}
+		results = append(results, result)
+	}
+	out := map[string]any{
+		"query":   query,
+		"results": results,
+	}
+	if ms, ok := envelope.Meta["ms"]; ok {
+		out["duration_ms"] = ms
+	}
+	return out, nil
 }
 
 func (r *Registry) fsStat(path string) (any, error) {
