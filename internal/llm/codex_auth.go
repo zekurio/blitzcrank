@@ -2,7 +2,6 @@ package llm
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"blitzcrank/internal/config"
@@ -281,132 +279,4 @@ func credentialFromTokens(tokens tokenResponse) CodexCredential {
 		ExpiresAt:    time.Now().Add(expires),
 		UpdatedAt:    time.Now(),
 	}
-}
-
-func loadCodexCredential(cfg config.Config) (CodexCredential, error) {
-	path := CodexAuthPath(cfg)
-	unlock, err := lockAuthStore(path)
-	if err != nil {
-		return CodexCredential{}, err
-	}
-	defer unlock()
-
-	store, err := loadAuthStoreUnlocked(path)
-	if err != nil {
-		return CodexCredential{}, err
-	}
-	cred, ok := store.Profiles[cfg.CodexAuthProfile]
-	if !ok {
-		return CodexCredential{}, fmt.Errorf("no Codex credentials for profile %q; run `blitzcrank codex login`", cfg.CodexAuthProfile)
-	}
-	return cred, nil
-}
-
-func saveCodexCredential(cfg config.Config, cred CodexCredential) error {
-	path := CodexAuthPath(cfg)
-	unlock, err := lockAuthStore(path)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-
-	store, err := loadAuthStoreUnlocked(path)
-	if err != nil {
-		return err
-	}
-	store.Profiles[cfg.CodexAuthProfile] = cred
-	return saveAuthStoreUnlocked(path, store)
-}
-
-func loadAuthStoreUnlocked(path string) (AuthStore, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return AuthStore{Version: 1, Profiles: map[string]CodexCredential{}}, nil
-		}
-		return AuthStore{}, err
-	}
-	var store AuthStore
-	if err := json.Unmarshal(data, &store); err != nil {
-		return AuthStore{}, err
-	}
-	if store.Profiles == nil {
-		store.Profiles = map[string]CodexCredential{}
-	}
-	if store.Version == 0 {
-		store.Version = 1
-	}
-	return store, nil
-}
-
-func saveAuthStoreUnlocked(path string, store AuthStore) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(store, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
-}
-
-func lockAuthStore(path string) (func(), error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, err
-	}
-	lockPath := path + ".lock"
-	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-	return func() {
-		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-		_ = file.Close()
-	}, nil
-}
-
-func extractAccountID(tokens ...string) string {
-	for _, token := range tokens {
-		claims := jwtClaims(token)
-		if value, ok := claims["chatgpt_account_id"].(string); ok && value != "" {
-			return value
-		}
-		if nested, ok := claims["https://api.openai.com/auth"].(map[string]any); ok {
-			if value, ok := nested["chatgpt_account_id"].(string); ok && value != "" {
-				return value
-			}
-		}
-		if organizations, ok := claims["organizations"].([]any); ok && len(organizations) > 0 {
-			if org, ok := organizations[0].(map[string]any); ok {
-				if value, ok := org["id"].(string); ok && value != "" {
-					return value
-				}
-			}
-		}
-	}
-	return ""
-}
-
-func jwtClaims(token string) map[string]any {
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		return map[string]any{}
-	}
-	data, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return map[string]any{}
-	}
-	var claims map[string]any
-	if err := json.Unmarshal(data, &claims); err != nil {
-		return map[string]any{}
-	}
-	return claims
 }
