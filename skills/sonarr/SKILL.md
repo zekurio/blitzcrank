@@ -8,6 +8,9 @@ description: Use when diagnosing or safely fixing Sonarr series queue, refresh, 
 - Use Sonarr tools for series issues, especially payloads with `media_type` tv or a TVDB id.
 - Lookup the series by TVDB id before queue actions.
 - Read the Sonarr queue when the issue suggests stuck, failed, missing, or delayed episode downloads/imports.
+- For questions about an episode's downloaded file metadata, use `sonarr_get_episode_file` when an `episodeFileId` is known, or `sonarr_get_episode_files_by_series_id` to inspect file quality, languages, and Sonarr `mediaInfo` across a series or season.
+- For playback-track questions such as "why is German audio missing?", prefer Jellyfin media-info tools to verify actual streams, then use Sonarr file metadata to explain how the release was selected or imported.
+- Use web search only after local tools establish the stored file's tracks, for example to check whether the requested audio language exists for that title or release.
 - If a fresh release failed because it was corrupt, unpack failed, or download/import failed and Sonarr blocklisted it, inspect `sonarr_get_blocklist`.
 - Only delete a blocklist item when it clearly matches the affected series/episode/release and the blocklist reason explains the missing episode.
 - After clearing the matching blocklist entry, trigger `sonarr_search_episode` for the specific episode id, not a broad series search.

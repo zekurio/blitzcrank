@@ -8,7 +8,7 @@ It currently provides:
 - A Jellyseerr webhook HTTP endpoint.
 - Skill-driven agent behavior from `skills/*/SKILL.md`.
 - OpenAI-compatible chat completions, including OpenRouter-compatible headers.
-- Tool calls for Jellyseerr issues/requests, Jellyfin item lookup, Sonarr queue/series lookup, and Radarr queue/movie lookup.
+- Tool calls for Jellyseerr issues/requests, Jellyfin item and stream lookup, Sonarr queue/series/file metadata lookup, and Radarr queue/movie/file metadata lookup.
 
 ## Configuration
 
@@ -104,16 +104,14 @@ Edit the built-in system prompt in `prompts/system.md`. The prompt supports thes
 - `{{bot_name}}`
 - `{{current_time}}`
 
-Put behavior and response rules in Codex-style skill files under `skills/<name>/SKILL.md`. Skills are loaded alphabetically and appended to the built-in system prompt.
+Put behavior and response rules in Codex-style skill files under `skills/<name>/SKILL.md`. Skills are loaded alphabetically and appended to the built-in system prompt as domain-specific instructions for the same agent run.
 
-Agent runs use `MODEL`, defaulting to `gpt-5.5` when unset. If `REASONING_EFFORT` is empty, Blitzcrank uses curated defaults: `gpt-5.4-mini` uses `high`, `gpt-5.4` uses `medium`, and `gpt-5.5` uses `low`. Set `REASONING_EFFORT` to override that globally. Skills can optionally override both values in frontmatter:
+Agent runs use `MODEL`, defaulting to `gpt-5.5` when unset. If `REASONING_EFFORT` is empty, Blitzcrank uses curated defaults: `gpt-5.4-mini` uses `high`, `gpt-5.4` uses `medium`, and `gpt-5.5` uses `low`. Set `REASONING_EFFORT` to override that globally.
 
 ```md
 ---
 name: seerr-issue-solver
 description: Main orchestrator for Jellyseerr issue webhooks.
-model: gpt-5.5
-reasoning_effort: high
 ---
 ```
 
@@ -123,18 +121,24 @@ reasoning_effort: high
 - `seerr_get_issue`
 - `jellyfin_search_items`
 - `jellyfin_get_item`
+- `jellyfin_get_item_media_info`
+- `jellyfin_get_child_media_info`
 - `jellyfin_refresh_item`
 - `sonarr_get_series_by_tvdb_id`
 - `sonarr_get_queue`
 - `sonarr_get_blocklist`
 - `sonarr_delete_blocklist_item`
 - `sonarr_get_episodes_by_series_id`
+- `sonarr_get_episode_file`
+- `sonarr_get_episode_files_by_series_id`
 - `sonarr_search_episode`
 - `sonarr_search_season`
 - `sonarr_search_series`
 - `sonarr_refresh_series`
 - `sonarr_retry_queue_item`
 - `radarr_get_movie_by_tmdb_id`
+- `radarr_get_movie_by_id`
+- `radarr_get_movie_file`
 - `radarr_get_queue`
 - `radarr_get_blocklist`
 - `radarr_delete_blocklist_item`
@@ -147,6 +151,7 @@ reasoning_effort: high
 - `fs_list_dir`
 - `fs_find_recent`
 - `fs_disk_usage`
+- `web_search` when `KAGI_API_KEY` is configured
 
 Filesystem tools are read-only and require `FS_TOOL_ALLOWED_ROOTS` to be set to comma-separated absolute paths, such as `/downloads,/media`.
 
