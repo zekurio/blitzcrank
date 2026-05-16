@@ -76,7 +76,7 @@ func (a *Agent) Respond(ctx context.Context, req Request) (string, error) {
 		for _, call := range choice.Message.ToolCalls {
 			result, err := a.executeTool(ctx, call)
 			if err != nil {
-				result = map[string]any{"error": err.Error()}
+				result = toolErrorResult(call.Function.Name, err)
 			}
 			payload, _ := json.Marshal(result)
 			messages = append(messages, llm.Message{
@@ -99,6 +99,40 @@ func (a *Agent) executeTool(ctx context.Context, call llm.ToolCall) (any, error)
 	}
 	log.Printf("agent tool call: %s", call.Function.Name)
 	return a.registry.Call(ctx, call.Function.Name, args)
+}
+
+func toolErrorResult(name string, err error) map[string]any {
+	message := strings.TrimSpace(err.Error())
+	out := map[string]any{
+		"ok":    false,
+		"tool":  name,
+		"error": compactToolError(name, message),
+	}
+	if category := toolErrorCategory(message); category != "" {
+		out["category"] = category
+	}
+	return out
+}
+
+func compactToolError(name, message string) string {
+	if len(message) > 240 {
+		return message[:240] + "..."
+	}
+	return message
+}
+
+func toolErrorCategory(message string) string {
+	lower := strings.ToLower(message)
+	switch {
+	case strings.Contains(lower, "not configured"):
+		return "not_configured"
+	case strings.Contains(lower, "unauthorized") || strings.Contains(lower, "401"):
+		return "unauthorized"
+	case strings.Contains(lower, "rate") || strings.Contains(lower, "429"):
+		return "rate_limited"
+	default:
+		return ""
+	}
 }
 
 func (a *Agent) ModelName(req Request) string {

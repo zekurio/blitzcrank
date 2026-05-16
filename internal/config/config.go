@@ -31,8 +31,8 @@ type Config struct {
 	SabnzbdBaseURL  string
 	SabnzbdAPIKey   string
 	FSAllowedRoots  []string
-	KagiBaseURL     string
-	KagiAPIKey      string
+	ExaBaseURL      string
+	ExaAPIKey       string
 
 	LLMProvider       string
 	CodexAuthProfile  string
@@ -92,8 +92,8 @@ func load(dotenvPath string, validate bool) (Config, error) {
 		SabnzbdBaseURL:         os.Getenv("SABNZBD_BASE_URL"),
 		SabnzbdAPIKey:          os.Getenv("SABNZBD_API_KEY"),
 		FSAllowedRoots:         listEnv("FS_TOOL_ALLOWED_ROOTS"),
-		KagiBaseURL:            getenv("KAGI_BASE_URL", "https://kagi.com/api/v0"),
-		KagiAPIKey:             os.Getenv("KAGI_API_KEY"),
+		ExaBaseURL:             getenv("EXA_BASE_URL", "https://api.exa.ai"),
+		ExaAPIKey:              os.Getenv("EXA_API_KEY"),
 		LLMProvider:            getenv("LLM_PROVIDER", "openai-compatible"),
 		CodexAuthProfile:       getenv("CODEX_AUTH_PROFILE", "default"),
 		CodexAuthStore:         getenv("CODEX_AUTH_STORE", ""),
