@@ -552,6 +552,9 @@ func (r *Registry) doJSON(ctx context.Context, method, baseURL, path, apiKey, ap
 }
 
 func objectSchema(properties map[string]any, required []string) map[string]any {
+	if required == nil {
+		required = []string{}
+	}
 	return map[string]any{
 		"type":                 "object",
 		"properties":           properties,
