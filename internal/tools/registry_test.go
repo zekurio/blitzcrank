@@ -33,6 +33,15 @@ func TestOpenAIToolsRequiredIsAlwaysArray(t *testing.T) {
 	}
 }
 
+func TestWebSearchToolOnlyRegisteredWhenConfigured(t *testing.T) {
+	if hasTool(NewRegistry(config.Config{}), "web_search") {
+		t.Fatal("web_search registered without KAGI_API_KEY")
+	}
+	if !hasTool(NewRegistry(config.Config{KagiAPIKey: "secret"}), "web_search") {
+		t.Fatal("web_search not registered with KAGI_API_KEY")
+	}
+}
+
 func TestFSToolsBlockOutsideAllowedRoot(t *testing.T) {
 	allowed := t.TempDir()
 	outside := t.TempDir()
@@ -81,6 +90,57 @@ func TestSabnzbdHistoryRequestShape(t *testing.T) {
 		if !containsQueryPart(gotQuery, want) {
 			t.Fatalf("query %q missing %q", gotQuery, want)
 		}
+	}
+}
+
+func TestKagiWebSearchRequestShape(t *testing.T) {
+	var auth, rawQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/search" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		auth = r.Header.Get("Authorization")
+		rawQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"meta":{"ms":42},
+			"data":[{"title":"Example","url":"https://example.test","snippet":"A result","published":"2026-05-16T00:00:00Z"}]
+		}`))
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(config.Config{KagiBaseURL: server.URL, KagiAPIKey: "secret"})
+	out, err := registry.Call(context.Background(), "web_search", map[string]any{"query": "project hail mary release", "limit": float64(3)})
+	if err != nil {
+		t.Fatalf("web_search error = %v", err)
+	}
+	if auth != "Bot secret" {
+		t.Fatalf("Authorization = %q", auth)
+	}
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values.Get("q") != "project hail mary release" || values.Get("limit") != "3" {
+		t.Fatalf("query = %q", rawQuery)
+	}
+	results := out.(map[string]any)["results"].([]map[string]any)
+	if len(results) != 1 || results[0]["url"] != "https://example.test" {
+		t.Fatalf("results = %#v", results)
+	}
+}
+
+func TestKagiWebSearchEnvelopeError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":null,"error":[{"code":101,"msg":"Insufficient credit"}]}`))
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(config.Config{KagiBaseURL: server.URL, KagiAPIKey: "secret"})
+	_, err := registry.Call(context.Background(), "web_search", map[string]any{"query": "test"})
+	if err == nil || !strings.Contains(err.Error(), "Insufficient credit") {
+		t.Fatalf("error = %v, want Kagi envelope error", err)
 	}
 }
 
@@ -216,4 +276,15 @@ func containsQueryPart(query, part string) bool {
 	}
 	key, value, ok := strings.Cut(part, "=")
 	return ok && values.Get(key) == value
+}
+
+func hasTool(registry *Registry, name string) bool {
+	for _, raw := range registry.OpenAITools() {
+		tool := raw.(map[string]any)
+		function := tool["function"].(map[string]any)
+		if function["name"] == name {
+			return true
+		}
+	}
+	return false
 }
