@@ -84,6 +84,7 @@ func NewManager(cfg config.Config, runner Runner, registry *tools.Registry, stat
 func (m *Manager) HandleWebhook(ctx context.Context, payload map[string]any) (Result, error) {
 	event := classify(payload)
 	issueID := issueID(payload)
+	log.Printf("jellyseerr webhook classified: issue=%s event=%s notification=%q actor=%q", issueID, event, stringValue(payload, "notification_type"), actor(payload))
 	if issueID == "" {
 		return Result{Ignored: true, Reason: "payload has no issue_id", Event: event}, nil
 	}
@@ -156,6 +157,7 @@ func (m *Manager) appendEvent(issueID, event string, payload map[string]any) *Is
 		"payload": payload,
 		"at":      now.Format(time.RFC3339Nano),
 	})
+	log.Printf("jellyseerr thread event recorded: issue=%s event=%s actor=%q events=%d", issueID, event, actor(payload), len(thread.Events))
 	return thread
 }
 
@@ -172,6 +174,7 @@ func (m *Manager) run(ctx context.Context, thread *IssueThread, payload map[stri
 		Content: prompt,
 		Skill:   "seerr-issue-solver",
 	}
+	log.Printf("jellyseerr issue run started: issue=%s event=%s actor=%q prior_events=%d prior_runs=%d", thread.IssueID, event, request.Author, len(thread.Events), len(thread.Runs))
 
 	comment, err := m.runner.Respond(runCtx, request)
 	record.CompletedAt = time.Now().UTC()
@@ -179,21 +182,25 @@ func (m *Manager) run(ctx context.Context, thread *IssueThread, payload map[stri
 		record.Error = err.Error()
 		record.CompletionReason = "agent run failed"
 		m.recordRun(thread, record)
+		log.Printf("jellyseerr issue run failed: issue=%s event=%s duration=%s error=%v", thread.IssueID, event, record.CompletedAt.Sub(record.StartedAt).Round(time.Millisecond), err)
 		return err
 	}
 
 	comment = m.signedComment(comment, request)
 	record.FinalComment = comment
 	record.Attribution = m.commentAttribution()
+	log.Printf("jellyseerr issue run completed: issue=%s event=%s duration=%s comment_bytes=%d", thread.IssueID, event, record.CompletedAt.Sub(record.StartedAt).Round(time.Millisecond), len(comment))
 	if _, err := m.tools.CommentIssue(runCtx, thread.IssueID, comment); err != nil {
 		record.Error = err.Error()
 		record.CompletionReason = "final comment failed"
 		m.recordRun(thread, record)
+		log.Printf("jellyseerr final comment failed: issue=%s event=%s error=%v", thread.IssueID, event, err)
 		return fmt.Errorf("post final issue comment: %w", err)
 	}
 	record.Posted = true
 	record.CompletionReason = "final comment posted"
 	m.recordRun(thread, record)
+	log.Printf("jellyseerr final comment posted: issue=%s event=%s attribution=%s", thread.IssueID, event, record.Attribution)
 	return nil
 }
 
@@ -233,6 +240,7 @@ func (m *Manager) complete(thread *IssueThread, reason string) {
 		"completion_reason": reason,
 		"at":                now.Format(time.RFC3339Nano),
 	})
+	log.Printf("jellyseerr issue completed: issue=%s reason=%q", thread.IssueID, reason)
 	if err := m.persist(thread); err != nil {
 		log.Printf("persist issue thread %s: %v", thread.IssueID, err)
 	}
