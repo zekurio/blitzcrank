@@ -162,7 +162,6 @@ Set `CRON_ENABLED=true` to run Markdown-defined automations from `AUTOMATIONS_DI
 ```env
 CRON_ENABLED=true
 AUTOMATIONS_DIR=automations
-AUTOMATION_TASKS=daily-health-check
 ```
 
 Each automation is a Markdown file with frontmatter:
@@ -187,4 +186,4 @@ schedule: "cron: */30 * * * *"
 schedule: "@hourly"
 ```
 
-`AUTOMATION_TASKS` is an optional comma-separated filter. Leave it empty to run every `*.md` automation in the directory. Results are logged and mirrored to Discord only when the Discord listener is configured.
+Every `*.md` automation in the directory is loaded. Results are logged and mirrored to Discord only when the Discord listener is configured.
