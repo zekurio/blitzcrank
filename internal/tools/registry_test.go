@@ -251,6 +251,139 @@ func TestJellyfinChildMediaInfoRequestShape(t *testing.T) {
 	}
 }
 
+func TestJellyfinListItemsRequestShape(t *testing.T) {
+	var gotPath string
+	var rawQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/Users/u1/Items" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		gotPath = r.URL.Path
+		rawQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"Items":[],"TotalRecordCount":0}`))
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(config.Config{JellyfinBaseURL: server.URL, JellyfinAPIKey: "secret"})
+	args := map[string]any{
+		"user_id":    "u1",
+		"parent_id":  "library1",
+		"item_types": "Movie,Series",
+		"query":      "matrix",
+		"recursive":  true,
+		"limit":      float64(7),
+	}
+	if _, err := registry.Call(context.Background(), "jellyfin_list_items", args); err != nil {
+		t.Fatalf("jellyfin_list_items error = %v", err)
+	}
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/Users/u1/Items" {
+		t.Fatalf("path = %q", gotPath)
+	}
+	if values.Get("ParentId") != "library1" || values.Get("IncludeItemTypes") != "Movie,Series" || values.Get("SearchTerm") != "matrix" || values.Get("Recursive") != "true" || values.Get("Limit") != "7" {
+		t.Fatalf("query = %q", rawQuery)
+	}
+	if !strings.Contains(values.Get("Fields"), "UserData") {
+		t.Fatalf("Fields = %q, want UserData", values.Get("Fields"))
+	}
+}
+
+func TestJellyfinUserReadTools(t *testing.T) {
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.RequestURI())
+		if r.Header.Get("X-Emby-Token") != "secret" {
+			t.Fatalf("X-Emby-Token = %q", r.Header.Get("X-Emby-Token"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/Users":
+			_, _ = w.Write([]byte(`[{"Id":"u1","Name":"Alice"},{"Id":"u2","Name":"Bob"}]`))
+		case "/Users/u1":
+			_, _ = w.Write([]byte(`{"Id":"u1","Name":"Alice"}`))
+		case "/Users/u1/Views":
+			_, _ = w.Write([]byte(`{"Items":[{"Id":"v1","Name":"Movies"}]}`))
+		case "/Users/u1/Items/i1":
+			_, _ = w.Write([]byte(`{"Id":"i1","Name":"Movie","UserData":{"Played":true,"PlayCount":1}}`))
+		case "/UserItems/i1/UserData":
+			if r.URL.Query().Get("userId") != "u1" {
+				t.Fatalf("userId = %q", r.URL.Query().Get("userId"))
+			}
+			_, _ = w.Write([]byte(`{"Played":true,"PlayCount":1}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.RequestURI())
+		}
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(config.Config{JellyfinBaseURL: server.URL, JellyfinAPIKey: "secret"})
+	if _, err := registry.Call(context.Background(), "jellyfin_list_users", map[string]any{}); err != nil {
+		t.Fatalf("jellyfin_list_users error = %v", err)
+	}
+	found, err := registry.Call(context.Background(), "jellyfin_find_user", map[string]any{"query": "ali"})
+	if err != nil {
+		t.Fatalf("jellyfin_find_user error = %v", err)
+	}
+	users := found.(map[string]any)["users"].([]map[string]any)
+	if len(users) != 1 || users[0]["name"] != "Alice" {
+		t.Fatalf("users = %#v", users)
+	}
+	if _, err := registry.Call(context.Background(), "jellyfin_get_user", map[string]any{"user_id": "u1"}); err != nil {
+		t.Fatalf("jellyfin_get_user error = %v", err)
+	}
+	if _, err := registry.Call(context.Background(), "jellyfin_get_user_views", map[string]any{"user_id": "u1"}); err != nil {
+		t.Fatalf("jellyfin_get_user_views error = %v", err)
+	}
+	if _, err := registry.Call(context.Background(), "jellyfin_get_user_item", map[string]any{"user_id": "u1", "item_id": "i1"}); err != nil {
+		t.Fatalf("jellyfin_get_user_item error = %v", err)
+	}
+	if _, err := registry.Call(context.Background(), "jellyfin_get_item_user_data", map[string]any{"user_id": "u1", "item_id": "i1"}); err != nil {
+		t.Fatalf("jellyfin_get_item_user_data error = %v", err)
+	}
+
+	joined := strings.Join(paths, "\n")
+	for _, want := range []string{"/Users", "/Users/u1", "/Users/u1/Views", "/Users/u1/Items/i1", "/UserItems/i1/UserData"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("paths = %q, want %q", joined, want)
+		}
+	}
+	if !strings.Contains(joined, "Fields=") {
+		t.Fatalf("paths = %q, want user item fields", joined)
+	}
+}
+
+func TestJellyfinLibraryAndSessionTools(t *testing.T) {
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/Library/VirtualFolders":
+			_, _ = w.Write([]byte(`[{"Name":"Movies","CollectionType":"movies"}]`))
+		case "/Sessions":
+			_, _ = w.Write([]byte(`[{"Id":"s1","UserName":"Alice"}]`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(config.Config{JellyfinBaseURL: server.URL, JellyfinAPIKey: "secret"})
+	if _, err := registry.Call(context.Background(), "jellyfin_list_libraries", map[string]any{}); err != nil {
+		t.Fatalf("jellyfin_list_libraries error = %v", err)
+	}
+	if _, err := registry.Call(context.Background(), "jellyfin_get_sessions", map[string]any{}); err != nil {
+		t.Fatalf("jellyfin_get_sessions error = %v", err)
+	}
+	if strings.Join(paths, ",") != "/Library/VirtualFolders,/Sessions" {
+		t.Fatalf("paths = %#v", paths)
+	}
+}
+
 func TestSonarrSearchEpisodeCommandShape(t *testing.T) {
 	var body map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
