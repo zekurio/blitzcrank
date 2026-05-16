@@ -52,6 +52,11 @@ func (r *Registry) OpenAITools() []any {
 			Parameters:  objectSchema(map[string]any{"issue_id": stringSchema("Jellyseerr issue id")}, []string{"issue_id"}),
 		},
 		{
+			Name:        "seerr_resolve_issue",
+			Description: "Mark a Jellyseerr/Overseerr issue as resolved after the fix has been validated with tools.",
+			Parameters:  objectSchema(map[string]any{"issue_id": stringSchema("Jellyseerr issue id")}, []string{"issue_id"}),
+		},
+		{
 			Name:        "jellyfin_search_items",
 			Description: "Search Jellyfin library items by name.",
 			Parameters:  objectSchema(map[string]any{"query": stringSchema("Movie, series, episode, or person search text")}, []string{"query"}),
@@ -60,6 +65,19 @@ func (r *Registry) OpenAITools() []any {
 			Name:        "jellyfin_get_item",
 			Description: "Fetch a Jellyfin item by item_id.",
 			Parameters:  objectSchema(map[string]any{"item_id": stringSchema("Jellyfin item id")}, []string{"item_id"}),
+		},
+		{
+			Name:        "jellyfin_get_item_media_info",
+			Description: "Fetch concise Jellyfin media-source and stream metadata for one movie, episode, or video item, including available audio and subtitle tracks.",
+			Parameters:  objectSchema(map[string]any{"item_id": stringSchema("Jellyfin item id")}, []string{"item_id"}),
+		},
+		{
+			Name:        "jellyfin_get_child_media_info",
+			Description: "Fetch concise Jellyfin media-source and stream metadata for video children under a series, season, folder, or collection item.",
+			Parameters: objectSchema(map[string]any{
+				"item_id": stringSchema("Parent Jellyfin item id"),
+				"limit":   numberSchema("Maximum child video items to return, from 1 to 100"),
+			}, []string{"item_id"}),
 		},
 		{
 			Name:        "jellyfin_refresh_item",
@@ -90,6 +108,19 @@ func (r *Registry) OpenAITools() []any {
 			Name:        "sonarr_get_episodes_by_series_id",
 			Description: "List Sonarr episodes for a known series id so a specific missing episode can be searched.",
 			Parameters:  objectSchema(map[string]any{"series_id": stringSchema("Sonarr series id")}, []string{"series_id"}),
+		},
+		{
+			Name:        "sonarr_get_episode_file",
+			Description: "Fetch Sonarr episode-file metadata by episode_file_id, including quality, languages, and mediaInfo when Sonarr has it.",
+			Parameters:  objectSchema(map[string]any{"episode_file_id": stringSchema("Sonarr episode file id")}, []string{"episode_file_id"}),
+		},
+		{
+			Name:        "sonarr_get_episode_files_by_series_id",
+			Description: "List Sonarr episode-file metadata for a known series, optionally narrowed to one season, including quality, languages, and mediaInfo when Sonarr has it.",
+			Parameters: objectSchema(map[string]any{
+				"series_id":     stringSchema("Sonarr series id"),
+				"season_number": stringSchema("Optional season number to narrow the file list"),
+			}, []string{"series_id"}),
 		},
 		{
 			Name:        "sonarr_search_episode",
@@ -123,6 +154,16 @@ func (r *Registry) OpenAITools() []any {
 			Name:        "radarr_get_movie_by_tmdb_id",
 			Description: "Find a Radarr movie by TMDB id.",
 			Parameters:  objectSchema(map[string]any{"tmdb_id": stringSchema("TMDB id")}, []string{"tmdb_id"}),
+		},
+		{
+			Name:        "radarr_get_movie_by_id",
+			Description: "Fetch a Radarr movie by movie_id, including movieFile metadata when Radarr has it.",
+			Parameters:  objectSchema(map[string]any{"movie_id": stringSchema("Radarr movie id")}, []string{"movie_id"}),
+		},
+		{
+			Name:        "radarr_get_movie_file",
+			Description: "Fetch Radarr movie-file metadata by movie_file_id, including quality, languages, and mediaInfo when Radarr has it.",
+			Parameters:  objectSchema(map[string]any{"movie_file_id": stringSchema("Radarr movie file id")}, []string{"movie_file_id"}),
 		},
 		{
 			Name:        "radarr_get_queue",
@@ -221,11 +262,17 @@ func (r *Registry) Call(ctx context.Context, name string, args map[string]any) (
 		return r.seerr(ctx, http.MethodGet, "/api/v1/issue/"+pathID(args, "issue_id"), nil)
 	case "seerr_comment_issue":
 		return r.CommentIssue(ctx, stringArg(args, "issue_id"), stringArg(args, "message"))
+	case "seerr_resolve_issue":
+		return r.ResolveIssue(ctx, stringArg(args, "issue_id"))
 	case "jellyfin_search_items":
 		values := url.Values{"searchTerm": []string{stringArg(args, "query")}, "recursive": []string{"true"}, "limit": []string{"10"}}
 		return r.jellyfin(ctx, http.MethodGet, "/Items?"+values.Encode(), nil)
 	case "jellyfin_get_item":
 		return r.jellyfin(ctx, http.MethodGet, "/Items/"+pathID(args, "item_id"), nil)
+	case "jellyfin_get_item_media_info":
+		return r.jellyfinItemMediaInfo(ctx, stringArg(args, "item_id"))
+	case "jellyfin_get_child_media_info":
+		return r.jellyfinChildMediaInfo(ctx, stringArg(args, "item_id"), intArg(args, "limit"))
 	case "jellyfin_refresh_item":
 		values := url.Values{
 			"Recursive":           []string{"true"},
@@ -255,6 +302,25 @@ func (r *Registry) Call(ctx context.Context, name string, args map[string]any) (
 			return nil, fmt.Errorf("series_id must be numeric")
 		}
 		return r.arr(ctx, "sonarr", http.MethodGet, fmt.Sprintf("/api/v3/episode?seriesId=%d", seriesID), nil)
+	case "sonarr_get_episode_file":
+		episodeFileID, err := strconv.Atoi(stringArg(args, "episode_file_id"))
+		if err != nil {
+			return nil, fmt.Errorf("episode_file_id must be numeric")
+		}
+		return r.arr(ctx, "sonarr", http.MethodGet, fmt.Sprintf("/api/v3/episodefile/%d", episodeFileID), nil)
+	case "sonarr_get_episode_files_by_series_id":
+		seriesID, err := strconv.Atoi(stringArg(args, "series_id"))
+		if err != nil {
+			return nil, fmt.Errorf("series_id must be numeric")
+		}
+		values := url.Values{"seriesId": []string{strconv.Itoa(seriesID)}}
+		if seasonNumber := strings.TrimSpace(stringArg(args, "season_number")); seasonNumber != "" {
+			if _, err := strconv.Atoi(seasonNumber); err != nil {
+				return nil, fmt.Errorf("season_number must be numeric")
+			}
+			values.Set("seasonNumber", seasonNumber)
+		}
+		return r.arr(ctx, "sonarr", http.MethodGet, "/api/v3/episodefile?"+values.Encode(), nil)
 	case "sonarr_search_episode":
 		episodeID, err := strconv.Atoi(stringArg(args, "episode_id"))
 		if err != nil {
@@ -291,6 +357,18 @@ func (r *Registry) Call(ctx context.Context, name string, args map[string]any) (
 			return nil, fmt.Errorf("tmdb_id must be numeric")
 		}
 		return r.arr(ctx, "radarr", http.MethodGet, fmt.Sprintf("/api/v3/movie?tmdbId=%d", tmdbID), nil)
+	case "radarr_get_movie_by_id":
+		movieID, err := strconv.Atoi(stringArg(args, "movie_id"))
+		if err != nil {
+			return nil, fmt.Errorf("movie_id must be numeric")
+		}
+		return r.arr(ctx, "radarr", http.MethodGet, fmt.Sprintf("/api/v3/movie/%d", movieID), nil)
+	case "radarr_get_movie_file":
+		movieFileID, err := strconv.Atoi(stringArg(args, "movie_file_id"))
+		if err != nil {
+			return nil, fmt.Errorf("movie_file_id must be numeric")
+		}
+		return r.arr(ctx, "radarr", http.MethodGet, fmt.Sprintf("/api/v3/moviefile/%d", movieFileID), nil)
 	case "radarr_get_queue":
 		return r.arr(ctx, "radarr", http.MethodGet, "/api/v3/queue?page=1&pageSize=20", nil)
 	case "radarr_get_blocklist":
@@ -347,12 +425,68 @@ func (r *Registry) CommentIssue(ctx context.Context, issueID, message string) (a
 	return r.doJSON(ctx, http.MethodPost, r.cfg.SeerrBaseURL, "/api/v1/issue/"+url.PathEscape(strings.TrimSpace(issueID))+"/comment", r.cfg.SeerrAPIKey, "X-Api-Key", headers, body)
 }
 
+func (r *Registry) ResolveIssue(ctx context.Context, issueID string) (any, error) {
+	issueID = strings.TrimSpace(issueID)
+	if issueID == "" {
+		return nil, fmt.Errorf("issue_id is required")
+	}
+	return r.doJSON(ctx, http.MethodPost, r.cfg.SeerrBaseURL, "/api/v1/issue/"+url.PathEscape(issueID)+"/resolved", r.cfg.SeerrAPIKey, "X-Api-Key", nil, nil)
+}
+
 func (r *Registry) seerr(ctx context.Context, method, path string, body any) (any, error) {
 	return r.doJSON(ctx, method, r.cfg.SeerrBaseURL, path, r.cfg.SeerrAPIKey, "X-Api-Key", nil, body)
 }
 
 func (r *Registry) jellyfin(ctx context.Context, method, path string, body any) (any, error) {
 	return r.doJSON(ctx, method, r.cfg.JellyfinBaseURL, path, r.cfg.JellyfinAPIKey, "X-Emby-Token", nil, body)
+}
+
+func (r *Registry) jellyfinItemMediaInfo(ctx context.Context, itemID string) (any, error) {
+	itemID = strings.TrimSpace(itemID)
+	if itemID == "" {
+		return nil, fmt.Errorf("item_id is required")
+	}
+	values := url.Values{}
+	values.Set("Fields", "MediaSources,Path,ProviderIds")
+	item, err := r.jellyfin(ctx, http.MethodGet, "/Items/"+url.PathEscape(itemID)+"?"+values.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	return summarizeJellyfinMediaItem(item), nil
+}
+
+func (r *Registry) jellyfinChildMediaInfo(ctx context.Context, parentID string, limit int) (any, error) {
+	parentID = strings.TrimSpace(parentID)
+	if parentID == "" {
+		return nil, fmt.Errorf("item_id is required")
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	values := url.Values{}
+	values.Set("ParentId", parentID)
+	values.Set("Recursive", "true")
+	values.Set("IncludeItemTypes", "Movie,Episode,Video")
+	values.Set("Fields", "MediaSources,Path,ProviderIds")
+	values.Set("Limit", strconv.Itoa(limit))
+	value, err := r.jellyfin(ctx, http.MethodGet, "/Items?"+values.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	envelope, ok := value.(map[string]any)
+	if !ok {
+		return value, nil
+	}
+	items, _ := envelope["Items"].([]any)
+	out := make([]any, 0, len(items))
+	for _, item := range items {
+		out = append(out, summarizeJellyfinMediaItem(item))
+	}
+	return map[string]any{
+		"parent_id":    parentID,
+		"total_record": envelope["TotalRecordCount"],
+		"items":        out,
+	}, nil
 }
 
 func (r *Registry) arr(ctx context.Context, service, method, path string, body any) (any, error) {
@@ -593,6 +727,113 @@ func sortRecent(files []map[string]any) {
 		right, _ := files[j]["mod_unix"].(int64)
 		return left > right
 	})
+}
+
+func summarizeJellyfinMediaItem(value any) any {
+	item, ok := value.(map[string]any)
+	if !ok {
+		return value
+	}
+
+	out := map[string]any{}
+	copyIfPresent(out, item, "Id", "id")
+	copyIfPresent(out, item, "Name", "name")
+	copyIfPresent(out, item, "Type", "type")
+	copyIfPresent(out, item, "IndexNumber", "index_number")
+	copyIfPresent(out, item, "ParentIndexNumber", "parent_index_number")
+	copyIfPresent(out, item, "ProductionYear", "production_year")
+	copyIfPresent(out, item, "ProviderIds", "provider_ids")
+
+	sources, _ := item["MediaSources"].([]any)
+	if len(sources) == 0 {
+		if streams, ok := item["MediaStreams"].([]any); ok && len(streams) > 0 {
+			sources = []any{map[string]any{"MediaStreams": streams}}
+		}
+	}
+
+	mediaSources := make([]map[string]any, 0, len(sources))
+	for _, sourceValue := range sources {
+		source, ok := sourceValue.(map[string]any)
+		if !ok {
+			continue
+		}
+		summary := map[string]any{}
+		copyIfPresent(summary, source, "Id", "id")
+		copyIfPresent(summary, source, "Name", "name")
+		copyIfPresent(summary, source, "Container", "container")
+		copyIfPresent(summary, source, "Size", "size")
+		copyIfPresent(summary, source, "RunTimeTicks", "run_time_ticks")
+		copyIfPresent(summary, source, "VideoType", "video_type")
+		copyIfPresent(summary, source, "Protocol", "protocol")
+		copyIfPresent(summary, source, "DefaultAudioStreamIndex", "default_audio_stream_index")
+		copyIfPresent(summary, source, "DefaultSubtitleStreamIndex", "default_subtitle_stream_index")
+
+		streams, _ := source["MediaStreams"].([]any)
+		audio, subtitles, video := summarizeJellyfinStreams(streams)
+		summary["audio_tracks"] = audio
+		summary["subtitle_tracks"] = subtitles
+		summary["video_tracks"] = video
+		mediaSources = append(mediaSources, summary)
+	}
+	out["media_sources"] = mediaSources
+	return out
+}
+
+func summarizeJellyfinStreams(streams []any) ([]map[string]any, []map[string]any, []map[string]any) {
+	audio := []map[string]any{}
+	subtitles := []map[string]any{}
+	video := []map[string]any{}
+	for _, streamValue := range streams {
+		stream, ok := streamValue.(map[string]any)
+		if !ok {
+			continue
+		}
+		summary := map[string]any{}
+		for sourceKey, destKey := range map[string]string{
+			"Index":                "index",
+			"Type":                 "type",
+			"Codec":                "codec",
+			"CodecTag":             "codec_tag",
+			"Profile":              "profile",
+			"Language":             "language",
+			"Title":                "title",
+			"DisplayTitle":         "display_title",
+			"ChannelLayout":        "channel_layout",
+			"Channels":             "channels",
+			"BitRate":              "bit_rate",
+			"SampleRate":           "sample_rate",
+			"Width":                "width",
+			"Height":               "height",
+			"AverageFrameRate":     "average_frame_rate",
+			"IsDefault":            "is_default",
+			"IsForced":             "is_forced",
+			"IsExternal":           "is_external",
+			"DeliveryMethod":       "delivery_method",
+			"IsTextSubtitleStream": "is_text_subtitle_stream",
+		} {
+			copyIfPresent(summary, stream, sourceKey, destKey)
+		}
+		switch strings.ToLower(strings.TrimSpace(fmt.Sprint(stream["Type"]))) {
+		case "audio":
+			audio = append(audio, summary)
+		case "subtitle":
+			subtitles = append(subtitles, summary)
+		case "video":
+			video = append(video, summary)
+		}
+	}
+	return audio, subtitles, video
+}
+
+func copyIfPresent(dst, src map[string]any, sourceKey, destKey string) {
+	value, ok := src[sourceKey]
+	if !ok || value == nil {
+		return
+	}
+	if text, ok := value.(string); ok && strings.TrimSpace(text) == "" {
+		return
+	}
+	dst[destKey] = value
 }
 
 func (r *Registry) doJSON(ctx context.Context, method, baseURL, path, apiKey, apiHeader string, headers map[string]string, body any) (any, error) {

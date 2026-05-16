@@ -40,7 +40,7 @@ func TestLoadSkillsRequiresFrontmatter(t *testing.T) {
 	}
 }
 
-func TestLoadSkillsParsesOptionalModel(t *testing.T) {
+func TestLoadSkillsIgnoresRuntimeFrontmatter(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "alpha")
 	if err := os.MkdirAll(path, 0o755); err != nil {
@@ -55,43 +55,14 @@ func TestLoadSkillsParsesOptionalModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSkills() error = %v", err)
 	}
-	if skills[0].Model != "gpt-test" {
-		t.Fatalf("skill model = %q, want gpt-test", skills[0].Model)
-	}
-	if skills[0].ReasoningEffort != "high" {
-		t.Fatalf("skill reasoning effort = %q, want high", skills[0].ReasoningEffort)
+	if skills[0].Name != "alpha" || skills[0].Description != "Test skill" {
+		t.Fatalf("skill = %#v, want parsed name and description", skills[0])
 	}
 }
 
-func TestModelForRequestUsesSkillModelWhenConfigured(t *testing.T) {
-	skills := []Skill{
-		{Name: "alpha", Model: "gpt-alpha"},
-		{Name: "beta"},
-	}
-	if got := ModelForRequest(skills, Request{Skill: "alpha"}, "gpt-default"); got != "gpt-alpha" {
-		t.Fatalf("ModelForRequest(alpha) = %q, want gpt-alpha", got)
-	}
-	if got := ModelForRequest(skills, Request{Skill: "beta"}, "gpt-default"); got != "gpt-default" {
-		t.Fatalf("ModelForRequest(beta) = %q, want gpt-default", got)
-	}
-	if got := ModelForRequest(skills, Request{}, "gpt-default"); got != "gpt-default" {
-		t.Fatalf("ModelForRequest(no skill) = %q, want gpt-default", got)
-	}
-}
-
-func TestReasoningEffortForRequestUsesSkillEffortWhenConfigured(t *testing.T) {
-	skills := []Skill{
-		{Name: "alpha", ReasoningEffort: "high"},
-		{Name: "beta"},
-	}
-	if got := ReasoningEffortForRequest(skills, Request{Skill: "alpha"}, "medium", "gpt-5.5"); got != "high" {
-		t.Fatalf("ReasoningEffortForRequest(alpha) = %q, want high", got)
-	}
-	if got := ReasoningEffortForRequest(skills, Request{Skill: "beta"}, "medium", "gpt-5.5"); got != "medium" {
-		t.Fatalf("ReasoningEffortForRequest(beta) = %q, want medium", got)
-	}
-	if got := ReasoningEffortForRequest(skills, Request{}, "medium", "gpt-5.5"); got != "medium" {
-		t.Fatalf("ReasoningEffortForRequest(no skill) = %q, want medium", got)
+func TestReasoningEffortForRequestUsesGlobalFallback(t *testing.T) {
+	if got := ReasoningEffortForRequest("medium", "gpt-5.5"); got != "medium" {
+		t.Fatalf("ReasoningEffortForRequest() = %q, want medium", got)
 	}
 }
 
@@ -107,7 +78,7 @@ func TestReasoningEffortForRequestUsesRecommendedModelDefault(t *testing.T) {
 		{model: "unknown-model", want: ""},
 	}
 	for _, tt := range tests {
-		if got := ReasoningEffortForRequest(nil, Request{}, "", tt.model); got != tt.want {
+		if got := ReasoningEffortForRequest("", tt.model); got != tt.want {
 			t.Fatalf("ReasoningEffortForRequest(%q) = %q, want %q", tt.model, got, tt.want)
 		}
 	}
@@ -122,6 +93,7 @@ func TestBuildSystemPromptIsMarkdown(t *testing.T) {
 		"## Operating Principles",
 		"## Jellyseerr Issue Workflow",
 		"## Skill: alpha",
+		"Description:",
 		"For explicit diagnostic or test instructions",
 	} {
 		if !strings.Contains(prompt, want) {

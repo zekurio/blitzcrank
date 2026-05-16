@@ -19,14 +19,12 @@ type Agent struct {
 	client   llm.Client
 	registry *tools.Registry
 	system   string
-	skills   []Skill
 }
 
 type Request struct {
 	Source  string
 	Author  string
 	Content string
-	Skill   string
 }
 
 func New(cfg config.Config, registry *tools.Registry) (*Agent, error) {
@@ -48,7 +46,6 @@ func New(cfg config.Config, registry *tools.Registry) (*Agent, error) {
 		client:   client,
 		registry: registry,
 		system:   system,
-		skills:   skills,
 	}, nil
 }
 
@@ -105,35 +102,14 @@ func (a *Agent) executeTool(ctx context.Context, call llm.ToolCall) (any, error)
 }
 
 func (a *Agent) ModelName(req Request) string {
-	return ModelForRequest(a.skills, req, a.cfg.Model)
+	return strings.TrimSpace(a.cfg.Model)
 }
 
-func (a *Agent) ReasoningEffort(req Request, model string) string {
-	return ReasoningEffortForRequest(a.skills, req, a.cfg.ReasoningEffort, model)
+func (a *Agent) ReasoningEffort(_ Request, model string) string {
+	return ReasoningEffortForRequest(a.cfg.ReasoningEffort, model)
 }
 
-func ModelForRequest(skills []Skill, req Request, fallback string) string {
-	skillName := strings.TrimSpace(req.Skill)
-	if skillName == "" {
-		return strings.TrimSpace(fallback)
-	}
-	for _, skill := range skills {
-		if strings.EqualFold(skill.Name, skillName) && strings.TrimSpace(skill.Model) != "" {
-			return strings.TrimSpace(skill.Model)
-		}
-	}
-	return strings.TrimSpace(fallback)
-}
-
-func ReasoningEffortForRequest(skills []Skill, req Request, fallback, model string) string {
-	skillName := strings.TrimSpace(req.Skill)
-	if skillName != "" {
-		for _, skill := range skills {
-			if strings.EqualFold(skill.Name, skillName) && strings.TrimSpace(skill.ReasoningEffort) != "" {
-				return strings.TrimSpace(skill.ReasoningEffort)
-			}
-		}
-	}
+func ReasoningEffortForRequest(fallback, model string) string {
 	if strings.TrimSpace(fallback) != "" {
 		return strings.TrimSpace(fallback)
 	}
@@ -198,7 +174,7 @@ func BuildSystemPrompt(cfg config.Config, promptTemplate string, skills []Skill)
 	parts := []string{prompt}
 
 	for _, skill := range skills {
-		parts = append(parts, fmt.Sprintf("## Skill: %s\n\n%s", skill.Name, strings.TrimSpace(skill.Body)))
+		parts = append(parts, fmt.Sprintf("## Skill: %s\n\nDescription: %s\n\n%s", skill.Name, strings.TrimSpace(skill.Description), strings.TrimSpace(skill.Body)))
 	}
 	return strings.Join(parts, "\n\n")
 }

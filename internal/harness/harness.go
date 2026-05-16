@@ -172,7 +172,6 @@ func (m *Manager) run(ctx context.Context, thread *IssueThread, payload map[stri
 		Source:  "jellyseerr_issue_" + event,
 		Author:  actor(payload),
 		Content: prompt,
-		Skill:   "seerr-issue-solver",
 	}
 	log.Printf("jellyseerr issue run started: issue=%s event=%s actor=%q prior_events=%d prior_runs=%d", thread.IssueID, event, request.Author, len(thread.Events), len(thread.Runs))
 

@@ -7,6 +7,10 @@ description: Use when diagnosing or safely fixing Radarr movie queue, refresh, o
 
 - Use Radarr tools for movie issues, especially payloads with `media_type` movie or a TMDB id.
 - Lookup the movie by TMDB id before queue actions.
+- Use `radarr_get_movie_by_id` when a Radarr movie id is already known from another tool result.
+- For questions about a downloaded movie file's metadata, use `radarr_get_movie_file` when a `movieFileId` is known and inspect quality, languages, and Radarr `mediaInfo`.
+- For playback-track questions such as "why is German audio missing?", prefer Jellyfin media-info tools to verify actual streams, then use Radarr file metadata to explain how the release was selected or imported.
+- Use web search only after local tools establish the stored file's tracks, for example to check whether the requested audio language exists for that title or release.
 - Read the Radarr queue when the issue suggests stuck, failed, missing, or delayed movie downloads/imports.
 - If a fresh release failed because it was corrupt, unpack failed, or download/import failed and Radarr blocklisted it, inspect `radarr_get_blocklist`.
 - Only delete a blocklist item when it clearly matches the affected movie/release and the blocklist reason explains the missing movie.

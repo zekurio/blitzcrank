@@ -76,8 +76,8 @@ func TestHandleWebhookReportedPostsOneFinalComment(t *testing.T) {
 	if !strings.HasPrefix(posted[0], "[blitzcrank w/ gpt-5.5]") {
 		t.Fatalf("comment missing signature: %q", posted[0])
 	}
-	if runner.last.Skill != "seerr-issue-solver" {
-		t.Fatalf("runner skill = %q, want seerr-issue-solver", runner.last.Skill)
+	if !strings.Contains(runner.last.Content, "Jellyseerr issue workflow event: reported") {
+		t.Fatalf("runner prompt = %q, want issue workflow prompt", runner.last.Content)
 	}
 }
 
@@ -109,7 +109,7 @@ func TestCommentHeaderIncludesFastServiceTier(t *testing.T) {
 	}
 }
 
-func TestHandleWebhookHeaderUsesRunnerModel(t *testing.T) {
+func TestHandleWebhookHeaderUsesResolvedRunnerModel(t *testing.T) {
 	var posted []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]string
@@ -130,7 +130,7 @@ func TestHandleWebhookHeaderUsesRunnerModel(t *testing.T) {
 		t.Fatalf("HandleWebhook() error = %v", err)
 	}
 	if len(posted) != 1 || !strings.HasPrefix(posted[0], "[blitzcrank w/ gpt-skill]") {
-		t.Fatalf("posted comment = %#v, want skill model header", posted)
+		t.Fatalf("posted comment = %#v, want runner model header", posted)
 	}
 }
 

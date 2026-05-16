@@ -9,12 +9,10 @@ import (
 )
 
 type Skill struct {
-	Name            string
-	Description     string
-	Model           string
-	ReasoningEffort string
-	Body            string
-	Path            string
+	Name        string
+	Description string
+	Body        string
+	Path        string
 }
 
 func LoadSkills(root string) ([]Skill, error) {
@@ -75,10 +73,6 @@ func parseSkill(path, content string) (Skill, error) {
 			skill.Name = value
 		case "description":
 			skill.Description = value
-		case "model":
-			skill.Model = value
-		case "reasoning_effort":
-			skill.ReasoningEffort = value
 		}
 	}
 	if skill.Name == "" {

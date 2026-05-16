@@ -93,6 +93,28 @@ func TestSabnzbdHistoryRequestShape(t *testing.T) {
 	}
 }
 
+func TestSeerrResolveIssueRequestShape(t *testing.T) {
+	var method, path string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method = r.Method
+		path = r.URL.Path
+		if r.Header.Get("X-Api-Key") != "secret" {
+			t.Fatalf("X-Api-Key = %q", r.Header.Get("X-Api-Key"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":42,"status":"resolved"}`))
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(config.Config{SeerrBaseURL: server.URL, SeerrAPIKey: "secret"})
+	if _, err := registry.Call(context.Background(), "seerr_resolve_issue", map[string]any{"issue_id": "42"}); err != nil {
+		t.Fatalf("seerr_resolve_issue error = %v", err)
+	}
+	if method != http.MethodPost || path != "/api/v1/issue/42/resolved" {
+		t.Fatalf("request = %s %s", method, path)
+	}
+}
+
 func TestKagiWebSearchRequestShape(t *testing.T) {
 	var auth, rawQuery string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -141,6 +163,79 @@ func TestKagiWebSearchEnvelopeError(t *testing.T) {
 	_, err := registry.Call(context.Background(), "web_search", map[string]any{"query": "test"})
 	if err == nil || !strings.Contains(err.Error(), "Insufficient credit") {
 		t.Fatalf("error = %v, want Kagi envelope error", err)
+	}
+}
+
+func TestJellyfinItemMediaInfoSummarizesStreams(t *testing.T) {
+	var rawQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/Items/abc" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		rawQuery = r.URL.RawQuery
+		if r.Header.Get("X-Emby-Token") != "secret" {
+			t.Fatalf("X-Emby-Token = %q", r.Header.Get("X-Emby-Token"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"Id":"abc",
+			"Name":"Example Episode",
+			"Type":"Episode",
+			"MediaSources":[{
+				"Id":"source1",
+				"Container":"mkv",
+				"MediaStreams":[
+					{"Index":0,"Type":"Video","Codec":"hevc","Width":1920,"Height":1080},
+					{"Index":1,"Type":"Audio","Codec":"aac","Language":"eng","DisplayTitle":"English - AAC - Stereo","Channels":2,"IsDefault":true},
+					{"Index":2,"Type":"Subtitle","Language":"deu","DisplayTitle":"German","IsExternal":false}
+				]
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(config.Config{JellyfinBaseURL: server.URL, JellyfinAPIKey: "secret"})
+	out, err := registry.Call(context.Background(), "jellyfin_get_item_media_info", map[string]any{"item_id": "abc"})
+	if err != nil {
+		t.Fatalf("jellyfin_get_item_media_info error = %v", err)
+	}
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(values.Get("Fields"), "MediaSources") {
+		t.Fatalf("Fields = %q, want MediaSources", values.Get("Fields"))
+	}
+	item := out.(map[string]any)
+	sources := item["media_sources"].([]map[string]any)
+	audio := sources[0]["audio_tracks"].([]map[string]any)
+	if len(audio) != 1 || audio[0]["language"] != "eng" || audio[0]["channels"].(float64) != 2 {
+		t.Fatalf("audio tracks = %#v", audio)
+	}
+}
+
+func TestJellyfinChildMediaInfoRequestShape(t *testing.T) {
+	var rawQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/Items" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		rawQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"Items":[],"TotalRecordCount":0}`))
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(config.Config{JellyfinBaseURL: server.URL, JellyfinAPIKey: "secret"})
+	if _, err := registry.Call(context.Background(), "jellyfin_get_child_media_info", map[string]any{"item_id": "parent", "limit": float64(3)}); err != nil {
+		t.Fatalf("jellyfin_get_child_media_info error = %v", err)
+	}
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values.Get("ParentId") != "parent" || values.Get("Recursive") != "true" || values.Get("Limit") != "3" {
+		t.Fatalf("query = %q", rawQuery)
 	}
 }
 
@@ -223,6 +318,50 @@ func TestSonarrSearchSeriesCommandShape(t *testing.T) {
 	}
 }
 
+func TestSonarrEpisodeFilesBySeriesRequestShape(t *testing.T) {
+	var rawQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v3/episodefile" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		rawQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(config.Config{SonarrBaseURL: server.URL, SonarrAPIKey: "secret"})
+	if _, err := registry.Call(context.Background(), "sonarr_get_episode_files_by_series_id", map[string]any{"series_id": "12", "season_number": "3"}); err != nil {
+		t.Fatalf("sonarr_get_episode_files_by_series_id error = %v", err)
+	}
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values.Get("seriesId") != "12" || values.Get("seasonNumber") != "3" {
+		t.Fatalf("query = %q", rawQuery)
+	}
+}
+
+func TestSonarrEpisodeFileRequestShape(t *testing.T) {
+	var method, path string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method = r.Method
+		path = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":77}`))
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(config.Config{SonarrBaseURL: server.URL, SonarrAPIKey: "secret"})
+	if _, err := registry.Call(context.Background(), "sonarr_get_episode_file", map[string]any{"episode_file_id": "77"}); err != nil {
+		t.Fatalf("sonarr_get_episode_file error = %v", err)
+	}
+	if method != http.MethodGet || path != "/api/v3/episodefile/77" {
+		t.Fatalf("request = %s %s", method, path)
+	}
+}
+
 func TestRadarrSearchMovieCommandShape(t *testing.T) {
 	var body map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -247,6 +386,44 @@ func TestRadarrSearchMovieCommandShape(t *testing.T) {
 	ids := body["movieIds"].([]any)
 	if ids[0].(float64) != 456 {
 		t.Fatalf("movieIds = %#v", body["movieIds"])
+	}
+}
+
+func TestRadarrMovieFileRequestShape(t *testing.T) {
+	var method, path string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method = r.Method
+		path = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":88}`))
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(config.Config{RadarrBaseURL: server.URL, RadarrAPIKey: "secret"})
+	if _, err := registry.Call(context.Background(), "radarr_get_movie_file", map[string]any{"movie_file_id": "88"}); err != nil {
+		t.Fatalf("radarr_get_movie_file error = %v", err)
+	}
+	if method != http.MethodGet || path != "/api/v3/moviefile/88" {
+		t.Fatalf("request = %s %s", method, path)
+	}
+}
+
+func TestRadarrMovieByIDRequestShape(t *testing.T) {
+	var method, path string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method = r.Method
+		path = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":456}`))
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(config.Config{RadarrBaseURL: server.URL, RadarrAPIKey: "secret"})
+	if _, err := registry.Call(context.Background(), "radarr_get_movie_by_id", map[string]any{"movie_id": "456"}); err != nil {
+		t.Fatalf("radarr_get_movie_by_id error = %v", err)
+	}
+	if method != http.MethodGet || path != "/api/v3/movie/456" {
+		t.Fatalf("request = %s %s", method, path)
 	}
 }
 
