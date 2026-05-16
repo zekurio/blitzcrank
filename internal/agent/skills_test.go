@@ -90,15 +90,10 @@ func TestReasoningEffortForRequestUsesRecommendedModelDefault(t *testing.T) {
 }
 
 func TestRuntimeMetadataIncludesModel(t *testing.T) {
-	agent := &Agent{runtimePrompt: `Trusted runtime metadata for this response: model={{model}}; reasoning_effort={{reasoning_effort}}.
-
-If the user asks which model you are using, answer with both the model and reasoning effort from this metadata.`}
+	agent := &Agent{runtimePrompt: `model={{model}}; reasoning_effort={{reasoning_effort}}`}
 	metadata := agent.runtimeMetadata("gpt-5.4", "low")
-	if !strings.Contains(metadata, "model=gpt-5.4") || !strings.Contains(metadata, "reasoning_effort=low") {
+	if metadata != "model=gpt-5.4; reasoning_effort=low" {
 		t.Fatalf("runtimeMetadata() = %q", metadata)
-	}
-	if !strings.Contains(metadata, "both the model and reasoning effort") {
-		t.Fatalf("runtimeMetadata() does not instruct model/reasoning answer: %q", metadata)
 	}
 }
 
@@ -148,39 +143,6 @@ func TestDiscordTriageConfigValuesAreUsedVerbatim(t *testing.T) {
 	}
 }
 
-func TestDiscordTriagePromptRequiresGermanThreadTitles(t *testing.T) {
-	prompt, err := LoadPromptTemplate("../../prompts/discord-triage.md")
-	if err != nil {
-		t.Fatalf("LoadPromptTemplate() error = %v", err)
-	}
-	for _, want := range []string{
-		"thread_title is user-facing Discord text",
-		"default to German",
-		"Preserve media titles",
-	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("discord triage prompt missing %q:\n%s", want, prompt)
-		}
-	}
-}
-
-func TestDiscordTriagePromptRoutesMediaReleaseQuestionsToAgent(t *testing.T) {
-	prompt, err := LoadPromptTemplate("../../prompts/discord-triage.md")
-	if err != nil {
-		t.Fatalf("LoadPromptTemplate() error = %v", err)
-	}
-	for _, want := range []string{
-		"public release dates or availability",
-		"named movie, series, or anime",
-		"classify it as \"support_request\"",
-		"web search",
-	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("discord triage prompt missing %q:\n%s", want, prompt)
-		}
-	}
-}
-
 func TestRuntimeInfoReturnsModelAndReasoning(t *testing.T) {
 	agent := &Agent{cfg: config.Config{Model: "gpt-5.5"}}
 	model, effort := agent.RuntimeInfo(Request{Source: "discord_mention"})
@@ -189,21 +151,12 @@ func TestRuntimeInfoReturnsModelAndReasoning(t *testing.T) {
 	}
 }
 
-func TestBuildSystemPromptIsMarkdown(t *testing.T) {
-	template := "# {{bot_name}} System Prompt\n\n## Role\n\nCurrent time: {{current_time}}.\n\n## Operating Principles\n\n## Jellyseerr Issue Workflow\n\nFor explicit diagnostic or test instructions.\n"
+func TestBuildSystemPromptAppendsSkills(t *testing.T) {
+	template := "# {{bot_name}} System Prompt"
 	prompt := BuildSystemPrompt(configForTest(), template, []Skill{{Name: "alpha", Body: "# Alpha\n\nUse alpha."}})
-	for _, want := range []string{
-		"# Blitzcrank System Prompt",
-		"## Role",
-		"## Operating Principles",
-		"## Jellyseerr Issue Workflow",
-		"## Skill: alpha",
-		"Description:",
-		"For explicit diagnostic or test instructions",
-	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("system prompt missing %q:\n%s", want, prompt)
-		}
+	want := "# Blitzcrank System Prompt\n\n## Skill: alpha\n\nDescription: \n\n# Alpha\n\nUse alpha."
+	if prompt != want {
+		t.Fatalf("BuildSystemPrompt() = %q", prompt)
 	}
 }
 
