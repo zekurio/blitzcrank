@@ -42,7 +42,7 @@ type Task struct {
 }
 
 func NewScheduler(cfg config.Config, runner Runner, reporter Reporter, state *store.Store) *Scheduler {
-	tasks, err := LoadTasks(cfg.AutomationsDir, cfg.AutomationTasks)
+	tasks, err := LoadTasks(cfg.AutomationsDir)
 	if err != nil {
 		log.Printf("load automations: %v", err)
 	}
@@ -179,21 +179,13 @@ func (s *Scheduler) dueTasks(now time.Time) []Task {
 	return due
 }
 
-func LoadTasks(root string, names []string) ([]Task, error) {
+func LoadTasks(root string) ([]Task, error) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
 		return nil, err
-	}
-
-	enabled := map[string]bool{}
-	for _, name := range names {
-		name = strings.TrimSpace(name)
-		if name != "" {
-			enabled[name] = true
-		}
 	}
 
 	var files []string
@@ -215,9 +207,6 @@ func LoadTasks(root string, names []string) ([]Task, error) {
 		task, err := parseTask(path, string(data))
 		if err != nil {
 			return nil, err
-		}
-		if len(enabled) > 0 && !enabled[task.Name] {
-			continue
 		}
 		tasks = append(tasks, task)
 	}

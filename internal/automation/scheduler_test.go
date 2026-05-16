@@ -45,7 +45,7 @@ func TestLoadTasksFromMarkdown(t *testing.T) {
 	root := t.TempDir()
 	writeTask(t, root, "daily.md", "daily-health-check", "Check things")
 
-	tasks, err := LoadTasks(root, nil)
+	tasks, err := LoadTasks(root)
 	if err != nil {
 		t.Fatalf("LoadTasks() error = %v", err)
 	}
@@ -57,16 +57,16 @@ func TestLoadTasksFromMarkdown(t *testing.T) {
 	}
 }
 
-func TestLoadTasksFiltersByName(t *testing.T) {
+func TestLoadTasksLoadsAllMarkdownTasks(t *testing.T) {
 	root := t.TempDir()
 	writeTask(t, root, "daily.md", "daily-health-check", "Check things")
 	writeTask(t, root, "other.md", "other", "Other")
 
-	tasks, err := LoadTasks(root, []string{"other"})
+	tasks, err := LoadTasks(root)
 	if err != nil {
 		t.Fatalf("LoadTasks() error = %v", err)
 	}
-	if len(tasks) != 1 || tasks[0].Name != "other" {
+	if len(tasks) != 2 || tasks[0].Name != "daily-health-check" || tasks[1].Name != "other" {
 		t.Fatalf("tasks = %#v", tasks)
 	}
 }
@@ -77,7 +77,7 @@ func TestLoadTasksParsesCronSchedule(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "frequent.md"), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	tasks, err := LoadTasks(root, nil)
+	tasks, err := LoadTasks(root)
 	if err != nil {
 		t.Fatalf("LoadTasks() error = %v", err)
 	}
@@ -93,7 +93,7 @@ func TestLoadTasksRejectsInvalidCronSchedule(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "bad.md"), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadTasks(root, nil); err == nil {
+	if _, err := LoadTasks(root); err == nil {
 		t.Fatal("LoadTasks() error = nil, want invalid cron error")
 	}
 }
@@ -104,7 +104,7 @@ func TestLoadTasksRejectsDailyShortcut(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "bad.md"), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadTasks(root, nil); err == nil {
+	if _, err := LoadTasks(root); err == nil {
 		t.Fatal("LoadTasks() error = nil, want daily shortcut rejection")
 	}
 }

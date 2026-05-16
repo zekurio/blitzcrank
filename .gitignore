@@ -34,6 +34,8 @@ go.work.sum
 # Local database files
 *.sqlite
 *.sqlite3
+*.sqlite-shm
+*.sqlite-wal
 
 # Editor and OS files
 .idea/
