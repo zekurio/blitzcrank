@@ -73,6 +73,13 @@
               };
               environment = {
                 DATABASE_PATH = "${cfg.dataDir}/blitzcrank.sqlite";
+                AGENT_THREADS_DIR = "${cfg.dataDir}/threads";
+                AGENT_SYSTEM_PROMPT = "${cfg.package}/share/blitzcrank/prompts/system.md";
+                AGENT_RUNTIME_PROMPT = "${cfg.package}/share/blitzcrank/prompts/runtime-metadata.md";
+                AGENT_DISCORD_TRIAGE_PROMPT = "${cfg.package}/share/blitzcrank/prompts/discord-triage.md";
+                AGENT_DISCORD_SUMMARY_PROMPT = "${cfg.package}/share/blitzcrank/prompts/discord-thread-summary.md";
+                AGENT_SKILLS_DIR = "${cfg.package}/share/blitzcrank/skills";
+                AUTOMATIONS_DIR = "${cfg.package}/share/blitzcrank/automations";
               };
             };
           };
@@ -97,12 +104,16 @@
               in
               base != ".git" && base != ".direnv" && base != ".env" && base != "result";
           };
-          vendorHash = "sha256-5zEiMFjV3ZNr89oAErOTHNVvGWI6oND51F2F8NduG+U=";
+          vendorHash = "sha256-mY6LMl7G2eFpK/MaaHzFG1A20nhPEkfafmt3fFJ5zLo=";
           subPackages = [ "cmd/blitzcrank" ];
           ldflags = [
             "-s"
             "-w"
           ];
+          postInstall = ''
+            install -d $out/share/blitzcrank
+            cp -r prompts skills automations $out/share/blitzcrank/
+          '';
         };
 
         devShells.default = pkgs.mkShell {
