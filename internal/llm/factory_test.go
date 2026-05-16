@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"strings"
 	"testing"
 
 	"blitzcrank/internal/config"
@@ -56,6 +57,9 @@ func TestToResponsesRequestConvertsToolOutput(t *testing.T) {
 	if request["store"] != false {
 		t.Fatalf("store = %v, want false", request["store"])
 	}
+	if request["stream"] != true {
+		t.Fatalf("stream = %v, want true", request["stream"])
+	}
 	input := request["input"].([]any)
 	if len(input) != 2 {
 		t.Fatalf("input len = %d, want 2", len(input))
@@ -66,6 +70,19 @@ func TestToResponsesRequestConvertsToolOutput(t *testing.T) {
 	}
 	if toolOutput["call_id"] != "call_1" {
 		t.Fatalf("call_id = %v", toolOutput["call_id"])
+	}
+}
+
+func TestFromResponsesStreamUsesCompletedResponse(t *testing.T) {
+	stream := strings.NewReader("event: response.completed\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"done\"}]}]}}\n\n" +
+		"data: [DONE]\n\n")
+	response, err := fromResponsesStream(stream)
+	if err != nil {
+		t.Fatalf("fromResponsesStream() error = %v", err)
+	}
+	if got := response.FirstChoice().Message.Content; got != "done" {
+		t.Fatalf("content = %q, want done", got)
 	}
 }
 

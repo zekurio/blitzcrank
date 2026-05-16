@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -65,14 +66,14 @@ func (c *CodexOAuth) Chat(ctx context.Context, request ChatRequest) (ChatRespons
 		return ChatResponse{}, err
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if err != nil {
-		return ChatResponse{}, err
-	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		data, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		if err != nil {
+			return ChatResponse{}, err
+		}
 		return ChatResponse{}, fmt.Errorf("codex responses failed: %s: %s", resp.Status, strings.TrimSpace(string(data)))
 	}
-	return fromResponsesResponse(data)
+	return fromResponsesStream(io.LimitReader(resp.Body, 32<<20))
 }
 
 func toResponsesRequest(request ChatRequest, serviceTier string) map[string]any {
@@ -120,10 +121,11 @@ func toResponsesRequest(request ChatRequest, serviceTier string) map[string]any 
 	}
 
 	payload := map[string]any{
-		"model": request.Model,
-		"input": input,
-		"tools": tools,
-		"store": false,
+		"model":  request.Model,
+		"input":  input,
+		"tools":  tools,
+		"store":  false,
+		"stream": true,
 	}
 	if len(instructions) > 0 {
 		payload["instructions"] = strings.Join(instructions, "\n\n")
@@ -136,6 +138,39 @@ func toResponsesRequest(request ChatRequest, serviceTier string) map[string]any 
 		payload["service_tier"] = "fast"
 	}
 	return payload
+}
+
+func fromResponsesStream(r io.Reader) (ChatResponse, error) {
+	var completed []byte
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), 8<<20)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "" || data == "[DONE]" {
+			continue
+		}
+		var event struct {
+			Type     string          `json:"type"`
+			Response json.RawMessage `json:"response"`
+		}
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			continue
+		}
+		if event.Type == "response.completed" && len(event.Response) > 0 {
+			completed = event.Response
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return ChatResponse{}, err
+	}
+	if len(completed) == 0 {
+		return ChatResponse{}, fmt.Errorf("codex responses stream ended without response.completed")
+	}
+	return fromResponsesResponse(completed)
 }
 
 func fromResponsesResponse(data []byte) (ChatResponse, error) {
