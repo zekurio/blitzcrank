@@ -77,7 +77,14 @@ func (c *CodexOAuth) Chat(ctx context.Context, request ChatRequest) (ChatRespons
 
 func toResponsesRequest(request ChatRequest, serviceTier string) map[string]any {
 	input := make([]any, 0, len(request.Messages))
+	var instructions []string
 	for _, message := range request.Messages {
+		if message.Role == "system" {
+			if strings.TrimSpace(message.Content) != "" {
+				instructions = append(instructions, strings.TrimSpace(message.Content))
+			}
+			continue
+		}
 		if message.Role == "tool" {
 			input = append(input, map[string]any{
 				"type":    "function_call_output",
@@ -116,6 +123,9 @@ func toResponsesRequest(request ChatRequest, serviceTier string) map[string]any 
 		"model": request.Model,
 		"input": input,
 		"tools": tools,
+	}
+	if len(instructions) > 0 {
+		payload["instructions"] = strings.Join(instructions, "\n\n")
 	}
 	if effort := strings.TrimSpace(request.ReasoningEffort); effort != "" {
 		payload["reasoning"] = map[string]any{"effort": effort}

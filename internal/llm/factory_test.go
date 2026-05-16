@@ -45,11 +45,18 @@ func TestToResponsesRequestConvertsToolOutput(t *testing.T) {
 	request := toResponsesRequest(ChatRequest{
 		Model: "gpt-test",
 		Messages: []Message{
+			{Role: "system", Content: "system prompt"},
 			{Role: "user", Content: "hi"},
 			{Role: "tool", ToolCallID: "call_1", Content: `{"ok":true}`},
 		},
 	}, "standard")
+	if request["instructions"] != "system prompt" {
+		t.Fatalf("instructions = %v, want system prompt", request["instructions"])
+	}
 	input := request["input"].([]any)
+	if len(input) != 2 {
+		t.Fatalf("input len = %d, want 2", len(input))
+	}
 	toolOutput := input[1].(map[string]any)
 	if toolOutput["type"] != "function_call_output" {
 		t.Fatalf("type = %v, want function_call_output", toolOutput["type"])
