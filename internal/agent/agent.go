@@ -14,6 +14,8 @@ import (
 	"blitzcrank/internal/tools"
 )
 
+const toolResultMessageLimit = 24000
+
 type Agent struct {
 	cfg                  config.Config
 	client               llm.Client
@@ -26,9 +28,20 @@ type Agent struct {
 }
 
 type Request struct {
-	Source  string
-	Author  string
-	Content string
+	Source    string
+	Author    string
+	Content   string
+	ToolAudit func(ToolAuditRecord)
+}
+
+type ToolAuditRecord struct {
+	Name             string
+	Mutating         bool
+	ArgumentsSummary string
+	ResultSummary    string
+	Error            string
+	StartedAt        time.Time
+	CompletedAt      time.Time
 }
 
 type DiscordTriageRequest struct {
@@ -114,14 +127,13 @@ func (a *Agent) Respond(ctx context.Context, req Request) (string, error) {
 
 		messages = append(messages, choice.Message)
 		for _, call := range choice.Message.ToolCalls {
-			result, err := a.executeTool(ctx, call, toolPolicy)
+			result, err := a.executeTool(ctx, req, call, toolPolicy)
 			if err != nil {
 				result = toolErrorResult(call.Function.Name, err)
 			}
-			payload, _ := json.Marshal(result)
 			messages = append(messages, llm.Message{
 				Role:       "tool",
-				Content:    string(payload),
+				Content:    toolResultMessagePayload(result, toolResultMessageLimit),
 				ToolCallID: call.ID,
 			})
 		}
@@ -186,7 +198,7 @@ func (a *Agent) runtimeMetadata(model, reasoningEffort string) string {
 	})
 }
 
-func (a *Agent) executeTool(ctx context.Context, call llm.ToolCall, policy tools.ToolPolicy) (any, error) {
+func (a *Agent) executeTool(ctx context.Context, req Request, call llm.ToolCall, policy tools.ToolPolicy) (any, error) {
 	if policy.ReadOnly && a.registry.IsMutatingTool(call.Function.Name) {
 		return nil, fmt.Errorf("tool %s is not permitted in read-only source policy", call.Function.Name)
 	}
@@ -206,7 +218,23 @@ func (a *Agent) executeTool(ctx context.Context, call llm.ToolCall, policy tools
 	log.Printf("agent tool call start: name=%s args=%s", call.Function.Name, compactLogValue(args, 512))
 	start := time.Now()
 	result, err := a.registry.Call(ctx, call.Function.Name, args)
-	elapsed := time.Since(start).Round(time.Millisecond)
+	completedAt := time.Now()
+	if req.ToolAudit != nil {
+		record := ToolAuditRecord{
+			Name:             call.Function.Name,
+			Mutating:         a.registry.IsMutatingTool(call.Function.Name),
+			ArgumentsSummary: compactLogValue(args, 2000),
+			StartedAt:        start.UTC(),
+			CompletedAt:      completedAt.UTC(),
+		}
+		if err != nil {
+			record.Error = compactToolError(call.Function.Name, err.Error())
+		} else {
+			record.ResultSummary = compactLogValue(result, 4000)
+		}
+		req.ToolAudit(record)
+	}
+	elapsed := completedAt.Sub(start).Round(time.Millisecond)
 	if err != nil {
 		log.Printf("agent tool call failed: name=%s duration=%s error=%q", call.Function.Name, elapsed, compactLogString(err.Error(), 1024))
 		return nil, err
@@ -406,6 +434,43 @@ func compactLogString(value string, limit int) string {
 		return value[:limit] + "..."
 	}
 	return value
+}
+
+func toolResultMessagePayload(result any, limit int) string {
+	payload, err := json.Marshal(result)
+	if err != nil {
+		payload, _ = json.Marshal(map[string]any{
+			"ok":    false,
+			"error": compactToolError("tool_result", err.Error()),
+		})
+	}
+	if limit <= 0 || len(payload) <= limit {
+		return string(payload)
+	}
+	preview := truncateRunes(string(payload), limit)
+	wrapped, err := json.Marshal(map[string]any{
+		"ok":              true,
+		"truncated":       true,
+		"original_bytes":  len(payload),
+		"retained_chars":  len([]rune(preview)),
+		"result_preview":  preview,
+		"compaction_note": "Tool result exceeded the harness context budget; use the preview only and call a narrower tool/query if more detail is needed.",
+	})
+	if err != nil {
+		return `{"ok":false,"error":"tool result exceeded context budget and could not be compacted"}`
+	}
+	return string(wrapped)
+}
+
+func truncateRunes(value string, limit int) string {
+	if limit <= 0 {
+		return strings.TrimSpace(value)
+	}
+	runes := []rune(strings.TrimSpace(value))
+	if len(runes) <= limit {
+		return string(runes)
+	}
+	return string(runes[:limit]) + "... [truncated]"
 }
 
 func toolErrorResult(name string, err error) map[string]any {

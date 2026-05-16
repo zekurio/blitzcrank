@@ -94,7 +94,7 @@ func (s *Store) InsertAgentRun(ctx context.Context, run AgentRun) error {
 }
 
 func (s *Store) LoadIssueEvents(ctx context.Context, issueID string) ([]IssueEvent, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,issue_id,event_type,actor,message,payload_json,created_at FROM issue_thread_events WHERE issue_id = ? ORDER BY id`, issueID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,issue_id,event_key,event_type,actor,message,payload_json,created_at FROM issue_thread_events WHERE issue_id = ? ORDER BY id`, issueID)
 	if err != nil {
 		return nil, err
 	}
@@ -102,9 +102,11 @@ func (s *Store) LoadIssueEvents(ctx context.Context, issueID string) ([]IssueEve
 	var events []IssueEvent
 	for rows.Next() {
 		var event IssueEvent
-		if err := rows.Scan(&event.ID, &event.IssueID, &event.EventType, &event.Actor, &event.Message, &event.PayloadJSON, scanTime(&event.CreatedAt)); err != nil {
+		var eventKey sql.NullString
+		if err := rows.Scan(&event.ID, &event.IssueID, &eventKey, &event.EventType, &event.Actor, &event.Message, &event.PayloadJSON, scanTime(&event.CreatedAt)); err != nil {
 			return nil, err
 		}
+		event.EventKey = eventKey.String
 		events = append(events, event)
 	}
 	return events, rows.Err()
@@ -129,6 +131,25 @@ func (s *Store) LoadIssueRuns(ctx context.Context, issueID string) ([]IssueRun, 
 		runs = append(runs, run)
 	}
 	return runs, rows.Err()
+}
+
+func (s *Store) LoadIssueToolCalls(ctx context.Context, issueID string) ([]IssueToolCall, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,issue_id,source_event_type,run_started_at,tool_name,mutating,arguments_summary,result_summary,error,started_at,completed_at FROM issue_tool_calls WHERE issue_id = ? ORDER BY id`, issueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var calls []IssueToolCall
+	for rows.Next() {
+		var call IssueToolCall
+		var mutating int
+		if err := rows.Scan(&call.ID, &call.IssueID, &call.SourceEventType, scanTime(&call.RunStartedAt), &call.ToolName, &mutating, &call.ArgumentsSummary, &call.ResultSummary, &call.Error, scanTime(&call.StartedAt), scanTime(&call.CompletedAt)); err != nil {
+			return nil, err
+		}
+		call.Mutating = mutating == 1
+		calls = append(calls, call)
+	}
+	return calls, rows.Err()
 }
 
 func (s *Store) LoadAgentThreadEvents(ctx context.Context, threadID string) ([]AgentThreadEvent, error) {

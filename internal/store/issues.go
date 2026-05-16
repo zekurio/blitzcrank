@@ -4,13 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 )
 
 func (s *Store) LoadIssueThread(ctx context.Context, issueID string) (IssueThread, bool, error) {
 	var thread IssueThread
 	var completedAt, reason sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT issue_id,status,created_at,updated_at,completed_at,completion_reason,last_payload_json FROM issue_threads WHERE issue_id = ?`, issueID).Scan(
-		&thread.IssueID, &thread.Status, scanTime(&thread.CreatedAt), scanTime(&thread.UpdatedAt), &completedAt, &reason, &thread.LastPayloadJSON,
+	var summary sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT issue_id,status,summary,created_at,updated_at,completed_at,completion_reason,last_payload_json FROM issue_threads WHERE issue_id = ?`, issueID).Scan(
+		&thread.IssueID, &thread.Status, &summary, scanTime(&thread.CreatedAt), scanTime(&thread.UpdatedAt), &completedAt, &reason, &thread.LastPayloadJSON,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return IssueThread{}, false, nil
@@ -18,6 +20,7 @@ func (s *Store) LoadIssueThread(ctx context.Context, issueID string) (IssueThrea
 	if err != nil {
 		return IssueThread{}, false, err
 	}
+	thread.Summary = summary.String
 	thread.CompletedAt = parseNullTime(completedAt)
 	thread.CompletionReason = reason.String
 
@@ -36,21 +39,22 @@ func (s *Store) LoadIssueThread(ctx context.Context, issueID string) (IssueThrea
 
 func (s *Store) UpsertIssueThread(ctx context.Context, thread IssueThread) error {
 	_, err := s.db.ExecContext(ctx, `
-INSERT INTO issue_threads(issue_id,status,created_at,updated_at,completed_at,completion_reason,last_payload_json)
-VALUES(?,?,?,?,?,?,?)
+INSERT INTO issue_threads(issue_id,status,summary,created_at,updated_at,completed_at,completion_reason,last_payload_json)
+VALUES(?,?,?,?,?,?,?,?)
 ON CONFLICT(issue_id) DO UPDATE SET
   status=excluded.status,
+  summary=excluded.summary,
   updated_at=excluded.updated_at,
   completed_at=excluded.completed_at,
   completion_reason=excluded.completion_reason,
   last_payload_json=excluded.last_payload_json
-`, thread.IssueID, thread.Status, formatTime(thread.CreatedAt), formatTime(thread.UpdatedAt), formatTimePtr(thread.CompletedAt), thread.CompletionReason, thread.LastPayloadJSON)
+`, thread.IssueID, thread.Status, thread.Summary, formatTime(thread.CreatedAt), formatTime(thread.UpdatedAt), formatTimePtr(thread.CompletedAt), thread.CompletionReason, thread.LastPayloadJSON)
 	return err
 }
 
 func (s *Store) InsertIssueEvent(ctx context.Context, event IssueEvent) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO issue_thread_events(issue_id,event_type,actor,message,payload_json,created_at) VALUES(?,?,?,?,?,?)`,
-		event.IssueID, event.EventType, event.Actor, event.Message, event.PayloadJSON, formatTime(event.CreatedAt))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO issue_thread_events(issue_id,event_key,event_type,actor,message,payload_json,created_at) VALUES(?,?,?,?,?,?,?)`,
+		event.IssueID, event.EventKey, event.EventType, event.Actor, event.Message, event.PayloadJSON, formatTime(event.CreatedAt))
 	return err
 }
 
@@ -61,6 +65,23 @@ func (s *Store) InsertIssueRun(ctx context.Context, run IssueRun) error {
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO issue_runs(issue_id,source_event_type,started_at,completed_at,final_comment,posted,attribution,error,completion_reason) VALUES(?,?,?,?,?,?,?,?,?)`,
 		run.IssueID, run.SourceEventType, formatTime(run.StartedAt), formatTimePtr(run.CompletedAt), run.FinalComment, posted, run.Attribution, run.Error, run.CompletionReason)
+	return err
+}
+
+func (s *Store) UpdateIssueThreadSummary(ctx context.Context, issueID, summary string, updatedAt time.Time) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE issue_threads SET summary = ?, updated_at = ? WHERE issue_id = ?`, summary, formatTime(updatedAt), issueID)
+	return err
+}
+
+func (s *Store) InsertIssueToolCall(ctx context.Context, call IssueToolCall) error {
+	mutating := 0
+	if call.Mutating {
+		mutating = 1
+	}
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO issue_tool_calls(issue_id,source_event_type,run_started_at,tool_name,mutating,arguments_summary,result_summary,error,started_at,completed_at)
+VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		call.IssueID, call.SourceEventType, formatTime(call.RunStartedAt), call.ToolName, mutating, call.ArgumentsSummary, call.ResultSummary, call.Error, formatTime(call.StartedAt), formatTime(call.CompletedAt))
 	return err
 }
 

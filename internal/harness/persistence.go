@@ -25,6 +25,7 @@ func (m *Manager) loadThread(ctx context.Context, issueID string) (*IssueThread,
 	thread := &IssueThread{
 		IssueID:          loaded.IssueID,
 		Status:           loaded.Status,
+		Summary:          loaded.Summary,
 		CreatedAt:        loaded.CreatedAt,
 		UpdatedAt:        loaded.UpdatedAt,
 		CompletedAt:      loaded.CompletedAt,
@@ -34,6 +35,7 @@ func (m *Manager) loadThread(ctx context.Context, issueID string) (*IssueThread,
 	for _, event := range loaded.Events {
 		thread.Events = append(thread.Events, ThreadEvent{
 			Type:    event.EventType,
+			Key:     event.EventKey,
 			Actor:   event.Actor,
 			Message: event.Message,
 			Payload: json.RawMessage(event.PayloadJSON),
@@ -65,6 +67,7 @@ func (m *Manager) upsertThread(ctx context.Context, thread *IssueThread) {
 	if err := m.store.UpsertIssueThread(ctx, store.IssueThread{
 		IssueID:          thread.IssueID,
 		Status:           thread.Status,
+		Summary:          thread.Summary,
 		CreatedAt:        thread.CreatedAt,
 		UpdatedAt:        thread.UpdatedAt,
 		CompletedAt:      thread.CompletedAt,
@@ -81,6 +84,7 @@ func (m *Manager) insertEvent(ctx context.Context, issueID string, event ThreadE
 	}
 	if err := m.store.InsertIssueEvent(ctx, store.IssueEvent{
 		IssueID:     issueID,
+		EventKey:    event.Key,
 		EventType:   event.Type,
 		Actor:       event.Actor,
 		Message:     event.Message,

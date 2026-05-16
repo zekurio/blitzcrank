@@ -19,6 +19,7 @@ func TestStorePersistsIssueThreadEventAndRun(t *testing.T) {
 	thread := IssueThread{
 		IssueID:         "42",
 		Status:          "active",
+		Summary:         "User reports a missing episode.",
 		CreatedAt:       now,
 		UpdatedAt:       now,
 		LastPayloadJSON: `{"ok":true}`,
@@ -28,6 +29,7 @@ func TestStorePersistsIssueThreadEventAndRun(t *testing.T) {
 	}
 	if err := store.InsertIssueEvent(ctx, IssueEvent{
 		IssueID:     "42",
+		EventKey:    "event-1",
 		EventType:   "reported",
 		Actor:       "alice",
 		Message:     "missing episode",
@@ -49,6 +51,18 @@ func TestStorePersistsIssueThreadEventAndRun(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("InsertIssueRun() error = %v", err)
 	}
+	if err := store.InsertIssueToolCall(ctx, IssueToolCall{
+		IssueID:          "42",
+		SourceEventType:  "reported",
+		RunStartedAt:     now,
+		ToolName:         "seerr_get_issue",
+		ArgumentsSummary: `{"issue_id":"42"}`,
+		ResultSummary:    `{"id":42}`,
+		StartedAt:        now,
+		CompletedAt:      completed,
+	}); err != nil {
+		t.Fatalf("InsertIssueToolCall() error = %v", err)
+	}
 
 	loaded, ok, err := store.LoadIssueThread(ctx, "42")
 	if err != nil {
@@ -57,11 +71,21 @@ func TestStorePersistsIssueThreadEventAndRun(t *testing.T) {
 	if !ok {
 		t.Fatal("LoadIssueThread() ok = false")
 	}
-	if len(loaded.Events) != 1 || loaded.Events[0].EventType != "reported" {
+	if loaded.Summary != "User reports a missing episode." {
+		t.Fatalf("summary = %q", loaded.Summary)
+	}
+	if len(loaded.Events) != 1 || loaded.Events[0].EventType != "reported" || loaded.Events[0].EventKey != "event-1" {
 		t.Fatalf("events = %#v", loaded.Events)
 	}
 	if len(loaded.Runs) != 1 || !loaded.Runs[0].Posted {
 		t.Fatalf("runs = %#v", loaded.Runs)
+	}
+	calls, err := store.LoadIssueToolCalls(ctx, "42")
+	if err != nil {
+		t.Fatalf("LoadIssueToolCalls() error = %v", err)
+	}
+	if len(calls) != 1 || calls[0].ToolName != "seerr_get_issue" {
+		t.Fatalf("tool calls = %#v", calls)
 	}
 }
 

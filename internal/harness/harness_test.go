@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,6 +33,35 @@ func (f *fakeRunner) Respond(_ context.Context, req agent.Request) (string, erro
 
 func (f *fakeRunner) ModelName(agent.Request) string {
 	return f.model
+}
+
+type observedRunner struct {
+	mu        sync.Mutex
+	active    int
+	maxActive int
+	calls     int
+	delay     time.Duration
+	reply     string
+}
+
+func (r *observedRunner) Respond(ctx context.Context, req agent.Request) (string, error) {
+	r.mu.Lock()
+	r.calls++
+	r.active++
+	if r.active > r.maxActive {
+		r.maxActive = r.active
+	}
+	r.mu.Unlock()
+
+	select {
+	case <-ctx.Done():
+	case <-time.After(r.delay):
+	}
+
+	r.mu.Lock()
+	r.active--
+	r.mu.Unlock()
+	return r.reply, nil
 }
 
 func TestHandleWebhookReportedPostsOneFinalComment(t *testing.T) {
@@ -99,6 +129,59 @@ func TestHandleWebhookIgnoresBotAuthoredComment(t *testing.T) {
 	}
 }
 
+func TestHandleWebhookIgnoresDuplicatePayload(t *testing.T) {
+	var posted []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		posted = append(posted, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	cfg := testConfig(server.URL, t.TempDir())
+	runner := &fakeRunner{reply: "Erledigt."}
+	manager := NewManager(cfg, runner, tools.NewRegistry(cfg), nil)
+	payload := issuePayload("Problem gemeldet", "alice", "file is stuck")
+
+	first, err := manager.HandleWebhook(context.Background(), payload)
+	if err != nil {
+		t.Fatalf("first HandleWebhook() error = %v", err)
+	}
+	second, err := manager.HandleWebhook(context.Background(), payload)
+	if err != nil {
+		t.Fatalf("second HandleWebhook() error = %v", err)
+	}
+	if first.Ignored {
+		t.Fatalf("first result ignored: %s", first.Reason)
+	}
+	if !second.Ignored || second.Reason != "duplicate webhook event" {
+		t.Fatalf("second result = %#v, want duplicate ignored", second)
+	}
+	if runner.calls != 1 || len(posted) != 1 {
+		t.Fatalf("runner calls=%d posted=%d, want one each", runner.calls, len(posted))
+	}
+}
+
+func TestHandleWebhookUpdatesIssueSummary(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	cfg := testConfig(server.URL, t.TempDir())
+	runner := &fakeRunner{reply: "Erledigt."}
+	manager := NewManager(cfg, runner, tools.NewRegistry(cfg), nil)
+
+	if _, err := manager.HandleWebhook(context.Background(), issuePayload("Problem gemeldet", "alice", "file is stuck")); err != nil {
+		t.Fatalf("HandleWebhook() error = %v", err)
+	}
+	thread := manager.threads["42"]
+	if thread == nil || !strings.Contains(thread.Summary, "Latest solver outcome") || !strings.Contains(thread.Summary, "Erledigt.") {
+		t.Fatalf("thread summary = %q", thread.Summary)
+	}
+}
+
 func TestCommentHeaderIncludesFastServiceTier(t *testing.T) {
 	cfg := testConfig("http://127.0.0.1.invalid", t.TempDir())
 	cfg.CodexServiceTier = "fast"
@@ -131,6 +214,39 @@ func TestHandleWebhookHeaderUsesResolvedRunnerModel(t *testing.T) {
 	}
 	if len(posted) != 1 || !strings.HasPrefix(posted[0], "[blitzcrank w/ gpt-skill]") {
 		t.Fatalf("posted comment = %#v, want runner model header", posted)
+	}
+}
+
+func TestHandleWebhookSerializesRunsForSameIssue(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	cfg := testConfig(server.URL, t.TempDir())
+	runner := &observedRunner{reply: "Erledigt.", delay: 40 * time.Millisecond}
+	manager := NewManager(cfg, runner, tools.NewRegistry(cfg), nil)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			if _, err := manager.HandleWebhook(context.Background(), issuePayload("Problem gemeldet", "alice", "file is stuck "+string(rune('A'+index)))); err != nil {
+				t.Errorf("HandleWebhook() error = %v", err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if runner.calls != 2 {
+		t.Fatalf("runner calls = %d, want 2", runner.calls)
+	}
+	if runner.maxActive != 1 {
+		t.Fatalf("max concurrent runs = %d, want 1", runner.maxActive)
 	}
 }
 
@@ -186,6 +302,35 @@ func TestIssuePromptHighlightsReportedMessage(t *testing.T) {
 	prompt := manager.issuePrompt(thread, payload, "reported")
 	if !strings.Contains(prompt, "Test erfolgreich") {
 		t.Fatalf("issuePrompt() dropped the reported message:\n%s", prompt)
+	}
+}
+
+func TestIssuePromptIncludesBoundedRecentContext(t *testing.T) {
+	cfg := testConfig("http://127.0.0.1.invalid", t.TempDir())
+	manager := NewManager(cfg, &fakeRunner{}, tools.NewRegistry(cfg), nil)
+	now := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)
+	thread := &IssueThread{
+		IssueID: "42",
+		Events: []ThreadEvent{
+			{Type: "comment", Actor: "alice", Message: "older context", At: now},
+			{Type: "comment", Actor: "bob", Message: strings.Repeat("x", issueLineValueLimit+20), At: now.Add(time.Minute)},
+		},
+		Runs: []RunRecord{
+			{StartedAt: now, CompletionReason: "final comment posted", FinalComment: "[blitzcrank w/ test]\n\nVorherige Antwort."},
+		},
+	}
+
+	prompt := manager.issuePrompt(thread, issuePayload("Problem gemeldet", "alice", "latest"), "comment")
+	for _, want := range []string{
+		"Recent thread events:",
+		"Recent solver outcomes:",
+		"older context",
+		"Vorherige Antwort.",
+		"... [truncated]",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("issuePrompt() missing %q:\n%s", want, prompt)
+		}
 	}
 }
 
