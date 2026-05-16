@@ -164,6 +164,23 @@ func TestDiscordTriagePromptRequiresGermanThreadTitles(t *testing.T) {
 	}
 }
 
+func TestDiscordTriagePromptRoutesMediaReleaseQuestionsToAgent(t *testing.T) {
+	prompt, err := LoadPromptTemplate("../../prompts/discord-triage.md")
+	if err != nil {
+		t.Fatalf("LoadPromptTemplate() error = %v", err)
+	}
+	for _, want := range []string{
+		"public release dates or availability",
+		"named movie, series, or anime",
+		"classify it as \"support_request\"",
+		"web search",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("discord triage prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
 func TestRuntimeInfoReturnsModelAndReasoning(t *testing.T) {
 	agent := &Agent{cfg: config.Config{Model: "gpt-5.5"}}
 	model, effort := agent.RuntimeInfo(Request{Source: "discord_mention"})
