@@ -133,6 +133,10 @@ func (b *Bot) handleParentChannelMessage(session *discordgo.Session, event *disc
 		b.runDirectAgent(context.Background(), session, event, content)
 		return
 	}
+	if isOneOffDiscordQuestion(content, triage) {
+		b.runDirectAgent(context.Background(), session, event, content)
+		return
+	}
 
 	title := strings.TrimSpace(triage.ThreadTitle)
 	if title == "" {

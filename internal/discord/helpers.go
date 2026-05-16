@@ -5,7 +5,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
+	"blitzcrank/internal/agent"
 	"blitzcrank/internal/store"
 
 	"github.com/bwmarrin/discordgo"
@@ -140,6 +142,83 @@ func isModelRuntimeQuestion(content string) bool {
 		}
 	}
 	return strings.Contains(text, "?")
+}
+
+func isOneOffDiscordQuestion(content string, triage agent.DiscordTriageResult) bool {
+	if strings.TrimSpace(triage.Action) != "support_request" || !triage.Actionable || !triage.NeedsAgentRun {
+		return false
+	}
+	text := normalizeQuestionText(content)
+	if text == "" || !hasQuestionShape(text) {
+		return false
+	}
+	if hasSupportCaseSignal(text) {
+		return false
+	}
+	return hasAvailabilitySignal(text) || hasReleaseSignal(text)
+}
+
+func normalizeQuestionText(content string) string {
+	text := strings.ToLower(stripDiscordMentionTokens(content))
+	text = strings.NewReplacer("ä", "ae", "ö", "oe", "ü", "ue", "ß", "ss").Replace(text)
+	var b strings.Builder
+	lastSpace := false
+	for _, r := range text {
+		switch {
+		case unicode.IsLetter(r), unicode.IsDigit(r), r == '?':
+			b.WriteRune(r)
+			lastSpace = false
+		default:
+			if !lastSpace {
+				b.WriteByte(' ')
+				lastSpace = true
+			}
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
+}
+
+func hasQuestionShape(text string) bool {
+	if strings.Contains(text, "?") {
+		return true
+	}
+	for _, signal := range []string{"ist ", "is ", "are ", "wann ", "when ", "where ", "wo ", "weisst ", "weißt ", "gibt es ", "gibts ", "kommt "} {
+		if strings.HasPrefix(text, signal) || strings.Contains(text, " "+signal) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAvailabilitySignal(text string) bool {
+	for _, signal := range []string{"auf jellyfin", "in jellyfin", "bei jellyfin", "jellyfin", "verfuegbar", "verfügbar", "available", "availability", "streaming", "watch"} {
+		if strings.Contains(text, signal) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasReleaseSignal(text string) bool {
+	for _, signal := range []string{"wann kommt", "when does", "when is", "release", "released", "raus", "erscheint", "startet", "premiere"} {
+		if strings.Contains(text, signal) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasSupportCaseSignal(text string) bool {
+	for _, signal := range []string{
+		"geht nicht", "funktioniert nicht", "kaputt", "fehler", "problem", "bug", "fix", "reparier", "reparieren",
+		"missing", "fehlt", "stuck", "haengt", "haengt fest", "failed", "error", "import", "download", "queue",
+		"blocklist", "subtitle", "subtitles", "untertitel", "audio", "tonspur",
+	} {
+		if strings.Contains(text, signal) {
+			return true
+		}
+	}
+	return false
 }
 
 func looksGerman(content string) bool {

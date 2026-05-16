@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"blitzcrank/internal/agent"
 	"blitzcrank/internal/store"
 )
 
@@ -52,6 +53,28 @@ func TestFallbackIntakeReply(t *testing.T) {
 	reply = fallbackIntakeReply("Can you help?", "clarify")
 	if !strings.Contains(reply, "What") {
 		t.Fatalf("fallbackIntakeReply(clarify) = %q", reply)
+	}
+}
+
+func TestOneOffDiscordQuestionRouting(t *testing.T) {
+	triage := agent.DiscordTriageResult{Action: "support_request", Actionable: true, NeedsAgentRun: true}
+	tests := []struct {
+		name    string
+		message string
+		want    bool
+	}{
+		{name: "jellyfin availability", message: "ist auf jellyfin der neue project hail mary film verfügbar?", want: true},
+		{name: "release date", message: "weiß jemand wann der neue ghost in the shell anime rauskommt?", want: true},
+		{name: "playback issue", message: "Project Hail Mary geht in Jellyfin nicht"},
+		{name: "missing track", message: "bei S02E05 fehlen die Untertitel"},
+		{name: "download issue", message: "download stuck for Ghost in the Shell"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isOneOffDiscordQuestion(tt.message, triage); got != tt.want {
+				t.Fatalf("isOneOffDiscordQuestion() = %t, want %t", got, tt.want)
+			}
+		})
 	}
 }
 
