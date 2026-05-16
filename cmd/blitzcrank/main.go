@@ -67,6 +67,7 @@ func main() {
 	}
 
 	scheduler := automation.NewScheduler(cfg, assistant, bot, state)
+	assistant.SetAutomationMetadataProvider(scheduler)
 	scheduler.Start(ctx)
 
 	log.Printf("%s is running", cfg.BotPublicName)

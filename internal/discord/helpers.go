@@ -163,6 +163,25 @@ func isToolInventoryQuestion(content string) bool {
 	return strings.Contains(text, "?")
 }
 
+func isAutomationScheduleQuestion(content string) bool {
+	text := normalizeQuestionText(content)
+	if text == "" {
+		return false
+	}
+	hasAutomationWord := strings.Contains(text, "automation") || strings.Contains(text, "automations") || strings.Contains(text, "job") || strings.Contains(text, "jobs") || strings.Contains(text, "schedule") || strings.Contains(text, "scheduled") || strings.Contains(text, "cron") || strings.Contains(text, "automatisierung") || strings.Contains(text, "automatisierungen")
+	if !hasAutomationWord {
+		return false
+	}
+	for _, signal := range []string{
+		"when", "wann", "next", "naechst", "näch", "welche", "what", "which", "list", "liste", "zaehle", "zaehl", "zähle", "zähl", "laufen", "laeuft", "läuft", "run", "runs",
+	} {
+		if strings.Contains(text, signal) {
+			return true
+		}
+	}
+	return strings.Contains(text, "?")
+}
+
 func isOneOffDiscordQuestion(content string, triage agent.DiscordTriageResult) bool {
 	if strings.TrimSpace(triage.Action) != "support_request" || !triage.Actionable || !triage.NeedsAgentRun {
 		return false
@@ -271,39 +290,6 @@ func fallbackIntakeReply(content, action string) string {
 		}
 		return "I am ready."
 	}
-}
-
-func toolInventoryReply(content string, available, issueOnly []string) string {
-	if looksGerman(content) {
-		reply := "In diesem Discord-Kontext kann ich diese Werkzeuge nutzen: " + inlineCodeList(available) + "."
-		if len(issueOnly) > 0 {
-			reply += "\n\nNur in Jellyseerr-Issue-Läufen mit Reparaturkontext sind zusätzlich verfügbar: " + inlineCodeList(issueOnly) + "."
-		}
-		return reply
-	}
-	reply := "In this Discord context I can use these tools: " + inlineCodeList(available) + "."
-	if len(issueOnly) > 0 {
-		reply += "\n\nOnly in Jellyseerr issue runs with repair context, these additional tools are available: " + inlineCodeList(issueOnly) + "."
-	}
-	return reply
-}
-
-func inlineCodeList(values []string) string {
-	if len(values) == 0 {
-		return "`none`"
-	}
-	quoted := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		quoted = append(quoted, "`"+value+"`")
-	}
-	if len(quoted) == 0 {
-		return "`none`"
-	}
-	return strings.Join(quoted, ", ")
 }
 
 func validateDiscordReply(reply string) (string, error) {

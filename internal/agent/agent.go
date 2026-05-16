@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
 	"strings"
 	"time"
 
@@ -21,6 +20,7 @@ type Agent struct {
 	cfg                  config.Config
 	client               llm.Client
 	registry             *tools.Registry
+	automationMetadata   AutomationMetadataProvider
 	system               string
 	skills               []Skill
 	runtimePrompt        string
@@ -45,6 +45,25 @@ type ToolAuditRecord struct {
 	CompletedAt      time.Time
 }
 
+type AutomationMetadataProvider interface {
+	AutomationRuntimeMetadata(time.Time) AutomationRuntimeMetadata
+}
+
+type AutomationRuntimeMetadata struct {
+	Enabled  bool
+	Timezone string
+	Tasks    []AutomationTaskMetadata
+	Error    string
+}
+
+type AutomationTaskMetadata struct {
+	Name        string
+	Description string
+	Schedule    string
+	Path        string
+	NextRun     time.Time
+}
+
 type DiscordTriageRequest struct {
 	Author  string
 	Content string
@@ -61,25 +80,32 @@ type DiscordTriageResult struct {
 	Reply         string  `json:"reply"`
 }
 
+const (
+	systemPromptPath         = "prompts/system.md"
+	runtimePromptPath        = "prompts/runtime-metadata.md"
+	discordTriagePromptPath  = "prompts/discord-triage.md"
+	discordSummaryPromptPath = "prompts/discord-thread-summary.md"
+)
+
 func New(cfg config.Config, registry *tools.Registry) (*Agent, error) {
-	skills, err := LoadSkills(cfg.SkillsDirectory)
+	skills, err := LoadEmbeddedSkills()
 	if err != nil {
 		return nil, err
 	}
-	prompt, err := LoadPromptTemplate(cfg.SystemPromptPath)
+	prompt, err := LoadPromptTemplate(systemPromptPath)
 	if err != nil {
 		return nil, err
 	}
 	system := BuildSystemPrompt(cfg, prompt, nil)
-	runtimePrompt, err := LoadPromptTemplate(cfg.RuntimePromptPath)
+	runtimePrompt, err := LoadPromptTemplate(runtimePromptPath)
 	if err != nil {
 		return nil, err
 	}
-	discordTriagePrompt, err := LoadPromptTemplate(cfg.DiscordTriagePromptPath)
+	discordTriagePrompt, err := LoadPromptTemplate(discordTriagePromptPath)
 	if err != nil {
 		return nil, err
 	}
-	discordSummaryPrompt, err := LoadPromptTemplate(cfg.DiscordSummaryPromptPath)
+	discordSummaryPrompt, err := LoadPromptTemplate(discordSummaryPromptPath)
 	if err != nil {
 		return nil, err
 	}
@@ -99,6 +125,10 @@ func New(cfg config.Config, registry *tools.Registry) (*Agent, error) {
 	}, nil
 }
 
+func (a *Agent) SetAutomationMetadataProvider(provider AutomationMetadataProvider) {
+	a.automationMetadata = provider
+}
+
 func (a *Agent) Respond(ctx context.Context, req Request) (string, error) {
 	model := a.ModelName(req)
 	reasoningEffort := a.ReasoningEffort(req, model)
@@ -108,7 +138,7 @@ func (a *Agent) Respond(ctx context.Context, req Request) (string, error) {
 		{Role: "system", Content: a.systemPrompt(req)},
 		{Role: "system", Content: a.workflowPrompt(req, toolPolicy)},
 		{Role: "system", Content: a.toolContextPrompt(toolPolicy)},
-		{Role: "system", Content: a.runtimeMetadata(model, reasoningEffort)},
+		{Role: "system", Content: a.runtimeMetadata(model, reasoningEffort, toolPolicy)},
 		{Role: "user", Content: fmt.Sprintf("Source: %s\nAuthor: %s\n\n%s", req.Source, req.Author, req.Content)},
 	}
 
@@ -190,7 +220,7 @@ func (a *Agent) discordTriageReasoningEffort() string {
 	return strings.TrimSpace(a.cfg.DiscordTriageReasoningEffort)
 }
 
-func (a *Agent) runtimeMetadata(model, reasoningEffort string) string {
+func (a *Agent) runtimeMetadata(model, reasoningEffort string, policy tools.ToolPolicy) string {
 	if strings.TrimSpace(reasoningEffort) == "" {
 		reasoningEffort = "unspecified"
 	}
@@ -198,7 +228,58 @@ func (a *Agent) runtimeMetadata(model, reasoningEffort string) string {
 		"model":            strings.TrimSpace(model),
 		"reasoning_effort": strings.TrimSpace(reasoningEffort),
 		"current_time":     time.Now().Format(time.RFC3339),
+		"callable_tools":   metadataList(a.registry.ToolNamesForPolicy(policy)),
+		"mutating_tools":   metadataList(a.MutatingToolNames()),
+		"read_only":        fmt.Sprintf("%t", policy.ReadOnly),
+		"automations":      a.automationRuntimeMetadata(),
 	})
+}
+
+func (a *Agent) automationRuntimeMetadata() string {
+	if a.automationMetadata == nil {
+		return "unavailable"
+	}
+	metadata := a.automationMetadata.AutomationRuntimeMetadata(time.Now())
+	if !metadata.Enabled {
+		return "disabled"
+	}
+	timezone := strings.TrimSpace(metadata.Timezone)
+	if timezone == "" {
+		timezone = "UTC"
+	}
+	if strings.TrimSpace(metadata.Error) != "" {
+		return fmt.Sprintf("enabled; timezone=%s; error=%s", timezone, compactLogString(metadata.Error, 240))
+	}
+	if len(metadata.Tasks) == 0 {
+		return fmt.Sprintf("enabled; timezone=%s; tasks=none", timezone)
+	}
+	parts := make([]string, 0, len(metadata.Tasks))
+	for _, task := range metadata.Tasks {
+		nextRun := "unknown"
+		if !task.NextRun.IsZero() {
+			nextRun = task.NextRun.Format(time.RFC3339)
+		}
+		description := strings.TrimSpace(task.Description)
+		if description != "" {
+			description = " description=" + compactLogString(description, 160)
+		}
+		parts = append(parts, fmt.Sprintf("%s schedule=%s next_run=%s%s", strings.TrimSpace(task.Name), strings.TrimSpace(task.Schedule), nextRun, description))
+	}
+	return fmt.Sprintf("enabled; timezone=%s; tasks=%s", timezone, strings.Join(parts, " | "))
+}
+
+func metadataList(values []string) string {
+	var cleaned []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			cleaned = append(cleaned, value)
+		}
+	}
+	if len(cleaned) == 0 {
+		return "none"
+	}
+	return strings.Join(cleaned, ", ")
 }
 
 func (a *Agent) executeTool(ctx context.Context, req Request, call llm.ToolCall, policy tools.ToolPolicy) (any, error) {
@@ -664,11 +745,11 @@ func normalizedModelName(model string) string {
 }
 
 func LoadSystemPrompt(cfg config.Config) (string, error) {
-	skills, err := LoadSkills(cfg.SkillsDirectory)
+	skills, err := LoadEmbeddedSkills()
 	if err != nil {
 		return "", err
 	}
-	prompt, err := LoadPromptTemplate(cfg.SystemPromptPath)
+	prompt, err := LoadPromptTemplate(systemPromptPath)
 	if err != nil {
 		return "", err
 	}
@@ -676,14 +757,9 @@ func LoadSystemPrompt(cfg config.Config) (string, error) {
 }
 
 func LoadPromptTemplate(path string) (string, error) {
-	content, err := os.ReadFile(path)
+	content, err := assets.FS.ReadFile(path)
 	if err != nil {
-		if embeddedPath, ok := assets.BundledFilePath(path, "prompts"); ok {
-			if embeddedContent, embeddedErr := assets.FS.ReadFile(embeddedPath); embeddedErr == nil {
-				return strings.TrimSpace(string(embeddedContent)), nil
-			}
-		}
-		return "", fmt.Errorf("load system prompt %s: %w", path, err)
+		return "", fmt.Errorf("load embedded prompt %s: %w", path, err)
 	}
 	return strings.TrimSpace(string(content)), nil
 }

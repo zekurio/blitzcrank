@@ -40,6 +40,35 @@ func TestNextRunRollsToTomorrow(t *testing.T) {
 	}
 }
 
+func TestAutomationRuntimeMetadataIncludesNextRuns(t *testing.T) {
+	scheduler := NewScheduler(config.Config{
+		CronEnabled: true,
+		Timezone:    "Europe/Vienna",
+	}, nil, nil, nil)
+	scheduler.tasks = []Task{{
+		Name:        "test",
+		Description: "Test automation",
+		Schedule:    "cron: 0 9 * * *",
+		cron:        mustSchedule(t, "0 9 * * *"),
+		Path:        "automations/test.md",
+	}}
+
+	metadata := scheduler.AutomationRuntimeMetadata(time.Date(2026, 5, 16, 8, 30, 0, 0, time.UTC))
+	if !metadata.Enabled || metadata.Timezone != "Europe/Vienna" {
+		t.Fatalf("metadata = %#v, want enabled Europe/Vienna", metadata)
+	}
+	if len(metadata.Tasks) != 1 {
+		t.Fatalf("tasks = %#v, want one task", metadata.Tasks)
+	}
+	task := metadata.Tasks[0]
+	if task.Name != "test" || task.Schedule != "cron: 0 9 * * *" || task.Description != "Test automation" {
+		t.Fatalf("task metadata = %#v", task)
+	}
+	if task.NextRun.Location().String() != "Europe/Vienna" || task.NextRun.Hour() != 9 || task.NextRun.Minute() != 0 {
+		t.Fatalf("next run = %s, want 09:00 Europe/Vienna", task.NextRun)
+	}
+}
+
 func TestLoadTasksFromMarkdown(t *testing.T) {
 	root := t.TempDir()
 	writeTask(t, root, "daily.md", "daily-health-check", "Check things")

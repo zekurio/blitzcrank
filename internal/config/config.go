@@ -39,28 +39,23 @@ type Config struct {
 	ExaBaseURL      string
 	ExaAPIKey       string
 
-	LLMProvider              string
-	CodexAuthProfile         string
-	CodexAuthStore           string
-	CodexBaseURL             string
-	CodexServiceTier         string
-	OpenAIAPIKey             string
-	OpenAIBaseURL            string
-	Model                    string
-	ReasoningEffort          string
-	OpenAIReferer            string
-	OpenAITitle              string
-	SystemPromptPath         string
-	RuntimePromptPath        string
-	DiscordTriagePromptPath  string
-	DiscordSummaryPromptPath string
-	SkillsDirectory          string
-	ThreadsDirectory         string
-	MaxToolIterations        int
-	RunTimeout               time.Duration
-	CronEnabled              bool
-	AutomationsExtraDirs     []string
-	DatabasePath             string
+	LLMProvider          string
+	CodexAuthProfile     string
+	CodexAuthStore       string
+	CodexBaseURL         string
+	CodexServiceTier     string
+	OpenAIAPIKey         string
+	OpenAIBaseURL        string
+	Model                string
+	ReasoningEffort      string
+	OpenAIReferer        string
+	OpenAITitle          string
+	ThreadsDirectory     string
+	MaxToolIterations    int
+	RunTimeout           time.Duration
+	CronEnabled          bool
+	AutomationsExtraDirs []string
+	DatabasePath         string
 
 	SeerrBotUserID      string
 	SeerrBotDisplayName string
@@ -117,13 +112,8 @@ func load(dotenvPath string, validate bool) (Config, error) {
 		ReasoningEffort:              os.Getenv("REASONING_EFFORT"),
 		OpenAIReferer:                os.Getenv("OPENROUTER_HTTP_REFERER"),
 		OpenAITitle:                  getenv("OPENROUTER_X_TITLE", "Blitzcrank"),
-		SystemPromptPath:             getenv("AGENT_SYSTEM_PROMPT", "prompts/system.md"),
-		RuntimePromptPath:            getenv("AGENT_RUNTIME_PROMPT", "prompts/runtime-metadata.md"),
-		DiscordTriagePromptPath:      getenv("AGENT_DISCORD_TRIAGE_PROMPT", "prompts/discord-triage.md"),
-		DiscordSummaryPromptPath:     getenv("AGENT_DISCORD_SUMMARY_PROMPT", "prompts/discord-thread-summary.md"),
-		SkillsDirectory:              getenv("AGENT_SKILLS_DIR", "skills"),
 		ThreadsDirectory:             getenv("AGENT_THREADS_DIR", "threads"),
-		MaxToolIterations:            intEnv("AGENT_MAX_TOOL_ITERATIONS", 8),
+		MaxToolIterations:            intEnv("AGENT_MAX_TOOL_ITERATIONS", 15),
 		RunTimeout:                   durationEnv("AGENT_RUN_TIMEOUT", 5*time.Minute),
 		CronEnabled:                  boolEnv("CRON_ENABLED", false),
 		AutomationsExtraDirs:         listEnv("AUTOMATIONS_EXTRA_DIRS"),

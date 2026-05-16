@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	assets "blitzcrank"
@@ -32,6 +33,7 @@ type Runner interface {
 }
 
 type Scheduler struct {
+	mu            sync.RWMutex
 	cfg           config.Config
 	runner        Runner
 	reporter      Reporter
@@ -65,10 +67,11 @@ func (s *Scheduler) Start(ctx context.Context) {
 		log.Printf("automation scheduler disabled")
 		return
 	}
-	if len(s.tasks) == 0 {
+	tasks := s.taskSnapshot()
+	if len(tasks) == 0 {
 		log.Printf("automation scheduler enabled with no tasks; watching automation directories")
 	} else {
-		log.Printf("automation scheduler enabled: tasks=%s timezone=%s", taskNames(s.tasks), s.cfg.Timezone)
+		log.Printf("automation scheduler enabled: tasks=%s timezone=%s", taskNames(tasks), s.cfg.Timezone)
 	}
 
 	go s.loop(ctx)
@@ -103,12 +106,17 @@ func (s *Scheduler) reloadTasks() {
 	tasks, err := LoadTaskDirs(s.cfg.AutomationsExtraDirs)
 	if err != nil {
 		message := err.Error()
-		if message != s.lastLoadError {
+		s.mu.Lock()
+		changed := message != s.lastLoadError
+		s.lastLoadError = message
+		s.mu.Unlock()
+		if changed {
 			log.Printf("load automations: %v", err)
-			s.lastLoadError = message
 		}
 		return
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.lastLoadError = ""
 	if sameTaskSet(s.tasks, tasks) {
 		return
@@ -191,13 +199,17 @@ func (s *Scheduler) appendTrace(relPath string, value any) {
 }
 
 func (s *Scheduler) nextRun(now time.Time) time.Time {
+	return s.nextRunForTasks(now, s.taskSnapshot())
+}
+
+func (s *Scheduler) nextRunForTasks(now time.Time, tasks []Task) time.Time {
 	location, err := time.LoadLocation(s.cfg.Timezone)
 	if err != nil {
 		location = time.UTC
 	}
 	localNow := now.In(location).Truncate(time.Minute)
 	var next time.Time
-	for _, task := range s.tasks {
+	for _, task := range tasks {
 		candidate := task.cron.Next(localNow)
 		if next.IsZero() || candidate.Before(next) {
 			next = candidate
@@ -207,13 +219,14 @@ func (s *Scheduler) nextRun(now time.Time) time.Time {
 }
 
 func (s *Scheduler) dueTasks(now time.Time) []Task {
+	tasks := s.taskSnapshot()
 	location, err := time.LoadLocation(s.cfg.Timezone)
 	if err != nil {
 		location = time.UTC
 	}
 	localNow := now.In(location).Truncate(time.Minute)
 	var due []Task
-	for _, task := range s.tasks {
+	for _, task := range tasks {
 		previous := localNow.Add(-time.Minute)
 		next := task.cron.Next(previous)
 		if next.Equal(localNow) {
@@ -221,6 +234,38 @@ func (s *Scheduler) dueTasks(now time.Time) []Task {
 		}
 	}
 	return due
+}
+
+func (s *Scheduler) taskSnapshot() []Task {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]Task(nil), s.tasks...)
+}
+
+func (s *Scheduler) AutomationRuntimeMetadata(now time.Time) agent.AutomationRuntimeMetadata {
+	s.mu.RLock()
+	tasks := append([]Task(nil), s.tasks...)
+	lastLoadError := s.lastLoadError
+	s.mu.RUnlock()
+
+	metadata := agent.AutomationRuntimeMetadata{
+		Enabled:  s.cfg.CronEnabled,
+		Timezone: s.cfg.Timezone,
+		Error:    lastLoadError,
+	}
+	if !s.cfg.CronEnabled || lastLoadError != "" {
+		return metadata
+	}
+	for _, task := range tasks {
+		metadata.Tasks = append(metadata.Tasks, agent.AutomationTaskMetadata{
+			Name:        task.Name,
+			Description: task.Description,
+			Schedule:    task.Schedule,
+			Path:        task.Path,
+			NextRun:     s.nextRunForTasks(now, []Task{task}),
+		})
+	}
+	return metadata
 }
 
 func LoadTasks(root string) ([]Task, error) {
