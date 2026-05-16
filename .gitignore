@@ -1,0 +1,43 @@
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.coverprofile
+coverage.*
+profile.cov
+
+# Local build output
+/bin/
+/build/
+/dist/
+
+# Local Go workspace files
+go.work
+go.work.sum
+
+# Nix build symlinks
+/result
+/result-*
+
+# direnv cache
+.direnv/
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Local database files
+*.sqlite
+*.sqlite3
+
+# Editor and OS files
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
