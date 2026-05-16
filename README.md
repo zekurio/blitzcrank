@@ -99,6 +99,11 @@ Skills and automations remain file-backed Markdown and are not stored in SQLite.
 
 ## Agent Skills
 
+Edit the built-in system prompt in `prompts/system.md`. The prompt supports these placeholders:
+
+- `{{bot_name}}`
+- `{{current_time}}`
+
 Put behavior and response rules in Codex-style skill files under `skills/<name>/SKILL.md`. Skills are loaded alphabetically and appended to the built-in system prompt.
 
 Agent runs use `MODEL`, defaulting to `gpt-5.5` when unset. If `REASONING_EFFORT` is empty, Blitzcrank uses curated defaults: `gpt-5.4-mini` uses `high`, `gpt-5.4` uses `medium`, and `gpt-5.5` uses `low`. Set `REASONING_EFFORT` to override that globally. Skills can optionally override both values in frontmatter:
