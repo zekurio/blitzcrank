@@ -48,7 +48,7 @@ func main() {
 
 	var bot *discord.Bot
 	if cfg.DiscordToken != "" && cfg.AgentDiscordChannelID != "" {
-		bot, err = discord.NewBot(cfg, assistant)
+		bot, err = discord.NewBot(cfg, assistant, state)
 		if err != nil {
 			log.Fatalf("create discord bot: %v", err)
 		}

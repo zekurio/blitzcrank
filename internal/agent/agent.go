@@ -15,16 +15,35 @@ import (
 )
 
 type Agent struct {
-	cfg      config.Config
-	client   llm.Client
-	registry *tools.Registry
-	system   string
+	cfg                  config.Config
+	client               llm.Client
+	registry             *tools.Registry
+	system               string
+	runtimePrompt        string
+	discordTriagePrompt  string
+	discordSummaryPrompt string
 }
 
 type Request struct {
 	Source  string
 	Author  string
 	Content string
+}
+
+type DiscordTriageRequest struct {
+	Author  string
+	Content string
+	Mention bool
+}
+
+type DiscordTriageResult struct {
+	Action        string  `json:"action"`
+	Actionable    bool    `json:"actionable"`
+	Confidence    float64 `json:"confidence"`
+	Reason        string  `json:"reason"`
+	ThreadTitle   string  `json:"thread_title"`
+	NeedsAgentRun bool    `json:"needs_agent_run"`
+	Reply         string  `json:"reply"`
 }
 
 func New(cfg config.Config, registry *tools.Registry) (*Agent, error) {
@@ -37,29 +56,46 @@ func New(cfg config.Config, registry *tools.Registry) (*Agent, error) {
 		return nil, err
 	}
 	system := BuildSystemPrompt(cfg, prompt, skills)
+	runtimePrompt, err := LoadPromptTemplate(cfg.RuntimePromptPath)
+	if err != nil {
+		return nil, err
+	}
+	discordTriagePrompt, err := LoadPromptTemplate(cfg.DiscordTriagePromptPath)
+	if err != nil {
+		return nil, err
+	}
+	discordSummaryPrompt, err := LoadPromptTemplate(cfg.DiscordSummaryPromptPath)
+	if err != nil {
+		return nil, err
+	}
 	client, err := llm.New(cfg)
 	if err != nil {
 		return nil, err
 	}
 	return &Agent{
-		cfg:      cfg,
-		client:   client,
-		registry: registry,
-		system:   system,
+		cfg:                  cfg,
+		client:               client,
+		registry:             registry,
+		system:               system,
+		runtimePrompt:        runtimePrompt,
+		discordTriagePrompt:  discordTriagePrompt,
+		discordSummaryPrompt: discordSummaryPrompt,
 	}, nil
 }
 
 func (a *Agent) Respond(ctx context.Context, req Request) (string, error) {
+	model := a.ModelName(req)
+	reasoningEffort := a.ReasoningEffort(req, model)
 	messages := []llm.Message{
 		{Role: "system", Content: a.system},
+		{Role: "system", Content: a.runtimeMetadata(model, reasoningEffort)},
 		{Role: "user", Content: fmt.Sprintf("Source: %s\nAuthor: %s\n\n%s", req.Source, req.Author, req.Content)},
 	}
 
 	for range a.cfg.MaxToolIterations {
-		model := a.ModelName(req)
 		response, err := a.client.Chat(ctx, llm.ChatRequest{
 			Model:           model,
-			ReasoningEffort: a.ReasoningEffort(req, model),
+			ReasoningEffort: reasoningEffort,
 			Messages:        messages,
 			Tools:           a.registry.OpenAITools(),
 		})
@@ -90,15 +126,113 @@ func (a *Agent) Respond(ctx context.Context, req Request) (string, error) {
 	return "", fmt.Errorf("agent exceeded tool iteration limit")
 }
 
+func (a *Agent) TriageDiscordMessage(ctx context.Context, req DiscordTriageRequest) (DiscordTriageResult, error) {
+	response, err := a.client.Chat(ctx, llm.ChatRequest{
+		Model:           a.discordTriageModel(),
+		ReasoningEffort: a.discordTriageReasoningEffort(),
+		Messages: []llm.Message{
+			{Role: "system", Content: a.discordTriagePrompt},
+			{Role: "user", Content: fmt.Sprintf("Author: %s\nMentioned bot: %t\nMessage:\n%s", req.Author, req.Mention, req.Content)},
+		},
+	})
+	if err != nil {
+		return DiscordTriageResult{}, err
+	}
+	var result DiscordTriageResult
+	if err := json.Unmarshal([]byte(extractJSONObject(response.FirstChoice().Message.Content)), &result); err != nil {
+		return DiscordTriageResult{}, fmt.Errorf("parse discord triage JSON: %w", err)
+	}
+	return result, nil
+}
+
+func (a *Agent) SummarizeDiscordThread(ctx context.Context, previousSummary, latestUserMessage, assistantReply string) (string, error) {
+	response, err := a.client.Chat(ctx, llm.ChatRequest{
+		Model:           a.discordTriageModel(),
+		ReasoningEffort: a.discordTriageReasoningEffort(),
+		Messages: []llm.Message{
+			{Role: "system", Content: a.discordSummaryPrompt},
+			{Role: "user", Content: fmt.Sprintf("Previous summary:\n%s\n\nLatest user message:\n%s\n\nAssistant reply:\n%s", previousSummary, latestUserMessage, assistantReply)},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(response.FirstChoice().Message.Content), nil
+}
+
+func (a *Agent) discordTriageModel() string {
+	return strings.TrimSpace(a.cfg.DiscordTriageModel)
+}
+
+func (a *Agent) discordTriageReasoningEffort() string {
+	return strings.TrimSpace(a.cfg.DiscordTriageReasoningEffort)
+}
+
+func (a *Agent) runtimeMetadata(model, reasoningEffort string) string {
+	if strings.TrimSpace(reasoningEffort) == "" {
+		reasoningEffort = "unspecified"
+	}
+	return renderPrompt(a.runtimePrompt, map[string]string{
+		"model":            strings.TrimSpace(model),
+		"reasoning_effort": strings.TrimSpace(reasoningEffort),
+	})
+}
+
 func (a *Agent) executeTool(ctx context.Context, call llm.ToolCall) (any, error) {
 	var args map[string]any
 	if call.Function.Arguments != "" {
 		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
+			log.Printf("agent tool call failed: name=%s parse_args=true arguments=%s error=%q", call.Function.Name, compactLogString(call.Function.Arguments, 512), err.Error())
 			return nil, fmt.Errorf("parse tool arguments for %s: %w", call.Function.Name, err)
 		}
 	}
-	log.Printf("agent tool call: %s", call.Function.Name)
-	return a.registry.Call(ctx, call.Function.Name, args)
+	if args == nil {
+		args = map[string]any{}
+	}
+	log.Printf("agent tool call start: name=%s args=%s", call.Function.Name, compactLogValue(args, 512))
+	start := time.Now()
+	result, err := a.registry.Call(ctx, call.Function.Name, args)
+	elapsed := time.Since(start).Round(time.Millisecond)
+	if err != nil {
+		log.Printf("agent tool call failed: name=%s duration=%s error=%q", call.Function.Name, elapsed, compactLogString(err.Error(), 1024))
+		return nil, err
+	}
+	log.Printf("agent tool call succeeded: name=%s duration=%s result=%s", call.Function.Name, elapsed, compactLogValue(result, 1024))
+	return result, nil
+}
+
+func extractJSONObject(content string) string {
+	content = strings.TrimSpace(content)
+	start := strings.Index(content, "{")
+	end := strings.LastIndex(content, "}")
+	if start >= 0 && end >= start {
+		return content[start : end+1]
+	}
+	return content
+}
+
+func renderPrompt(template string, values map[string]string) string {
+	out := strings.TrimSpace(template)
+	for key, value := range values {
+		out = strings.ReplaceAll(out, "{{"+key+"}}", value)
+	}
+	return out
+}
+
+func compactLogValue(value any, limit int) string {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return compactLogString(fmt.Sprintf("%v", value), limit)
+	}
+	return compactLogString(string(data), limit)
+}
+
+func compactLogString(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if limit > 0 && len(value) > limit {
+		return value[:limit] + "..."
+	}
+	return value
 }
 
 func toolErrorResult(name string, err error) map[string]any {
@@ -141,6 +275,11 @@ func (a *Agent) ModelName(req Request) string {
 
 func (a *Agent) ReasoningEffort(_ Request, model string) string {
 	return ReasoningEffortForRequest(a.cfg.ReasoningEffort, model)
+}
+
+func (a *Agent) RuntimeInfo(req Request) (string, string) {
+	model := a.ModelName(req)
+	return model, a.ReasoningEffort(req, model)
 }
 
 func ReasoningEffortForRequest(fallback, model string) string {

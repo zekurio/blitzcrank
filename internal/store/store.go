@@ -3,9 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -58,6 +56,50 @@ type AutomationRun struct {
 	CompletedAt    *time.Time
 	Result         string
 	Error          string
+}
+
+type AgentThread struct {
+	ThreadID         string
+	Source           string
+	ExternalID       string
+	ParentExternalID string
+	RootExternalID   string
+	Status           string
+	Title            string
+	Summary          string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	CompletedAt      *time.Time
+	CompletionReason string
+	LastPayloadJSON  string
+	Events           []AgentThreadEvent
+	Runs             []AgentRun
+}
+
+type AgentThreadEvent struct {
+	ID                int64
+	ThreadID          string
+	EventType         string
+	Actor             string
+	ActorID           string
+	Message           string
+	ExternalMessageID string
+	PayloadJSON       string
+	CreatedAt         time.Time
+}
+
+type AgentRun struct {
+	ID               int64
+	ThreadID         string
+	SourceEventType  string
+	StartedAt        time.Time
+	CompletedAt      *time.Time
+	FinalResponse    string
+	Posted           bool
+	Attribution      string
+	Error            string
+	CompletionReason string
+	Summary          string
 }
 
 func Open(ctx context.Context, path string) (*Store, error) {
@@ -134,172 +176,56 @@ CREATE TABLE IF NOT EXISTS automation_runs (
   result TEXT,
   error TEXT
 );
+
+CREATE TABLE IF NOT EXISTS agent_threads (
+  thread_id TEXT PRIMARY KEY,
+  source TEXT NOT NULL,
+  external_id TEXT NOT NULL,
+  parent_external_id TEXT,
+  root_external_id TEXT,
+  status TEXT NOT NULL,
+  title TEXT,
+  summary TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_at TEXT,
+  completion_reason TEXT,
+  last_payload_json TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_threads_source_external
+ON agent_threads(source, external_id);
+
+CREATE TABLE IF NOT EXISTS agent_thread_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  thread_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  actor TEXT,
+  actor_id TEXT,
+  message TEXT,
+  external_message_id TEXT,
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (thread_id) REFERENCES agent_threads(thread_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_thread_events_thread_id
+ON agent_thread_events(thread_id, id);
+
+CREATE TABLE IF NOT EXISTS agent_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  thread_id TEXT NOT NULL,
+  source_event_type TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  final_response TEXT,
+  posted INTEGER NOT NULL DEFAULT 0,
+  attribution TEXT,
+  error TEXT,
+  completion_reason TEXT,
+  summary TEXT,
+  FOREIGN KEY (thread_id) REFERENCES agent_threads(thread_id)
+);
 `)
 	return err
-}
-
-func (s *Store) LoadIssueThread(ctx context.Context, issueID string) (IssueThread, bool, error) {
-	var thread IssueThread
-	var completedAt, reason sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT issue_id,status,created_at,updated_at,completed_at,completion_reason,last_payload_json FROM issue_threads WHERE issue_id = ?`, issueID).Scan(
-		&thread.IssueID, &thread.Status, scanTime(&thread.CreatedAt), scanTime(&thread.UpdatedAt), &completedAt, &reason, &thread.LastPayloadJSON,
-	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return IssueThread{}, false, nil
-	}
-	if err != nil {
-		return IssueThread{}, false, err
-	}
-	thread.CompletedAt = parseNullTime(completedAt)
-	thread.CompletionReason = reason.String
-
-	events, err := s.LoadIssueEvents(ctx, issueID)
-	if err != nil {
-		return IssueThread{}, false, err
-	}
-	runs, err := s.LoadIssueRuns(ctx, issueID)
-	if err != nil {
-		return IssueThread{}, false, err
-	}
-	thread.Events = events
-	thread.Runs = runs
-	return thread, true, nil
-}
-
-func (s *Store) UpsertIssueThread(ctx context.Context, thread IssueThread) error {
-	_, err := s.db.ExecContext(ctx, `
-INSERT INTO issue_threads(issue_id,status,created_at,updated_at,completed_at,completion_reason,last_payload_json)
-VALUES(?,?,?,?,?,?,?)
-ON CONFLICT(issue_id) DO UPDATE SET
-  status=excluded.status,
-  updated_at=excluded.updated_at,
-  completed_at=excluded.completed_at,
-  completion_reason=excluded.completion_reason,
-  last_payload_json=excluded.last_payload_json
-`, thread.IssueID, thread.Status, formatTime(thread.CreatedAt), formatTime(thread.UpdatedAt), formatTimePtr(thread.CompletedAt), thread.CompletionReason, thread.LastPayloadJSON)
-	return err
-}
-
-func (s *Store) InsertIssueEvent(ctx context.Context, event IssueEvent) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO issue_thread_events(issue_id,event_type,actor,message,payload_json,created_at) VALUES(?,?,?,?,?,?)`,
-		event.IssueID, event.EventType, event.Actor, event.Message, event.PayloadJSON, formatTime(event.CreatedAt))
-	return err
-}
-
-func (s *Store) InsertIssueRun(ctx context.Context, run IssueRun) error {
-	posted := 0
-	if run.Posted {
-		posted = 1
-	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO issue_runs(issue_id,source_event_type,started_at,completed_at,final_comment,posted,attribution,error,completion_reason) VALUES(?,?,?,?,?,?,?,?,?)`,
-		run.IssueID, run.SourceEventType, formatTime(run.StartedAt), formatTimePtr(run.CompletedAt), run.FinalComment, posted, run.Attribution, run.Error, run.CompletionReason)
-	return err
-}
-
-func (s *Store) InsertAutomationRun(ctx context.Context, run AutomationRun) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO automation_runs(automation_name,started_at,completed_at,result,error) VALUES(?,?,?,?,?)`,
-		run.AutomationName, formatTime(run.StartedAt), formatTimePtr(run.CompletedAt), run.Result, run.Error)
-	return err
-}
-
-func (s *Store) LoadIssueEvents(ctx context.Context, issueID string) ([]IssueEvent, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,issue_id,event_type,actor,message,payload_json,created_at FROM issue_thread_events WHERE issue_id = ? ORDER BY id`, issueID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var events []IssueEvent
-	for rows.Next() {
-		var event IssueEvent
-		if err := rows.Scan(&event.ID, &event.IssueID, &event.EventType, &event.Actor, &event.Message, &event.PayloadJSON, scanTime(&event.CreatedAt)); err != nil {
-			return nil, err
-		}
-		events = append(events, event)
-	}
-	return events, rows.Err()
-}
-
-func (s *Store) LoadIssueRuns(ctx context.Context, issueID string) ([]IssueRun, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,issue_id,source_event_type,started_at,completed_at,final_comment,posted,attribution,error,completion_reason FROM issue_runs WHERE issue_id = ? ORDER BY id`, issueID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var runs []IssueRun
-	for rows.Next() {
-		var run IssueRun
-		var completedAt sql.NullString
-		var posted int
-		if err := rows.Scan(&run.ID, &run.IssueID, &run.SourceEventType, scanTime(&run.StartedAt), &completedAt, &run.FinalComment, &posted, &run.Attribution, &run.Error, &run.CompletionReason); err != nil {
-			return nil, err
-		}
-		run.CompletedAt = parseNullTime(completedAt)
-		run.Posted = posted == 1
-		runs = append(runs, run)
-	}
-	return runs, rows.Err()
-}
-
-func AppendJSONL(path string, value any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	data, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintln(file, string(data))
-	return err
-}
-
-func formatTime(value time.Time) string {
-	return value.UTC().Format(time.RFC3339Nano)
-}
-
-func formatTimePtr(value *time.Time) any {
-	if value == nil {
-		return nil
-	}
-	return formatTime(*value)
-}
-
-func scanTime(target *time.Time) any {
-	return sqlScannerFunc(func(src any) error {
-		value, ok := src.(string)
-		if !ok {
-			if bytes, ok := src.([]byte); ok {
-				value = string(bytes)
-			} else {
-				return fmt.Errorf("unexpected time value %T", src)
-			}
-		}
-		parsed, err := time.Parse(time.RFC3339Nano, value)
-		if err != nil {
-			return err
-		}
-		*target = parsed
-		return nil
-	})
-}
-
-func parseNullTime(value sql.NullString) *time.Time {
-	if !value.Valid || value.String == "" {
-		return nil
-	}
-	parsed, err := time.Parse(time.RFC3339Nano, value.String)
-	if err != nil {
-		return nil
-	}
-	return &parsed
-}
-
-type sqlScannerFunc func(any) error
-
-func (f sqlScannerFunc) Scan(src any) error {
-	return f(src)
 }

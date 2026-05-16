@@ -65,6 +65,76 @@ func TestStorePersistsIssueThreadEventAndRun(t *testing.T) {
 	}
 }
 
+func TestStorePersistsAgentThreadEventAndRun(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().UTC()
+	thread := AgentThread{
+		ThreadID:         "discord:thread-1",
+		Source:           "discord",
+		ExternalID:       "thread-1",
+		ParentExternalID: "channel-1",
+		RootExternalID:   "message-1",
+		Status:           "active",
+		Title:            "Missing episode",
+		Summary:          "User reports a missing episode.",
+		CreatedAt:        now,
+		UpdatedAt:        now,
+		LastPayloadJSON:  `{"ok":true}`,
+	}
+	if err := store.UpsertAgentThread(ctx, thread); err != nil {
+		t.Fatalf("UpsertAgentThread() error = %v", err)
+	}
+	if err := store.InsertAgentThreadEvent(ctx, AgentThreadEvent{
+		ThreadID:          "discord:thread-1",
+		EventType:         "root_message",
+		Actor:             "alice",
+		ActorID:           "user-1",
+		Message:           "episode is missing",
+		ExternalMessageID: "message-1",
+		PayloadJSON:       `{"message_id":"message-1"}`,
+		CreatedAt:         now,
+	}); err != nil {
+		t.Fatalf("InsertAgentThreadEvent() error = %v", err)
+	}
+	completed := now.Add(time.Second)
+	if err := store.InsertAgentRun(ctx, AgentRun{
+		ThreadID:         "discord:thread-1",
+		SourceEventType:  "root_message",
+		StartedAt:        now,
+		CompletedAt:      &completed,
+		FinalResponse:    "done",
+		Posted:           true,
+		Attribution:      "discord:gpt-5.5",
+		CompletionReason: "discord response posted",
+		Summary:          "Resolved.",
+	}); err != nil {
+		t.Fatalf("InsertAgentRun() error = %v", err)
+	}
+
+	loaded, ok, err := store.LoadAgentThreadByExternalID(ctx, "discord", "thread-1")
+	if err != nil {
+		t.Fatalf("LoadAgentThreadByExternalID() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("LoadAgentThreadByExternalID() ok = false")
+	}
+	if loaded.ThreadID != "discord:thread-1" || loaded.ParentExternalID != "channel-1" || loaded.RootExternalID != "message-1" {
+		t.Fatalf("loaded thread = %#v", loaded)
+	}
+	if len(loaded.Events) != 1 || loaded.Events[0].ExternalMessageID != "message-1" {
+		t.Fatalf("events = %#v", loaded.Events)
+	}
+	if len(loaded.Runs) != 1 || !loaded.Runs[0].Posted || loaded.Runs[0].Summary != "Resolved." {
+		t.Fatalf("runs = %#v", loaded.Runs)
+	}
+}
+
 func TestAppendJSONL(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "trace", "run.jsonl")
 	if err := AppendJSONL(path, map[string]any{"type": "test"}); err != nil {
