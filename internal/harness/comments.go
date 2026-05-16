@@ -52,6 +52,60 @@ func (m *Manager) signedComment(comment string, request agent.Request) string {
 	return header + "\n\n" + comment
 }
 
+func (m *Manager) validateFinalIssueComment(comment string) error {
+	comment = strings.TrimSpace(comment)
+	if comment == "" {
+		return fmt.Errorf("final issue comment is empty")
+	}
+	if len(comment) > 1600 {
+		return fmt.Errorf("final issue comment is too long: %d bytes", len(comment))
+	}
+	lower := strings.ToLower(comment)
+	if strings.HasPrefix(comment, m.commentHeaderPrefix()) {
+		return fmt.Errorf("final issue comment must not include the bot header")
+	}
+	for _, marker := range []string{
+		"webhook payload:",
+		"tool result",
+		"tool_results",
+		"```",
+		"{\"",
+	} {
+		if strings.Contains(lower, marker) {
+			return fmt.Errorf("final issue comment appears to expose internal output")
+		}
+	}
+	for _, label := range []string{
+		"validierung:",
+		"ursache:",
+		"fix:",
+		"prüfung:",
+		"pruefung:",
+		"nächste schritte:",
+		"naechste schritte:",
+	} {
+		if strings.Contains(lower, label) {
+			return fmt.Errorf("final issue comment contains a disallowed section label")
+		}
+	}
+	for _, phrase := range []string{
+		"bitte prüfen",
+		"bitte pruefen",
+		"try again",
+		"let me know",
+		"gib bescheid",
+		"manuell prüfen",
+		"manuell pruefen",
+		"sobald verfügbar",
+		"sobald verfuegbar",
+	} {
+		if strings.Contains(lower, phrase) {
+			return fmt.Errorf("final issue comment contains open-ended guidance")
+		}
+	}
+	return nil
+}
+
 func (m *Manager) commentHeader(request ...agent.Request) string {
 	name := strings.ToLower(strings.TrimSpace(m.cfg.SeerrBotDisplayName))
 	if name == "" {

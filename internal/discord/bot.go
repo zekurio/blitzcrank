@@ -115,6 +115,9 @@ func (b *Bot) handleParentChannelMessage(session *discordgo.Session, event *disc
 	if b.replyToParentModelRuntimeQuestion(session, event, content) {
 		return
 	}
+	if b.replyToParentToolInventoryQuestion(session, event, content) {
+		return
+	}
 
 	triage, mentioned, ok := b.triageParentChannelMessage(session, event, content)
 	if !ok {
@@ -173,6 +176,22 @@ func (b *Bot) replyToParentModelRuntimeQuestion(session *discordgo.Session, even
 	}
 	if err := b.sendMessageReference(context.Background(), event.ChannelID, event.ID, b.modelRuntimeReply(content, request)); err != nil {
 		log.Printf("send discord model info response failed: %v", err)
+	}
+	return true
+}
+
+func (b *Bot) replyToParentToolInventoryQuestion(session *discordgo.Session, event *discordgo.MessageCreate, content string) bool {
+	if !b.mentionsBot(session, event.Message) || !isToolInventoryQuestion(content) {
+		return false
+	}
+	request := agent.Request{
+		Source:  "discord_mention",
+		Author:  discordAuthor(event.Author),
+		Content: content,
+	}
+	reply := toolInventoryReply(content, b.agent.ToolNames(request), b.agent.MutatingToolNames())
+	if err := b.sendMessageReference(context.Background(), event.ChannelID, event.ID, reply); err != nil {
+		log.Printf("send discord tool inventory response failed: %v", err)
 	}
 	return true
 }
@@ -251,6 +270,13 @@ func (b *Bot) runDirectAgent(ctx context.Context, session *discordgo.Session, ev
 		}
 		return
 	}
+	if isToolInventoryQuestion(content) {
+		reply := toolInventoryReply(content, b.agent.ToolNames(request), b.agent.MutatingToolNames())
+		if err := b.sendMessageReference(runCtx, event.ChannelID, event.ID, reply); err != nil {
+			log.Printf("send discord tool inventory response failed: %v", err)
+		}
+		return
+	}
 
 	if err := session.ChannelTyping(event.ChannelID); err != nil {
 		log.Printf("send typing indicator: %v", err)
@@ -260,6 +286,9 @@ func (b *Bot) runDirectAgent(ctx context.Context, session *discordgo.Session, ev
 	if err != nil {
 		log.Printf("agent discord mention response failed: %v", err)
 		reply = "I could not process that request. Check the bot logs for details."
+	} else if reply, err = validateDiscordReply(reply); err != nil {
+		log.Printf("agent discord mention response invalid: %v", err)
+		reply = safeDiscordFailureReply(content)
 	}
 	if err := b.sendMessageReference(runCtx, event.ChannelID, event.ID, reply); err != nil {
 		log.Printf("send discord mention response failed: %v", err)
@@ -288,6 +317,18 @@ func (b *Bot) handleThreadMessage(session *discordgo.Session, event *discordgo.M
 	}
 
 	mentioned := b.mentionsBot(session, event.Message)
+	if mentioned && isToolInventoryQuestion(content) {
+		request := agent.Request{
+			Source:  "discord_thread",
+			Author:  discordAuthor(event.Author),
+			Content: content,
+		}
+		reply := toolInventoryReply(content, b.agent.ToolNames(request), b.agent.MutatingToolNames())
+		if err := b.sendMessageReference(context.Background(), event.ChannelID, event.ID, reply); err != nil {
+			log.Printf("send discord tool inventory response failed: %v", err)
+		}
+		return
+	}
 	loaded, ok, err := b.loadDiscordThread(context.Background(), event.ChannelID)
 	if err != nil {
 		log.Printf("load discord agent thread failed: thread=%s error=%v", event.ChannelID, err)

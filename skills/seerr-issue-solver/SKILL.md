@@ -11,7 +11,7 @@ Workflow:
 
 1. Read the webhook payload and prior thread context.
 2. Fetch the Jellyseerr issue before acting.
-3. Identify whether the issue concerns Jellyseerr, Jellyfin, Sonarr, Radarr, SABnzbd/filesystem, or a combination.
+3. Identify whether the issue concerns Jellyseerr, Jellyfin, Sonarr, Radarr, SABnzbd, filesystem state, or a combination.
 4. Use the relevant service tools to gather facts.
 5. For diagnostic reports, answer from evidence and do not mutate state.
 6. Apply safe fixes only when the user asks for a fix or the issue clearly requires one and the evidence supports it.
@@ -32,7 +32,7 @@ Rules:
 - Do not mention non-actions such as "no replacement search was started" unless the user explicitly asked whether that action was taken.
 - Avoid boilerplate non-action disclaimers such as "es wurde nichts geändert" or "es wurde keine Änderung vorgenommen"; state the verified blocker directly.
 - If no safe fix is available, say what was checked and why the issue could not be fixed. Do not describe manual action, next steps, or future conditions.
-- If downloads or imports are stuck, use the SABnzbd/filesystem skill to inspect queue/history, disk usage, completed files, and path visibility before retrying blindly.
+- If downloads or imports are stuck, use the SABnzbd skill for queue/history and the filesystem skill for disk usage, completed files, and path visibility before retrying blindly.
 - External communication must be German.
 - Do not include the `[blitzcrank w/ model]` header; the harness adds it.
 - Final comments must be final-state comments: fixed with a concise explanation, or not fixable with a concise explanation.

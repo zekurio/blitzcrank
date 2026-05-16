@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"blitzcrank/internal/agent"
@@ -46,10 +45,11 @@ func (b *Bot) runThreadAgent(ctx context.Context, session *discordgo.Session, di
 		return
 	}
 
-	reply = strings.TrimSpace(reply)
-	if reply == "" {
-		b.recordFailedDiscordRun(record, "agent returned empty response", fmt.Errorf("agent returned empty response"))
-		log.Printf("agent discord response empty: thread=%s", discordThreadID)
+	reply, err = validateDiscordReply(reply)
+	if err != nil {
+		b.recordFailedDiscordRun(record, "agent response failed validation", err)
+		log.Printf("agent discord response invalid: thread=%s error=%v", discordThreadID, err)
+		_ = b.sendMessage(context.Background(), discordThreadID, safeDiscordFailureReply(content))
 		return
 	}
 

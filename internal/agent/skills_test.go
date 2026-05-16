@@ -113,7 +113,7 @@ func TestExecuteToolLogsFailureDetail(t *testing.T) {
 	call.Function.Name = "fs_stat_path"
 	call.Function.Arguments = `{"path":"/tmp"}`
 
-	_, err := agent.executeTool(context.Background(), call)
+	_, err := agent.executeTool(context.Background(), call, tools.ToolPolicy{})
 	if err == nil {
 		t.Fatal("executeTool() error = nil, want filesystem configuration error")
 	}
@@ -127,6 +127,70 @@ func TestExecuteToolLogsFailureDetail(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Fatalf("tool logs missing %q:\n%s", want, output)
 		}
+	}
+}
+
+func TestReadOnlyPolicyBlocksMutatingTools(t *testing.T) {
+	agent := &Agent{registry: tools.NewRegistry(config.Config{})}
+	var call llm.ToolCall
+	call.Function.Name = "sonarr_search_episode"
+	call.Function.Arguments = `{"episode_id":"42"}`
+
+	_, err := agent.executeTool(context.Background(), call, tools.ToolPolicy{ReadOnly: true})
+	if err == nil || !strings.Contains(err.Error(), "not permitted") {
+		t.Fatalf("executeTool() error = %v, want read-only policy error", err)
+	}
+}
+
+func TestToolPolicyIsReadOnlyOutsideJellyseerrIssues(t *testing.T) {
+	agent := &Agent{}
+	if policy := agent.toolPolicy(Request{Source: "discord_thread"}); !policy.ReadOnly {
+		t.Fatal("discord thread policy is not read-only")
+	}
+	if policy := agent.toolPolicy(Request{Source: "automation_cron"}); !policy.ReadOnly {
+		t.Fatal("automation policy is not read-only")
+	}
+	if policy := agent.toolPolicy(Request{Source: "jellyseerr_issue_created"}); policy.ReadOnly {
+		t.Fatal("jellyseerr issue policy is read-only")
+	}
+}
+
+func TestToolPolicySelectsRelevantDiscordGroups(t *testing.T) {
+	agent := &Agent{}
+	policy := agent.toolPolicy(Request{Source: "discord_mention", Content: "Ist Project Hail Mary auf Jellyfin verfuegbar?"})
+	if !policy.ReadOnly {
+		t.Fatal("discord policy is not read-only")
+	}
+	if !stringSliceContains(policy.Groups, "jellyfin") || !stringSliceContains(policy.Groups, "web") {
+		t.Fatalf("groups = %#v, want jellyfin and web", policy.Groups)
+	}
+	if stringSliceContains(policy.Groups, "sonarr") || stringSliceContains(policy.Groups, "filesystem") {
+		t.Fatalf("groups = %#v, want no unrelated tool packs", policy.Groups)
+	}
+}
+
+func TestToolPolicySplitsSabnzbdAndFilesystemGroups(t *testing.T) {
+	agent := &Agent{}
+	sab := agent.toolPolicy(Request{Source: "discord_thread", Content: "download queue is stuck"})
+	if !stringSliceContains(sab.Groups, "sabnzbd") || stringSliceContains(sab.Groups, "filesystem") {
+		t.Fatalf("download groups = %#v, want sabnzbd only", sab.Groups)
+	}
+	fs := agent.toolPolicy(Request{Source: "discord_thread", Content: "check disk space and file permissions"})
+	if !stringSliceContains(fs.Groups, "filesystem") || stringSliceContains(fs.Groups, "sabnzbd") {
+		t.Fatalf("filesystem groups = %#v, want filesystem only", fs.Groups)
+	}
+}
+
+func TestSkillsForRequestLoadsOnlySelectedSkillPacks(t *testing.T) {
+	agent := &Agent{skills: []Skill{
+		{Name: "jellyfin"},
+		{Name: "sonarr"},
+		{Name: "filesystem"},
+		{Name: "sabnzbd"},
+	}}
+	skills := agent.skillsForRequest(Request{Source: "discord_mention", Content: "Welche Jellyfin user haben Zugriff?"})
+	if len(skills) != 1 || skills[0].Name != "jellyfin" {
+		t.Fatalf("skills = %#v, want only jellyfin", skills)
 	}
 }
 
@@ -188,4 +252,13 @@ func writeSkill(t *testing.T, root, dir, name string) {
 
 func configForTest() config.Config {
 	return config.Config{BotPublicName: "Blitzcrank"}
+}
+
+func stringSliceContains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

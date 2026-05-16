@@ -19,6 +19,7 @@ type Agent struct {
 	client               llm.Client
 	registry             *tools.Registry
 	system               string
+	skills               []Skill
 	runtimePrompt        string
 	discordTriagePrompt  string
 	discordSummaryPrompt string
@@ -55,7 +56,7 @@ func New(cfg config.Config, registry *tools.Registry) (*Agent, error) {
 	if err != nil {
 		return nil, err
 	}
-	system := BuildSystemPrompt(cfg, prompt, skills)
+	system := BuildSystemPrompt(cfg, prompt, nil)
 	runtimePrompt, err := LoadPromptTemplate(cfg.RuntimePromptPath)
 	if err != nil {
 		return nil, err
@@ -77,6 +78,7 @@ func New(cfg config.Config, registry *tools.Registry) (*Agent, error) {
 		client:               client,
 		registry:             registry,
 		system:               system,
+		skills:               skills,
 		runtimePrompt:        runtimePrompt,
 		discordTriagePrompt:  discordTriagePrompt,
 		discordSummaryPrompt: discordSummaryPrompt,
@@ -86,8 +88,10 @@ func New(cfg config.Config, registry *tools.Registry) (*Agent, error) {
 func (a *Agent) Respond(ctx context.Context, req Request) (string, error) {
 	model := a.ModelName(req)
 	reasoningEffort := a.ReasoningEffort(req, model)
+	toolPolicy := a.toolPolicy(req)
 	messages := []llm.Message{
-		{Role: "system", Content: a.system},
+		{Role: "system", Content: a.systemPrompt(req)},
+		{Role: "system", Content: a.workflowPrompt(req, toolPolicy)},
 		{Role: "system", Content: a.runtimeMetadata(model, reasoningEffort)},
 		{Role: "user", Content: fmt.Sprintf("Source: %s\nAuthor: %s\n\n%s", req.Source, req.Author, req.Content)},
 	}
@@ -97,7 +101,7 @@ func (a *Agent) Respond(ctx context.Context, req Request) (string, error) {
 			Model:           model,
 			ReasoningEffort: reasoningEffort,
 			Messages:        messages,
-			Tools:           a.registry.OpenAITools(),
+			Tools:           a.registry.OpenAIToolsForPolicy(toolPolicy),
 		})
 		if err != nil {
 			return "", err
@@ -110,7 +114,7 @@ func (a *Agent) Respond(ctx context.Context, req Request) (string, error) {
 
 		messages = append(messages, choice.Message)
 		for _, call := range choice.Message.ToolCalls {
-			result, err := a.executeTool(ctx, call)
+			result, err := a.executeTool(ctx, call, toolPolicy)
 			if err != nil {
 				result = toolErrorResult(call.Function.Name, err)
 			}
@@ -141,6 +145,9 @@ func (a *Agent) TriageDiscordMessage(ctx context.Context, req DiscordTriageReque
 	var result DiscordTriageResult
 	if err := json.Unmarshal([]byte(extractJSONObject(response.FirstChoice().Message.Content)), &result); err != nil {
 		return DiscordTriageResult{}, fmt.Errorf("parse discord triage JSON: %w", err)
+	}
+	if err := validateDiscordTriageResult(result); err != nil {
+		return DiscordTriageResult{}, err
 	}
 	return result, nil
 }
@@ -175,10 +182,17 @@ func (a *Agent) runtimeMetadata(model, reasoningEffort string) string {
 	return renderPrompt(a.runtimePrompt, map[string]string{
 		"model":            strings.TrimSpace(model),
 		"reasoning_effort": strings.TrimSpace(reasoningEffort),
+		"current_time":     time.Now().Format(time.RFC3339),
 	})
 }
 
-func (a *Agent) executeTool(ctx context.Context, call llm.ToolCall) (any, error) {
+func (a *Agent) executeTool(ctx context.Context, call llm.ToolCall, policy tools.ToolPolicy) (any, error) {
+	if policy.ReadOnly && a.registry.IsMutatingTool(call.Function.Name) {
+		return nil, fmt.Errorf("tool %s is not permitted in read-only source policy", call.Function.Name)
+	}
+	if !a.registry.ToolAllowedForPolicy(call.Function.Name, policy) {
+		return nil, fmt.Errorf("tool %s is not available for selected capability set", call.Function.Name)
+	}
 	var args map[string]any
 	if call.Function.Arguments != "" {
 		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
@@ -199,6 +213,165 @@ func (a *Agent) executeTool(ctx context.Context, call llm.ToolCall) (any, error)
 	}
 	log.Printf("agent tool call succeeded: name=%s duration=%s result=%s", call.Function.Name, elapsed, compactLogValue(result, 1024))
 	return result, nil
+}
+
+func (a *Agent) toolPolicy(req Request) tools.ToolPolicy {
+	source := strings.ToLower(strings.TrimSpace(req.Source))
+	groups := a.toolGroupsForRequest(req)
+	switch {
+	case strings.HasPrefix(source, "jellyseerr_issue_"):
+		return tools.ToolPolicy{Groups: groups}
+	default:
+		return tools.ToolPolicy{ReadOnly: true, Groups: groups}
+	}
+}
+
+func (a *Agent) systemPrompt(req Request) string {
+	skills := a.skillsForRequest(req)
+	if len(skills) == 0 {
+		return a.system
+	}
+	parts := []string{a.system}
+	for _, skill := range skills {
+		parts = append(parts, formatSkillPrompt(skill))
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func (a *Agent) skillsForRequest(req Request) []Skill {
+	selected := skillNamesForGroups(a.toolGroupsForRequest(req))
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(req.Source)), "jellyseerr_issue_") {
+		selected = append([]string{"seerr-issue-solver"}, selected...)
+	}
+	selectedSet := map[string]bool{}
+	for _, name := range selected {
+		selectedSet[name] = true
+	}
+	var out []Skill
+	for _, skill := range a.skills {
+		if selectedSet[skill.Name] {
+			out = append(out, skill)
+		}
+	}
+	return out
+}
+
+func skillNamesForGroups(groups []string) []string {
+	var names []string
+	for _, group := range groups {
+		switch group {
+		case "jellyseerr", "jellyfin", "sonarr", "radarr", "sabnzbd", "filesystem":
+			names = append(names, group)
+		}
+	}
+	return uniqueStrings(names)
+}
+
+func (a *Agent) toolGroupsForRequest(req Request) []string {
+	source := strings.ToLower(strings.TrimSpace(req.Source))
+	if strings.HasPrefix(source, "jellyseerr_issue_") {
+		return []string{"jellyseerr", "jellyfin", "sonarr", "radarr", "sabnzbd", "filesystem", "web"}
+	}
+	if source == "automation_cron" {
+		return []string{"jellyseerr", "jellyfin", "sonarr", "radarr", "sabnzbd", "filesystem", "web"}
+	}
+
+	text := normalizedCapabilityText(req.Content)
+	var groups []string
+	addGroup := func(name string) {
+		groups = append(groups, name)
+	}
+	if containsAny(text, "jellyseerr", "overseerr", "seerr", "request", "issue") {
+		addGroup("jellyseerr")
+	}
+	if containsAny(text, "jellyfin", "library", "libraries", "playback", "watched", "played", "user", "users", "view", "views", "subtitle", "subtitles", "untertitel", "audio", "tonspur", "verfuegbar", "available") {
+		addGroup("jellyfin")
+	}
+	if containsAny(text, "sonarr", "series", "season", "episode", "tvdb", "serie", "staffel", "folge", "s0") {
+		addGroup("sonarr")
+	}
+	if containsAny(text, "radarr", "movie", "film", "tmdb") {
+		addGroup("radarr")
+	}
+	if containsAny(text, "sabnzbd", "sab", "download", "queue", "blocklist", "import", "stuck", "failed", "haengt", "fehler") {
+		addGroup("sabnzbd")
+	}
+	if containsAny(text, "disk", "filesystem", "file", "path", "permissions", "folder", "directory", "speicher", "datei", "ordner", "import", "completed") {
+		addGroup("filesystem")
+	}
+	if containsAny(text, "release", "released", "streaming", "public", "availability", "available", "verfuegbar", "wann", "when", "raus", "erscheint", "premiere", "anime") {
+		addGroup("web")
+	}
+	if len(groups) == 0 && strings.HasPrefix(source, "discord") {
+		return []string{"jellyseerr", "jellyfin", "web"}
+	}
+	return uniqueStrings(groups)
+}
+
+func normalizedCapabilityText(content string) string {
+	text := strings.ToLower(strings.TrimSpace(content))
+	text = strings.NewReplacer("ä", "ae", "ö", "oe", "ü", "ue", "ß", "ss").Replace(text)
+	return strings.Join(strings.Fields(text), " ")
+}
+
+func containsAny(text string, needles ...string) bool {
+	for _, needle := range needles {
+		if strings.Contains(text, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func uniqueStrings(values []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func (a *Agent) workflowPrompt(req Request, policy tools.ToolPolicy) string {
+	source := strings.ToLower(strings.TrimSpace(req.Source))
+	mutation := "Mutating tools are available only when the active workflow and evidence allow them."
+	if policy.ReadOnly {
+		mutation = "This run is read-only: use lookup/search tools only, do not attempt repairs, refreshes, retries, searches that alter queues, deletes, or issue resolution."
+	}
+	switch {
+	case strings.HasPrefix(source, "jellyseerr_issue_"):
+		return "Active workflow: Jellyseerr issue. Follow the Jellyseerr issue workflow and final-comment rules. " + mutation
+	case source == "automation_cron":
+		return "Active workflow: scheduled automation. Follow the automation prompt for output shape. Ignore Jellyseerr issue final-comment rules unless the automation explicitly concerns a Jellyseerr issue. " + mutation
+	case strings.HasPrefix(source, "discord"):
+		return "Active workflow: Discord support. Reply as a Discord message. Ignore Jellyseerr issue final-comment rules unless the user explicitly asks about a Jellyseerr issue. " + mutation
+	default:
+		return "Active workflow: general media-server support. Ignore Jellyseerr issue final-comment rules unless the request explicitly concerns a Jellyseerr issue. " + mutation
+	}
+}
+
+func validateDiscordTriageResult(result DiscordTriageResult) error {
+	action := strings.TrimSpace(result.Action)
+	switch action {
+	case "ignore", "direct_reply", "support_request", "unsupported", "clarify":
+	default:
+		return fmt.Errorf("discord triage returned invalid action %q", result.Action)
+	}
+	if result.Confidence < 0 || result.Confidence > 1 {
+		return fmt.Errorf("discord triage returned confidence %.2f outside [0,1]", result.Confidence)
+	}
+	if action == "support_request" && (!result.Actionable || !result.NeedsAgentRun) {
+		return fmt.Errorf("discord triage support_request must be actionable and need an agent run")
+	}
+	if action == "ignore" && (result.Actionable || result.NeedsAgentRun) {
+		return fmt.Errorf("discord triage ignore must not be actionable or need an agent run")
+	}
+	return nil
 }
 
 func extractJSONObject(content string) string {
@@ -282,6 +455,24 @@ func (a *Agent) RuntimeInfo(req Request) (string, string) {
 	return model, a.ReasoningEffort(req, model)
 }
 
+func (a *Agent) ToolNames(req Request) []string {
+	return a.registry.ToolNamesForPolicy(a.toolPolicy(req))
+}
+
+func (a *Agent) MutatingToolNames() []string {
+	readOnly := map[string]bool{}
+	for _, name := range a.registry.ToolNamesForPolicy(tools.ToolPolicy{ReadOnly: true}) {
+		readOnly[name] = true
+	}
+	var names []string
+	for _, name := range a.registry.ToolNamesForPolicy(tools.ToolPolicy{}) {
+		if !readOnly[name] {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
 func ReasoningEffortForRequest(fallback, model string) string {
 	if strings.TrimSpace(fallback) != "" {
 		return strings.TrimSpace(fallback)
@@ -347,7 +538,11 @@ func BuildSystemPrompt(cfg config.Config, promptTemplate string, skills []Skill)
 	parts := []string{prompt}
 
 	for _, skill := range skills {
-		parts = append(parts, fmt.Sprintf("## Skill: %s\n\nDescription: %s\n\n%s", skill.Name, strings.TrimSpace(skill.Description), strings.TrimSpace(skill.Body)))
+		parts = append(parts, formatSkillPrompt(skill))
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+func formatSkillPrompt(skill Skill) string {
+	return fmt.Sprintf("## Skill: %s\n\nDescription: %s\n\n%s", skill.Name, strings.TrimSpace(skill.Description), strings.TrimSpace(skill.Body))
 }
