@@ -185,6 +185,14 @@ func (m *Manager) run(ctx context.Context, thread *IssueThread, payload map[stri
 		log.Printf("jellyseerr issue run failed: issue=%s event=%s duration=%s error=%v", thread.IssueID, event, record.CompletedAt.Sub(record.StartedAt).Round(time.Millisecond), err)
 		return err
 	}
+	if strings.TrimSpace(comment) == "" {
+		err := fmt.Errorf("agent returned empty final comment")
+		record.Error = err.Error()
+		record.CompletionReason = "agent run returned empty comment"
+		m.recordRun(thread, record)
+		log.Printf("jellyseerr issue run failed: issue=%s event=%s duration=%s error=%v", thread.IssueID, event, record.CompletedAt.Sub(record.StartedAt).Round(time.Millisecond), err)
+		return err
+	}
 
 	comment = m.signedComment(comment, request)
 	record.FinalComment = comment
@@ -366,22 +374,30 @@ func (m *Manager) persist(thread *IssueThread) error {
 
 func (m *Manager) issuePrompt(thread *IssueThread, payload map[string]any, event string) string {
 	data, _ := json.MarshalIndent(payload, "", "  ")
+	reportedMessage := stringValue(payload, "message")
+	if reportedMessage == "" {
+		reportedMessage = stringValue(section(payload, "comment"), "comment_message")
+	}
 	return fmt.Sprintf(`Jellyseerr issue workflow event: %s
 Issue id: %s
 Prior thread events: %d
 Prior solver runs: %d
+Reported user message:
+%s
 
 Use the tools to investigate the issue, apply safe fixes when appropriate, validate the result, and return exactly one final Jellyseerr issue comment body.
+If the reported user message is an explicit diagnostic or test instruction, follow that instruction using safe read-only tools and preserve any exact final phrase the user requested.
 
 Required final comment:
 - Write in German.
-- Explain what caused the issue and what was done to fix it.
-- Mention validation when a fix was verified.
+- For real issues, explain what caused the issue and what was done to fix it.
+- For diagnostic/test instructions, report the tool result and the requested success phrase instead of inventing a cause/fix.
+- Mention validation when a fix or diagnostic action was verified.
 - Do not include a signature/header; the harness adds a bracket header with the bot name and model.
 - Keep it concise and readable as a Jellyseerr issue comment.
 
 Webhook payload:
-%s`, event, thread.IssueID, len(thread.Events), len(thread.Runs), string(data))
+%s`, event, thread.IssueID, len(thread.Events), len(thread.Runs), reportedMessage, string(data))
 }
 
 func (m *Manager) signedComment(comment string, request agent.Request) string {
