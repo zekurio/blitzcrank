@@ -59,7 +59,7 @@ type Config struct {
 	MaxToolIterations        int
 	RunTimeout               time.Duration
 	CronEnabled              bool
-	AutomationsDir           string
+	AutomationsExtraDirs     []string
 	DatabasePath             string
 
 	SeerrBotUserID      string
@@ -126,7 +126,7 @@ func load(dotenvPath string, validate bool) (Config, error) {
 		MaxToolIterations:            intEnv("AGENT_MAX_TOOL_ITERATIONS", 8),
 		RunTimeout:                   durationEnv("AGENT_RUN_TIMEOUT", 5*time.Minute),
 		CronEnabled:                  boolEnv("CRON_ENABLED", false),
-		AutomationsDir:               getenv("AUTOMATIONS_DIR", "automations"),
+		AutomationsExtraDirs:         listEnv("AUTOMATIONS_EXTRA_DIRS"),
 		DatabasePath:                 getenv("DATABASE_PATH", "./blitzcrank.sqlite"),
 		SeerrBotUserID:               os.Getenv("SEERR_BOT_USER_ID"),
 		SeerrBotDisplayName:          getenv("SEERR_BOT_DISPLAY_NAME", "Blitzcrank"),

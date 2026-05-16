@@ -3,6 +3,7 @@ package automation
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,8 +13,7 @@ import (
 
 func TestNextRunUsesConfiguredTimezone(t *testing.T) {
 	scheduler := NewScheduler(config.Config{
-		AutomationsDir: t.TempDir(),
-		Timezone:       "Europe/Vienna",
+		Timezone: "Europe/Vienna",
 	}, nil, nil, nil)
 	scheduler.tasks = []Task{{Name: "test", cron: mustSchedule(t, "0 9 * * *")}}
 
@@ -29,8 +29,7 @@ func TestNextRunUsesConfiguredTimezone(t *testing.T) {
 
 func TestNextRunRollsToTomorrow(t *testing.T) {
 	scheduler := NewScheduler(config.Config{
-		AutomationsDir: t.TempDir(),
-		Timezone:       "UTC",
+		Timezone: "UTC",
 	}, nil, nil, nil)
 	scheduler.tasks = []Task{{Name: "test", cron: mustSchedule(t, "0 9 * * *")}}
 
@@ -71,6 +70,42 @@ func TestLoadTasksLoadsAllMarkdownTasks(t *testing.T) {
 	}
 }
 
+func TestLoadTaskDirsIncludesEmbeddedBaseline(t *testing.T) {
+	tasks, err := LoadTaskDirs(nil)
+	if err != nil {
+		t.Fatalf("LoadTaskDirs() error = %v", err)
+	}
+	if len(tasks) != 1 || tasks[0].Name != "hourly-stale-import-handler" {
+		t.Fatalf("tasks = %#v, want embedded hourly-stale-import-handler", tasks)
+	}
+	if !strings.Contains(tasks[0].Prompt, "hourly stale import handler") {
+		t.Fatalf("embedded task prompt = %q", tasks[0].Prompt)
+	}
+}
+
+func TestLoadTaskDirsAddsExtraAutomations(t *testing.T) {
+	root := t.TempDir()
+	writeTask(t, root, "extra.md", "extra-health-check", "Extra")
+
+	tasks, err := LoadTaskDirs([]string{root})
+	if err != nil {
+		t.Fatalf("LoadTaskDirs() error = %v", err)
+	}
+	if !taskSliceContains(tasks, "hourly-stale-import-handler") || !taskSliceContains(tasks, "extra-health-check") {
+		t.Fatalf("tasks = %#v, want embedded and extra automations", tasks)
+	}
+}
+
+func TestLoadTaskDirsRejectsDuplicateNames(t *testing.T) {
+	root := t.TempDir()
+	writeTask(t, root, "duplicate.md", "hourly-stale-import-handler", "Duplicate")
+
+	_, err := LoadTaskDirs([]string{root})
+	if err == nil || !strings.Contains(err.Error(), "duplicate automation") {
+		t.Fatalf("LoadTaskDirs() error = %v, want duplicate automation error", err)
+	}
+}
+
 func TestLoadTasksParsesCronSchedule(t *testing.T) {
 	root := t.TempDir()
 	content := "---\nname: frequent\ndescription: Frequent\nschedule: \"cron: */15 * * * *\"\n---\n\nRun often"
@@ -85,6 +120,15 @@ func TestLoadTasksParsesCronSchedule(t *testing.T) {
 	if next.Minute() != 15 {
 		t.Fatalf("next = %s, want minute 15", next)
 	}
+}
+
+func taskSliceContains(values []Task, want string) bool {
+	for _, value := range values {
+		if value.Name == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestLoadTasksRejectsInvalidCronSchedule(t *testing.T) {

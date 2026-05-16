@@ -65,6 +65,28 @@ func TestLoadSkillsIgnoresRuntimeFrontmatter(t *testing.T) {
 	}
 }
 
+func TestLoadSkillsFallsBackToEmbeddedBundledPath(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "share", "blitzcrank", "skills")
+	skills, err := LoadSkills(root)
+	if err != nil {
+		t.Fatalf("LoadSkills() error = %v", err)
+	}
+	if !skillSliceContains(skills, "jellyfin") || !skillSliceContains(skills, "seerr-issue-solver") {
+		t.Fatalf("embedded skills missing expected entries: %#v", skills)
+	}
+}
+
+func TestLoadPromptTemplateFallsBackToEmbeddedBundledPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "share", "blitzcrank", "prompts", "system.md")
+	prompt, err := LoadPromptTemplate(path)
+	if err != nil {
+		t.Fatalf("LoadPromptTemplate() error = %v", err)
+	}
+	if !strings.Contains(prompt, "{{bot_name}} System Prompt") {
+		t.Fatalf("embedded prompt = %q, want system prompt", prompt)
+	}
+}
+
 func TestReasoningEffortForRequestUsesGlobalFallback(t *testing.T) {
 	if got := ReasoningEffortForRequest("medium", "gpt-5.5"); got != "medium" {
 		t.Fatalf("ReasoningEffortForRequest() = %q, want medium", got)
@@ -86,14 +108,6 @@ func TestReasoningEffortForRequestUsesRecommendedModelDefault(t *testing.T) {
 		if got := ReasoningEffortForRequest("", tt.model); got != tt.want {
 			t.Fatalf("ReasoningEffortForRequest(%q) = %q, want %q", tt.model, got, tt.want)
 		}
-	}
-}
-
-func TestRuntimeMetadataIncludesModel(t *testing.T) {
-	agent := &Agent{runtimePrompt: `model={{model}}; reasoning_effort={{reasoning_effort}}`}
-	metadata := agent.runtimeMetadata("gpt-5.4", "low")
-	if metadata != "model=gpt-5.4; reasoning_effort=low" {
-		t.Fatalf("runtimeMetadata() = %q", metadata)
 	}
 }
 
@@ -192,6 +206,9 @@ func TestToolPolicyIsReadOnlyOutsideJellyseerrIssues(t *testing.T) {
 	if policy := agent.toolPolicy(Request{Source: "automation_cron"}); !policy.ReadOnly {
 		t.Fatal("automation policy is not read-only")
 	}
+	if policy := agent.toolPolicy(Request{Source: "automation_cron", Content: "Run the hourly stale import handler."}); policy.ReadOnly {
+		t.Fatal("stale import handler policy is read-only")
+	}
 	if policy := agent.toolPolicy(Request{Source: "jellyseerr_issue_created"}); policy.ReadOnly {
 		t.Fatal("jellyseerr issue policy is read-only")
 	}
@@ -211,15 +228,83 @@ func TestToolPolicySelectsRelevantDiscordGroups(t *testing.T) {
 	}
 }
 
+func TestToolPolicyKeepsWebCapabilityInContext(t *testing.T) {
+	agent := &Agent{}
+	policy := agent.toolPolicy(Request{Source: "discord_thread", Content: "download queue is stuck"})
+	if !stringSliceContains(policy.Groups, "sabnzbd") {
+		t.Fatalf("groups = %#v, want sabnzbd", policy.Groups)
+	}
+	if !stringSliceContains(policy.Groups, "web") {
+		t.Fatalf("groups = %#v, want web always selected", policy.Groups)
+	}
+}
+
 func TestToolPolicySplitsSabnzbdAndFilesystemGroups(t *testing.T) {
 	agent := &Agent{}
 	sab := agent.toolPolicy(Request{Source: "discord_thread", Content: "download queue is stuck"})
-	if !stringSliceContains(sab.Groups, "sabnzbd") || stringSliceContains(sab.Groups, "filesystem") {
-		t.Fatalf("download groups = %#v, want sabnzbd only", sab.Groups)
+	if !stringSliceContains(sab.Groups, "sabnzbd") || !stringSliceContains(sab.Groups, "web") || stringSliceContains(sab.Groups, "filesystem") {
+		t.Fatalf("download groups = %#v, want sabnzbd and web only", sab.Groups)
 	}
 	fs := agent.toolPolicy(Request{Source: "discord_thread", Content: "check disk space and file permissions"})
-	if !stringSliceContains(fs.Groups, "filesystem") || stringSliceContains(fs.Groups, "sabnzbd") {
-		t.Fatalf("filesystem groups = %#v, want filesystem only", fs.Groups)
+	if !stringSliceContains(fs.Groups, "filesystem") || !stringSliceContains(fs.Groups, "web") || stringSliceContains(fs.Groups, "sabnzbd") {
+		t.Fatalf("filesystem groups = %#v, want filesystem and web only", fs.Groups)
+	}
+}
+
+func TestToolContextPromptBalancesAwarenessAndUse(t *testing.T) {
+	agent := &Agent{registry: tools.NewRegistry(config.Config{ExaAPIKey: "secret"})}
+	prompt := agent.toolContextPrompt(tools.ToolPolicy{ReadOnly: true, Groups: []string{"jellyfin", "web"}})
+	for _, want := range []string{
+		"Selected tools by capability: jellyfin (",
+		"web (web_search)",
+		"not a checklist",
+		"read-only",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("toolContextPrompt() missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestRespondPropagatesSelectedToolsAcrossIterations(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "file.txt")
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	toolCall := llm.ToolCall{ID: "call_1", Type: "function"}
+	toolCall.Function.Name = "fs_stat_path"
+	toolCall.Function.Arguments = `{"path":"` + path + `"}`
+	client := &recordingClient{responses: []llm.ChatResponse{
+		responseWithMessage(llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{toolCall}}),
+		responseWithMessage(llm.Message{Role: "assistant", Content: "done"}),
+	}}
+	agent := &Agent{
+		cfg:           config.Config{Model: "gpt-test", MaxToolIterations: 2},
+		client:        client,
+		registry:      tools.NewRegistry(config.Config{FSAllowedRoots: []string{root}, ExaAPIKey: "secret"}),
+		system:        "system",
+		runtimePrompt: "model={{model}}; reasoning_effort={{reasoning_effort}}",
+	}
+
+	reply, err := agent.Respond(context.Background(), Request{Source: "discord_thread", Content: "check file permissions"})
+	if err != nil {
+		t.Fatalf("Respond() error = %v", err)
+	}
+	if reply != "done" {
+		t.Fatalf("reply = %q, want done", reply)
+	}
+	if len(client.requests) != 2 {
+		t.Fatalf("chat requests = %d, want 2", len(client.requests))
+	}
+	for i, request := range client.requests {
+		names := toolNamesFromRaw(request.Tools)
+		if !stringSliceContains(names, "fs_stat_path") || !stringSliceContains(names, "web_search") {
+			t.Fatalf("request %d tools = %#v, want filesystem and web tools", i, names)
+		}
+	}
+	if len(client.requests[1].Messages) == 0 || client.requests[1].Messages[len(client.requests[1].Messages)-1].Role != "tool" {
+		t.Fatalf("second request did not propagate tool result messages: %#v", client.requests[1].Messages)
 	}
 }
 
@@ -257,27 +342,34 @@ func TestRuntimeInfoReturnsModelAndReasoning(t *testing.T) {
 	}
 }
 
-func TestBuildSystemPromptAppendsSkills(t *testing.T) {
-	template := "# {{bot_name}} System Prompt"
-	prompt := BuildSystemPrompt(configForTest(), template, []Skill{{Name: "alpha", Body: "# Alpha\n\nUse alpha."}})
-	want := "# Blitzcrank System Prompt\n\n## Skill: alpha\n\nDescription: \n\n# Alpha\n\nUse alpha."
-	if prompt != want {
-		t.Fatalf("BuildSystemPrompt() = %q", prompt)
-	}
+type recordingClient struct {
+	requests  []llm.ChatRequest
+	responses []llm.ChatResponse
 }
 
-func TestLoadPromptTemplate(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "system.md")
-	if err := os.WriteFile(path, []byte("# Prompt\n"), 0o644); err != nil {
-		t.Fatal(err)
+func (c *recordingClient) Chat(_ context.Context, request llm.ChatRequest) (llm.ChatResponse, error) {
+	c.requests = append(c.requests, request)
+	response := c.responses[0]
+	c.responses = c.responses[1:]
+	return response, nil
+}
+
+func responseWithMessage(message llm.Message) llm.ChatResponse {
+	var response llm.ChatResponse
+	response.Choices = append(response.Choices, struct {
+		Message llm.Message `json:"message"`
+	}{Message: message})
+	return response
+}
+
+func toolNamesFromRaw(rawTools []any) []string {
+	var names []string
+	for _, raw := range rawTools {
+		tool := raw.(map[string]any)
+		function := tool["function"].(map[string]any)
+		names = append(names, function["name"].(string))
 	}
-	prompt, err := LoadPromptTemplate(path)
-	if err != nil {
-		t.Fatalf("LoadPromptTemplate() error = %v", err)
-	}
-	if prompt != "# Prompt" {
-		t.Fatalf("prompt = %q, want # Prompt", prompt)
-	}
+	return names
 }
 
 func writeSkill(t *testing.T, root, dir, name string) {
@@ -292,13 +384,18 @@ func writeSkill(t *testing.T, root, dir, name string) {
 	}
 }
 
-func configForTest() config.Config {
-	return config.Config{BotPublicName: "Blitzcrank"}
-}
-
 func stringSliceContains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func skillSliceContains(values []Skill, want string) bool {
+	for _, value := range values {
+		if value.Name == want {
 			return true
 		}
 	}

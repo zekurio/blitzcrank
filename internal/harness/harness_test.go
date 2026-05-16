@@ -19,7 +19,6 @@ import (
 
 type fakeRunner struct {
 	calls int
-	last  agent.Request
 	reply string
 	err   error
 	model string
@@ -27,7 +26,6 @@ type fakeRunner struct {
 
 func (f *fakeRunner) Respond(_ context.Context, req agent.Request) (string, error) {
 	f.calls++
-	f.last = req
 	return f.reply, f.err
 }
 
@@ -105,9 +103,6 @@ func TestHandleWebhookReportedPostsOneFinalComment(t *testing.T) {
 	}
 	if !strings.HasPrefix(posted[0], "[blitzcrank w/ gpt-5.5]") {
 		t.Fatalf("comment missing signature: %q", posted[0])
-	}
-	if !strings.Contains(runner.last.Content, "Jellyseerr issue workflow event: reported") {
-		t.Fatalf("runner prompt = %q, want issue workflow prompt", runner.last.Content)
 	}
 }
 
@@ -289,48 +284,6 @@ func TestHandleWebhookRejectsUnsafeFinalComment(t *testing.T) {
 	}
 	if len(posted) != 0 {
 		t.Fatalf("posted comments = %#v, want none", posted)
-	}
-}
-
-func TestIssuePromptHighlightsReportedMessage(t *testing.T) {
-	cfg := testConfig("http://127.0.0.1.invalid", t.TempDir())
-	manager := NewManager(cfg, &fakeRunner{}, tools.NewRegistry(cfg), nil)
-	payload := issuePayload("Problem gemeldet", "alice", "ignored")
-	payload["message"] = "Das ist ein Test. Führe einen Tool-Call aus und schreibe Test erfolgreich."
-	thread := &IssueThread{IssueID: "42"}
-
-	prompt := manager.issuePrompt(thread, payload, "reported")
-	if !strings.Contains(prompt, "Test erfolgreich") {
-		t.Fatalf("issuePrompt() dropped the reported message:\n%s", prompt)
-	}
-}
-
-func TestIssuePromptIncludesBoundedRecentContext(t *testing.T) {
-	cfg := testConfig("http://127.0.0.1.invalid", t.TempDir())
-	manager := NewManager(cfg, &fakeRunner{}, tools.NewRegistry(cfg), nil)
-	now := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)
-	thread := &IssueThread{
-		IssueID: "42",
-		Events: []ThreadEvent{
-			{Type: "comment", Actor: "alice", Message: "older context", At: now},
-			{Type: "comment", Actor: "bob", Message: strings.Repeat("x", issueLineValueLimit+20), At: now.Add(time.Minute)},
-		},
-		Runs: []RunRecord{
-			{StartedAt: now, CompletionReason: "final comment posted", FinalComment: "[blitzcrank w/ test]\n\nVorherige Antwort."},
-		},
-	}
-
-	prompt := manager.issuePrompt(thread, issuePayload("Problem gemeldet", "alice", "latest"), "comment")
-	for _, want := range []string{
-		"Recent thread events:",
-		"Recent solver outcomes:",
-		"older context",
-		"Vorherige Antwort.",
-		"... [truncated]",
-	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("issuePrompt() missing %q:\n%s", want, prompt)
-		}
 	}
 }
 

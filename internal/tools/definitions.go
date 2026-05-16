@@ -179,6 +179,26 @@ var baseToolDefs = []toolDef{
 		Mutating:    true,
 	},
 	{
+		Name:        "sonarr_list_manual_import",
+		Description: "List Sonarr manual import candidates for a completed download id or folder. Use this before importing stale completed downloads.",
+		Parameters: objectSchema(map[string]any{
+			"download_id":           stringSchema("Optional Sonarr downloadId from the queue/trackedDownload"),
+			"folder":                stringSchema("Optional absolute folder or file path to inspect"),
+			"series_id":             stringSchema("Optional Sonarr series id to narrow candidates"),
+			"season_number":         stringSchema("Optional season number to narrow candidates"),
+			"filter_existing_files": boolSchema("Whether Sonarr should filter existing files"),
+		}, nil),
+	},
+	{
+		Name:        "sonarr_import_manual_candidate",
+		Description: "Import one safe Sonarr manual import candidate returned by sonarr_list_manual_import. Only use when the candidate has no explicit rejections and clearly matches the queued download.",
+		Parameters: objectSchema(map[string]any{
+			"candidate_json": stringSchema("One complete candidate object from sonarr_list_manual_import, encoded as JSON"),
+			"import_mode":    stringSchema("Import mode, usually Move"),
+		}, []string{"candidate_json"}),
+		Mutating: true,
+	},
+	{
 		Name:        "radarr_get_movie_by_tmdb_id",
 		Description: "Find a Radarr movie by TMDB id.",
 		Parameters:  objectSchema(map[string]any{"tmdb_id": stringSchema("TMDB id")}, []string{"tmdb_id"}),
@@ -226,6 +246,25 @@ var baseToolDefs = []toolDef{
 		Description: "Retry/grab a known Radarr queue item id.",
 		Parameters:  objectSchema(map[string]any{"queue_id": stringSchema("Radarr queue item id")}, []string{"queue_id"}),
 		Mutating:    true,
+	},
+	{
+		Name:        "radarr_list_manual_import",
+		Description: "List Radarr manual import candidates for a completed download id or folder. Use this before importing stale completed downloads.",
+		Parameters: objectSchema(map[string]any{
+			"download_id":           stringSchema("Optional Radarr downloadId from the queue/trackedDownload"),
+			"folder":                stringSchema("Optional absolute folder or file path to inspect"),
+			"movie_id":              stringSchema("Optional Radarr movie id to narrow candidates"),
+			"filter_existing_files": boolSchema("Whether Radarr should filter existing files"),
+		}, nil),
+	},
+	{
+		Name:        "radarr_import_manual_candidate",
+		Description: "Import one safe Radarr manual import candidate returned by radarr_list_manual_import. Only use when the candidate has no explicit rejections and clearly matches the queued download.",
+		Parameters: objectSchema(map[string]any{
+			"candidate_json": stringSchema("One complete candidate object from radarr_list_manual_import, encoded as JSON"),
+			"import_mode":    stringSchema("Import mode, usually Move"),
+		}, []string{"candidate_json"}),
+		Mutating: true,
 	},
 	{
 		Name:        "sabnzbd_get_queue",

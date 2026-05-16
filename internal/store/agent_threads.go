@@ -52,6 +52,18 @@ func (s *Store) LoadAgentThreadByExternalID(ctx context.Context, source, externa
 	return s.LoadAgentThread(ctx, threadID)
 }
 
+func (s *Store) LoadAgentThreadByRootExternalID(ctx context.Context, source, rootExternalID string) (AgentThread, bool, error) {
+	var threadID string
+	err := s.db.QueryRowContext(ctx, `SELECT thread_id FROM agent_threads WHERE source = ? AND root_external_id = ?`, source, rootExternalID).Scan(&threadID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AgentThread{}, false, nil
+	}
+	if err != nil {
+		return AgentThread{}, false, err
+	}
+	return s.LoadAgentThread(ctx, threadID)
+}
+
 func (s *Store) UpsertAgentThread(ctx context.Context, thread AgentThread) error {
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO agent_threads(thread_id,source,external_id,parent_external_id,root_external_id,status,title,summary,created_at,updated_at,completed_at,completion_reason,last_payload_json)
