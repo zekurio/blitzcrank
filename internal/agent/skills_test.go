@@ -114,7 +114,8 @@ func TestReasoningEffortForRequestUsesRecommendedModelDefault(t *testing.T) {
 }
 
 func TestBuildSystemPromptIsMarkdown(t *testing.T) {
-	prompt := BuildSystemPrompt(configForTest(), []Skill{{Name: "alpha", Body: "# Alpha\n\nUse alpha."}})
+	template := "# {{bot_name}} System Prompt\n\n## Role\n\nCurrent time: {{current_time}}.\n\n## Operating Principles\n\n## Jellyseerr Issue Workflow\n\nFor explicit diagnostic or test instructions.\n"
+	prompt := BuildSystemPrompt(configForTest(), template, []Skill{{Name: "alpha", Body: "# Alpha\n\nUse alpha."}})
 	for _, want := range []string{
 		"# Blitzcrank System Prompt",
 		"## Role",
@@ -126,6 +127,20 @@ func TestBuildSystemPromptIsMarkdown(t *testing.T) {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("system prompt missing %q:\n%s", want, prompt)
 		}
+	}
+}
+
+func TestLoadPromptTemplate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "system.md")
+	if err := os.WriteFile(path, []byte("# Prompt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prompt, err := LoadPromptTemplate(path)
+	if err != nil {
+		t.Fatalf("LoadPromptTemplate() error = %v", err)
+	}
+	if prompt != "# Prompt" {
+		t.Fatalf("prompt = %q, want # Prompt", prompt)
 	}
 }
 

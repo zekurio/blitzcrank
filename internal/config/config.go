@@ -43,6 +43,7 @@ type Config struct {
 	ReasoningEffort   string
 	OpenAIReferer     string
 	OpenAITitle       string
+	SystemPromptPath  string
 	SkillsDirectory   string
 	ThreadsDirectory  string
 	MaxToolIterations int
@@ -100,6 +101,7 @@ func load(dotenvPath string, validate bool) (Config, error) {
 		ReasoningEffort:        os.Getenv("REASONING_EFFORT"),
 		OpenAIReferer:          os.Getenv("OPENROUTER_HTTP_REFERER"),
 		OpenAITitle:            getenv("OPENROUTER_X_TITLE", "Blitzcrank"),
+		SystemPromptPath:       getenv("AGENT_SYSTEM_PROMPT", "prompts/system.md"),
 		SkillsDirectory:        getenv("AGENT_SKILLS_DIR", "skills"),
 		ThreadsDirectory:       getenv("AGENT_THREADS_DIR", "threads"),
 		MaxToolIterations:      intEnv("AGENT_MAX_TOOL_ITERATIONS", 8),
