@@ -10,6 +10,8 @@ description: Use when handling Jellyseerr issue webhooks, reading issue/request 
 - Use request/media ids from the webhook or issue record to decide whether Sonarr, Radarr, or Jellyfin tools are relevant.
 - Do not call comment-writing tools. The harness posts the final comment after the run.
 - If tool evidence shows the problem is fixed and validation confirms the reported issue is no longer actionable, call `seerr_resolve_issue`.
-- If the result is uncertain, partial, still pending, or needs the user to verify playback/subtitles/audio, do not resolve the issue; ask the user to confirm in the final comment.
-- Final comments must be German, short, and operational: explain the issue, what was done to fix it, validation, and remaining manual action only if unresolved.
+- If the result is uncertain, partial, still pending, or needs the user to verify playback/subtitles/audio, do not resolve the issue. State that it could not be fixed or fully verified; do not ask the user to confirm.
+- Final comments must be German, short, operational, and closed-form: either fixed with a short explanation, or not fixed with a short blocker explanation.
+- Do not include next steps, manual-action guidance, future availability speculation, or requests for the user to check/confirm something.
+- Do not use labeled sections such as "Validierung:", "Ursache:", "Fix:", or "Nächste Schritte:" in final comments.
 - Do not include the comment header; the harness adds `[blitzcrank w/ model]`.
