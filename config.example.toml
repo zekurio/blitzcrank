@@ -1,0 +1,90 @@
+[bot]
+public_name = "Blitzcrank"
+
+[discord]
+# Set token in .env or the service environment.
+guild_id = ""
+owner_id = ""
+channel_id = ""
+triage_threshold = 0.75
+thread_archive_minutes = 1440
+context_recent_messages = 12
+# Optional override/fallback mapping from Discord user ids to Seerr user ids.
+seerr_user_map = {}
+
+[seerr]
+base_url = ""
+webhook_listen_addr = ""
+webhook_path = "/webhooks/seerr"
+bot_user_id = ""
+bot_display_name = "Blitzcrank"
+
+[jellyfin]
+base_url = ""
+
+[sonarr]
+base_url = ""
+
+[radarr]
+base_url = ""
+
+[sabnzbd]
+base_url = ""
+
+[filesystem]
+allowed_roots = []
+
+[exa]
+base_url = "https://api.exa.ai"
+
+[llm.openai]
+base_url = "https://api.openai.com/v1"
+
+[llm.openrouter]
+base_url = "https://openrouter.ai/api/v1"
+http_referer = ""
+title = "Blitzcrank"
+
+[llm.codex]
+auth_profile = "default"
+auth_store = ""
+base_url = "https://chatgpt.com/backend-api/codex"
+service_tier = "standard"
+
+[runtime]
+skills_dir = "skills"
+automations_dir = "automations"
+automations_extra_dirs = []
+threads_dir = "threads"
+automations_enabled = false
+max_tool_iterations = 15
+run_timeout = "5m"
+timezone = "Europe/Vienna"
+
+[runtime.profiles.default]
+provider = "openai-compatible"
+model = "gpt-5.5"
+reasoning_effort = ""
+
+[runtime.profiles.seerr]
+provider = ""
+model = ""
+reasoning_effort = ""
+
+[runtime.profiles.discord]
+provider = ""
+model = ""
+reasoning_effort = ""
+
+[runtime.profiles.automation]
+provider = ""
+model = ""
+reasoning_effort = ""
+
+[runtime.profiles.discord_triage]
+provider = ""
+model = ""
+reasoning_effort = ""
+
+[storage]
+database_path = "./blitzcrank.sqlite"

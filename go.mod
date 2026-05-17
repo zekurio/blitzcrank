@@ -3,6 +3,7 @@ module blitzcrank
 go 1.26
 
 require (
+	github.com/BurntSushi/toml v1.5.0
 	github.com/bwmarrin/discordgo v0.29.0
 	github.com/robfig/cron/v3 v3.0.1
 	modernc.org/sqlite v1.50.1
