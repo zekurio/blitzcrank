@@ -17,8 +17,9 @@ description: Use when handling Jellyseerr issue webhooks, reading issue/request 
 - If the result is uncertain, partial, still pending, or needs the user to verify playback/subtitles/audio, do not resolve the issue. State that it could not be fixed or fully verified; do not ask the user to confirm.
 - Final comments follow the system language rules and must be short, operational, and closed-form: either fixed with a short explanation, or not fixed with a short blocker explanation.
 - Final comments should usually be one sentence and never more than two short sentences.
-- Do not include next steps, manual-action guidance, future availability speculation, or requests for the user to check/confirm something.
+- Do not include next steps, manual-action guidance, unverified future availability speculation, or requests for the user to check/confirm something.
 - Do not mention actions that were not performed unless the user explicitly asked whether they were performed.
 - Avoid boilerplate non-action disclaimers such as "es wurde nichts geändert" or "es wurde keine Änderung vorgenommen"; state the verified blocker directly.
+- If the blocker is verified external availability, write it as a natural availability answer instead of saying the issue could not be repaired. Example: "Die deutsche Fassung ist laut WOW erst ab 22.5. verfügbar, bis dahin musst du dich gedulden."
 - Do not use labeled sections such as "Validierung:", "Ursache:", "Fix:", or "Nächste Schritte:" in final comments.
 - Do not include the comment header; the harness adds `[blitzcrank w/ model]`.
