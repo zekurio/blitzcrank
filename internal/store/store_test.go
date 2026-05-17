@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -137,6 +138,110 @@ func TestStorePersistsAgentThreadEventAndRun(t *testing.T) {
 	}
 	if len(loaded.Runs) != 1 || !loaded.Runs[0].Posted {
 		t.Fatalf("runs = %#v", loaded.Runs)
+	}
+	if loaded.Runs[0].Summary != "Resolved." {
+		t.Fatalf("run summary = %q, want Resolved.", loaded.Runs[0].Summary)
+	}
+}
+
+func TestLoadAgentThreadByBotMessageIDUsesPayloadAliases(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().UTC()
+	thread := AgentThread{
+		ThreadID:        "discord:bot-message-1",
+		Source:          "discord",
+		ExternalID:      "bot-message-2",
+		Status:          "active",
+		Title:           "Support",
+		CreatedAt:       now,
+		UpdatedAt:       now,
+		LastPayloadJSON: `{"bot_message_id":"bot-message-1","latest_bot_message_id":"bot-message-2","bot_message_ids":["bot-message-1","bot-message-2"]}`,
+	}
+	if err := store.UpsertAgentThread(ctx, thread); err != nil {
+		t.Fatalf("UpsertAgentThread() error = %v", err)
+	}
+
+	loaded, ok, err := store.LoadAgentThreadByBotMessageID(ctx, "discord", "bot-message-1")
+	if err != nil {
+		t.Fatalf("LoadAgentThreadByBotMessageID() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("LoadAgentThreadByBotMessageID() ok = false")
+	}
+	if loaded.ThreadID != thread.ThreadID {
+		t.Fatalf("ThreadID = %q, want %q", loaded.ThreadID, thread.ThreadID)
+	}
+
+	loaded, ok, err = store.LoadAgentThreadByBotMessageID(ctx, "discord", "bot-message-2")
+	if err != nil {
+		t.Fatalf("LoadAgentThreadByBotMessageID(latest) error = %v", err)
+	}
+	if !ok || loaded.ThreadID != thread.ThreadID {
+		t.Fatalf("latest lookup = %#v, ok=%v", loaded, ok)
+	}
+}
+
+func TestStoreEnforcesForeignKeysAcrossConnections(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+	store.db.SetMaxOpenConns(4)
+	store.db.SetMaxIdleConns(0)
+
+	for i := 0; i < 8; i++ {
+		err := store.InsertAgentThreadEvent(ctx, AgentThreadEvent{
+			ThreadID:    "missing-thread",
+			EventType:   "message",
+			PayloadJSON: "{}",
+			CreatedAt:   time.Now().UTC(),
+		})
+		if err == nil {
+			t.Fatalf("InsertAgentThreadEvent() attempt %d error = nil, want foreign key constraint", i)
+		}
+		if !strings.Contains(strings.ToLower(err.Error()), "constraint") {
+			t.Fatalf("InsertAgentThreadEvent() attempt %d error = %v, want constraint error", i, err)
+		}
+	}
+}
+
+func TestLoadAgentRunsReturnsInvalidCompletedAtError(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().UTC()
+	if err := store.UpsertAgentThread(ctx, AgentThread{
+		ThreadID:   "thread-1",
+		Source:     "discord",
+		ExternalID: "thread-1",
+		Status:     "active",
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}); err != nil {
+		t.Fatalf("UpsertAgentThread() error = %v", err)
+	}
+	_, err = store.db.ExecContext(ctx, `INSERT INTO agent_runs(thread_id,source_event_type,started_at,completed_at,final_response,attribution,error,completion_reason,summary) VALUES(?,?,?,?,?,?,?,?,?)`, "thread-1", "message", formatTime(now), "not-a-time", "", "", "", "", "")
+	if err != nil {
+		t.Fatalf("insert malformed run: %v", err)
+	}
+	_, err = store.LoadAgentRuns(ctx, "thread-1")
+	if err == nil {
+		t.Fatal("LoadAgentRuns() error = nil, want timestamp parse error")
+	}
+	if !strings.Contains(err.Error(), `cannot parse`) {
+		t.Fatalf("LoadAgentRuns() error = %v, want parse error", err)
 	}
 }
 

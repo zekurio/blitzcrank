@@ -7,6 +7,8 @@ import (
 	"bytes"
 	"context"
 	"log"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,6 +66,19 @@ func TestLoadSkillsIgnoresRuntimeFrontmatter(t *testing.T) {
 	if skills[0].Name != "alpha" || skills[0].Description != "Test skill" {
 		t.Fatalf("skill = %#v, want parsed name and description", skills[0])
 	}
+	if !strings.Contains(skills[0].Prompt, "## Skill: alpha") {
+		t.Fatalf("skill prompt = %q, want preformatted prompt", skills[0].Prompt)
+	}
+}
+
+func TestLoadSkillsRequiresNameToMatchDirectory(t *testing.T) {
+	root := t.TempDir()
+	writeSkill(t, root, "alpha", "beta")
+
+	_, err := LoadSkills(root)
+	if err == nil || !strings.Contains(err.Error(), "must match directory") {
+		t.Fatalf("LoadSkills() error = %v, want directory/name mismatch", err)
+	}
 }
 
 func TestLoadEmbeddedSkills(t *testing.T) {
@@ -76,6 +91,32 @@ func TestLoadEmbeddedSkills(t *testing.T) {
 	}
 }
 
+func TestLoadRuntimeSkillsErrorsForExplicitEmptyDirectory(t *testing.T) {
+	root := t.TempDir()
+	_, err := LoadRuntimeSkills(config.Config{SkillsDirectory: root})
+	if err == nil || !strings.Contains(err.Error(), "no skills found") {
+		t.Fatalf("LoadRuntimeSkills() error = %v, want no skills found", err)
+	}
+}
+
+func TestLoadRuntimeSkillsErrorsForExplicitMissingDirectory(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "missing")
+	_, err := LoadRuntimeSkills(config.Config{SkillsDirectory: root})
+	if err == nil {
+		t.Fatal("LoadRuntimeSkills() error = nil, want missing directory error")
+	}
+}
+
+func TestLoadRuntimeSkillsFallsBackToEmbeddedOnlyWhenUnconfigured(t *testing.T) {
+	skills, err := LoadRuntimeSkills(config.Config{})
+	if err != nil {
+		t.Fatalf("LoadRuntimeSkills() error = %v", err)
+	}
+	if !skillSliceContains(skills, "jellyfin") {
+		t.Fatalf("skills missing embedded jellyfin entry: %#v", skills)
+	}
+}
+
 func TestLoadPromptTemplateReadsEmbeddedPrompt(t *testing.T) {
 	prompt, err := LoadPromptTemplate(systemPromptPath)
 	if err != nil {
@@ -83,6 +124,58 @@ func TestLoadPromptTemplateReadsEmbeddedPrompt(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "{{bot_name}} System Prompt") {
 		t.Fatalf("embedded prompt = %q, want system prompt", prompt)
+	}
+}
+
+func TestNewDoesNotCreateLLMClientDuringStartup(t *testing.T) {
+	skills := filepath.Join(t.TempDir(), "skills")
+	writeSkill(t, skills, "jellyfin", "jellyfin")
+	agent, err := New(config.Config{
+		BotPublicName:     "TestBot",
+		Provider:          "unsupported-provider",
+		MaxToolIterations: 1,
+		SkillsDirectory:   skills,
+		CodexAuthStore:    filepath.Join(t.TempDir(), "missing-auth.json"),
+		CodexAuthProfile:  "test",
+		CodexBaseURL:      "https://example.test",
+		CodexServiceTier:  "standard",
+		RuntimeProfiles: map[string]config.RuntimeProfile{
+			"discord_triage": {Model: "gpt-test"},
+		},
+	}, tools.NewRegistry(config.Config{}))
+	if err != nil {
+		t.Fatalf("New() error = %v, want startup without LLM client construction", err)
+	}
+	if agent.client != nil || len(agent.clients) != 0 {
+		t.Fatalf("agent clients initialized during startup: client=%T clients=%d", agent.client, len(agent.clients))
+	}
+}
+
+func TestLoadSystemPromptDoesNotInlineAllSkills(t *testing.T) {
+	root := t.TempDir()
+	skills := filepath.Join(root, "skills")
+	writeSkill(t, skills, "jellyfin", "jellyfin")
+
+	prompt, err := LoadSystemPrompt(config.Config{BotPublicName: "TestBot", SkillsDirectory: skills})
+	if err != nil {
+		t.Fatalf("LoadSystemPrompt() error = %v", err)
+	}
+	if strings.Contains(prompt, "## Skill: jellyfin") {
+		t.Fatalf("LoadSystemPrompt() inlined runtime skills:\n%s", prompt)
+	}
+}
+
+func TestReloadSkillsUsesRuntimeSkillDir(t *testing.T) {
+	root := t.TempDir()
+	skills := filepath.Join(root, "skills")
+	writeSkill(t, skills, "jellyfin", "jellyfin")
+
+	agent := &Agent{cfg: config.Config{BotPublicName: "TestBot", SkillsDirectory: skills}}
+	if err := agent.ReloadSkills(); err != nil {
+		t.Fatalf("ReloadSkills() error = %v", err)
+	}
+	if len(agent.skills) != 1 || agent.skills[0].Name != "jellyfin" {
+		t.Fatalf("skills = %#v", agent.skills)
 	}
 }
 
@@ -197,10 +290,67 @@ func TestReadOnlyPolicyBlocksMutatingTools(t *testing.T) {
 	}
 }
 
+func TestExecuteToolRequestsApprovalForDestructiveTools(t *testing.T) {
+	agent := &Agent{registry: tools.NewRegistry(config.Config{})}
+	var call llm.ToolCall
+	call.Function.Name = "sonarr_delete_blocklist_item"
+	call.Function.Arguments = `{"blocklist_id":"42"}`
+
+	called := false
+	_, err := agent.executeTool(context.Background(), Request{
+		ToolApproval: func(_ context.Context, request ToolApprovalRequest) (ToolApprovalDecision, error) {
+			called = true
+			if request.Name != "sonarr_delete_blocklist_item" || !request.Destructive || !request.Mutating {
+				t.Fatalf("approval request = %#v", request)
+			}
+			return ToolApprovalDecision{Approved: false, Actor: "owner", Reason: "tool call denied"}, nil
+		},
+	}, call, tools.ToolPolicy{})
+	if !called {
+		t.Fatal("ToolApproval was not called")
+	}
+	if err == nil || !strings.Contains(err.Error(), "denied") {
+		t.Fatalf("executeTool() error = %v, want approval denial", err)
+	}
+}
+
+func TestExecuteToolRejectsApprovalToolWithoutCallback(t *testing.T) {
+	agent := &Agent{registry: tools.NewRegistry(config.Config{})}
+	var call llm.ToolCall
+	call.Function.Name = "sonarr_delete_blocklist_item"
+	call.Function.Arguments = `{"blocklist_id":"42"}`
+
+	_, err := agent.executeTool(context.Background(), Request{}, call, tools.ToolPolicy{})
+	if err == nil || !strings.Contains(err.Error(), "requires approval") {
+		t.Fatalf("executeTool() error = %v, want missing approval callback error", err)
+	}
+}
+
+func TestExecuteToolAppliesSeerrRequesterDefault(t *testing.T) {
+	var call llm.ToolCall
+	call.Function.Name = "seerr_get_user_quota"
+	call.Function.Arguments = `{}`
+
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/user/42/quota" {
+			t.Fatalf("request path = %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"movie":{"remaining":1},"tv":{"remaining":2}}`))
+	}))
+	defer server.Close()
+
+	agent := &Agent{registry: tools.NewRegistry(config.Config{SeerrBaseURL: server.URL, SeerrAPIKey: "secret", FSAllowedRoots: []string{root}})}
+	if _, err := agent.executeTool(context.Background(), Request{SeerrUserID: "42"}, call, tools.ToolPolicy{}); err != nil {
+		t.Fatalf("executeTool() error = %v", err)
+	}
+}
+
 func TestToolPolicyIsReadOnlyOutsideJellyseerrIssues(t *testing.T) {
 	agent := &Agent{}
-	if policy := agent.toolPolicy(Request{Source: "discord_thread"}); !policy.ReadOnly {
-		t.Fatal("discord thread policy is not read-only")
+	if policy := agent.toolPolicy(Request{Source: "discord_thread"}); policy.ReadOnly {
+		t.Fatal("discord thread policy is read-only")
 	}
 	if policy := agent.toolPolicy(Request{Source: "automation_cron"}); !policy.ReadOnly {
 		t.Fatal("automation policy is not read-only")
@@ -216,14 +366,36 @@ func TestToolPolicyIsReadOnlyOutsideJellyseerrIssues(t *testing.T) {
 func TestToolPolicySelectsRelevantDiscordGroups(t *testing.T) {
 	agent := &Agent{}
 	policy := agent.toolPolicy(Request{Source: "discord_mention", Content: "Ist Project Hail Mary auf Jellyfin verfuegbar?"})
-	if !policy.ReadOnly {
-		t.Fatal("discord policy is not read-only")
+	if policy.ReadOnly {
+		t.Fatal("discord policy is read-only")
 	}
 	if !stringSliceContains(policy.Groups, "jellyfin") || !stringSliceContains(policy.Groups, "web") {
 		t.Fatalf("groups = %#v, want jellyfin and web", policy.Groups)
 	}
 	if stringSliceContains(policy.Groups, "sonarr") || stringSliceContains(policy.Groups, "filesystem") {
 		t.Fatalf("groups = %#v, want no unrelated tool packs", policy.Groups)
+	}
+}
+
+func TestToolPolicyHonorsExplicitSlashCommandGroups(t *testing.T) {
+	agent := &Agent{}
+	policy := agent.toolPolicy(Request{Source: "discord_slash_jellyfin", Content: "anything", ToolGroups: []string{"jellyfin"}})
+	if policy.ReadOnly {
+		t.Fatal("discord slash policy is read-only")
+	}
+	if !stringSliceContains(policy.Groups, "jellyfin") || !stringSliceContains(policy.Groups, "web") {
+		t.Fatalf("groups = %#v, want jellyfin and web", policy.Groups)
+	}
+	if stringSliceContains(policy.Groups, "sonarr") || stringSliceContains(policy.Groups, "filesystem") {
+		t.Fatalf("groups = %#v, want explicit groups only", policy.Groups)
+	}
+}
+
+func TestSkillsForRequestHonorsExplicitSlashCommandGroups(t *testing.T) {
+	agent := &Agent{skills: []Skill{{Name: "jellyfin"}, {Name: "sonarr"}}}
+	skills := agent.skillsForRequest(Request{Source: "discord_slash_jellyfin", ToolGroups: []string{"jellyfin"}})
+	if len(skills) != 1 || skills[0].Name != "jellyfin" {
+		t.Fatalf("skills = %#v, want jellyfin only", skills)
 	}
 }
 
@@ -306,7 +478,7 @@ func TestRespondPropagatesSelectedToolsAcrossIterations(t *testing.T) {
 		t.Fatalf("second request did not propagate tool result messages: %#v", client.requests[1].Messages)
 	}
 	runtimeMessage := client.requests[0].Messages[3].Content
-	if !strings.Contains(runtimeMessage, "callable=") || !strings.Contains(runtimeMessage, "fs_stat_path") || !strings.Contains(runtimeMessage, "read_only=true") {
+	if !strings.Contains(runtimeMessage, "callable=") || !strings.Contains(runtimeMessage, "fs_stat_path") || !strings.Contains(runtimeMessage, "read_only=false") {
 		t.Fatalf("runtime metadata missing selected tool inventory: %q", runtimeMessage)
 	}
 }
@@ -326,8 +498,9 @@ func TestSkillsForRequestLoadsOnlySelectedSkillPacks(t *testing.T) {
 
 func TestDiscordTriageConfigValuesAreUsedVerbatim(t *testing.T) {
 	agent := &Agent{cfg: config.Config{
-		DiscordTriageModel:           "gpt-5.4-mini",
-		DiscordTriageReasoningEffort: "none",
+		RuntimeProfiles: map[string]config.RuntimeProfile{
+			"discord_triage": {Model: "gpt-5.4-mini", ReasoningEffort: "none"},
+		},
 	}}
 	if got := agent.discordTriageModel(); got != "gpt-5.4-mini" {
 		t.Fatalf("discordTriageModel() = %q, want gpt-5.4-mini", got)

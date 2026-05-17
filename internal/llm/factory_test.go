@@ -1,159 +1,100 @@
 package llm
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"blitzcrank/internal/config"
+	"blitzcrank/internal/llm/codex"
+	"blitzcrank/internal/llm/openai"
+	"blitzcrank/internal/llm/openrouter"
 )
 
-func TestFactoryOpenAICompatibleAliases(t *testing.T) {
-	for _, provider := range []string{"", ProviderOpenAICompatible, "api-key", "openrouter"} {
-		client, err := New(config.Config{
-			LLMProvider:   provider,
-			OpenAIBaseURL: "https://example.test/v1",
-			OpenAIAPIKey:  "key",
-		})
-		if err != nil {
-			t.Fatalf("New(%q) error = %v", provider, err)
+func TestFactoryOpenAICompatible(t *testing.T) {
+	client, err := New(config.Config{
+		Provider:      ProviderOpenAICompatible,
+		OpenAIBaseURL: "https://example.test/v1",
+		OpenAIAPIKey:  "key",
+	})
+	if err != nil {
+		t.Fatalf("New(%q) error = %v", ProviderOpenAICompatible, err)
+	}
+	if _, ok := client.(*openai.OpenAICompatible); !ok {
+		t.Fatalf("New(%q) type = %T, want *OpenAICompatible", ProviderOpenAICompatible, client)
+	}
+}
+
+func TestFactoryOpenRouter(t *testing.T) {
+	client, err := New(config.Config{
+		Provider:         ProviderOpenRouter,
+		OpenRouterAPIKey: "key",
+	})
+	if err != nil {
+		t.Fatalf("New(%q) error = %v", ProviderOpenRouter, err)
+	}
+	if _, ok := client.(*openrouter.OpenRouter); !ok {
+		t.Fatalf("New(%q) type = %T, want *OpenRouter", ProviderOpenRouter, client)
+	}
+}
+
+func TestFactoryCodexOAuth(t *testing.T) {
+	authPath := filepath.Join(t.TempDir(), "auth.json")
+	expiresAt := time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano)
+	updatedAt := time.Now().UTC().Format(time.RFC3339Nano)
+	if err := os.WriteFile(authPath, []byte(`{
+		"version": 1,
+		"profiles": {
+			"default": {
+				"access_token": "access",
+				"refresh_token": "refresh",
+				"expires_at": "`+expiresAt+`",
+				"updated_at": "`+updatedAt+`"
+			}
 		}
-		if _, ok := client.(*OpenAICompatible); !ok {
-			t.Fatalf("New(%q) type = %T, want *OpenAICompatible", provider, client)
-		}
+	}`), 0o600); err != nil {
+		t.Fatalf("write auth store: %v", err)
 	}
-}
 
-func TestFromResponsesResponseToolCall(t *testing.T) {
-	data := []byte(`{
-		"output": [
-			{"type":"function_call","call_id":"call_1","name":"seerr_get_issue","arguments":"{\"issue_id\":\"42\"}"}
-		]
-	}`)
-	response, err := fromResponsesResponse(data)
+	client, err := New(config.Config{
+		Provider:         ProviderCodexOAuth,
+		CodexAuthProfile: "default",
+		CodexAuthStore:   authPath,
+		CodexBaseURL:     "https://codex.example.test",
+	})
 	if err != nil {
-		t.Fatalf("fromResponsesResponse() error = %v", err)
+		t.Fatalf("New(%q) error = %v", ProviderCodexOAuth, err)
 	}
-	choice := response.FirstChoice()
-	if len(choice.Message.ToolCalls) != 1 {
-		t.Fatalf("tool calls = %d, want 1", len(choice.Message.ToolCalls))
-	}
-	if choice.Message.ToolCalls[0].Function.Name != "seerr_get_issue" {
-		t.Fatalf("tool name = %q", choice.Message.ToolCalls[0].Function.Name)
+	if _, ok := client.(*codex.CodexOAuth); !ok {
+		t.Fatalf("New(%q) type = %T, want *CodexOAuth", ProviderCodexOAuth, client)
 	}
 }
 
-func TestToResponsesRequestConvertsToolOutput(t *testing.T) {
-	toolCall := ToolCall{ID: "call_1", Type: "function"}
-	toolCall.Function.Name = "seerr_get_issue"
-	toolCall.Function.Arguments = `{"issue_id":"42"}`
-	request := toResponsesRequest(ChatRequest{
-		Model: "gpt-test",
-		Messages: []Message{
-			{Role: "system", Content: "system prompt"},
-			{Role: "user", Content: "hi"},
-			{Role: "assistant", ToolCalls: []ToolCall{toolCall}},
-			{Role: "tool", ToolCallID: "call_1", Content: `{"ok":true}`},
-		},
-	}, "standard")
-	if request["instructions"] != "system prompt" {
-		t.Fatalf("instructions = %v, want system prompt", request["instructions"])
-	}
-	if request["store"] != false {
-		t.Fatalf("store = %v, want false", request["store"])
-	}
-	if request["stream"] != true {
-		t.Fatalf("stream = %v, want true", request["stream"])
-	}
-	input := request["input"].([]any)
-	if len(input) != 3 {
-		t.Fatalf("input len = %d, want 3", len(input))
-	}
-	functionCall := input[1].(map[string]any)
-	if functionCall["type"] != "function_call" {
-		t.Fatalf("type = %v, want function_call", functionCall["type"])
-	}
-	if functionCall["call_id"] != "call_1" {
-		t.Fatalf("call_id = %v", functionCall["call_id"])
-	}
-	if functionCall["name"] != "seerr_get_issue" {
-		t.Fatalf("name = %v", functionCall["name"])
-	}
-	toolOutput := input[2].(map[string]any)
-	if toolOutput["type"] != "function_call_output" {
-		t.Fatalf("type = %v, want function_call_output", toolOutput["type"])
-	}
-	if toolOutput["call_id"] != "call_1" {
-		t.Fatalf("call_id = %v", toolOutput["call_id"])
+func TestFactoryCodexOAuthFailure(t *testing.T) {
+	_, err := New(config.Config{
+		Provider:         ProviderCodexOAuth,
+		CodexAuthProfile: "missing",
+		CodexAuthStore:   filepath.Join(t.TempDir(), "auth.json"),
+		CodexBaseURL:     "https://codex.example.test",
+	})
+	if err == nil {
+		t.Fatal("New(codex-oauth) error = nil, want missing credentials error")
 	}
 }
 
-func TestFromResponsesStreamUsesCompletedResponse(t *testing.T) {
-	stream := strings.NewReader("event: response.completed\n" +
-		"data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"done\"}]}]}}\n\n" +
-		"data: [DONE]\n\n")
-	response, err := fromResponsesStream(stream)
-	if err != nil {
-		t.Fatalf("fromResponsesStream() error = %v", err)
+func TestFactoryUnsupportedProvider(t *testing.T) {
+	_, err := New(config.Config{Provider: "not-a-provider"})
+	if err == nil {
+		t.Fatal("New(unsupported) error = nil")
 	}
-	if got := response.FirstChoice().Message.Content; got != "done" {
-		t.Fatalf("content = %q, want done", got)
+	if !strings.Contains(err.Error(), "unsupported runtime provider") {
+		t.Fatalf("error = %v, want unsupported runtime provider", err)
 	}
-}
-
-func TestFromResponsesStreamFallsBackToStreamedOutputItem(t *testing.T) {
-	stream := strings.NewReader("event: response.output_item.done\n" +
-		"data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"seerr_get_issue\",\"arguments\":\"{\\\"issue_id\\\":\\\"42\\\"}\"}}\n\n" +
-		"event: response.completed\n" +
-		"data: {\"type\":\"response.completed\",\"response\":{\"output\":[]}}\n\n" +
-		"data: [DONE]\n\n")
-	response, err := fromResponsesStream(stream)
-	if err != nil {
-		t.Fatalf("fromResponsesStream() error = %v", err)
-	}
-	choice := response.FirstChoice()
-	if len(choice.Message.ToolCalls) != 1 {
-		t.Fatalf("tool calls = %d, want 1", len(choice.Message.ToolCalls))
-	}
-	if choice.Message.ToolCalls[0].Function.Name != "seerr_get_issue" {
-		t.Fatalf("tool name = %q", choice.Message.ToolCalls[0].Function.Name)
-	}
-}
-
-func TestFromResponsesStreamFallsBackToTextDeltas(t *testing.T) {
-	stream := strings.NewReader("event: response.output_text.delta\n" +
-		"data: {\"type\":\"response.output_text.delta\",\"delta\":\"Test \"}\n\n" +
-		"event: response.output_text.delta\n" +
-		"data: {\"type\":\"response.output_text.delta\",\"delta\":\"erfolgreich\"}\n\n" +
-		"event: response.completed\n" +
-		"data: {\"type\":\"response.completed\",\"response\":{\"output\":[]}}\n\n" +
-		"data: [DONE]\n\n")
-	response, err := fromResponsesStream(stream)
-	if err != nil {
-		t.Fatalf("fromResponsesStream() error = %v", err)
-	}
-	if got := response.FirstChoice().Message.Content; got != "Test erfolgreich" {
-		t.Fatalf("content = %q, want Test erfolgreich", got)
-	}
-}
-
-func TestToResponsesRequestAddsFastServiceTier(t *testing.T) {
-	request := toResponsesRequest(ChatRequest{
-		Model:    "gpt-test",
-		Messages: []Message{{Role: "user", Content: "hi"}},
-	}, "fast")
-	if request["service_tier"] != "fast" {
-		t.Fatalf("service_tier = %v, want fast", request["service_tier"])
-	}
-}
-
-func TestToResponsesRequestAddsReasoningEffort(t *testing.T) {
-	request := toResponsesRequest(ChatRequest{
-		Model:           "gpt-test",
-		ReasoningEffort: "high",
-		Messages:        []Message{{Role: "user", Content: "hi"}},
-	}, "standard")
-	reasoning := request["reasoning"].(map[string]any)
-	if reasoning["effort"] != "high" {
-		t.Fatalf("reasoning effort = %v, want high", reasoning["effort"])
+	var providerErr *ProviderError
+	if errors.As(err, &providerErr) {
+		t.Fatalf("error = %T, did not expect ProviderError", err)
 	}
 }

@@ -47,6 +47,9 @@ func TestReadOnlyPolicyOmitsMutatingTools(t *testing.T) {
 	if hasToolWithPolicy(registry, "sonarr_search_episode", ToolPolicy{ReadOnly: true}) {
 		t.Fatal("read-only policy exposed sonarr_search_episode")
 	}
+	if hasToolWithPolicy(registry, "seerr_comment_issue", ToolPolicy{ReadOnly: true}) {
+		t.Fatal("read-only policy exposed seerr_comment_issue")
+	}
 	if hasToolWithPolicy(registry, "seerr_resolve_issue", ToolPolicy{ReadOnly: true}) {
 		t.Fatal("read-only policy exposed seerr_resolve_issue")
 	}
@@ -75,6 +78,29 @@ func TestToolPolicyFiltersByGroup(t *testing.T) {
 	}
 }
 
+func TestDestructiveToolMetadata(t *testing.T) {
+	registry := NewRegistry(config.Config{})
+	if !registry.IsDestructiveTool("sonarr_delete_blocklist_item") {
+		t.Fatal("sonarr_delete_blocklist_item is not destructive")
+	}
+	if !registry.RequiresApproval("radarr_delete_blocklist_item") {
+		t.Fatal("radarr_delete_blocklist_item does not require approval")
+	}
+	if registry.IsDestructiveTool("sonarr_search_episode") {
+		t.Fatal("sonarr_search_episode unexpectedly marked destructive")
+	}
+}
+
+func TestSeerrCommentIssueToolMetadata(t *testing.T) {
+	registry := NewRegistry(config.Config{})
+	if !hasTool(registry, "seerr_comment_issue") {
+		t.Fatal("seerr_comment_issue not registered")
+	}
+	if !registry.IsMutatingTool("seerr_comment_issue") {
+		t.Fatal("seerr_comment_issue is not mutating")
+	}
+}
+
 func TestFSToolsBlockOutsideAllowedRoot(t *testing.T) {
 	allowed := t.TempDir()
 	outside := t.TempDir()
@@ -85,6 +111,24 @@ func TestFSToolsBlockOutsideAllowedRoot(t *testing.T) {
 	registry := NewRegistry(config.Config{FSAllowedRoots: []string{allowed}})
 	if _, err := registry.Call(context.Background(), "fs_stat_path", map[string]any{"path": path}); err == nil {
 		t.Fatal("fs_stat_path error = nil, want outside-root error")
+	}
+}
+
+func TestFSToolsBlockSymlinkEscapeFromAllowedRoot(t *testing.T) {
+	allowed := t.TempDir()
+	outside := t.TempDir()
+	outsidePath := filepath.Join(outside, "file.txt")
+	if err := os.WriteFile(outsidePath, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	linkPath := filepath.Join(allowed, "linked-outside.txt")
+	if err := os.Symlink(outsidePath, linkPath); err != nil {
+		t.Fatal(err)
+	}
+
+	registry := NewRegistry(config.Config{FSAllowedRoots: []string{allowed}})
+	if _, err := registry.Call(context.Background(), "fs_stat_path", map[string]any{"path": linkPath}); err == nil {
+		t.Fatal("fs_stat_path error = nil, want symlink outside-root error")
 	}
 }
 
@@ -145,6 +189,208 @@ func TestSeerrResolveIssueRequestShape(t *testing.T) {
 	}
 	if method != http.MethodPost || path != "/api/v1/issue/42/resolved" {
 		t.Fatalf("request = %s %s", method, path)
+	}
+}
+
+func TestSeerrCommentIssueValidatesInputs(t *testing.T) {
+	registry := NewRegistry(config.Config{})
+	if _, err := registry.Call(context.Background(), "seerr_comment_issue", map[string]any{"issue_id": "", "message": "fixed"}); err == nil || !strings.Contains(err.Error(), "issue_id is required") {
+		t.Fatalf("empty issue_id error = %v, want required error", err)
+	}
+	if _, err := registry.Call(context.Background(), "seerr_comment_issue", map[string]any{"issue_id": "42", "message": " "}); err == nil || !strings.Contains(err.Error(), "message is required") {
+		t.Fatalf("empty message error = %v, want required error", err)
+	}
+}
+
+func TestDoJSONRejectsInvalidJSONResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"broken"`))
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(config.Config{JellyfinBaseURL: server.URL, JellyfinAPIKey: "secret"})
+	if _, err := registry.Call(context.Background(), "jellyfin_list_libraries", map[string]any{}); err == nil || !strings.Contains(err.Error(), "invalid JSON") {
+		t.Fatalf("jellyfin_list_libraries error = %v, want invalid JSON error", err)
+	}
+}
+
+func TestDoJSONRejectsOversizedResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(strings.Repeat(" ", maxJSONResponseBytes+1)))
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(config.Config{JellyfinBaseURL: server.URL, JellyfinAPIKey: "secret"})
+	if _, err := registry.Call(context.Background(), "jellyfin_list_libraries", map[string]any{}); err == nil || !strings.Contains(err.Error(), "response exceeded") {
+		t.Fatalf("jellyfin_list_libraries error = %v, want oversized response error", err)
+	}
+}
+
+func TestSeerrSearchMediaRequestShape(t *testing.T) {
+	var method, path, rawQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method = r.Method
+		path = r.URL.Path
+		rawQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[]}`))
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(config.Config{SeerrBaseURL: server.URL, SeerrAPIKey: "secret"})
+	if _, err := registry.Call(context.Background(), "seerr_search_media", map[string]any{"query": "Ghost in the Shell", "page": float64(2)}); err != nil {
+		t.Fatalf("seerr_search_media error = %v", err)
+	}
+	if method != http.MethodGet || path != "/api/v1/search" {
+		t.Fatalf("request = %s %s", method, path)
+	}
+	for _, want := range []string{"query=Ghost in the Shell", "page=2"} {
+		if !containsQueryPart(rawQuery, want) {
+			t.Fatalf("query %q missing %q", rawQuery, want)
+		}
+	}
+}
+
+func TestSeerrGetUserQuotaRequestShape(t *testing.T) {
+	var method, path string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method = r.Method
+		path = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"movie":{"remaining":3},"tv":{"remaining":2}}`))
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(config.Config{SeerrBaseURL: server.URL, SeerrAPIKey: "secret"})
+	if _, err := registry.Call(context.Background(), "seerr_get_user_quota", map[string]any{"user_id": "7"}); err != nil {
+		t.Fatalf("seerr_get_user_quota error = %v", err)
+	}
+	if method != http.MethodGet || path != "/api/v1/user/7/quota" {
+		t.Fatalf("request = %s %s", method, path)
+	}
+}
+
+func TestSeerrRequestMediaRequestShape(t *testing.T) {
+	var method, path string
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method = r.Method
+		path = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":55,"status":2}`))
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(config.Config{SeerrBaseURL: server.URL, SeerrAPIKey: "secret"})
+	if _, err := registry.Call(context.Background(), "seerr_request_media", map[string]any{
+		"user_id":    "7",
+		"media_type": "tv",
+		"media_id":   "1402",
+		"seasons":    "1, 2",
+		"is_4k":      true,
+	}); err != nil {
+		t.Fatalf("seerr_request_media error = %v", err)
+	}
+	if method != http.MethodPost || path != "/api/v1/request" {
+		t.Fatalf("request = %s %s", method, path)
+	}
+	if body["userId"].(float64) != 7 || body["mediaId"].(float64) != 1402 || body["mediaType"] != "tv" || body["is4k"] != true {
+		t.Fatalf("body = %#v", body)
+	}
+	seasons := body["seasons"].([]any)
+	if len(seasons) != 2 || seasons[0].(float64) != 1 || seasons[1].(float64) != 2 {
+		t.Fatalf("seasons = %#v", seasons)
+	}
+}
+
+func TestSeerrFindUserByDiscordID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/user" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"pageInfo":{"results":2,"page":1,"pages":1},
+			"results":[
+				{"id":4,"displayName":"alice","discordId":"1001"},
+				{"id":7,"displayName":"bob","discordId":"1002"}
+			]
+		}`))
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(config.Config{SeerrBaseURL: server.URL, SeerrAPIKey: "secret"})
+	userID, err := registry.SeerrFindUserByDiscordID(context.Background(), "1002")
+	if err != nil {
+		t.Fatalf("SeerrFindUserByDiscordID error = %v", err)
+	}
+	if userID != "7" {
+		t.Fatalf("SeerrFindUserByDiscordID = %q", userID)
+	}
+}
+
+func TestSeerrFindUserByDiscordIDUsesNestedSettings(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/user" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"pageInfo":{"results":1,"page":1,"pages":1},
+			"results":[
+				{"id":7,"displayName":"bob","settings":{"discordId":"1002"}}
+			]
+		}`))
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(config.Config{SeerrBaseURL: server.URL, SeerrAPIKey: "secret"})
+	userID, err := registry.SeerrFindUserByDiscordID(context.Background(), "1002")
+	if err != nil {
+		t.Fatalf("SeerrFindUserByDiscordID error = %v", err)
+	}
+	if userID != "7" {
+		t.Fatalf("SeerrFindUserByDiscordID = %q", userID)
+	}
+}
+
+func TestSeerrFindUserByDiscordIDFallsBackToUserSettings(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/user":
+			_, _ = w.Write([]byte(`{
+				"pageInfo":{"results":2,"page":1,"pages":1},
+				"results":[
+					{"id":4,"displayName":"alice"},
+					{"id":7,"displayName":"bob"}
+				]
+			}`))
+		case "/api/v1/user/4/settings/main":
+			_, _ = w.Write([]byte(`{"discordId":"1001"}`))
+		case "/api/v1/user/7/settings/main":
+			_, _ = w.Write([]byte(`{"discordId":"1002"}`))
+		default:
+			t.Fatalf("unexpected request path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(config.Config{SeerrBaseURL: server.URL, SeerrAPIKey: "secret"})
+	userID, err := registry.SeerrFindUserByDiscordID(context.Background(), "1002")
+	if err != nil {
+		t.Fatalf("SeerrFindUserByDiscordID error = %v", err)
+	}
+	if userID != "7" {
+		t.Fatalf("SeerrFindUserByDiscordID = %q", userID)
 	}
 }
 
@@ -214,7 +460,7 @@ func TestExaWebSearchHTTPError(t *testing.T) {
 func TestJellyfinItemMediaInfoSummarizesStreams(t *testing.T) {
 	var rawQuery string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/Items/abc" {
+		if r.Method != http.MethodGet || r.URL.Path != "/Items" {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 		rawQuery = r.URL.RawQuery
@@ -223,18 +469,21 @@ func TestJellyfinItemMediaInfoSummarizesStreams(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
-			"Id":"abc",
-			"Name":"Example Episode",
-			"Type":"Episode",
-			"MediaSources":[{
-				"Id":"source1",
-				"Container":"mkv",
-				"MediaStreams":[
-					{"Index":0,"Type":"Video","Codec":"hevc","Width":1920,"Height":1080},
-					{"Index":1,"Type":"Audio","Codec":"aac","Language":"eng","DisplayTitle":"English - AAC - Stereo","Channels":2,"IsDefault":true},
-					{"Index":2,"Type":"Subtitle","Language":"deu","DisplayTitle":"German","IsExternal":false}
-				]
-			}]
+			"Items":[{
+				"Id":"abc",
+				"Name":"Example Episode",
+				"Type":"Episode",
+				"MediaSources":[{
+					"Id":"source1",
+					"Container":"mkv",
+					"MediaStreams":[
+						{"Index":0,"Type":"Video","Codec":"hevc","Width":1920,"Height":1080},
+						{"Index":1,"Type":"Audio","Codec":"aac","Language":"eng","DisplayTitle":"English - AAC - Stereo","Channels":2,"IsDefault":true},
+						{"Index":2,"Type":"Subtitle","Language":"deu","DisplayTitle":"German","IsExternal":false}
+					]
+				}]
+			}],
+			"TotalRecordCount":1
 		}`))
 	}))
 	defer server.Close()
@@ -251,11 +500,44 @@ func TestJellyfinItemMediaInfoSummarizesStreams(t *testing.T) {
 	if !strings.Contains(values.Get("Fields"), "MediaSources") {
 		t.Fatalf("Fields = %q, want MediaSources", values.Get("Fields"))
 	}
+	if values.Get("Ids") != "abc" || values.Get("Limit") != "1" {
+		t.Fatalf("query = %q, want Ids and Limit", rawQuery)
+	}
 	item := out.(map[string]any)
 	sources := item["media_sources"].([]map[string]any)
 	audio := sources[0]["audio_tracks"].([]map[string]any)
 	if len(audio) != 1 || audio[0]["language"] != "eng" || audio[0]["channels"].(float64) != 2 {
 		t.Fatalf("audio tracks = %#v", audio)
+	}
+}
+
+func TestJellyfinGetItemUsesIdsFilter(t *testing.T) {
+	var rawQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/Items" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		rawQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"Items":[{"Id":"abc","Name":"Movie"}],"TotalRecordCount":1}`))
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(config.Config{JellyfinBaseURL: server.URL, JellyfinAPIKey: "secret"})
+	out, err := registry.Call(context.Background(), "jellyfin_get_item", map[string]any{"item_id": "abc"})
+	if err != nil {
+		t.Fatalf("jellyfin_get_item error = %v", err)
+	}
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values.Get("Ids") != "abc" || values.Get("Limit") != "1" {
+		t.Fatalf("query = %q, want Ids and Limit", rawQuery)
+	}
+	item := out.(map[string]any)
+	if item["Name"] != "Movie" {
+		t.Fatalf("item = %#v", item)
 	}
 }
 
@@ -444,6 +726,45 @@ func TestSonarrSearchEpisodeCommandShape(t *testing.T) {
 	}
 }
 
+func TestNumericArgAcceptsDirectNumericIDs(t *testing.T) {
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":1}`))
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(config.Config{SonarrBaseURL: server.URL, SonarrAPIKey: "secret"})
+	if _, err := registry.Call(context.Background(), "sonarr_search_episode", map[string]any{"episode_id": float64(123)}); err != nil {
+		t.Fatalf("sonarr_search_episode error = %v", err)
+	}
+	ids := body["episodeIds"].([]any)
+	if ids[0].(float64) != 123 {
+		t.Fatalf("episodeIds = %#v", body["episodeIds"])
+	}
+}
+
+func TestInvalidScalarArgsReturnErrors(t *testing.T) {
+	registry := NewRegistry(config.Config{
+		ExaBaseURL: "http://example.invalid",
+		ExaAPIKey:  "secret",
+	})
+	if _, err := registry.Call(context.Background(), "web_search", map[string]any{"query": "test", "limit": "many"}); err == nil || !strings.Contains(err.Error(), "limit must be an integer") {
+		t.Fatalf("web_search error = %v, want integer error", err)
+	}
+	if _, err := registry.Call(context.Background(), "web_search", map[string]any{"query": "test", "limit": 1.5}); err == nil || !strings.Contains(err.Error(), "limit must be an integer") {
+		t.Fatalf("web_search error = %v, want fractional integer error", err)
+	}
+
+	registry = NewRegistry(config.Config{JellyfinBaseURL: "http://example.invalid", JellyfinAPIKey: "secret"})
+	if _, err := registry.Call(context.Background(), "jellyfin_list_items", map[string]any{"recursive": "sometimes"}); err == nil || !strings.Contains(err.Error(), "recursive must be a boolean") {
+		t.Fatalf("jellyfin_list_items error = %v, want boolean error", err)
+	}
+}
+
 func TestSonarrSearchSeasonCommandShape(t *testing.T) {
 	var body map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -613,14 +934,14 @@ func TestRadarrSearchMovieCommandShape(t *testing.T) {
 
 func TestRadarrManualImportRequestShapes(t *testing.T) {
 	var listQuery string
-	var importBody []map[string]any
+	var importBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/manualimport":
 			listQuery = r.URL.RawQuery
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`[{"id":1,"path":"/downloads/movie.mkv","movie":{"id":456},"rejections":[]}]`))
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v3/manualimport":
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v3/command":
 			if err := json.NewDecoder(r.Body).Decode(&importBody); err != nil {
 				t.Fatal(err)
 			}
@@ -646,8 +967,16 @@ func TestRadarrManualImportRequestShapes(t *testing.T) {
 	if _, err := registry.Call(context.Background(), "radarr_import_manual_candidate", map[string]any{"candidate_json": candidate}); err != nil {
 		t.Fatalf("radarr_import_manual_candidate error = %v", err)
 	}
-	if len(importBody) != 1 || importBody[0]["importMode"] != "Move" || importBody[0]["movieId"].(float64) != 456 {
+	if importBody["name"] != "ManualImport" || importBody["importMode"] != "auto" {
 		t.Fatalf("import body = %#v", importBody)
+	}
+	files := importBody["files"].([]any)
+	file := files[0].(map[string]any)
+	if file["movieId"].(float64) != 456 || file["path"] != "/downloads/movie.mkv" {
+		t.Fatalf("import file = %#v", file)
+	}
+	if _, ok := file["movie"]; ok {
+		t.Fatalf("import file includes full movie object: %#v", file)
 	}
 }
 
@@ -656,6 +985,35 @@ func TestManualImportRejectsExplicitRejections(t *testing.T) {
 	candidate := `{"id":1,"path":"/downloads/movie.mkv","rejections":[{"reason":"sample"}]}`
 	if _, err := registry.Call(context.Background(), "radarr_import_manual_candidate", map[string]any{"candidate_json": candidate}); err == nil || !strings.Contains(err.Error(), "explicit rejections") {
 		t.Fatalf("radarr_import_manual_candidate error = %v, want explicit rejections error", err)
+	}
+}
+
+func TestManualImportAllowsExplicitRejectionsWithForce(t *testing.T) {
+	var importBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v3/command" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&importBody); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(config.Config{RadarrBaseURL: server.URL, RadarrAPIKey: "secret"})
+	candidate := `{"id":1,"path":"/downloads/movie.mkv","movie":{"id":456},"rejections":[{"reason":"Import blocked by queue item"}]}`
+	if _, err := registry.Call(context.Background(), "radarr_import_manual_candidate", map[string]any{"candidate_json": candidate, "force": true}); err != nil {
+		t.Fatalf("radarr_import_manual_candidate error = %v", err)
+	}
+	if importBody["name"] != "ManualImport" || importBody["importMode"] != "auto" {
+		t.Fatalf("import body = %#v", importBody)
+	}
+	files := importBody["files"].([]any)
+	file := files[0].(map[string]any)
+	if file["movieId"].(float64) != 456 || file["path"] != "/downloads/movie.mkv" {
+		t.Fatalf("import file = %#v", file)
 	}
 }
 

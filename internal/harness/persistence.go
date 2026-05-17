@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"log"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -119,16 +118,4 @@ func (m *Manager) appendTrace(relPath string, value any) {
 	if err := store.AppendJSONL(filepath.Join(m.cfg.ThreadsDirectory, relPath), value); err != nil {
 		log.Printf("append trace %s: %v", relPath, err)
 	}
-}
-
-func (m *Manager) persist(thread *IssueThread) error {
-	if err := os.MkdirAll(m.cfg.ThreadsDirectory, 0o755); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(thread, "", "  ")
-	if err != nil {
-		return err
-	}
-	path := filepath.Join(m.cfg.ThreadsDirectory, "issue-"+thread.IssueID+".json")
-	return os.WriteFile(path, data, 0o600)
 }

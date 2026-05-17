@@ -10,10 +10,11 @@ import (
 )
 
 const (
-	issuePromptPayloadLimit = 12000
-	issueRecentEventLimit   = 8
-	issueRecentRunLimit     = 5
-	issueLineValueLimit     = 700
+	issuePromptPayloadLimit   = 12000
+	issueRecentEventLimit     = 8
+	issueRecentRunLimit       = 5
+	issueLineValueLimit       = 700
+	finalIssueCommentMaxBytes = 1600
 )
 
 func (m *Manager) issuePrompt(thread *IssueThread, payload map[string]any, event string) string {
@@ -44,7 +45,7 @@ Use the tools to investigate the issue, apply safe fixes when appropriate, valid
 If the reported user message is an explicit diagnostic or test instruction, perform a safe read-only tool call when possible and summarize the result.
 
 Required final comment:
-- Write in German.
+- Use the system language rules: default to German, but if the reporting user clearly wrote the actual issue in another language, write the final comment in that language.
 - Return a final, closed-form comment: either the issue was fixed with a short cause/result explanation, or it could not be fixed with a short blocker explanation.
 - Use at most two short sentences.
 - Answer the latest user message directly and do not repeat earlier bot comments.
@@ -194,9 +195,6 @@ func (m *Manager) validateFinalIssueComment(comment string) error {
 	if comment == "" {
 		return fmt.Errorf("final issue comment is empty")
 	}
-	if len(comment) > 1600 {
-		return fmt.Errorf("final issue comment is too long: %d bytes", len(comment))
-	}
 	lower := strings.ToLower(comment)
 	if strings.HasPrefix(comment, m.commentHeaderPrefix()) {
 		return fmt.Errorf("final issue comment must not include the bot header")
@@ -239,6 +237,14 @@ func (m *Manager) validateFinalIssueComment(comment string) error {
 		if strings.Contains(lower, phrase) {
 			return fmt.Errorf("final issue comment contains open-ended guidance")
 		}
+	}
+	return nil
+}
+
+func (m *Manager) validateSignedFinalIssueComment(comment string) error {
+	comment = strings.TrimSpace(comment)
+	if len(comment) > finalIssueCommentMaxBytes {
+		return fmt.Errorf("final issue comment is too long after header: %d bytes", len(comment))
 	}
 	return nil
 }

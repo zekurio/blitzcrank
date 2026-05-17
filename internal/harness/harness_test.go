@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -40,6 +41,18 @@ type observedRunner struct {
 	calls     int
 	delay     time.Duration
 	reply     string
+}
+
+type retryRunner struct {
+	calls int
+}
+
+func (r *retryRunner) Respond(_ context.Context, req agent.Request) (string, error) {
+	r.calls++
+	if r.calls == 1 {
+		return "", errors.New("temporary agent failure")
+	}
+	return "Erledigt.", nil
 }
 
 func (r *observedRunner) Respond(ctx context.Context, req agent.Request) (string, error) {
@@ -154,6 +167,43 @@ func TestHandleWebhookIgnoresDuplicatePayload(t *testing.T) {
 	}
 	if runner.calls != 1 || len(posted) != 1 {
 		t.Fatalf("runner calls=%d posted=%d, want one each", runner.calls, len(posted))
+	}
+}
+
+func TestHandleWebhookRetriesIdenticalPayloadAfterRunFailure(t *testing.T) {
+	var posted []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		posted = append(posted, body["message"])
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	cfg := testConfig(server.URL, t.TempDir())
+	runner := &retryRunner{}
+	manager := NewManager(cfg, runner, tools.NewRegistry(cfg), nil)
+	payload := issuePayload("Problem gemeldet", "alice", "file is stuck")
+
+	first, err := manager.HandleWebhook(context.Background(), payload)
+	if err == nil {
+		t.Fatal("first HandleWebhook() error = nil, want transient failure")
+	}
+	if first.Ignored {
+		t.Fatalf("first result ignored: %s", first.Reason)
+	}
+	second, err := manager.HandleWebhook(context.Background(), payload)
+	if err != nil {
+		t.Fatalf("second HandleWebhook() error = %v", err)
+	}
+	if second.Ignored {
+		t.Fatalf("second result ignored: %s", second.Reason)
+	}
+	if runner.calls != 2 || len(posted) != 1 {
+		t.Fatalf("runner calls=%d posted=%d, want retry and one post", runner.calls, len(posted))
 	}
 }
 
@@ -287,7 +337,28 @@ func TestHandleWebhookRejectsUnsafeFinalComment(t *testing.T) {
 	}
 }
 
-func TestHandleWebhookResolvedPersistsThread(t *testing.T) {
+func TestHandleWebhookRejectsSignedFinalCommentOverLimit(t *testing.T) {
+	var posted []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		posted = append(posted, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	cfg := testConfig(server.URL, t.TempDir())
+	runner := &fakeRunner{reply: strings.Repeat("a", 1590)}
+	manager := NewManager(cfg, runner, tools.NewRegistry(cfg), nil)
+
+	if _, err := manager.HandleWebhook(context.Background(), issuePayload("Problem gemeldet", "alice", "file is stuck")); err == nil {
+		t.Fatal("HandleWebhook() error = nil, want signed comment length error")
+	}
+	if len(posted) != 0 {
+		t.Fatalf("posted comments = %#v, want none", posted)
+	}
+}
+
+func TestHandleWebhookResolvedWritesIssueJSONLTraceOnly(t *testing.T) {
 	dir := t.TempDir()
 	cfg := testConfig("http://127.0.0.1.invalid", dir)
 	manager := NewManager(cfg, &fakeRunner{}, tools.NewRegistry(cfg), nil)
@@ -300,9 +371,26 @@ func TestHandleWebhookResolvedPersistsThread(t *testing.T) {
 		t.Fatalf("HandleWebhook() ignored = true: %s", result.Reason)
 	}
 
-	path := filepath.Join(dir, "issue-42.json")
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("expected persisted thread at %s: %v", path, err)
+	legacyJSONPath := filepath.Join(dir, "issue-42.json")
+	if _, err := os.Stat(legacyJSONPath); !os.IsNotExist(err) {
+		t.Fatalf("unexpected legacy issue JSON at %s: %v", legacyJSONPath, err)
+	}
+
+	tracePath := filepath.Join(dir, "issues", "issue-42.jsonl")
+	data, err := os.ReadFile(tracePath)
+	if err != nil {
+		t.Fatalf("ReadFile(%s) error = %v", tracePath, err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("trace lines = %d, want 2: %s", len(lines), data)
+	}
+	var completion map[string]any
+	if err := json.Unmarshal([]byte(lines[1]), &completion); err != nil {
+		t.Fatalf("Unmarshal completion trace error = %v", err)
+	}
+	if completion["type"] != "issue_completed" {
+		t.Fatalf("completion trace type = %v, want issue_completed", completion["type"])
 	}
 }
 

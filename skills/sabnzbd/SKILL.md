@@ -11,4 +11,4 @@ description: Use when diagnosing SABnzbd queue, history, failed downloads, stuck
 - Use `sabnzbd_get_history` for completed, failed, or recently retried jobs.
 - SABnzbd tools are read-only; do not claim a retry, deletion, or repair was performed from SABnzbd evidence alone.
 - If the queue/history points to missing completed files, disk space, permissions, or path mapping, use the filesystem skill when it is available.
-- Final comments must be German and explain the concrete download blocker in user-friendly language.
+- Final comments follow the system language rules and explain the concrete download blocker in user-friendly language.

@@ -1,42 +1,23 @@
 package llm
 
-import "context"
+import "blitzcrank/internal/llm/api"
 
-type Client interface {
-	Chat(ctx context.Context, request ChatRequest) (ChatResponse, error)
-}
+type Client = api.Client
+type ChatRequest = api.ChatRequest
+type Message = api.Message
+type ToolCall = api.ToolCall
+type ChatResponse = api.ChatResponse
 
-type ChatRequest struct {
-	Model           string    `json:"model"`
-	ReasoningEffort string    `json:"reasoning_effort,omitempty"`
-	Messages        []Message `json:"messages"`
-	Tools           []any     `json:"tools,omitempty"`
-}
+type ErrorKind = api.ErrorKind
+type ProviderError = api.ProviderError
 
-type Message struct {
-	Role       string     `json:"role"`
-	Content    string     `json:"content,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-}
-
-type ToolCall struct {
-	ID       string `json:"id"`
-	Type     string `json:"type"`
-	Function struct {
-		Name      string `json:"name"`
-		Arguments string `json:"arguments"`
-	} `json:"function"`
-}
-
-type ChatResponse struct {
-	Choices []struct {
-		Message Message `json:"message"`
-	} `json:"choices"`
-}
-
-func (r ChatResponse) FirstChoice() struct {
-	Message Message `json:"message"`
-} {
-	return r.Choices[0]
-}
+const (
+	ErrorKindUnknown             = api.ErrorKindUnknown
+	ErrorKindInvalidRequest      = api.ErrorKindInvalidRequest
+	ErrorKindUnauthorized        = api.ErrorKindUnauthorized
+	ErrorKindInsufficientCredits = api.ErrorKindInsufficientCredits
+	ErrorKindForbidden           = api.ErrorKindForbidden
+	ErrorKindTimeout             = api.ErrorKindTimeout
+	ErrorKindRateLimited         = api.ErrorKindRateLimited
+	ErrorKindProviderUnavailable = api.ErrorKindProviderUnavailable
+)

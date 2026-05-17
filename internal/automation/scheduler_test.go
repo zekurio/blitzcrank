@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,19 +17,27 @@ import (
 )
 
 type fakeRunner struct {
-	reply string
-	err   error
+	reply    string
+	err      error
+	requests *[]agent.Request
 }
 
-func (f fakeRunner) Respond(context.Context, agent.Request) (string, error) {
+func (f fakeRunner) Respond(_ context.Context, req agent.Request) (string, error) {
+	if f.requests != nil {
+		*f.requests = append(*f.requests, req)
+	}
 	return f.reply, f.err
 }
 
 type fakeReporter struct {
-	err error
+	err      error
+	messages *[]string
 }
 
-func (f fakeReporter) SendMessage(context.Context, string) error {
+func (f fakeReporter) SendMessage(_ context.Context, message string) error {
+	if f.messages != nil {
+		*f.messages = append(*f.messages, message)
+	}
 	return f.err
 }
 
@@ -63,8 +72,8 @@ func TestNextRunRollsToTomorrow(t *testing.T) {
 
 func TestAutomationRuntimeMetadataIncludesNextRuns(t *testing.T) {
 	scheduler := NewScheduler(config.Config{
-		CronEnabled: true,
-		Timezone:    "Europe/Vienna",
+		AutomationsEnabled: true,
+		Timezone:           "Europe/Vienna",
 	}, nil, nil, nil)
 	scheduler.tasks = []Task{{
 		Name:        "test",
@@ -100,6 +109,7 @@ func TestAutomationReportDeliveryWritesTrace(t *testing.T) {
 	scheduler.tasks = []Task{{Name: "test", cron: mustSchedule(t, "* * * * *")}}
 
 	scheduler.runDue(context.Background(), time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC))
+	scheduler.waitForRuns()
 
 	data, err := os.ReadFile(filepath.Join(dir, "automations", "test.jsonl"))
 	if err != nil {
@@ -115,6 +125,185 @@ func TestAutomationReportDeliveryWritesTrace(t *testing.T) {
 	}
 	if delivery["type"] != "automation_report_delivery" || delivery["error"] != "discord down" {
 		t.Fatalf("delivery trace = %#v", delivery)
+	}
+}
+
+func TestRunDueStartsTasksAsynchronously(t *testing.T) {
+	dir := t.TempDir()
+	runner := &blockingRunner{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	scheduler := NewScheduler(config.Config{
+		ThreadsDirectory: dir,
+		RunTimeout:       time.Minute,
+		Timezone:         "UTC",
+	}, runner, nil, nil)
+	scheduler.tasks = []Task{{Name: "test", cron: mustSchedule(t, "* * * * *")}}
+
+	scheduler.runDue(context.Background(), time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC))
+	select {
+	case <-runner.started:
+	case <-time.After(time.Second):
+		t.Fatal("runner did not start")
+	}
+	select {
+	case <-runner.done:
+		t.Fatal("runDue waited for the task to finish")
+	default:
+	}
+	close(runner.release)
+	scheduler.waitForRuns()
+}
+
+func TestRunDueCatchesMissedScheduleWindow(t *testing.T) {
+	dir := t.TempDir()
+	var requests []agent.Request
+	scheduler := NewScheduler(config.Config{
+		ThreadsDirectory: dir,
+		RunTimeout:       time.Minute,
+		Timezone:         "UTC",
+	}, fakeRunner{reply: "done", requests: &requests}, nil, nil)
+	scheduler.tasks = []Task{{Name: "hourly", cron: mustSchedule(t, "0 * * * *")}}
+	scheduler.lastDueCheck = time.Date(2026, 5, 16, 9, 59, 30, 0, time.UTC)
+
+	scheduler.runDue(context.Background(), time.Date(2026, 5, 16, 10, 2, 0, 0, time.UTC))
+	scheduler.waitForRuns()
+
+	if len(requests) != 1 {
+		t.Fatalf("requests = %d, want one missed hourly run", len(requests))
+	}
+}
+
+func TestAutomationSilentOutputDoesNotFailOrReport(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		reply string
+		err   error
+	}{
+		{name: "blank reply", reply: "   "},
+		{name: "codex no assistant output", err: errors.New("codex responses completed without assistant output")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			var messages []string
+			scheduler := NewScheduler(config.Config{
+				ThreadsDirectory: dir,
+				RunTimeout:       time.Minute,
+				Timezone:         "UTC",
+			}, fakeRunner{reply: tc.reply, err: tc.err}, fakeReporter{messages: &messages}, nil)
+
+			scheduler.runTask(context.Background(), Task{
+				Name:   "hourly-stale-import-handler",
+				Prompt: "Run the hourly stale import handler.",
+			})
+
+			if len(messages) != 0 {
+				t.Fatalf("reported messages = %#v, want none", messages)
+			}
+			data, err := os.ReadFile(filepath.Join(dir, "automations", "hourly-stale-import-handler.jsonl"))
+			if err != nil {
+				t.Fatalf("ReadFile() error = %v", err)
+			}
+			var record map[string]any
+			if err := json.Unmarshal([]byte(strings.TrimSpace(string(data))), &record); err != nil {
+				t.Fatalf("Unmarshal() error = %v", err)
+			}
+			if record["type"] != "automation_run" || record["silent"] != true || record["error"] != nil {
+				t.Fatalf("silent automation trace = %#v", record)
+			}
+		})
+	}
+}
+
+func TestRunTaskIncludesPriorAutomationHistory(t *testing.T) {
+	dir := t.TempDir()
+	traceDir := filepath.Join(dir, "automations")
+	if err := os.MkdirAll(traceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	trace := strings.Join([]string{
+		`{"type":"automation_report_delivery","posted":true}`,
+		`{"type":"automation_run","completed":"2026-05-16T10:00:00Z","result":"Manuell pruefen:\n- MANUAL_INTERVENTION_REQUIRED Sonarr Some Show S01E02 /downloads/show/file.mkv wrong-episode download"}`,
+		`{"type":"discord_automation_report","at":"2026-05-16T10:00:01Z","message":"Validierung: Import wurde angenommen, Queue-Eintrag meldet weiterhin den Import-Blocker."}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(traceDir, "hourly-stale-import-handler.jsonl"), []byte(trace), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var requests []agent.Request
+	scheduler := NewScheduler(config.Config{
+		ThreadsDirectory: dir,
+		RunTimeout:       time.Minute,
+		Timezone:         "UTC",
+	}, fakeRunner{reply: "done", requests: &requests}, nil, nil)
+
+	scheduler.runTask(context.Background(), Task{
+		Name:   "hourly-stale-import-handler",
+		Prompt: "Run the hourly stale import handler.",
+	})
+
+	if len(requests) != 1 {
+		t.Fatalf("requests len = %d, want 1", len(requests))
+	}
+	content := requests[0].Content
+	if !strings.Contains(content, "Prior automation history for hourly-stale-import-handler") {
+		t.Fatalf("request content missing history header:\n%s", content)
+	}
+	if !strings.Contains(content, filepath.Join(dir, "automations", "hourly-stale-import-handler.jsonl")) {
+		t.Fatalf("request content missing local thread trace path:\n%s", content)
+	}
+	if !strings.Contains(content, "Persistent manual-intervention ledger from all local thread records:") {
+		t.Fatalf("request content missing manual ledger:\n%s", content)
+	}
+	if !strings.Contains(content, "MANUAL_INTERVENTION_REQUIRED Sonarr Some Show S01E02") {
+		t.Fatalf("request content missing prior manual marker:\n%s", content)
+	}
+	if !strings.Contains(content, "Discord automation thread report:") || !strings.Contains(content, "Queue-Eintrag meldet weiterhin den Import-Blocker") {
+		t.Fatalf("request content missing Discord report transcript:\n%s", content)
+	}
+	if !strings.Contains(content, "Current automation prompt:\nRun the hourly stale import handler.") {
+		t.Fatalf("request content missing current prompt:\n%s", content)
+	}
+}
+
+func TestRunTaskKeepsOldManualMarkersAfterRecentHistoryLimit(t *testing.T) {
+	dir := t.TempDir()
+	traceDir := filepath.Join(dir, "automations")
+	if err := os.MkdirAll(traceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var lines []string
+	lines = append(lines, `{"type":"automation_run","completed":"2026-05-16T00:00:00Z","result":"Manuell prüfen:\n- MANUAL_INTERVENTION_REQUIRED Radarr Old Movie 2024 download_id=old-1 folder=/downloads/old candidate=Old Movie exact blocker wrong target"}`)
+	for i := 1; i <= automationHistoryLimit+2; i++ {
+		lines = append(lines, `{"type":"automation_run","completed":"2026-05-16T01:00:00Z","result":"Importiert:\n- Radarr New Movie `+string(rune('A'+i))+`"}`)
+	}
+	if err := os.WriteFile(filepath.Join(traceDir, "hourly-stale-import-handler.jsonl"), []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var requests []agent.Request
+	scheduler := NewScheduler(config.Config{
+		ThreadsDirectory: dir,
+		RunTimeout:       time.Minute,
+		Timezone:         "UTC",
+	}, fakeRunner{reply: "done", requests: &requests}, nil, nil)
+
+	scheduler.runTask(context.Background(), Task{
+		Name:   "hourly-stale-import-handler",
+		Prompt: "Run the hourly stale import handler.",
+	})
+
+	if len(requests) != 1 {
+		t.Fatalf("requests len = %d, want 1", len(requests))
+	}
+	content := requests[0].Content
+	if !strings.Contains(content, "MANUAL_INTERVENTION_REQUIRED Radarr Old Movie 2024") {
+		t.Fatalf("request content lost old manual marker after compaction:\n%s", content)
+	}
+	if strings.Contains(content, "2026-05-16T00:00:00Z\nManuell prüfen:") {
+		t.Fatalf("old full record should not be in recent history window:\n%s", content)
 	}
 }
 
@@ -149,7 +338,7 @@ func TestLoadTasksLoadsAllMarkdownTasks(t *testing.T) {
 }
 
 func TestLoadTaskDirsIncludesEmbeddedBaseline(t *testing.T) {
-	tasks, err := LoadTaskDirs(nil)
+	tasks, err := LoadTaskDirs("automations", nil)
 	if err != nil {
 		t.Fatalf("LoadTaskDirs() error = %v", err)
 	}
@@ -165,7 +354,7 @@ func TestLoadTaskDirsAddsExtraAutomations(t *testing.T) {
 	root := t.TempDir()
 	writeTask(t, root, "extra.md", "extra-health-check", "Extra")
 
-	tasks, err := LoadTaskDirs([]string{root})
+	tasks, err := LoadTaskDirs("automations", []string{root})
 	if err != nil {
 		t.Fatalf("LoadTaskDirs() error = %v", err)
 	}
@@ -178,7 +367,7 @@ func TestLoadTaskDirsRejectsDuplicateNames(t *testing.T) {
 	root := t.TempDir()
 	writeTask(t, root, "duplicate.md", "hourly-stale-import-handler", "Duplicate")
 
-	_, err := LoadTaskDirs([]string{root})
+	_, err := LoadTaskDirs("automations", []string{root})
 	if err == nil || !strings.Contains(err.Error(), "duplicate automation") {
 		t.Fatalf("LoadTaskDirs() error = %v, want duplicate automation error", err)
 	}
@@ -246,4 +435,25 @@ func mustSchedule(t *testing.T, spec string) cron.Schedule {
 		t.Fatal(err)
 	}
 	return schedule
+}
+
+type blockingRunner struct {
+	once    sync.Once
+	started chan struct{}
+	release chan struct{}
+	done    chan struct{}
+}
+
+func (r *blockingRunner) Respond(ctx context.Context, req agent.Request) (string, error) {
+	r.once.Do(func() {
+		r.done = make(chan struct{})
+		close(r.started)
+	})
+	defer close(r.done)
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case <-r.release:
+		return "done", nil
+	}
 }

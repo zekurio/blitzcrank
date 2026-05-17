@@ -1,6 +1,8 @@
 package tools
 
 import (
+	"fmt"
+	"math"
 	"net/url"
 	"strconv"
 	"strings"
@@ -27,17 +29,29 @@ func stringArg(args map[string]any, key string) string {
 	return strings.TrimSpace(value)
 }
 
-func intArg(args map[string]any, key string) int {
+func intArg(args map[string]any, key string) (int, error) {
 	switch value := args[key].(type) {
+	case nil:
+		return 0, nil
 	case float64:
-		return int(value)
+		if math.Trunc(value) != value {
+			return 0, fmt.Errorf("%s must be an integer", key)
+		}
+		return int(value), nil
 	case int:
-		return value
+		return value, nil
 	case string:
-		parsed, _ := strconv.Atoi(strings.TrimSpace(value))
-		return parsed
+		text := strings.TrimSpace(value)
+		if text == "" {
+			return 0, nil
+		}
+		parsed, err := strconv.Atoi(text)
+		if err != nil {
+			return 0, fmt.Errorf("%s must be an integer", key)
+		}
+		return parsed, nil
 	default:
-		return 0
+		return 0, fmt.Errorf("%s must be an integer", key)
 	}
 }
 
@@ -45,15 +59,24 @@ func boolSchema(description string) map[string]any {
 	return map[string]any{"type": "boolean", "description": description}
 }
 
-func boolArg(args map[string]any, key string) bool {
+func boolArg(args map[string]any, key string) (bool, error) {
 	switch value := args[key].(type) {
+	case nil:
+		return false, nil
 	case bool:
-		return value
+		return value, nil
 	case string:
-		parsed, _ := strconv.ParseBool(strings.TrimSpace(value))
-		return parsed
+		text := strings.TrimSpace(value)
+		if text == "" {
+			return false, nil
+		}
+		parsed, err := strconv.ParseBool(text)
+		if err != nil {
+			return false, fmt.Errorf("%s must be a boolean", key)
+		}
+		return parsed, nil
 	default:
-		return false
+		return false, fmt.Errorf("%s must be a boolean", key)
 	}
 }
 

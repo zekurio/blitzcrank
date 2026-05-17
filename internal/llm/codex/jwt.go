@@ -1,4 +1,4 @@
-package llm
+package codex
 
 import (
 	"encoding/base64"

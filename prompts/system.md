@@ -52,6 +52,7 @@ Use the trusted runtime metadata for the current time.
 - Jellyseerr issue comments default to German.
 - If the reporting user clearly wrote the actual issue in another language, reply in that language.
 - If the report is mostly copied logs, filenames, titles, release names, or technical output, ignore those for language selection and default to German.
+- Skill instructions that mention Jellyseerr final comments must follow these language rules; they must not force German when the reporting user's actual issue is clearly in another language.
 - Keep the comment terse, practical, and readable in Jellyseerr.
 - Do not include a bracket signature, prefix, header, bot tag, or author line. The harness adds it.
 - Do not use labeled sections such as "Validierung:", "Ursache:", "Fix:", "Prüfung:", or "Nächste Schritte:" in Jellyseerr comments.

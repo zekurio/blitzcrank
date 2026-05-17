@@ -67,7 +67,7 @@ func (r *Registry) fsFindRecent(root string, limit int) (any, error) {
 	if limit <= 0 || limit > 50 {
 		limit = 20
 	}
-	var files []map[string]any
+	files := make([]map[string]any, 0, limit)
 	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil || entry.IsDir() {
 			return nil
@@ -83,14 +83,14 @@ func (r *Registry) fsFindRecent(root string, limit int) (any, error) {
 			"mod_time": info.ModTime().UTC().Format(time.RFC3339),
 			"mod_unix": info.ModTime().Unix(),
 		})
+		sortRecent(files)
+		if len(files) > limit {
+			files = files[:limit]
+		}
 		return nil
 	})
 	if err != nil {
 		return nil, err
-	}
-	sortRecent(files)
-	if len(files) > limit {
-		files = files[:limit]
 	}
 	for _, file := range files {
 		delete(file, "mod_unix")
@@ -125,6 +125,10 @@ func (r *Registry) allowedPath(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	resolved, err := filepath.EvalSymlinks(clean)
+	if err != nil {
+		return "", err
+	}
 	for _, root := range r.cfg.FSAllowedRoots {
 		root = strings.TrimSpace(root)
 		if root == "" {
@@ -134,12 +138,16 @@ func (r *Registry) allowedPath(path string) (string, error) {
 		if err != nil {
 			continue
 		}
-		rel, err := filepath.Rel(absRoot, clean)
+		resolvedRoot, err := filepath.EvalSymlinks(absRoot)
+		if err != nil {
+			continue
+		}
+		rel, err := filepath.Rel(resolvedRoot, resolved)
 		if err == nil && (rel == "." || (!strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != "..")) {
-			return clean, nil
+			return resolved, nil
 		}
 	}
-	return "", fmt.Errorf("path %q is outside FS_TOOL_ALLOWED_ROOTS", clean)
+	return "", fmt.Errorf("path %q is outside FS_TOOL_ALLOWED_ROOTS", resolved)
 }
 
 func sortRecent(files []map[string]any) {
