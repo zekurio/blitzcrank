@@ -22,20 +22,20 @@ func RuntimeCommands() []*discordgo.ApplicationCommand {
 	return []*discordgo.ApplicationCommand{
 		{
 			Name:                     ConfigCommand,
-			Description:              "Manage Blitzcrank runtime configuration and operations.",
+			Description:              "Blitzcrank-Laufzeitkonfiguration und Betrieb verwalten.",
 			DefaultMemberPermissions: &admin,
 			DMPermission:             &dm,
 			Options:                  configCommandOptions(),
 		},
 		{
 			Name:                     AutomationCommand,
-			Description:              "Run a Blitzcrank automation now.",
+			Description:              "Eine Blitzcrank-Automatisierung sofort ausführen.",
 			DefaultMemberPermissions: &admin,
 			DMPermission:             &dm,
 			Options: []*discordgo.ApplicationCommandOption{{
 				Type:         discordgo.ApplicationCommandOptionString,
 				Name:         "name",
-				Description:  "Automation name",
+				Description:  "Name der Automatisierung",
 				Required:     true,
 				Autocomplete: true,
 			}},
@@ -53,26 +53,26 @@ func ApplicationCommands() []*discordgo.ApplicationCommand {
 
 func configCommandOptions() []*discordgo.ApplicationCommandOption {
 	profileOptions := []*discordgo.ApplicationCommandOption{
-		{Type: discordgo.ApplicationCommandOptionString, Name: "profile", Description: "Runtime profile", Required: true, Choices: stringChoices("default", "seerr", "discord", "automation", "discord_triage")},
-		{Type: discordgo.ApplicationCommandOptionString, Name: "field", Description: "Profile field", Required: true, Choices: stringChoices("provider", "model", "reasoning_effort")},
+		{Type: discordgo.ApplicationCommandOptionString, Name: "profile", Description: "Laufzeitprofil", Required: true, Choices: stringChoices("default", "seerr", "discord", "automation", "discord_triage")},
+		{Type: discordgo.ApplicationCommandOptionString, Name: "field", Description: "Profilfeld", Required: true, Choices: stringChoices("provider", "model", "reasoning_effort")},
 	}
 	return []*discordgo.ApplicationCommandOption{
-		{Type: discordgo.ApplicationCommandOptionSubCommand, Name: "restart", Description: "Restart Blitzcrank through its supervisor."},
-		{Type: discordgo.ApplicationCommandOptionSubCommand, Name: "reload-skills", Description: "Reload runtime skills from SKILLS_DIR."},
-		{Type: discordgo.ApplicationCommandOptionSubCommand, Name: "reload-automations", Description: "Reload runtime automations from AUTOMATIONS_DIR."},
+		{Type: discordgo.ApplicationCommandOptionSubCommand, Name: "restart", Description: "Blitzcrank über den Supervisor neu starten."},
+		{Type: discordgo.ApplicationCommandOptionSubCommand, Name: "reload-skills", Description: "Laufzeit-Skills aus SKILLS_DIR neu laden."},
+		{Type: discordgo.ApplicationCommandOptionSubCommand, Name: "reload-automations", Description: "Laufzeit-Automatisierungen aus AUTOMATIONS_DIR neu laden."},
 		{
 			Type:        discordgo.ApplicationCommandOptionSubCommandGroup,
 			Name:        "global",
-			Description: "Get or set global runtime config.",
+			Description: "Globale Laufzeitkonfiguration lesen oder ändern.",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Name:        "get",
-					Description: "Read a global runtime setting.",
+					Description: "Eine globale Laufzeiteinstellung lesen.",
 					Options: []*discordgo.ApplicationCommandOption{{
 						Type:        discordgo.ApplicationCommandOptionString,
 						Name:        "key",
-						Description: "Global setting",
+						Description: "Globale Einstellung",
 						Required:    true,
 						Choices:     stringChoices("skills_dir", "automations_dir", "automations_enabled", "timezone"),
 					}},
@@ -80,10 +80,10 @@ func configCommandOptions() []*discordgo.ApplicationCommandOption {
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Name:        "set",
-					Description: "Write a global runtime setting.",
+					Description: "Eine globale Laufzeiteinstellung ändern.",
 					Options: []*discordgo.ApplicationCommandOption{
-						{Type: discordgo.ApplicationCommandOptionString, Name: "key", Description: "Global setting", Required: true, Choices: stringChoices("skills_dir", "automations_dir", "automations_enabled", "timezone")},
-						{Type: discordgo.ApplicationCommandOptionString, Name: "value", Description: "New value", Required: true},
+						{Type: discordgo.ApplicationCommandOptionString, Name: "key", Description: "Globale Einstellung", Required: true, Choices: stringChoices("skills_dir", "automations_dir", "automations_enabled", "timezone")},
+						{Type: discordgo.ApplicationCommandOptionString, Name: "value", Description: "Neuer Wert", Required: true},
 					},
 				},
 			},
@@ -91,38 +91,38 @@ func configCommandOptions() []*discordgo.ApplicationCommandOption {
 		{
 			Type:        discordgo.ApplicationCommandOptionSubCommandGroup,
 			Name:        "profile",
-			Description: "Get or set runtime profile config.",
+			Description: "Laufzeitprofil-Konfiguration lesen oder ändern.",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Name:        "get",
-					Description: "Read a runtime profile setting.",
+					Description: "Eine Laufzeitprofil-Einstellung lesen.",
 					Options:     profileOptions,
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Name:        "set",
-					Description: "Write a runtime profile setting.",
+					Description: "Eine Laufzeitprofil-Einstellung ändern.",
 					Options: append([]*discordgo.ApplicationCommandOption{}, append(profileOptions,
-						&discordgo.ApplicationCommandOption{Type: discordgo.ApplicationCommandOptionString, Name: "value", Description: "New value", Required: true})...),
+						&discordgo.ApplicationCommandOption{Type: discordgo.ApplicationCommandOptionString, Name: "value", Description: "Neuer Wert", Required: true})...),
 				},
 			},
 		},
 		{
 			Type:        discordgo.ApplicationCommandOptionSubCommandGroup,
 			Name:        "automation",
-			Description: "Manage automations.",
+			Description: "Automatisierungen verwalten.",
 			Options: []*discordgo.ApplicationCommandOption{
-				{Type: discordgo.ApplicationCommandOptionSubCommand, Name: "list", Description: "List loaded automations and next runs."},
-				{Type: discordgo.ApplicationCommandOptionSubCommand, Name: "reload", Description: "Reload automations from AUTOMATIONS_DIR."},
+				{Type: discordgo.ApplicationCommandOptionSubCommand, Name: "list", Description: "Geladene Automatisierungen und nächste Läufe anzeigen."},
+				{Type: discordgo.ApplicationCommandOptionSubCommand, Name: "reload", Description: "Automatisierungen aus AUTOMATIONS_DIR neu laden."},
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Name:        "run",
-					Description: "Run an automation by name now.",
+					Description: "Eine Automatisierung nach Namen sofort ausführen.",
 					Options: []*discordgo.ApplicationCommandOption{{
 						Type:        discordgo.ApplicationCommandOptionString,
 						Name:        "name",
-						Description: "Automation name",
+						Description: "Name der Automatisierung",
 						Required:    true,
 					}},
 				},
@@ -143,12 +143,12 @@ func skillCommand(name string) *discordgo.ApplicationCommand {
 	dm := false
 	return &discordgo.ApplicationCommand{
 		Name:         name,
-		Description:  "Ask Blitzcrank with the " + name + " skill selected.",
+		Description:  "Blitzcrank mit ausgewähltem Skill " + name + " fragen.",
 		DMPermission: &dm,
 		Options: []*discordgo.ApplicationCommandOption{{
 			Type:        discordgo.ApplicationCommandOptionString,
 			Name:        "prompt",
-			Description: "What should Blitzcrank investigate or answer?",
+			Description: "Was soll Blitzcrank prüfen oder beantworten?",
 			Required:    true,
 		}},
 	}
