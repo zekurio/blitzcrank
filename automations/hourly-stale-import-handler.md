@@ -25,11 +25,15 @@ Use SABnzbd queue/history only when a Sonarr/Radarr queue item needs confirmatio
 
 Do not trigger searches, retry unrelated queue items, refresh libraries, delete files, clear blocklists, or resolve Jellyseerr issues from this automation. Do not import candidates with explicit rejections or uncertain matches; report those for manual review.
 
-If there are no stale imports or blocked downloads, say so briefly and do not invent follow-up work.
+Return a concise German operations summary focused on the actual outcome.
 
-Return a concise German operations summary with:
+Use exactly one of these message shapes:
 
-- Auffälligkeiten
-- Aktionen
-- Validierung
-- Manuelle Schritte, falls nötig
+1. If one or more imports were handled, list the handled imports and validation result:
+   - `Importiert:` with one bullet per imported item. Include service, title, season/episode or movie year when available, and the imported file or release name.
+   - `Validierung:` state whether the item disappeared from the queue or no longer reports the import blocker.
+   - `Manuell prüfen:` only include this section when some stale items were intentionally skipped because the match was unsafe or uncertain.
+2. If no stale imports or blocked downloads were found, do not post a message.
+3. If the queue or import tools failed, say that errors occurred and list the affected service/tool plus the practical next step, for example checking Sonarr/Radarr availability. Do not claim that imports, validation, or queue checks happened when they could not be completed.
+
+Do not use generic sections such as `Auffälligkeiten`, `Aktionen`, `Validierung`, and `Manuelle Schritte` unless they contain concrete imported items or concrete errors from this run.
