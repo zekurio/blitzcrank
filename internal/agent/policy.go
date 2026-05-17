@@ -40,11 +40,11 @@ func skillsForRequest(req Request, skills []Skill, groups []string) []Skill {
 	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(req.Source)), "jellyseerr_issue_") {
 		selected = append([]string{"seerr-issue-solver"}, selected...)
 	}
-	selectedSet := map[string]bool{}
+	selectedSet := make(map[string]bool, len(selected))
 	for _, name := range selected {
 		selectedSet[name] = true
 	}
-	var out []Skill
+	out := make([]Skill, 0, len(selectedSet))
 	for _, skill := range skills {
 		if selectedSet[skill.Name] {
 			out = append(out, skill)
@@ -54,7 +54,7 @@ func skillsForRequest(req Request, skills []Skill, groups []string) []Skill {
 }
 
 func skillNamesForGroups(groups []string) []string {
-	var names []string
+	names := make([]string, 0, len(groups))
 	for _, group := range groups {
 		switch group {
 		case "jellyseerr", "jellyfin", "sonarr", "radarr", "sabnzbd", "filesystem":
@@ -77,7 +77,7 @@ func (a *Agent) toolGroupsForRequest(req Request) []string {
 	}
 
 	text := normalizedCapabilityText(req.Content)
-	var groups []string
+	groups := make([]string, 0, 7)
 	addGroup := func(name string) {
 		groups = append(groups, name)
 	}
@@ -124,8 +124,8 @@ func containsAny(text string, needles ...string) bool {
 }
 
 func uniqueStrings(values []string) []string {
-	seen := map[string]bool{}
-	var out []string
+	seen := make(map[string]bool, len(values))
+	out := make([]string, 0, len(values))
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		if value == "" || seen[value] {
@@ -181,8 +181,8 @@ func (a *Agent) toolContextPrompt(policy tools.ToolPolicy) string {
 }
 
 func formatToolCapabilities(names []string) string {
-	groups := map[string][]string{}
-	var order []string
+	groups := make(map[string][]string, len(names))
+	order := make([]string, 0, len(names))
 	for _, name := range names {
 		group := toolCapabilityGroup(name)
 		if _, ok := groups[group]; !ok {
@@ -190,7 +190,7 @@ func formatToolCapabilities(names []string) string {
 		}
 		groups[group] = append(groups[group], name)
 	}
-	var parts []string
+	parts := make([]string, 0, len(order))
 	for _, group := range order {
 		parts = append(parts, fmt.Sprintf("%s (%s)", group, strings.Join(groups[group], ", ")))
 	}

@@ -104,27 +104,27 @@ func (m *Manager) HandleWebhook(ctx context.Context, payload map[string]any) (Re
 	defer lock.Unlock()
 
 	key := webhookEventKey(payload)
-	if m.hasEvent(issueID, key) {
+	if m.hasEvent(ctx, issueID, key) {
 		return Result{Ignored: true, Reason: "duplicate webhook event", IssueID: issueID, Event: event}, nil
 	}
 
 	switch event {
 	case "resolved":
-		thread := m.appendEvent(issueID, event, key, payload)
-		m.complete(thread, "jellyseerr issue resolved")
+		thread := m.appendEvent(ctx, issueID, event, key, payload)
+		m.complete(ctx, thread, "jellyseerr issue resolved")
 		return Result{IssueID: issueID, Event: event}, nil
 	case "comment", "reported", "reopened":
-		thread := m.threadForIssue(issueID, payload)
+		thread := m.threadForIssue(ctx, issueID, payload)
 		eventRecord := m.newThreadEvent(event, key, payload)
 		promptThread := cloneIssueThread(thread)
 		promptThread.Events = append(promptThread.Events, eventRecord)
 		record, err := m.run(ctx, promptThread, payload, event)
 		if err != nil {
-			m.recordRun(thread, record)
+			m.recordRun(ctx, thread, record)
 			return Result{IssueID: issueID, Event: event}, err
 		}
-		m.appendEventRecord(thread, eventRecord, payload)
-		m.recordRun(thread, record)
+		m.appendEventRecord(ctx, thread, eventRecord, payload)
+		m.recordRun(ctx, thread, record)
 		return Result{IssueID: issueID, Event: event}, nil
 	default:
 		return Result{Ignored: true, Reason: "event ignored", IssueID: issueID, Event: event}, nil
@@ -136,7 +136,7 @@ func (m *Manager) issueLock(issueID string) *sync.Mutex {
 	return value.(*sync.Mutex)
 }
 
-func (m *Manager) hasEvent(issueID, key string) bool {
+func (m *Manager) hasEvent(ctx context.Context, issueID, key string) bool {
 	if strings.TrimSpace(key) == "" {
 		return false
 	}
@@ -144,7 +144,7 @@ func (m *Manager) hasEvent(issueID, key string) bool {
 	thread := m.threads[issueID]
 	m.mu.Unlock()
 	if thread == nil {
-		if loaded, ok := m.loadThread(context.Background(), issueID); ok {
+		if loaded, ok := m.loadThread(ctx, issueID); ok {
 			thread = loaded
 			m.mu.Lock()
 			m.threads[issueID] = thread
@@ -171,14 +171,14 @@ func webhookEventKey(payload map[string]any) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func (m *Manager) appendEvent(issueID, event, key string, payload map[string]any) *IssueThread {
-	thread := m.threadForIssue(issueID, payload)
+func (m *Manager) appendEvent(ctx context.Context, issueID, event, key string, payload map[string]any) *IssueThread {
+	thread := m.threadForIssue(ctx, issueID, payload)
 	eventRecord := m.newThreadEvent(event, key, payload)
-	m.appendEventRecord(thread, eventRecord, payload)
+	m.appendEventRecord(ctx, thread, eventRecord, payload)
 	return thread
 }
 
-func (m *Manager) threadForIssue(issueID string, payload map[string]any) *IssueThread {
+func (m *Manager) threadForIssue(ctx context.Context, issueID string, payload map[string]any) *IssueThread {
 	now := time.Now().UTC()
 	data, _ := json.Marshal(payload)
 
@@ -187,7 +187,7 @@ func (m *Manager) threadForIssue(issueID string, payload map[string]any) *IssueT
 
 	thread := m.threads[issueID]
 	if thread == nil {
-		if loaded, ok := m.loadThread(context.Background(), issueID); ok {
+		if loaded, ok := m.loadThread(ctx, issueID); ok {
 			thread = loaded
 		} else {
 			thread = &IssueThread{
@@ -221,14 +221,14 @@ func (m *Manager) newThreadEvent(event, key string, payload map[string]any) Thre
 	}
 }
 
-func (m *Manager) appendEventRecord(thread *IssueThread, eventRecord ThreadEvent, payload map[string]any) {
+func (m *Manager) appendEventRecord(ctx context.Context, thread *IssueThread, eventRecord ThreadEvent, payload map[string]any) {
 	m.mu.Lock()
 	thread.Status = "active"
 	thread.UpdatedAt = time.Now().UTC()
 	thread.LastPayload, _ = json.Marshal(payload)
 	thread.Events = append(thread.Events, eventRecord)
-	m.upsertThread(context.Background(), thread)
-	m.insertEvent(context.Background(), thread.IssueID, thread.Events[len(thread.Events)-1])
+	m.upsertThread(ctx, thread)
+	m.insertEvent(ctx, thread.IssueID, thread.Events[len(thread.Events)-1])
 	m.mu.Unlock()
 
 	m.appendTrace("issues/issue-"+thread.IssueID+".jsonl", map[string]any{
@@ -332,14 +332,14 @@ func (m *Manager) recordToolCall(issueID, sourceEventType string, runStartedAt t
 	})
 }
 
-func (m *Manager) recordRun(thread *IssueThread, record RunRecord) {
+func (m *Manager) recordRun(ctx context.Context, thread *IssueThread, record RunRecord) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	thread.Runs = append(thread.Runs, record)
 	thread.Summary = buildIssueSummary(thread)
 	thread.UpdatedAt = time.Now().UTC()
-	m.upsertThread(context.Background(), thread)
-	m.insertRun(context.Background(), thread.IssueID, record, "webhook")
+	m.upsertThread(ctx, thread)
+	m.insertRun(ctx, thread.IssueID, record, "webhook")
 	m.appendTrace("issues/issue-"+thread.IssueID+".jsonl", map[string]any{
 		"type":              "agent_run",
 		"issue":             thread.IssueID,
@@ -354,7 +354,7 @@ func (m *Manager) recordRun(thread *IssueThread, record RunRecord) {
 	})
 }
 
-func (m *Manager) complete(thread *IssueThread, reason string) {
+func (m *Manager) complete(ctx context.Context, thread *IssueThread, reason string) {
 	now := time.Now().UTC()
 	m.mu.Lock()
 	thread.Status = "completed"
@@ -363,7 +363,7 @@ func (m *Manager) complete(thread *IssueThread, reason string) {
 	thread.UpdatedAt = now
 	m.mu.Unlock()
 
-	m.upsertThread(context.Background(), thread)
+	m.upsertThread(ctx, thread)
 	m.appendTrace("issues/issue-"+thread.IssueID+".jsonl", map[string]any{
 		"type":              "issue_completed",
 		"issue":             thread.IssueID,

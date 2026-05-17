@@ -5,10 +5,12 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"blitzcrank/internal/config"
@@ -16,19 +18,28 @@ import (
 )
 
 type Server struct {
-	cfg     config.Config
-	harness *harness.Manager
-	server  *http.Server
+	cfg        config.Config
+	harness    *harness.Manager
+	server     *http.Server
+	processCtx context.Context
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
+	shutdown   sync.Once
+	done       chan struct{}
+	err        error
 }
 
 func NewServer(cfg config.Config, manager *harness.Manager) *Server {
-	return &Server{cfg: cfg, harness: manager}
+	return &Server{cfg: cfg, harness: manager, done: make(chan struct{})}
 }
 
 func (s *Server) Start(ctx context.Context) error {
 	if s.cfg.SeerrWebhookListenAddr == "" {
 		return nil
 	}
+	processCtx, cancel := context.WithCancel(ctx)
+	s.processCtx = processCtx
+	s.cancel = cancel
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(s.cfg.SeerrWebhookPath, s.handleSeerr)
@@ -46,7 +57,9 @@ func (s *Server) Start(ctx context.Context) error {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = s.Shutdown(shutdownCtx)
+		if err := s.Shutdown(shutdownCtx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Printf("shutdown webhook server after context cancellation: %v", err)
+		}
 	}()
 
 	go func() {
@@ -60,10 +73,35 @@ func (s *Server) Start(ctx context.Context) error {
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
-	if s.server == nil {
-		return nil
+	s.shutdown.Do(func() {
+		defer close(s.done)
+		if s.cancel != nil {
+			s.cancel()
+		}
+		if s.server == nil {
+			return
+		}
+		if err := s.server.Shutdown(ctx); err != nil {
+			s.err = err
+			return
+		}
+		wait := make(chan struct{})
+		go func() {
+			defer close(wait)
+			s.wg.Wait()
+		}()
+		select {
+		case <-wait:
+		case <-ctx.Done():
+			s.err = ctx.Err()
+		}
+	})
+	select {
+	case <-s.done:
+		return s.err
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-	return s.server.Shutdown(ctx)
 }
 
 func (s *Server) handleSeerr(w http.ResponseWriter, r *http.Request) {
@@ -94,7 +132,15 @@ func (s *Server) handleSeerr(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("jellyseerr webhook accepted: remote=%s bytes=%d notification=%q event=%q subject=%q issue_id=%q actor=%q", r.RemoteAddr, len(data), stringValue(payload, "notification_type"), stringValue(payload, "event"), stringValue(payload, "subject"), issueID(payload), actor(payload))
-	go s.process(context.Background(), payload)
+	processCtx := s.processCtx
+	if processCtx == nil {
+		processCtx = context.Background()
+	}
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.process(processCtx, payload)
+	}()
 	w.WriteHeader(http.StatusAccepted)
 }
 

@@ -24,7 +24,7 @@ func LoadTasks(root string) ([]Task, error) {
 }
 
 func LoadTaskDirs(runtimeRoot string, extraRoots []string) ([]Task, error) {
-	var all []Task
+	all := make([]Task, 0, len(extraRoots)+1)
 	if strings.TrimSpace(runtimeRoot) != "" {
 		if !filepath.IsAbs(runtimeRoot) {
 			runtimeRoot = localMarkdownDir(runtimeRoot)
@@ -84,7 +84,7 @@ func localMarkdownDir(name string) string {
 }
 
 func rejectDuplicateTasks(tasks []Task) error {
-	seen := map[string]string{}
+	seen := make(map[string]string, len(tasks))
 	for _, task := range tasks {
 		name := strings.TrimSpace(task.Name)
 		if previous, ok := seen[name]; ok {
@@ -117,7 +117,7 @@ func loadTasksFromFS(fsys fs.FS, root, displayRoot string) ([]Task, error) {
 		return nil, err
 	}
 
-	var files []string
+	files := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".md") {
 			continue
@@ -126,7 +126,7 @@ func loadTasksFromFS(fsys fs.FS, root, displayRoot string) ([]Task, error) {
 	}
 	sort.Strings(files)
 
-	var tasks []Task
+	tasks := make([]Task, 0, len(files))
 	for _, file := range files {
 		task, err := loadTaskFile(fsys, root, displayRoot, file)
 		if err != nil {
@@ -147,7 +147,7 @@ func loadTaskFile(fsys fs.FS, root, displayRoot, file string) (Task, error) {
 }
 
 func fsPath(parts ...string) string {
-	var clean []string
+	clean := make([]string, 0, len(parts))
 	for _, part := range parts {
 		part = strings.Trim(part, "/")
 		if part != "" && part != "." {
@@ -164,7 +164,10 @@ func displayPath(root string, parts ...string) string {
 	if root == "" || root == "." {
 		return filepath.Join(parts...)
 	}
-	return filepath.Join(append([]string{root}, parts...)...)
+	pathParts := make([]string, 0, len(parts)+1)
+	pathParts = append(pathParts, root)
+	pathParts = append(pathParts, parts...)
+	return filepath.Join(pathParts...)
 }
 
 func parseTask(path, content string) (Task, error) {

@@ -6,6 +6,7 @@ import (
 	"blitzcrank/internal/tools"
 	"bytes"
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -246,7 +247,7 @@ func TestExecuteToolEmitsAuditRecord(t *testing.T) {
 	var records []ToolAuditRecord
 	var call llm.ToolCall
 	call.Function.Name = "fs_stat_path"
-	call.Function.Arguments = `{"path":"` + path + `"}`
+	call.Function.Arguments = toolArgsJSON(t, map[string]any{"path": path})
 
 	_, err := agent.executeTool(context.Background(), Request{ToolAudit: func(record ToolAuditRecord) {
 		records = append(records, record)
@@ -445,7 +446,7 @@ func TestRespondPropagatesSelectedToolsAcrossIterations(t *testing.T) {
 	}
 	toolCall := llm.ToolCall{ID: "call_1", Type: "function"}
 	toolCall.Function.Name = "fs_stat_path"
-	toolCall.Function.Arguments = `{"path":"` + path + `"}`
+	toolCall.Function.Arguments = toolArgsJSON(t, map[string]any{"path": path})
 	client := &recordingClient{responses: []llm.ChatResponse{
 		responseWithMessage(llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{toolCall}}),
 		responseWithMessage(llm.Message{Role: "assistant", Content: "done"}),
@@ -588,6 +589,15 @@ func writeSkill(t *testing.T, root, dir, name string) {
 	if err := os.WriteFile(filepath.Join(path, "SKILL.md"), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func toolArgsJSON(t *testing.T, args map[string]any) string {
+	t.Helper()
+	data, err := json.Marshal(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 func stringSliceContains(values []string, want string) bool {

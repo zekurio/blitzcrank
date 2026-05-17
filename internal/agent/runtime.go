@@ -105,12 +105,14 @@ func (a *Agent) ToolNames(req Request) []string {
 }
 
 func (a *Agent) MutatingToolNames() []string {
-	readOnly := map[string]bool{}
-	for _, name := range a.registry.ToolNamesForPolicy(tools.ToolPolicy{ReadOnly: true}) {
+	readOnlyNames := a.registry.ToolNamesForPolicy(tools.ToolPolicy{ReadOnly: true})
+	readOnly := make(map[string]bool, len(readOnlyNames))
+	for _, name := range readOnlyNames {
 		readOnly[name] = true
 	}
-	var names []string
-	for _, name := range a.registry.ToolNamesForPolicy(tools.ToolPolicy{}) {
+	allNames := a.registry.ToolNamesForPolicy(tools.ToolPolicy{})
+	names := make([]string, 0, len(allNames))
+	for _, name := range allNames {
 		if !readOnly[name] {
 			names = append(names, name)
 		}

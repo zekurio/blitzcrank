@@ -197,7 +197,7 @@ func (s *Scheduler) AutomationStatus(now time.Time) string {
 	if len(metadata.Tasks) == 0 {
 		return "enabled; no tasks loaded"
 	}
-	var lines []string
+	lines := make([]string, 0, len(metadata.Tasks))
 	for _, task := range metadata.Tasks {
 		next := "unknown"
 		if !task.NextRun.IsZero() {
@@ -262,7 +262,7 @@ func (s *Scheduler) dueTasks(now time.Time) []Task {
 	}
 	localSince := since.In(location).Truncate(time.Minute)
 	localNow := now.In(location).Truncate(time.Minute)
-	var due []Task
+	due := make([]Task, 0, len(tasks))
 	for _, task := range tasks {
 		next := task.cron.Next(localSince)
 		if !next.After(localNow) {
@@ -289,6 +289,7 @@ func (s *Scheduler) AutomationRuntimeMetadata(now time.Time) agent.AutomationRun
 	if !cfg.AutomationsEnabled || lastLoadError != "" {
 		return metadata
 	}
+	metadata.Tasks = make([]agent.AutomationTaskMetadata, 0, len(tasks))
 	for _, task := range tasks {
 		metadata.Tasks = append(metadata.Tasks, agent.AutomationTaskMetadata{
 			Name:        task.Name,

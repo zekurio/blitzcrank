@@ -128,6 +128,35 @@ func TestAutomationReportDeliveryWritesTrace(t *testing.T) {
 	}
 }
 
+func TestAutomationReportDeliveryUsesRunContext(t *testing.T) {
+	dir := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	scheduler := NewScheduler(config.Config{
+		ThreadsDirectory: dir,
+		RunTimeout:       time.Minute,
+		Timezone:         "UTC",
+	}, fakeRunner{reply: "done"}, contextAwareReporter{}, nil)
+
+	scheduler.runTask(ctx, Task{Name: "test"})
+
+	data, err := os.ReadFile(filepath.Join(dir, "automations", "test.jsonl"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("trace line count = %d, want 2\n%s", len(lines), string(data))
+	}
+	var delivery map[string]any
+	if err := json.Unmarshal([]byte(lines[1]), &delivery); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if delivery["type"] != "automation_report_delivery" || delivery["error"] != context.Canceled.Error() {
+		t.Fatalf("delivery trace = %#v", delivery)
+	}
+}
+
 func TestRunDueStartsTasksAsynchronously(t *testing.T) {
 	dir := t.TempDir()
 	runner := &blockingRunner{
@@ -442,6 +471,12 @@ type blockingRunner struct {
 	started chan struct{}
 	release chan struct{}
 	done    chan struct{}
+}
+
+type contextAwareReporter struct{}
+
+func (contextAwareReporter) SendMessage(ctx context.Context, message string) error {
+	return ctx.Err()
 }
 
 func (r *blockingRunner) Respond(ctx context.Context, req agent.Request) (string, error) {

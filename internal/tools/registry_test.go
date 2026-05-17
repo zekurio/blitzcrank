@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -123,6 +124,9 @@ func TestFSToolsBlockSymlinkEscapeFromAllowedRoot(t *testing.T) {
 	}
 	linkPath := filepath.Join(allowed, "linked-outside.txt")
 	if err := os.Symlink(outsidePath, linkPath); err != nil {
+		if os.IsPermission(err) || runtime.GOOS == "windows" {
+			t.Skipf("symlink creation requires privileges: %v", err)
+		}
 		t.Fatal(err)
 	}
 
