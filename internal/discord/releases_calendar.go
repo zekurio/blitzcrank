@@ -42,19 +42,36 @@ type releaseCalendarItem struct {
 
 func releaseCalendarSpan(span string, now time.Time) (time.Time, time.Time, string, error) {
 	location := now.Location()
-	start := time.Date(now.In(location).Year(), now.In(location).Month(), now.In(location).Day(), 0, 0, 0, 0, location)
-	switch strings.ToLower(strings.TrimSpace(span)) {
-	case "", releaseCalendarDefaultSpan:
+	localNow := now.In(location)
+	day := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, location)
+	switch normalizeReleaseCalendarSpan(span) {
+	case releaseCalendarDefaultSpan:
+		start := day.AddDate(0, 0, -int((int(day.Weekday())+6)%7))
 		end := start.AddDate(0, 0, 7)
 		return start, end, "diese Woche (" + releaseCalendarDateRange(start, end) + ")", nil
 	case "today":
+		start := day
 		end := start.AddDate(0, 0, 1)
 		return start, end, "heute (" + start.Format("2006-01-02") + ")", nil
 	case "month":
+		start := time.Date(day.Year(), day.Month(), 1, 0, 0, 0, 0, location)
 		end := start.AddDate(0, 1, 0)
 		return start, end, "dieser Monat (" + releaseCalendarDateRange(start, end) + ")", nil
 	default:
-		return time.Time{}, time.Time{}, "", fmt.Errorf("Unbekannter Zeitraum. Erlaubt sind today, week oder month.")
+		return time.Time{}, time.Time{}, "", fmt.Errorf("Unbekannter Zeitraum. Erlaubt sind heute, woche oder monat.")
+	}
+}
+
+func normalizeReleaseCalendarSpan(span string) string {
+	switch strings.ToLower(strings.TrimSpace(span)) {
+	case "", releaseCalendarDefaultSpan, "woche", "diese-woche", "diese_woche":
+		return "week"
+	case "today", "heute":
+		return "today"
+	case "month", "monat", "dieser-monat", "dieser_monat":
+		return "month"
+	default:
+		return strings.ToLower(strings.TrimSpace(span))
 	}
 }
 
@@ -142,12 +159,27 @@ func radarrCalendarItems(value any) []releaseCalendarItem {
 		if !ok {
 			continue
 		}
-		date, ok := parseReleaseTime(object["digitalRelease"], object["physicalRelease"], object["inCinemas"])
+		movie, _ := object["movie"].(map[string]any)
+		date, ok := parseReleaseTime(
+			object["digitalRelease"],
+			object["physicalRelease"],
+			object["inCinemas"],
+			object["releaseDate"],
+			movie["digitalRelease"],
+			movie["physicalRelease"],
+			movie["inCinemas"],
+			movie["releaseDate"],
+		)
 		if !ok {
 			continue
 		}
 		title := strings.TrimSpace(stringFromMap(object, "title"))
-		if year := intFromInterface(object["year"]); year > 0 {
+		if title == "" {
+			title = strings.TrimSpace(stringFromMap(movie, "title"))
+		}
+		if year := intFromInterface(object["year"]); year > 0 && title != "" {
+			title += " (" + strconv.Itoa(year) + ")"
+		} else if year := intFromInterface(movie["year"]); year > 0 && title != "" {
 			title += " (" + strconv.Itoa(year) + ")"
 		}
 		if title == "" {

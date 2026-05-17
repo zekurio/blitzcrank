@@ -3,8 +3,16 @@ package commands
 import "github.com/bwmarrin/discordgo"
 
 const (
-	AutomationCommand = "automation"
-	ReleasesCommand   = "releases"
+	AutomationCommand       = "automatisierung"
+	LegacyAutomationCommand = "automation"
+	ReleasesCommand         = "release"
+	LegacyReleasesCommand   = "releases"
+
+	AutomationNameOption = "name"
+	QuestionOption       = "frage"
+	LegacyPromptOption   = "prompt"
+	SpanOption           = "zeitraum"
+	LegacySpanOption     = "span"
 )
 
 var SkillCommandGroups = map[string][]string{
@@ -27,7 +35,7 @@ func RuntimeCommands() []*discordgo.ApplicationCommand {
 			DMPermission:             &dm,
 			Options: []*discordgo.ApplicationCommandOption{{
 				Type:         discordgo.ApplicationCommandOptionString,
-				Name:         "name",
+				Name:         AutomationNameOption,
 				Description:  "Name der Automatisierung",
 				Required:     true,
 				Autocomplete: true,
@@ -53,13 +61,13 @@ func releasesCommand() *discordgo.ApplicationCommand {
 		DMPermission: &dm,
 		Options: []*discordgo.ApplicationCommandOption{{
 			Type:        discordgo.ApplicationCommandOptionString,
-			Name:        "span",
+			Name:        SpanOption,
 			Description: "Zeitraum: heute, Woche oder Monat",
 			Required:    false,
 			Choices: []*discordgo.ApplicationCommandOptionChoice{
-				{Name: "Heute", Value: "today"},
-				{Name: "Woche", Value: "week"},
-				{Name: "Monat", Value: "month"},
+				{Name: "Heute", Value: "heute"},
+				{Name: "Diese Woche", Value: "woche"},
+				{Name: "Dieser Monat", Value: "monat"},
 			},
 		}},
 	}
@@ -73,7 +81,7 @@ func skillCommand(name string) *discordgo.ApplicationCommand {
 		DMPermission: &dm,
 		Options: []*discordgo.ApplicationCommandOption{{
 			Type:        discordgo.ApplicationCommandOptionString,
-			Name:        "prompt",
+			Name:        QuestionOption,
 			Description: "Was soll Blitzcrank prüfen oder beantworten?",
 			Required:    true,
 		}},

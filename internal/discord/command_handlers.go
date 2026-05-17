@@ -32,9 +32,9 @@ func (b *Bot) onInteractionCreate(session *discordgo.Session, event *discordgo.I
 	}
 	data := event.ApplicationCommandData()
 	switch data.Name {
-	case commands.AutomationCommand:
+	case commands.AutomationCommand, commands.LegacyAutomationCommand:
 		b.handleLeanAutomationSlashCommand(session, event, data)
-	case commands.ReleasesCommand:
+	case commands.ReleasesCommand, commands.LegacyReleasesCommand:
 		b.handleReleasesSlashCommand(session, event, data)
 	default:
 		if groups, ok := commands.SkillCommandGroups[data.Name]; ok {
@@ -59,8 +59,8 @@ func (b *Bot) handleAutocomplete(session *discordgo.Session, event *discordgo.In
 
 func (b *Bot) autocompleteChoices(data discordgo.ApplicationCommandInteractionData) ([]*discordgo.ApplicationCommandOptionChoice, bool) {
 	switch data.Name {
-	case commands.AutomationCommand:
-		return b.automationChoices(commands.StringOption(data, "name")), true
+	case commands.AutomationCommand, commands.LegacyAutomationCommand:
+		return b.automationChoices(commands.AutomationName(data)), true
 	default:
 		return nil, false
 	}
@@ -75,7 +75,7 @@ func (b *Bot) handleLeanAutomationSlashCommand(session *discordgo.Session, event
 		b.respondEphemeral(session, event, "Der Laufzeitmanager ist noch nicht bereit.")
 		return
 	}
-	b.runAutomationFromSlash(session, event, commands.StringOption(data, "name"))
+	b.runAutomationFromSlash(session, event, commands.AutomationName(data))
 }
 
 func (b *Bot) runAutomationFromSlash(session *discordgo.Session, event *discordgo.InteractionCreate, name string) {
@@ -95,7 +95,7 @@ func (b *Bot) runAutomationFromSlash(session *discordgo.Session, event *discordg
 }
 
 func (b *Bot) handleReleasesSlashCommand(session *discordgo.Session, event *discordgo.InteractionCreate, data discordgo.ApplicationCommandInteractionData) {
-	start, end, label, err := releaseCalendarSpan(commands.StringOption(data, "span"), time.Now())
+	start, end, label, err := releaseCalendarSpan(commands.ReleaseSpan(data), time.Now())
 	if err != nil {
 		b.respondEphemeral(session, event, err.Error())
 		return

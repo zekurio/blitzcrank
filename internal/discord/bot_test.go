@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -100,13 +101,13 @@ func TestRuntimeCommandsRequireAdministratorPermission(t *testing.T) {
 			t.Fatalf("command %s DMPermission = %#v, want false", command.Name, command.DMPermission)
 		}
 	}
-	if runtimeCommands[0].Name != "automation" {
-		t.Fatalf("runtime command name = %q, want automation", runtimeCommands[0].Name)
+	if runtimeCommands[0].Name != commands.AutomationCommand {
+		t.Fatalf("runtime command name = %q, want %s", runtimeCommands[0].Name, commands.AutomationCommand)
 	}
 	if runtimeCommands[0].Description != "Eine Blitzcrank-Automatisierung sofort ausführen." {
 		t.Fatalf("automation command description = %q", runtimeCommands[0].Description)
 	}
-	if len(runtimeCommands[0].Options) != 1 || runtimeCommands[0].Options[0].Name != "name" || !runtimeCommands[0].Options[0].Autocomplete {
+	if len(runtimeCommands[0].Options) != 1 || runtimeCommands[0].Options[0].Name != commands.AutomationNameOption || !runtimeCommands[0].Options[0].Autocomplete {
 		t.Fatalf("automation command options = %#v, want autocompleted name", runtimeCommands[0].Options)
 	}
 	if runtimeCommands[0].Options[0].Description != "Name der Automatisierung" {
@@ -271,8 +272,33 @@ func TestDiscordApplicationCommandsIncludeSkillCommands(t *testing.T) {
 	if jellyfin.DMPermission == nil || *jellyfin.DMPermission {
 		t.Fatalf("jellyfin command DMPermission = %#v, want false", jellyfin.DMPermission)
 	}
-	if len(jellyfin.Options) != 1 || jellyfin.Options[0].Name != "prompt" || !jellyfin.Options[0].Required {
-		t.Fatalf("jellyfin options = %#v, want required prompt option", jellyfin.Options)
+	if len(jellyfin.Options) != 1 || jellyfin.Options[0].Name != commands.QuestionOption || !jellyfin.Options[0].Required {
+		t.Fatalf("jellyfin options = %#v, want required question option", jellyfin.Options)
+	}
+}
+
+func TestDiscordReleaseCommandIsGerman(t *testing.T) {
+	appCommands := commands.ApplicationCommands()
+	var release *discordgo.ApplicationCommand
+	for _, command := range appCommands {
+		if command.Name == commands.ReleasesCommand {
+			release = command
+		}
+	}
+	if release == nil {
+		t.Fatal("release slash command missing")
+	}
+	if len(release.Options) != 1 || release.Options[0].Name != commands.SpanOption {
+		t.Fatalf("release options = %#v, want localized span option", release.Options)
+	}
+	var values []string
+	for _, choice := range release.Options[0].Choices {
+		values = append(values, choice.Value.(string))
+	}
+	for _, want := range []string{"heute", "woche", "monat"} {
+		if !slices.Contains(values, want) {
+			t.Fatalf("release choices = %#v, missing %q", values, want)
+		}
 	}
 }
 
