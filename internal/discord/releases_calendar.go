@@ -227,11 +227,7 @@ func renderReleaseCalendarPNG(start, end time.Time, label string, items []releas
 	const itemHeight = 22
 	const rowGap = 12
 	const cellPadding = 8
-	days := int(end.Sub(start).Hours() / 24)
-	if days < 1 {
-		days = 1
-	}
-	rows := (days + 6) / 7
+	days, leadingBlankDays, rows := releaseCalendarGrid(start, end)
 	byDay := map[int][]releaseCalendarItem{}
 	maxItemsInRow := make([]int, rows)
 	for _, item := range items {
@@ -240,7 +236,7 @@ func renderReleaseCalendarPNG(start, end time.Time, label string, items []releas
 			continue
 		}
 		byDay[index] = append(byDay[index], item)
-		row := index / 7
+		row := (leadingBlankDays + index) / 7
 		if len(byDay[index]) > maxItemsInRow[row] {
 			maxItemsInRow[row] = len(byDay[index])
 		}
@@ -280,20 +276,21 @@ func renderReleaseCalendarPNG(start, end time.Time, label string, items []releas
 	for row := 0; row < rows; row++ {
 		rowHeight := rowHeights[row]
 		for col := 0; col < 7; col++ {
-			index := row*7 + col
+			cellIndex := row*7 + col
+			dayIndex := cellIndex - leadingBlankDays
 			x := margin + col*cellWidth
 			rect := image.Rect(x, y, x+cellWidth-6, y+rowHeight)
 			fill := color.RGBA{R: 30, G: 41, B: 59, A: 255}
-			if index >= days {
+			if dayIndex < 0 || dayIndex >= days {
 				fill = color.RGBA{R: 23, G: 32, B: 48, A: 255}
 			}
 			draw.Draw(img, rect, &image.Uniform{C: fill}, image.Point{}, draw.Src)
 			drawRectBorder(img, rect, color.RGBA{R: 51, G: 65, B: 85, A: 255})
-			if index < days {
-				day := start.AddDate(0, 0, index)
+			if dayIndex >= 0 && dayIndex < days {
+				day := start.AddDate(0, 0, dayIndex)
 				drawText(img, face, x+cellPadding, y+18, day.Format("02.01."), color.RGBA{R: 226, G: 232, B: 240, A: 255})
 				itemY := y + dayHeaderHeight + cellPadding
-				for _, item := range byDay[index] {
+				for _, item := range byDay[dayIndex] {
 					chip := image.Rect(x+cellPadding, itemY, x+cellWidth-14, itemY+itemHeight-4)
 					draw.Draw(img, chip, &image.Uniform{C: item.Color}, image.Point{}, draw.Src)
 					drawText(img, face, chip.Min.X+6, chip.Min.Y+14, compactCalendarText(item.Title, 18), color.RGBA{R: 15, G: 23, B: 42, A: 255})
@@ -316,6 +313,16 @@ func renderReleaseCalendarPNG(start, end time.Time, label string, items []releas
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+func releaseCalendarGrid(start, end time.Time) (int, int, int) {
+	days := int(end.Sub(start).Hours() / 24)
+	if days < 1 {
+		days = 1
+	}
+	leadingBlankDays := daysSinceMonday(start)
+	rows := (leadingBlankDays + days + 6) / 7
+	return days, leadingBlankDays, rows
 }
 
 func dayStart(value time.Time) time.Time {

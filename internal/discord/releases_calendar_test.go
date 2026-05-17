@@ -84,3 +84,20 @@ func TestRadarrCalendarItemsUsesReleaseDateAndNestedMovie(t *testing.T) {
 		t.Fatalf("direct item = %#v", items[1])
 	}
 }
+
+func TestReleaseCalendarGridPadsBeforeFirstWeekday(t *testing.T) {
+	location := time.UTC
+	start := time.Date(2026, time.May, 1, 0, 0, 0, 0, location) // Friday
+	end := time.Date(2026, time.June, 1, 0, 0, 0, 0, location)
+
+	days, leadingBlankDays, rows := releaseCalendarGrid(start, end)
+	if days != 31 {
+		t.Fatalf("days = %d, want 31", days)
+	}
+	if leadingBlankDays != 4 {
+		t.Fatalf("leadingBlankDays = %d, want 4", leadingBlankDays)
+	}
+	if rows != 5 {
+		t.Fatalf("rows = %d, want 5", rows)
+	}
+}
