@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -8,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	assets "blitzcrank"
+	"blitzcrank/internal/config"
 )
 
 type Skill struct {
@@ -16,10 +17,40 @@ type Skill struct {
 	Description string
 	Body        string
 	Path        string
+	Prompt      string
 }
 
 func LoadEmbeddedSkills() ([]Skill, error) {
-	return loadSkillsFromFS(assets.FS, "skills", "skills")
+	return LoadSkills(localMarkdownDir("skills"))
+}
+
+func LoadRuntimeSkills(cfg config.Config) ([]Skill, error) {
+	if root := strings.TrimSpace(cfg.SkillsDirectory); root != "" {
+		skills, err := LoadSkills(root)
+		if err == nil {
+			return skills, nil
+		}
+		return nil, err
+	}
+	return LoadEmbeddedSkills()
+}
+
+func localMarkdownDir(name string) string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return name
+	}
+	for {
+		candidate := filepath.Join(wd, name)
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate
+		}
+		next := filepath.Dir(wd)
+		if next == wd {
+			return name
+		}
+		wd = next
+	}
 }
 
 func LoadSkills(root string) ([]Skill, error) {
@@ -49,11 +80,17 @@ func loadSkillsFromFS(fsys fs.FS, root, displayRoot string) ([]Skill, error) {
 		readPath := fsPath(root, dir, "SKILL.md")
 		content, err := fs.ReadFile(fsys, readPath)
 		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
 			return nil, fmt.Errorf("load skill %s: %w", dir, err)
 		}
 		skill, err := parseSkill(displayPath(displayRoot, dir, "SKILL.md"), string(content))
 		if err != nil {
 			return nil, err
+		}
+		if skill.Name != dir {
+			return nil, fmt.Errorf("skill %s name %q must match directory %q", skill.Path, skill.Name, dir)
 		}
 		skills = append(skills, skill)
 	}
@@ -118,5 +155,6 @@ func parseSkill(path, content string) (Skill, error) {
 		return skill, fmt.Errorf("skill %s is missing description", path)
 	}
 	skill.Body = strings.TrimSpace(body)
+	skill.Prompt = formatSkillPrompt(skill)
 	return skill, nil
 }

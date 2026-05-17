@@ -11,4 +11,4 @@ description: Use when diagnosing disk space, file presence, permissions, timesta
 - Check file modes, ownership implications, and timestamps when files exist but imports fail.
 - Do not delete, move, chmod, chown, rename, overwrite, or edit files; no filesystem repair tools are available in this skill.
 - If filesystem evidence points back to a failed or stuck download, use the SABnzbd skill when it is available.
-- Final comments must be German and explain the concrete filesystem blocker in user-friendly language.
+- Final comments follow the system language rules and explain the concrete filesystem blocker in user-friendly language.

@@ -10,6 +10,8 @@ import (
 	"strings"
 )
 
+const maxJSONResponseBytes = 4 << 20
+
 type jsonRequest struct {
 	Method    string
 	BaseURL   string
@@ -55,17 +57,23 @@ func (r *Registry) doJSON(ctx context.Context, request jsonRequest) (any, error)
 	}
 	defer resp.Body.Close()
 
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxJSONResponseBytes+1))
 	if err != nil {
 		return nil, err
+	}
+	if len(data) > maxJSONResponseBytes {
+		return nil, fmt.Errorf("%s %s response exceeded %d bytes", request.Method, request.Path, maxJSONResponseBytes)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, fmt.Errorf("%s %s failed: %s: %s", request.Method, request.Path, resp.Status, strings.TrimSpace(string(data)))
 	}
+	if strings.TrimSpace(string(data)) == "" {
+		return nil, nil
+	}
 
 	var decoded any
 	if err := json.Unmarshal(data, &decoded); err != nil {
-		return string(data), nil
+		return nil, fmt.Errorf("%s %s returned invalid JSON: %w", request.Method, request.Path, err)
 	}
 	return decoded, nil
 }

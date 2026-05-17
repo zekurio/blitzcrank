@@ -36,15 +36,15 @@ func scanTime(target *time.Time) any {
 	})
 }
 
-func parseNullTime(value sql.NullString) *time.Time {
+func parseNullTime(value sql.NullString) (*time.Time, error) {
 	if !value.Valid || value.String == "" {
-		return nil
+		return nil, nil
 	}
 	parsed, err := time.Parse(time.RFC3339Nano, value.String)
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return &parsed
+	return &parsed, nil
 }
 
 type sqlScannerFunc func(any) error

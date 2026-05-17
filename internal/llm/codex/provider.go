@@ -1,4 +1,4 @@
-package llm
+package codex
 
 import (
 	"bufio"
@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"blitzcrank/internal/config"
+	"blitzcrank/internal/llm/api"
+	"blitzcrank/internal/llm/chatcompletions"
 )
 
 type CodexOAuth struct {
@@ -20,7 +22,7 @@ type CodexOAuth struct {
 	http    *http.Client
 }
 
-func NewCodexOAuth(cfg config.Config) (*CodexOAuth, error) {
+func New(cfg config.Config) (*CodexOAuth, error) {
 	if _, err := loadCodexCredential(cfg); err != nil {
 		return nil, err
 	}
@@ -33,25 +35,25 @@ func NewCodexOAuth(cfg config.Config) (*CodexOAuth, error) {
 	}, nil
 }
 
-func (c *CodexOAuth) Chat(ctx context.Context, request ChatRequest) (ChatResponse, error) {
+func (c *CodexOAuth) Chat(ctx context.Context, request api.ChatRequest) (api.ChatResponse, error) {
 	cred, err := loadCodexCredential(c.cfg)
 	if err != nil {
-		return ChatResponse{}, err
+		return api.ChatResponse{}, err
 	}
 	if time.Until(cred.ExpiresAt) < codexRefreshSkew {
 		cred, err = refreshCodexCredential(ctx, c.cfg, cred)
 		if err != nil {
-			return ChatResponse{}, err
+			return api.ChatResponse{}, err
 		}
 	}
 
 	body, err := json.Marshal(toResponsesRequest(request, c.cfg.CodexServiceTier))
 	if err != nil {
-		return ChatResponse{}, err
+		return api.ChatResponse{}, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/responses", bytes.NewReader(body))
 	if err != nil {
-		return ChatResponse{}, err
+		return api.ChatResponse{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+cred.AccessToken)
 	req.Header.Set("Content-Type", "application/json")
@@ -63,20 +65,20 @@ func (c *CodexOAuth) Chat(ctx context.Context, request ChatRequest) (ChatRespons
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return ChatResponse{}, err
+		return api.ChatResponse{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		data, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 		if err != nil {
-			return ChatResponse{}, err
+			return api.ChatResponse{}, err
 		}
-		return ChatResponse{}, fmt.Errorf("codex responses failed: %s: %s", resp.Status, strings.TrimSpace(string(data)))
+		return api.ChatResponse{}, api.ProviderErrorFromHTTP("codex-oauth", resp.StatusCode, resp.Header, data)
 	}
 	return fromResponsesStream(io.LimitReader(resp.Body, 32<<20))
 }
 
-func toResponsesRequest(request ChatRequest, serviceTier string) map[string]any {
+func toResponsesRequest(request api.ChatRequest, serviceTier string) map[string]any {
 	input := make([]any, 0, len(request.Messages))
 	var instructions []string
 	for _, message := range request.Messages {
@@ -147,7 +149,7 @@ func toResponsesRequest(request ChatRequest, serviceTier string) map[string]any 
 	if len(instructions) > 0 {
 		payload["instructions"] = strings.Join(instructions, "\n\n")
 	}
-	if effort := strings.TrimSpace(request.ReasoningEffort); effort != "" {
+	if effort := chatcompletions.ReasoningEffortForWire(request.ReasoningEffort); effort != "" {
 		payload["reasoning"] = map[string]any{"effort": effort}
 	}
 	serviceTier = strings.TrimSpace(strings.ToLower(serviceTier))
@@ -157,7 +159,7 @@ func toResponsesRequest(request ChatRequest, serviceTier string) map[string]any 
 	return payload
 }
 
-func fromResponsesStream(r io.Reader) (ChatResponse, error) {
+func fromResponsesStream(r io.Reader) (api.ChatResponse, error) {
 	var completed []byte
 	var streamedOutput []json.RawMessage
 	var streamedText []string
@@ -197,12 +199,12 @@ func fromResponsesStream(r io.Reader) (ChatResponse, error) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return ChatResponse{}, err
+		return api.ChatResponse{}, err
 	}
 	if len(completed) > 0 {
 		response, err := fromResponsesResponse(completed)
 		if err != nil {
-			return ChatResponse{}, err
+			return api.ChatResponse{}, err
 		}
 		choice := response.FirstChoice()
 		if strings.TrimSpace(choice.Message.Content) != "" || len(choice.Message.ToolCalls) > 0 {
@@ -214,11 +216,11 @@ func fromResponsesStream(r io.Reader) (ChatResponse, error) {
 			Output []json.RawMessage `json:"output"`
 		}{Output: streamedOutput})
 		if err != nil {
-			return ChatResponse{}, err
+			return api.ChatResponse{}, err
 		}
 		response, err := fromResponsesResponse(data)
 		if err != nil {
-			return ChatResponse{}, err
+			return api.ChatResponse{}, err
 		}
 		choice := response.FirstChoice()
 		if strings.TrimSpace(choice.Message.Content) != "" || len(choice.Message.ToolCalls) > 0 {
@@ -226,21 +228,21 @@ func fromResponsesStream(r io.Reader) (ChatResponse, error) {
 		}
 	}
 	if len(streamedText) > 0 {
-		message := Message{
+		message := api.Message{
 			Role:    "assistant",
 			Content: strings.TrimSpace(strings.Join(streamedText, "")),
 		}
-		return ChatResponse{Choices: []struct {
-			Message Message `json:"message"`
+		return api.ChatResponse{Choices: []struct {
+			Message api.Message `json:"message"`
 		}{{Message: message}}}, nil
 	}
 	if len(completed) == 0 {
-		return ChatResponse{}, fmt.Errorf("codex responses stream ended without response.completed")
+		return api.ChatResponse{}, fmt.Errorf("codex responses stream ended without response.completed")
 	}
-	return ChatResponse{}, fmt.Errorf("codex responses completed without assistant output")
+	return api.ChatResponse{}, fmt.Errorf("codex responses completed without assistant output")
 }
 
-func fromResponsesResponse(data []byte) (ChatResponse, error) {
+func fromResponsesResponse(data []byte) (api.ChatResponse, error) {
 	var raw struct {
 		Output []struct {
 			Type      string `json:"type"`
@@ -256,10 +258,10 @@ func fromResponsesResponse(data []byte) (ChatResponse, error) {
 		OutputText string `json:"output_text"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return ChatResponse{}, err
+		return api.ChatResponse{}, err
 	}
 
-	message := Message{Role: "assistant"}
+	message := api.Message{Role: "assistant"}
 	var text []string
 	for _, item := range raw.Output {
 		switch item.Type {
@@ -270,7 +272,7 @@ func fromResponsesResponse(data []byte) (ChatResponse, error) {
 				}
 			}
 		case "function_call":
-			var call ToolCall
+			var call api.ToolCall
 			call.ID = item.CallID
 			if call.ID == "" {
 				call.ID = item.ID
@@ -286,9 +288,9 @@ func fromResponsesResponse(data []byte) (ChatResponse, error) {
 	}
 	message.Content = strings.TrimSpace(strings.Join(text, "\n\n"))
 
-	var response ChatResponse
+	var response api.ChatResponse
 	response.Choices = append(response.Choices, struct {
-		Message Message `json:"message"`
+		Message api.Message `json:"message"`
 	}{Message: message})
 	return response, nil
 }

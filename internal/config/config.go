@@ -1,11 +1,7 @@
 package config
 
 import (
-	"bufio"
-	"errors"
-	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -14,9 +10,8 @@ type Config struct {
 	DiscordToken                 string
 	DiscordGuildID               string
 	InstanceOwnerID              string
+	DiscordSeerrUserMap          map[string]string
 	AgentDiscordChannelID        string
-	DiscordTriageModel           string
-	DiscordTriageReasoningEffort string
 	DiscordTriageThreshold       float64
 	DiscordThreadArchiveMinutes  int
 	DiscordContextRecentMessages int
@@ -39,23 +34,30 @@ type Config struct {
 	ExaBaseURL      string
 	ExaAPIKey       string
 
-	LLMProvider          string
-	CodexAuthProfile     string
-	CodexAuthStore       string
-	CodexBaseURL         string
-	CodexServiceTier     string
-	OpenAIAPIKey         string
-	OpenAIBaseURL        string
-	Model                string
-	ReasoningEffort      string
-	OpenAIReferer        string
-	OpenAITitle          string
-	ThreadsDirectory     string
-	MaxToolIterations    int
-	RunTimeout           time.Duration
-	CronEnabled          bool
-	AutomationsExtraDirs []string
-	DatabasePath         string
+	Provider                 string
+	CodexAuthProfile         string
+	CodexAuthStore           string
+	CodexBaseURL             string
+	CodexServiceTier         string
+	OpenAIAPIKey             string
+	OpenAIBaseURL            string
+	OpenRouterAPIKey         string
+	OpenRouterBaseURL        string
+	OpenRouterReferer        string
+	OpenRouterTitle          string
+	Model                    string
+	ReasoningEffort          string
+	RuntimeProfiles          map[string]RuntimeProfile
+	RuntimeDefaultConfigPath string
+	RuntimeConfigPath        string
+	SkillsDirectory          string
+	AutomationsDirectory     string
+	ThreadsDirectory         string
+	MaxToolIterations        int
+	RunTimeout               time.Duration
+	AutomationsEnabled       bool
+	AutomationsExtraDirs     []string
+	DatabasePath             string
 
 	SeerrBotUserID      string
 	SeerrBotDisplayName string
@@ -74,18 +76,18 @@ func LoadRelaxed(dotenvPath string) (Config, error) {
 
 func load(dotenvPath string, validate bool) (Config, error) {
 	_ = loadDotenv(dotenvPath)
+	_, runtimeConfigPathSet := os.LookupEnv("RUNTIME_CONFIG_PATH")
 
 	cfg := Config{
 		DiscordToken:                 os.Getenv("DISCORD_TOKEN"),
 		DiscordGuildID:               os.Getenv("DISCORD_GUILD_ID"),
 		InstanceOwnerID:              os.Getenv("INSTANCE_OWNER_DISCORD_ID"),
-		AgentDiscordChannelID:        os.Getenv("AGENT_DISCORD_CHANNEL_ID"),
-		DiscordTriageModel:           getenv("AGENT_DISCORD_TRIAGE_MODEL", "gpt-5.4-mini"),
-		DiscordTriageReasoningEffort: getenv("AGENT_DISCORD_TRIAGE_REASONING_EFFORT", "none"),
-		DiscordTriageThreshold:       floatEnv("AGENT_DISCORD_TRIAGE_THRESHOLD", 0.75),
-		DiscordThreadArchiveMinutes:  intEnv("AGENT_DISCORD_THREAD_ARCHIVE_MINUTES", 1440),
-		DiscordContextRecentMessages: intEnv("AGENT_DISCORD_CONTEXT_RECENT_MESSAGES", 12),
-		SeerrWebhookListenAddr:       getenv("SEERR_WEBHOOK_LISTEN_ADDR", "127.0.0.1:8080"),
+		DiscordSeerrUserMap:          jsonMapEnv("DISCORD_SEERR_USER_MAP"),
+		AgentDiscordChannelID:        os.Getenv("DISCORD_CHANNEL_ID"),
+		DiscordTriageThreshold:       floatEnv("DISCORD_TRIAGE_THRESHOLD", 0.75),
+		DiscordThreadArchiveMinutes:  intEnv("DISCORD_THREAD_ARCHIVE_MINUTES", 1440),
+		DiscordContextRecentMessages: intEnv("DISCORD_CONTEXT_RECENT_MESSAGES", 12),
+		SeerrWebhookListenAddr:       strings.TrimSpace(os.Getenv("SEERR_WEBHOOK_LISTEN_ADDR")),
 		SeerrWebhookPath:             getenv("SEERR_WEBHOOK_PATH", "/webhooks/seerr"),
 		SeerrWebhookSecret:           os.Getenv("SEERR_WEBHOOK_SECRET"),
 		SeerrBaseURL:                 os.Getenv("SEERR_BASE_URL"),
@@ -101,21 +103,24 @@ func load(dotenvPath string, validate bool) (Config, error) {
 		FSAllowedRoots:               listEnv("FS_TOOL_ALLOWED_ROOTS"),
 		ExaBaseURL:                   getenv("EXA_BASE_URL", "https://api.exa.ai"),
 		ExaAPIKey:                    os.Getenv("EXA_API_KEY"),
-		LLMProvider:                  getenv("LLM_PROVIDER", "openai-compatible"),
 		CodexAuthProfile:             getenv("CODEX_AUTH_PROFILE", "default"),
 		CodexAuthStore:               getenv("CODEX_AUTH_STORE", ""),
 		CodexBaseURL:                 getenv("CODEX_BASE_URL", "https://chatgpt.com/backend-api/codex"),
-		CodexServiceTier:             getenv("CODEX_SERVICE_TIER", "standard"),
-		OpenAIAPIKey:                 firstEnv("OPENAI_API_KEY", "OPENROUTER_API_KEY"),
-		OpenAIBaseURL:                getenv("OPENAI_BASE_URL", getenv("OPENROUTER_BASE_URL", "https://api.openai.com/v1")),
-		Model:                        getenv("MODEL", "gpt-5.5"),
-		ReasoningEffort:              os.Getenv("REASONING_EFFORT"),
-		OpenAIReferer:                os.Getenv("OPENROUTER_HTTP_REFERER"),
-		OpenAITitle:                  getenv("OPENROUTER_X_TITLE", "Blitzcrank"),
+		CodexServiceTier:             codexServiceTierFromFastEnv("CODEX_FAST_MODE", "standard"),
+		OpenAIAPIKey:                 os.Getenv("OPENAI_API_KEY"),
+		OpenAIBaseURL:                getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+		OpenRouterAPIKey:             os.Getenv("OPENROUTER_API_KEY"),
+		OpenRouterBaseURL:            getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+		OpenRouterReferer:            os.Getenv("OPENROUTER_HTTP_REFERER"),
+		OpenRouterTitle:              getenv("OPENROUTER_X_TITLE", "Blitzcrank"),
+		RuntimeDefaultConfigPath:     os.Getenv("RUNTIME_DEFAULT_CONFIG_PATH"),
+		RuntimeConfigPath:            getenv("RUNTIME_CONFIG_PATH", "./runtime-config.json"),
+		SkillsDirectory:              getenv("SKILLS_DIR", "skills"),
+		AutomationsDirectory:         getenv("AUTOMATIONS_DIR", "automations"),
 		ThreadsDirectory:             getenv("AGENT_THREADS_DIR", "threads"),
 		MaxToolIterations:            intEnv("AGENT_MAX_TOOL_ITERATIONS", 15),
 		RunTimeout:                   durationEnv("AGENT_RUN_TIMEOUT", 5*time.Minute),
-		CronEnabled:                  boolEnv("CRON_ENABLED", false),
+		AutomationsEnabled:           boolEnvFallback("AUTOMATIONS_ENABLED", "CRON_ENABLED", false),
 		AutomationsExtraDirs:         listEnv("AUTOMATIONS_EXTRA_DIRS"),
 		DatabasePath:                 getenv("DATABASE_PATH", "./blitzcrank.sqlite"),
 		SeerrBotUserID:               os.Getenv("SEERR_BOT_USER_ID"),
@@ -123,128 +128,25 @@ func load(dotenvPath string, validate bool) (Config, error) {
 		BotPublicName:                getenv("BOT_PUBLIC_NAME", "Blitzcrank"),
 		Timezone:                     getenv("TIMEZONE", "UTC"),
 	}
+	cfg.RuntimeProfiles = runtimeProfiles(cfg)
+	if runtimeConfigPathSet {
+		seed := RuntimeFileFromConfig(cfg)
+		if strings.TrimSpace(cfg.RuntimeDefaultConfigPath) != "" {
+			seed = RuntimeFile{}
+		}
+		if err := SeedRuntimeConfigFile(cfg.RuntimeConfigPath, seed); err != nil {
+			return cfg, err
+		}
+	}
+	if err := ApplyRuntimeConfigFile(&cfg); err != nil {
+		return cfg, err
+	}
 
 	if !validate {
 		return cfg, nil
 	}
-
-	if cfg.LLMProvider != "codex-oauth" && cfg.LLMProvider != "openai-codex" && cfg.LLMProvider != "codex" && cfg.OpenAIAPIKey == "" {
-		return cfg, errors.New("OPENAI_API_KEY or OPENROUTER_API_KEY is required")
-	}
-	if cfg.Model == "" {
-		return cfg, errors.New("MODEL is required")
-	}
-	if cfg.SeerrWebhookListenAddr != "" && (cfg.SeerrBaseURL == "" || cfg.SeerrAPIKey == "") {
-		return cfg, errors.New("SEERR_BASE_URL and SEERR_API_KEY are required when the Seerr webhook server is enabled")
-	}
-	if cfg.SeerrWebhookPath == "" || !strings.HasPrefix(cfg.SeerrWebhookPath, "/") {
-		return cfg, fmt.Errorf("SEERR_WEBHOOK_PATH must start with /")
+	if err := validateStrictConfig(cfg); err != nil {
+		return cfg, err
 	}
 	return cfg, nil
-}
-
-func loadDotenv(path string) error {
-	file, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") || !strings.Contains(line, "=") {
-			continue
-		}
-		key, value, _ := strings.Cut(line, "=")
-		key = strings.TrimSpace(key)
-		value = strings.Trim(strings.TrimSpace(value), `"'`)
-		if key != "" && os.Getenv(key) == "" {
-			_ = os.Setenv(key, value)
-		}
-	}
-	return scanner.Err()
-}
-
-func getenv(key, fallback string) string {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback
-	}
-	return value
-}
-
-func firstEnv(keys ...string) string {
-	for _, key := range keys {
-		if value := os.Getenv(key); value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func listEnv(key string) []string {
-	raw := os.Getenv(key)
-	if raw == "" {
-		return nil
-	}
-	var values []string
-	for _, value := range strings.Split(raw, ",") {
-		value = strings.TrimSpace(value)
-		if value != "" {
-			values = append(values, value)
-		}
-	}
-	return values
-}
-
-func intEnv(key string, fallback int) int {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback
-	}
-	parsed, err := strconv.Atoi(value)
-	if err != nil || parsed < 1 {
-		return fallback
-	}
-	return parsed
-}
-
-func floatEnv(key string, fallback float64) float64 {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback
-	}
-	parsed, err := strconv.ParseFloat(value, 64)
-	if err != nil {
-		return fallback
-	}
-	return parsed
-}
-
-func durationEnv(key string, fallback time.Duration) time.Duration {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback
-	}
-	parsed, err := time.ParseDuration(value)
-	if err != nil || parsed <= 0 {
-		return fallback
-	}
-	return parsed
-}
-
-func boolEnv(key string, fallback bool) bool {
-	value := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
-	if value == "" {
-		return fallback
-	}
-	switch value {
-	case "1", "true", "yes", "on":
-		return true
-	case "0", "false", "no", "off":
-		return false
-	default:
-		return fallback
-	}
 }

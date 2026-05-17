@@ -5,9 +5,7 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
-	"blitzcrank/internal/agent"
 	"blitzcrank/internal/store"
 
 	"github.com/bwmarrin/discordgo"
@@ -27,9 +25,9 @@ func splitDiscordMessage(content string) []string {
 
 	var chunks []string
 	for len(content) > limit {
-		cut := strings.LastIndex(content[:limit], "\n")
-		if cut < 1 {
-			cut = limit
+		cut := discordMessageCutIndex(content, limit)
+		if cut <= 0 {
+			break
 		}
 		chunks = append(chunks, strings.TrimSpace(content[:cut]))
 		content = strings.TrimSpace(content[cut:])
@@ -38,6 +36,29 @@ func splitDiscordMessage(content string) []string {
 		chunks = append(chunks, content)
 	}
 	return chunks
+}
+
+func discordMessageCutIndex(content string, limit int) int {
+	lastBoundary := 0
+	lastNewline := -1
+	for index, r := range content {
+		if index > limit {
+			break
+		}
+		if index > 0 {
+			lastBoundary = index
+		}
+		if r == '\n' && index > 0 {
+			lastNewline = index
+		}
+	}
+	if lastNewline > 0 {
+		return lastNewline
+	}
+	if lastBoundary > 0 {
+		return lastBoundary
+	}
+	return len(content)
 }
 
 func (b *Bot) mentionsBot(session *discordgo.Session, message *discordgo.Message) bool {
@@ -75,6 +96,91 @@ func discordAuthor(user *discordgo.User) string {
 		name = user.ID
 	}
 	return fmt.Sprintf("%s (%s)", name, user.ID)
+}
+
+func discordUserID(user *discordgo.User) string {
+	if user == nil {
+		return ""
+	}
+	return strings.TrimSpace(user.ID)
+}
+
+func interactionAuthor(event *discordgo.InteractionCreate) string {
+	if event == nil {
+		return "unknown Discord user"
+	}
+	if event.Member != nil && event.Member.User != nil {
+		return discordAuthor(event.Member.User)
+	}
+	return discordAuthor(event.User)
+}
+
+func interactionUserID(event *discordgo.InteractionCreate) string {
+	if event == nil {
+		return ""
+	}
+	if event.Member != nil && event.Member.User != nil {
+		return event.Member.User.ID
+	}
+	if event.User != nil {
+		return event.User.ID
+	}
+	return ""
+}
+
+func slashInteractionMessage(event *discordgo.InteractionCreate, root *discordgo.Message) *discordgo.MessageCreate {
+	if event == nil || root == nil {
+		return nil
+	}
+	user := &discordgo.User{}
+	switch {
+	case event.Member != nil && event.Member.User != nil:
+		*user = *event.Member.User
+	case event.User != nil:
+		*user = *event.User
+	default:
+		user = nil
+	}
+	return &discordgo.MessageCreate{Message: &discordgo.Message{
+		ID:        root.ID,
+		ChannelID: root.ChannelID,
+		GuildID:   root.GuildID,
+		Timestamp: root.Timestamp,
+		Author:    user,
+	}}
+}
+
+func (b *Bot) skillSlashRootMessage(event *discordgo.InteractionCreate, skill, prompt string) string {
+	userID := interactionUserID(event)
+	if userID == "" {
+		return fmt.Sprintf("/%s gestartet: %s", strings.TrimSpace(skill), threadTitle(prompt))
+	}
+	return fmt.Sprintf("<@%s> hat `/%s` gestartet: %s", userID, strings.TrimSpace(skill), threadTitle(prompt))
+}
+
+func discordSkillPrompt(skill, prompt string) string {
+	return fmt.Sprintf("Discord slash command: /%s\nSelected skill: %s\n\nUser prompt:\n%s", strings.TrimSpace(skill), strings.TrimSpace(skill), strings.TrimSpace(prompt))
+}
+
+func messageReplyTargetID(message *discordgo.Message) string {
+	if message == nil || message.MessageReference == nil {
+		return ""
+	}
+	return strings.TrimSpace(message.MessageReference.MessageID)
+}
+
+func (b *Bot) messageRepliesToBot(message *discordgo.Message) bool {
+	if message == nil || message.MessageReference == nil {
+		return false
+	}
+	if message.ReferencedMessage == nil || message.ReferencedMessage.Author == nil {
+		return false
+	}
+	botID := strings.TrimSpace(b.botID)
+	if botID == "" {
+		return false
+	}
+	return message.ReferencedMessage.Author.ID == botID
 }
 
 func threadTitle(content string) string {
@@ -127,201 +233,6 @@ func isDiscordMentionToken(value string) bool {
 	default:
 		return false
 	}
-}
-
-func isModelRuntimeQuestion(content string) bool {
-	text := strings.ToLower(stripDiscordMentionTokens(content))
-	text = strings.NewReplacer("ä", "ae", "ö", "oe", "ü", "ue", "ß", "ss").Replace(text)
-	if !(strings.Contains(text, "model") || strings.Contains(text, "modell") || strings.Contains(text, "reasoning") || strings.Contains(text, "runtime")) {
-		return false
-	}
-	questionSignals := []string{"which", "what", "using", "use", "verwend", "welch", "welches", "welchen", "gerade", "laeuf", "nutzt", "benutzt", "effort"}
-	for _, signal := range questionSignals {
-		if strings.Contains(text, signal) {
-			return true
-		}
-	}
-	return strings.Contains(text, "?")
-}
-
-func isToolInventoryQuestion(content string) bool {
-	text := normalizeQuestionText(content)
-	if text == "" {
-		return false
-	}
-	hasToolWord := strings.Contains(text, "tool") || strings.Contains(text, "tools") || strings.Contains(text, "werkzeug") || strings.Contains(text, "werkzeuge")
-	if !hasToolWord {
-		return false
-	}
-	for _, signal := range []string{
-		"welche", "welchen", "welches", "was", "what", "which", "list", "liste", "zaehle", "zaehl", "zähle", "zähl", "auffuehren", "aufführen", "anzeigen",
-	} {
-		if strings.Contains(text, signal) {
-			return true
-		}
-	}
-	return strings.Contains(text, "?")
-}
-
-func isAutomationScheduleQuestion(content string) bool {
-	text := normalizeQuestionText(content)
-	if text == "" {
-		return false
-	}
-	hasAutomationWord := strings.Contains(text, "automation") || strings.Contains(text, "automations") || strings.Contains(text, "job") || strings.Contains(text, "jobs") || strings.Contains(text, "schedule") || strings.Contains(text, "scheduled") || strings.Contains(text, "cron") || strings.Contains(text, "automatisierung") || strings.Contains(text, "automatisierungen")
-	if !hasAutomationWord {
-		return false
-	}
-	for _, signal := range []string{
-		"when", "wann", "next", "naechst", "näch", "welche", "what", "which", "list", "liste", "zaehle", "zaehl", "zähle", "zähl", "laufen", "laeuft", "läuft", "run", "runs",
-	} {
-		if strings.Contains(text, signal) {
-			return true
-		}
-	}
-	return strings.Contains(text, "?")
-}
-
-func isOneOffDiscordQuestion(content string, triage agent.DiscordTriageResult) bool {
-	if strings.TrimSpace(triage.Action) != "support_request" || !triage.Actionable || !triage.NeedsAgentRun {
-		return false
-	}
-	text := normalizeQuestionText(content)
-	if text == "" || !hasQuestionShape(text) {
-		return false
-	}
-	if hasSupportCaseSignal(text) {
-		return false
-	}
-	return hasAvailabilitySignal(text) || hasReleaseSignal(text)
-}
-
-func normalizeQuestionText(content string) string {
-	text := strings.ToLower(stripDiscordMentionTokens(content))
-	text = strings.NewReplacer("ä", "ae", "ö", "oe", "ü", "ue", "ß", "ss").Replace(text)
-	var b strings.Builder
-	lastSpace := false
-	for _, r := range text {
-		switch {
-		case unicode.IsLetter(r), unicode.IsDigit(r), r == '?':
-			b.WriteRune(r)
-			lastSpace = false
-		default:
-			if !lastSpace {
-				b.WriteByte(' ')
-				lastSpace = true
-			}
-		}
-	}
-	return strings.Join(strings.Fields(b.String()), " ")
-}
-
-func hasQuestionShape(text string) bool {
-	if strings.Contains(text, "?") {
-		return true
-	}
-	for _, signal := range []string{"ist ", "is ", "are ", "wann ", "when ", "where ", "wo ", "weisst ", "weißt ", "gibt es ", "gibts ", "kommt "} {
-		if strings.HasPrefix(text, signal) || strings.Contains(text, " "+signal) {
-			return true
-		}
-	}
-	return false
-}
-
-func hasAvailabilitySignal(text string) bool {
-	for _, signal := range []string{"auf jellyfin", "in jellyfin", "bei jellyfin", "jellyfin", "verfuegbar", "verfügbar", "available", "availability", "streaming", "watch"} {
-		if strings.Contains(text, signal) {
-			return true
-		}
-	}
-	return false
-}
-
-func hasReleaseSignal(text string) bool {
-	for _, signal := range []string{"wann kommt", "when does", "when is", "release", "released", "raus", "erscheint", "startet", "premiere"} {
-		if strings.Contains(text, signal) {
-			return true
-		}
-	}
-	return false
-}
-
-func hasSupportCaseSignal(text string) bool {
-	for _, signal := range []string{
-		"geht nicht", "funktioniert nicht", "kaputt", "fehler", "problem", "bug", "fix", "reparier", "reparieren",
-		"missing", "fehlt", "stuck", "haengt", "haengt fest", "failed", "error", "import", "download", "queue",
-		"blocklist", "subtitle", "subtitles", "untertitel", "audio", "tonspur",
-	} {
-		if strings.Contains(text, signal) {
-			return true
-		}
-	}
-	return false
-}
-
-func looksGerman(content string) bool {
-	text := strings.ToLower(stripDiscordMentionTokens(content))
-	text = strings.NewReplacer("ä", "ae", "ö", "oe", "ü", "ue", "ß", "ss").Replace(text)
-	germanSignals := []string{"welch", "verwend", "gerade", "kannst", "mir", "gehts", "geht's", "modell", "du ", "bitte", "werkzeug", "werkzeuge", "zaehl", "zaehle"}
-	for _, signal := range germanSignals {
-		if strings.Contains(text, signal) {
-			return true
-		}
-	}
-	return false
-}
-
-func fallbackIntakeReply(content, action string) string {
-	german := looksGerman(content)
-	switch action {
-	case "unsupported":
-		if german {
-			return "Ich bin hier auf Medienserver-Support begrenzt."
-		}
-		return "I am limited to media-server support here."
-	case "clarify":
-		if german {
-			return "Wobei genau brauchst du Hilfe?"
-		}
-		return "What do you need help with?"
-	default:
-		if german {
-			return "Ich bin einsatzbereit."
-		}
-		return "I am ready."
-	}
-}
-
-func validateDiscordReply(reply string) (string, error) {
-	reply = strings.TrimSpace(reply)
-	if reply == "" {
-		return "", fmt.Errorf("discord reply is empty")
-	}
-	if len(reply) > 1900 {
-		return "", fmt.Errorf("discord reply is too long: %d bytes", len(reply))
-	}
-	lower := strings.ToLower(reply)
-	for _, marker := range []string{
-		"webhook payload:",
-		"tool result",
-		"tool_results",
-		"```json",
-		"{\"",
-		"api_key",
-		"authorization:",
-	} {
-		if strings.Contains(lower, marker) {
-			return "", fmt.Errorf("discord reply appears to expose internal output")
-		}
-	}
-	return reply, nil
-}
-
-func safeDiscordFailureReply(content string) string {
-	if looksGerman(content) {
-		return "Ich konnte daraus keine sichere Antwort erstellen."
-	}
-	return "I could not produce a safe response for that request."
 }
 
 func emptySummary(summary string) string {

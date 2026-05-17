@@ -17,7 +17,7 @@ Workflow:
 6. Apply safe fixes only when the user asks for a fix or the issue clearly requires one and the evidence supports it.
 7. Validate with a follow-up lookup after any fix.
 8. If validation makes it certain that the reported issue is solved, mark the Jellyseerr issue resolved with `seerr_resolve_issue`.
-9. Return exactly one final issue comment body in German.
+9. Return exactly one final issue comment body using the system language rules.
 
 Rules:
 
@@ -33,7 +33,7 @@ Rules:
 - Avoid boilerplate non-action disclaimers such as "es wurde nichts geändert" or "es wurde keine Änderung vorgenommen"; state the verified blocker directly.
 - If no safe fix is available, say what was checked and why the issue could not be fixed. Do not describe manual action, next steps, or future conditions.
 - If downloads or imports are stuck, use the SABnzbd skill for queue/history and the filesystem skill for disk usage, completed files, and path visibility before retrying blindly.
-- External communication must be German.
+- External communication follows the system language rules: default German, but use another language when the reporting user's actual issue is clearly in that language.
 - Do not include the `[blitzcrank w/ model]` header; the harness adds it.
 - Final comments must be final-state comments: fixed with a concise explanation, or not fixable with a concise explanation.
 - Final comments should usually be one sentence and never more than two short sentences.

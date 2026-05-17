@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -105,7 +106,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil && filepath.Dir(path) != "." {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", sqliteDSN(path))
 	if err != nil {
 		return nil, err
 	}
@@ -115,6 +116,21 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		return nil, err
 	}
 	return store, nil
+}
+
+func sqliteDSN(path string) string {
+	if path == ":memory:" {
+		return "file::memory:?cache=shared&_pragma=foreign_keys(1)"
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		absPath = path
+	}
+	uri := url.URL{Scheme: "file", Path: absPath}
+	query := uri.Query()
+	query.Add("_pragma", "foreign_keys(1)")
+	uri.RawQuery = query.Encode()
+	return uri.String()
 }
 
 func (s *Store) Close() error {
@@ -216,6 +232,7 @@ CREATE TABLE IF NOT EXISTS agent_runs (
   attribution TEXT,
   error TEXT,
   completion_reason TEXT,
+  summary TEXT,
   FOREIGN KEY (thread_id) REFERENCES agent_threads(thread_id)
 );
 `)
@@ -229,6 +246,7 @@ CREATE TABLE IF NOT EXISTS agent_runs (
 	}{
 		{table: "issue_threads", name: "summary", ddl: "ALTER TABLE issue_threads ADD COLUMN summary TEXT"},
 		{table: "issue_thread_events", name: "event_key", ddl: "ALTER TABLE issue_thread_events ADD COLUMN event_key TEXT"},
+		{table: "agent_runs", name: "summary", ddl: "ALTER TABLE agent_runs ADD COLUMN summary TEXT"},
 	} {
 		if err := s.ensureColumn(ctx, column.table, column.name, column.ddl); err != nil {
 			return err

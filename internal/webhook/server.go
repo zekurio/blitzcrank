@@ -2,6 +2,8 @@ package webhook
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/json"
 	"io"
 	"log"
@@ -100,10 +102,20 @@ func (s *Server) authorized(r *http.Request) bool {
 	if s.cfg.SeerrWebhookSecret == "" {
 		return true
 	}
-	if r.Header.Get("X-Blitzcrank-Webhook-Secret") == s.cfg.SeerrWebhookSecret {
+	if constantTimeSecretEqual(r.Header.Get("X-Blitzcrank-Webhook-Secret"), s.cfg.SeerrWebhookSecret) {
 		return true
 	}
-	return r.Header.Get("Authorization") == "Bearer "+s.cfg.SeerrWebhookSecret
+	auth := strings.TrimSpace(r.Header.Get("Authorization"))
+	if !strings.HasPrefix(auth, "Bearer ") {
+		return false
+	}
+	return constantTimeSecretEqual(strings.TrimSpace(strings.TrimPrefix(auth, "Bearer ")), s.cfg.SeerrWebhookSecret)
+}
+
+func constantTimeSecretEqual(candidate, secret string) bool {
+	candidateHash := sha256.Sum256([]byte(candidate))
+	secretHash := sha256.Sum256([]byte(secret))
+	return hmac.Equal(candidateHash[:], secretHash[:])
 }
 
 func (s *Server) process(ctx context.Context, payload map[string]any) {

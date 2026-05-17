@@ -1,4 +1,4 @@
-package llm
+package codex
 
 import (
 	"context"
@@ -64,7 +64,7 @@ type deviceTokenResponse struct {
 	CodeVerifier      string `json:"code_verifier"`
 }
 
-func CodexAuthPath(cfg config.Config) string {
+func AuthPath(cfg config.Config) string {
 	if cfg.CodexAuthStore != "" {
 		return cfg.CodexAuthStore
 	}
@@ -78,7 +78,7 @@ func CodexAuthPath(cfg config.Config) string {
 	return filepath.Join(home, ".config", "blitzcrank", "auth.json")
 }
 
-func CodexLogin(ctx context.Context, cfg config.Config, out io.Writer) error {
+func Login(ctx context.Context, cfg config.Config, out io.Writer) error {
 	httpClient := &http.Client{Timeout: 30 * time.Second}
 	reqBody := strings.NewReader(`{"client_id":"` + codexClientID + `"}`)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, codexUserCodeURL, reqBody)
@@ -133,13 +133,13 @@ func CodexLogin(ctx context.Context, cfg config.Config, out io.Writer) error {
 		if err := saveCodexCredential(cfg, cred); err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "Saved Codex credentials for profile %q at %s\n", cfg.CodexAuthProfile, CodexAuthPath(cfg))
+		fmt.Fprintf(out, "Saved Codex credentials for profile %q at %s\n", cfg.CodexAuthProfile, AuthPath(cfg))
 		return nil
 	}
 }
 
-func CodexLogout(cfg config.Config) error {
-	path := CodexAuthPath(cfg)
+func Logout(cfg config.Config) error {
+	path := AuthPath(cfg)
 	unlock, err := lockAuthStore(path)
 	if err != nil {
 		return err
@@ -154,8 +154,8 @@ func CodexLogout(cfg config.Config) error {
 	return saveAuthStoreUnlocked(path, store)
 }
 
-func CodexStatus(cfg config.Config, out io.Writer) error {
-	path := CodexAuthPath(cfg)
+func Status(cfg config.Config, out io.Writer) error {
+	path := AuthPath(cfg)
 	unlock, err := lockAuthStore(path)
 	if err != nil {
 		return err
@@ -168,7 +168,7 @@ func CodexStatus(cfg config.Config, out io.Writer) error {
 	}
 	cred, ok := store.Profiles[cfg.CodexAuthProfile]
 	if !ok {
-		fmt.Fprintf(out, "No Codex credentials for profile %q at %s\n", cfg.CodexAuthProfile, CodexAuthPath(cfg))
+		fmt.Fprintf(out, "No Codex credentials for profile %q at %s\n", cfg.CodexAuthProfile, AuthPath(cfg))
 		return nil
 	}
 	status := "valid"
@@ -256,7 +256,13 @@ func refreshCodexCredential(ctx context.Context, cfg config.Config, cred CodexCr
 	if err := json.NewDecoder(resp.Body).Decode(&tokens); err != nil {
 		return cred, err
 	}
+	if strings.TrimSpace(tokens.AccessToken) == "" {
+		return cred, fmt.Errorf("refresh codex token: missing access_token")
+	}
 	refreshed := credentialFromTokens(tokens)
+	if refreshed.IDToken == "" {
+		refreshed.IDToken = cred.IDToken
+	}
 	if refreshed.AccountID == "" {
 		refreshed.AccountID = cred.AccountID
 	}

@@ -1,4 +1,4 @@
-package llm
+package codex
 
 import (
 	"encoding/json"
@@ -11,7 +11,7 @@ import (
 )
 
 func loadCodexCredential(cfg config.Config) (CodexCredential, error) {
-	path := CodexAuthPath(cfg)
+	path := AuthPath(cfg)
 	unlock, err := lockAuthStore(path)
 	if err != nil {
 		return CodexCredential{}, err
@@ -30,7 +30,7 @@ func loadCodexCredential(cfg config.Config) (CodexCredential, error) {
 }
 
 func saveCodexCredential(cfg config.Config, cred CodexCredential) error {
-	path := CodexAuthPath(cfg)
+	path := AuthPath(cfg)
 	unlock, err := lockAuthStore(path)
 	if err != nil {
 		return err
@@ -46,6 +46,9 @@ func saveCodexCredential(cfg config.Config, cred CodexCredential) error {
 }
 
 func loadAuthStoreUnlocked(path string) (AuthStore, error) {
+	if err := tightenAuthStorePermissions(path); err != nil {
+		return AuthStore{}, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -64,6 +67,20 @@ func loadAuthStoreUnlocked(path string) (AuthStore, error) {
 		store.Version = 1
 	}
 	return store, nil
+}
+
+func tightenAuthStorePermissions(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if info.Mode().Perm()&0o077 == 0 {
+		return nil
+	}
+	return os.Chmod(path, 0o600)
 }
 
 func saveAuthStoreUnlocked(path string, store AuthStore) error {

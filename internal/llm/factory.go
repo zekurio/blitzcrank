@@ -5,25 +5,31 @@ import (
 	"strings"
 
 	"blitzcrank/internal/config"
+	"blitzcrank/internal/llm/codex"
+	"blitzcrank/internal/llm/openai"
+	"blitzcrank/internal/llm/openrouter"
 )
 
 const (
 	ProviderOpenAICompatible = "openai-compatible"
+	ProviderOpenRouter       = "openrouter"
 	ProviderCodexOAuth       = "codex-oauth"
 )
 
 func New(cfg config.Config) (Client, error) {
-	provider := strings.TrimSpace(cfg.LLMProvider)
+	provider := strings.TrimSpace(cfg.Provider)
 	if provider == "" {
 		provider = ProviderOpenAICompatible
 	}
 
 	switch provider {
-	case ProviderOpenAICompatible, "api_key", "api-key", "openai", "openrouter":
-		return NewOpenAICompatible(cfg), nil
-	case ProviderCodexOAuth, "openai-codex", "codex":
-		return NewCodexOAuth(cfg)
+	case ProviderOpenAICompatible:
+		return openai.New(cfg), nil
+	case ProviderOpenRouter:
+		return openrouter.New(cfg), nil
+	case ProviderCodexOAuth:
+		return codex.New(cfg)
 	default:
-		return nil, fmt.Errorf("unsupported LLM_PROVIDER %q", cfg.LLMProvider)
+		return nil, fmt.Errorf("unsupported runtime provider %q", cfg.Provider)
 	}
 }

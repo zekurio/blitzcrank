@@ -22,7 +22,3 @@ Use standard Go formatting: run `gofmt` on changed `.go` files before submitting
 ## Testing Guidelines
 
 Add or update tests next to the package being changed. Use `t.TempDir()` for filesystem state and avoid relying on real service credentials in tests. Run `go test ./...` before opening a PR; run focused package tests while iterating. For changes to persistence or workflows, cover both the stored state and the observable behavior.
-
-## Commit & Pull Request Guidelines
-
-This checkout does not include Git history, so follow a simple project convention: short, imperative commit subjects such as `Add Sonarr queue retry tool` or `Fix webhook secret handling`. PRs should explain the user-facing change, list test results, call out configuration changes, and link any related issue. Include screenshots or logs only when they clarify Discord, webhook, or automation behavior.

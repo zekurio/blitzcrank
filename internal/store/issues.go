@@ -21,7 +21,10 @@ func (s *Store) LoadIssueThread(ctx context.Context, issueID string) (IssueThrea
 		return IssueThread{}, false, err
 	}
 	thread.Summary = summary.String
-	thread.CompletedAt = parseNullTime(completedAt)
+	thread.CompletedAt, err = parseNullTime(completedAt)
+	if err != nil {
+		return IssueThread{}, false, err
+	}
 	thread.CompletionReason = reason.String
 
 	events, err := s.LoadIssueEvents(ctx, issueID)

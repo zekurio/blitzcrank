@@ -17,6 +17,7 @@ type toolDef struct {
 	Description string
 	Parameters  map[string]any
 	Mutating    bool
+	Destructive bool
 }
 
 type ToolPolicy struct {

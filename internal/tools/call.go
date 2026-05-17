@@ -2,12 +2,10 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 )
 
 func (r *Registry) Call(ctx context.Context, name string, args map[string]any) (any, error) {
@@ -36,6 +34,18 @@ func (r *Registry) callSeerrTool(ctx context.Context, name string, args map[stri
 		return handled(r.seerr(ctx, http.MethodGet, "/api/v1/request/"+pathID(args, "request_id"), nil))
 	case "seerr_get_issue":
 		return handled(r.seerr(ctx, http.MethodGet, "/api/v1/issue/"+pathID(args, "issue_id"), nil))
+	case "seerr_search_media":
+		page, err := intArg(args, "page")
+		if err != nil {
+			return nil, true, err
+		}
+		return handled(r.seerrSearchMedia(ctx, stringArg(args, "query"), page))
+	case "seerr_get_user":
+		return handled(r.SeerrGetUser(ctx, stringArg(args, "user_id")))
+	case "seerr_get_user_quota":
+		return handled(r.SeerrGetUserQuota(ctx, stringArg(args, "user_id")))
+	case "seerr_request_media":
+		return handled(r.SeerrRequestMedia(ctx, args))
 	case "seerr_comment_issue":
 		return handled(r.CommentIssue(ctx, stringArg(args, "issue_id"), stringArg(args, "message")))
 	case "seerr_resolve_issue":
@@ -53,11 +63,15 @@ func (r *Registry) callJellyfinTool(ctx context.Context, name string, args map[s
 	case "jellyfin_list_items":
 		return handled(r.jellyfinListItems(ctx, args))
 	case "jellyfin_get_item":
-		return handled(r.jellyfin(ctx, http.MethodGet, "/Items/"+pathID(args, "item_id"), nil))
+		return handled(r.jellyfinGetItem(ctx, stringArg(args, "item_id"), ""))
 	case "jellyfin_get_item_media_info":
 		return handled(r.jellyfinItemMediaInfo(ctx, stringArg(args, "item_id")))
 	case "jellyfin_get_child_media_info":
-		return handled(r.jellyfinChildMediaInfo(ctx, stringArg(args, "item_id"), intArg(args, "limit")))
+		limit, err := intArg(args, "limit")
+		if err != nil {
+			return nil, true, err
+		}
+		return handled(r.jellyfinChildMediaInfo(ctx, stringArg(args, "item_id"), limit))
 	case "jellyfin_refresh_item":
 		values := url.Values{"Recursive": []string{"true"}, "ImageRefreshMode": []string{"Default"}, "MetadataRefreshMode": []string{"Default"}}
 		return handled(r.jellyfin(ctx, http.MethodPost, "/Items/"+pathID(args, "item_id")+"/Refresh?"+values.Encode(), nil))
@@ -93,7 +107,11 @@ func (r *Registry) callSonarrTool(ctx context.Context, name string, args map[str
 	case "sonarr_get_queue":
 		return handled(r.arr(ctx, "sonarr", http.MethodGet, "/api/v3/queue?page=1&pageSize=20", nil))
 	case "sonarr_get_blocklist":
-		return handled(r.arr(ctx, "sonarr", http.MethodGet, blocklistPath(args), nil))
+		path, err := blocklistPath(args)
+		if err != nil {
+			return nil, true, err
+		}
+		return handled(r.arr(ctx, "sonarr", http.MethodGet, path, nil))
 	case "sonarr_delete_blocklist_item":
 		return handled(r.arr(ctx, "sonarr", http.MethodDelete, "/api/v3/blocklist/"+pathID(args, "blocklist_id"), nil))
 	case "sonarr_get_episodes_by_series_id":
@@ -135,7 +153,11 @@ func (r *Registry) callSonarrTool(ctx context.Context, name string, args map[str
 	case "sonarr_retry_queue_item":
 		return handled(r.arr(ctx, "sonarr", http.MethodPost, "/api/v3/queue/grab/"+pathID(args, "queue_id"), nil))
 	case "sonarr_list_manual_import":
-		return handled(r.arr(ctx, "sonarr", http.MethodGet, sonarrManualImportPath(args), nil))
+		path, err := sonarrManualImportPath(args)
+		if err != nil {
+			return nil, true, err
+		}
+		return handled(r.arr(ctx, "sonarr", http.MethodGet, path, nil))
 	case "sonarr_import_manual_candidate":
 		body, err := manualImportBody(args)
 		if err != nil {
@@ -166,19 +188,27 @@ func (r *Registry) callRadarrTool(ctx context.Context, name string, args map[str
 	case "radarr_get_queue":
 		return handled(r.arr(ctx, "radarr", http.MethodGet, "/api/v3/queue?page=1&pageSize=20", nil))
 	case "radarr_get_blocklist":
-		return handled(r.arr(ctx, "radarr", http.MethodGet, blocklistPath(args), nil))
+		path, err := blocklistPath(args)
+		if err != nil {
+			return nil, true, err
+		}
+		return handled(r.arr(ctx, "radarr", http.MethodGet, path, nil))
 	case "radarr_delete_blocklist_item":
 		return handled(r.arr(ctx, "radarr", http.MethodDelete, "/api/v3/blocklist/"+pathID(args, "blocklist_id"), nil))
 	case "radarr_retry_queue_item":
 		return handled(r.arr(ctx, "radarr", http.MethodPost, "/api/v3/queue/grab/"+pathID(args, "queue_id"), nil))
 	case "radarr_list_manual_import":
-		return handled(r.arr(ctx, "radarr", http.MethodGet, radarrManualImportPath(args), nil))
-	case "radarr_import_manual_candidate":
-		body, err := manualImportBody(args)
+		path, err := radarrManualImportPath(args)
 		if err != nil {
 			return nil, true, err
 		}
-		return handled(r.arr(ctx, "radarr", http.MethodPost, "/api/v3/manualimport", body))
+		return handled(r.arr(ctx, "radarr", http.MethodGet, path, nil))
+	case "radarr_import_manual_candidate":
+		body, err := radarrManualImportCommandBody(args)
+		if err != nil {
+			return nil, true, err
+		}
+		return handled(r.arr(ctx, "radarr", http.MethodPost, "/api/v3/command", body))
 	default:
 		return nil, false, nil
 	}
@@ -190,7 +220,11 @@ func (r *Registry) callUtilityTool(ctx context.Context, name string, args map[st
 		return handled(r.sabnzbd(ctx, "queue", url.Values{}))
 	case "sabnzbd_get_history":
 		values := url.Values{}
-		if limit := intArg(args, "limit"); limit > 0 {
+		limit, err := intArg(args, "limit")
+		if err != nil {
+			return nil, true, err
+		}
+		if limit > 0 {
 			values.Set("limit", strconv.Itoa(limit))
 		}
 		return handled(r.sabnzbd(ctx, "history", values))
@@ -199,11 +233,19 @@ func (r *Registry) callUtilityTool(ctx context.Context, name string, args map[st
 	case "fs_list_dir":
 		return handled(r.fsList(stringArg(args, "path")))
 	case "fs_find_recent":
-		return handled(r.fsFindRecent(stringArg(args, "root"), intArg(args, "limit")))
+		limit, err := intArg(args, "limit")
+		if err != nil {
+			return nil, true, err
+		}
+		return handled(r.fsFindRecent(stringArg(args, "root"), limit))
 	case "fs_disk_usage":
 		return handled(r.fsDiskUsage(stringArg(args, "path")))
 	case "web_search":
-		return handled(r.exaSearch(ctx, stringArg(args, "query"), intArg(args, "limit")))
+		limit, err := intArg(args, "limit")
+		if err != nil {
+			return nil, true, err
+		}
+		return handled(r.exaSearch(ctx, stringArg(args, "query"), limit))
 	default:
 		return nil, false, nil
 	}
@@ -222,166 +264,4 @@ func (r *Registry) callRadarrMovieTool(ctx context.Context, name string, args ma
 	default:
 		return handled(r.arr(ctx, "radarr", http.MethodPost, "/api/v3/command", map[string]any{"name": "RefreshMovie", "movieIds": []int{movieID}}))
 	}
-}
-
-func numericArg(args map[string]any, key string) (int, error) {
-	id, err := strconv.Atoi(stringArg(args, key))
-	if err != nil {
-		return 0, fmt.Errorf("%s must be numeric", key)
-	}
-	return id, nil
-}
-
-func blocklistPath(args map[string]any) string {
-	pageSize := intArg(args, "page_size")
-	if pageSize <= 0 || pageSize > 100 {
-		pageSize = 50
-	}
-	return fmt.Sprintf("/api/v3/blocklist?page=1&pageSize=%d&sortKey=date&sortDirection=descending", pageSize)
-}
-
-func sonarrEpisodeFilesPath(args map[string]any) (string, error) {
-	seriesID, err := numericArg(args, "series_id")
-	if err != nil {
-		return "", err
-	}
-	values := url.Values{"seriesId": []string{strconv.Itoa(seriesID)}}
-	if seasonNumber := strings.TrimSpace(stringArg(args, "season_number")); seasonNumber != "" {
-		if _, err := strconv.Atoi(seasonNumber); err != nil {
-			return "", fmt.Errorf("season_number must be numeric")
-		}
-		values.Set("seasonNumber", seasonNumber)
-	}
-	return "/api/v3/episodefile?" + values.Encode(), nil
-}
-
-func sonarrManualImportPath(args map[string]any) string {
-	values := manualImportValues(args)
-	if seriesID := strings.TrimSpace(stringArg(args, "series_id")); seriesID != "" {
-		values.Set("seriesId", seriesID)
-	}
-	if seasonNumber := strings.TrimSpace(stringArg(args, "season_number")); seasonNumber != "" {
-		values.Set("seasonNumber", seasonNumber)
-	}
-	return "/api/v3/manualimport?" + values.Encode()
-}
-
-func radarrManualImportPath(args map[string]any) string {
-	values := manualImportValues(args)
-	if movieID := strings.TrimSpace(stringArg(args, "movie_id")); movieID != "" {
-		values.Set("movieId", movieID)
-	}
-	return "/api/v3/manualimport?" + values.Encode()
-}
-
-func manualImportValues(args map[string]any) url.Values {
-	values := url.Values{}
-	if folder := strings.TrimSpace(stringArg(args, "folder")); folder != "" {
-		values.Set("folder", folder)
-	}
-	if downloadID := strings.TrimSpace(stringArg(args, "download_id")); downloadID != "" {
-		values.Set("downloadId", downloadID)
-	}
-	if _, ok := args["filter_existing_files"]; ok {
-		values.Set("filterExistingFiles", strconv.FormatBool(boolArg(args, "filter_existing_files")))
-	}
-	return values
-}
-
-func manualImportBody(args map[string]any) ([]map[string]any, error) {
-	raw := stringArg(args, "candidate_json")
-	if raw == "" {
-		return nil, fmt.Errorf("candidate_json is required")
-	}
-	var candidate map[string]any
-	if err := json.Unmarshal([]byte(raw), &candidate); err != nil {
-		return nil, fmt.Errorf("candidate_json must be a JSON object: %w", err)
-	}
-	if len(candidate) == 0 {
-		return nil, fmt.Errorf("candidate_json must not be empty")
-	}
-	if hasExplicitRejections(candidate["rejections"]) {
-		return nil, fmt.Errorf("manual import candidate has explicit rejections")
-	}
-	importMode := strings.TrimSpace(stringArg(args, "import_mode"))
-	if importMode == "" {
-		importMode = "Move"
-	}
-	candidate["importMode"] = importMode
-	normalizeManualImportCandidate(candidate)
-	return []map[string]any{candidate}, nil
-}
-
-func hasExplicitRejections(value any) bool {
-	switch typed := value.(type) {
-	case []any:
-		return len(typed) > 0
-	case []map[string]any:
-		return len(typed) > 0
-	default:
-		return false
-	}
-}
-
-func normalizeManualImportCandidate(candidate map[string]any) {
-	if _, ok := candidate["episodeIds"]; !ok {
-		if episodes, ok := candidate["episodes"].([]any); ok {
-			var ids []int
-			for _, episode := range episodes {
-				if object, ok := episode.(map[string]any); ok {
-					if id := intFromAny(object["id"]); id > 0 {
-						ids = append(ids, id)
-					}
-				}
-			}
-			if len(ids) > 0 {
-				candidate["episodeIds"] = ids
-			}
-		}
-	}
-	if _, ok := candidate["movieId"]; !ok {
-		if movie, ok := candidate["movie"].(map[string]any); ok {
-			if id := intFromAny(movie["id"]); id > 0 {
-				candidate["movieId"] = id
-			}
-		}
-	}
-}
-
-func intFromAny(value any) int {
-	switch typed := value.(type) {
-	case float64:
-		return int(typed)
-	case int:
-		return typed
-	case string:
-		parsed, _ := strconv.Atoi(strings.TrimSpace(typed))
-		return parsed
-	default:
-		return 0
-	}
-}
-
-func sonarrSeasonSearchBody(args map[string]any) (map[string]any, error) {
-	seriesID, err := numericArg(args, "series_id")
-	if err != nil {
-		return nil, err
-	}
-	seasonNumber, err := numericArg(args, "season_number")
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"name": "SeasonSearch", "seriesId": seriesID, "seasonNumber": seasonNumber}, nil
-}
-
-func sonarrSeriesCommandBody(name string, args map[string]any) (map[string]any, error) {
-	seriesID, err := numericArg(args, "series_id")
-	if err != nil {
-		return nil, err
-	}
-	command := "SeriesSearch"
-	if name == "sonarr_refresh_series" {
-		command = "RefreshSeries"
-	}
-	return map[string]any{"name": command, "seriesId": seriesID}, nil
 }
