@@ -127,6 +127,9 @@ func TestRuntimeCommandsRequireAdministratorPermission(t *testing.T) {
 	if findCommandOption(runtimeCommands[0].Options, "automation", discordgo.ApplicationCommandOptionSubCommandGroup) == nil {
 		t.Fatal("config command missing automation group")
 	}
+	if findCommandOption(runtimeCommands[0].Options, "reload-automations", discordgo.ApplicationCommandOptionSubCommand) != nil {
+		t.Fatal("config command includes duplicate top-level reload-automations subcommand")
+	}
 	profile := findCommandOption(runtimeCommands[0].Options, "profile", discordgo.ApplicationCommandOptionSubCommandGroup)
 	if findCommandOption(profile.Options, "set", discordgo.ApplicationCommandOptionSubCommand) == nil {
 		t.Fatal("config profile group missing set subcommand")

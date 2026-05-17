@@ -58,7 +58,7 @@ func (b *Bot) handleAutocomplete(session *discordgo.Session, event *discordgo.In
 func (b *Bot) handleConfigRootSlashCommand(session *discordgo.Session, event *discordgo.InteractionCreate, data discordgo.ApplicationCommandInteractionData) {
 	group, sub := commands.FirstSubcommandPath(data)
 	if sub == nil {
-		b.respondEphemeral(session, event, "Config subcommand is required.")
+		b.respondEphemeral(session, event, "Ein Konfigurations-Unterbefehl ist erforderlich.")
 		return
 	}
 	if group == "" {
@@ -70,7 +70,7 @@ func (b *Bot) handleConfigRootSlashCommand(session *discordgo.Session, event *di
 		case "reload-automations":
 			b.handleRuntimeSlashCommand(session, event, "automations")
 		default:
-			b.respondEphemeral(session, event, "Unknown config subcommand.")
+			b.respondEphemeral(session, event, "Unbekannter Konfigurations-Unterbefehl.")
 		}
 		return
 	}
@@ -80,18 +80,19 @@ func (b *Bot) handleConfigRootSlashCommand(session *discordgo.Session, event *di
 	case "automation":
 		b.handleAutomationSlashCommand(session, event, sub)
 	default:
-		b.respondEphemeral(session, event, "Unknown config command group.")
+		b.respondEphemeral(session, event, "Unbekannte Konfigurationsgruppe.")
 	}
 }
 
 func (b *Bot) handleRuntimeSlashCommand(session *discordgo.Session, event *discordgo.InteractionCreate, target string) {
-	initialReply := "Reloading runtime " + target + "."
+	label := runtimeReloadTargetLabel(target)
+	initialReply := "Lade " + label + " neu."
 	if !b.isAdminInteraction(event) {
-		b.respondEphemeral(session, event, "Only the configured owner or Discord administrators can use this command.")
+		b.respondEphemeral(session, event, "Nur der konfigurierte Owner oder Discord-Administratoren können diesen Befehl verwenden.")
 		return
 	}
 	if b.runtime == nil {
-		b.respondEphemeral(session, event, "Runtime manager is not ready yet.")
+		b.respondEphemeral(session, event, "Der Laufzeitmanager ist noch nicht bereit.")
 		return
 	}
 	if err := session.InteractionRespond(event.Interaction, &discordgo.InteractionResponse{
@@ -105,7 +106,7 @@ func (b *Bot) handleRuntimeSlashCommand(session *discordgo.Session, event *disco
 		return
 	}
 
-	reply := "Reloaded runtime " + target + "."
+	reply := label + " neu geladen."
 	var err error
 	switch target {
 	case "skills":
@@ -113,11 +114,11 @@ func (b *Bot) handleRuntimeSlashCommand(session *discordgo.Session, event *disco
 	case "automations":
 		err = b.runtime.ReloadAutomations()
 	default:
-		reply = "Unknown runtime reload target."
+		reply = "Unbekanntes Laufzeit-Ziel zum Neuladen."
 	}
 	if err != nil {
 		log.Printf("runtime slash command failed: command=%s error=%v", target, err)
-		reply = "Reload failed. Check the bot logs for details."
+		reply = "Neuladen fehlgeschlagen. Details stehen in den Bot-Logs."
 	}
 	if _, editErr := session.InteractionResponseEdit(event.Interaction, &discordgo.WebhookEdit{
 		Content:         &reply,
@@ -127,17 +128,28 @@ func (b *Bot) handleRuntimeSlashCommand(session *discordgo.Session, event *disco
 	}
 }
 
+func runtimeReloadTargetLabel(target string) string {
+	switch target {
+	case "skills":
+		return "Laufzeit-Skills"
+	case "automations":
+		return "Laufzeit-Automatisierungen"
+	default:
+		return "Laufzeit-" + target
+	}
+}
+
 func (b *Bot) handleConfigSlashCommand(session *discordgo.Session, event *discordgo.InteractionCreate, group string, sub *discordgo.ApplicationCommandInteractionDataOption) {
 	if !b.isAdminInteraction(event) {
-		b.respondEphemeral(session, event, "Only the configured owner or Discord administrators can use this command.")
+		b.respondEphemeral(session, event, "Nur der konfigurierte Owner oder Discord-Administratoren können diesen Befehl verwenden.")
 		return
 	}
 	if b.runtime == nil {
-		b.respondEphemeral(session, event, "Runtime manager is not ready yet.")
+		b.respondEphemeral(session, event, "Der Laufzeitmanager ist noch nicht bereit.")
 		return
 	}
 	if sub == nil {
-		b.respondEphemeral(session, event, "Config subcommand is required.")
+		b.respondEphemeral(session, event, "Ein Konfigurations-Unterbefehl ist erforderlich.")
 		return
 	}
 	key := ""
@@ -147,25 +159,25 @@ func (b *Bot) handleConfigSlashCommand(session *discordgo.Session, event *discor
 	case "profile":
 		key = "runtime." + commands.OptionString(sub, "profile") + "." + commands.OptionString(sub, "field")
 	default:
-		b.respondEphemeral(session, event, "Unknown config command group.")
+		b.respondEphemeral(session, event, "Unbekannte Konfigurationsgruppe.")
 		return
 	}
 	switch sub.Name {
 	case "set":
 		if err := b.runtime.ConfigSet(key, commands.OptionString(sub, "value")); err != nil {
-			b.respondEphemeral(session, event, "Config update failed: "+err.Error())
+			b.respondEphemeral(session, event, "Konfigurationsänderung fehlgeschlagen: "+err.Error())
 			return
 		}
-		b.respondEphemeral(session, event, "Updated `"+key+"`.")
+		b.respondEphemeral(session, event, "`"+key+"` wurde aktualisiert.")
 		return
 	case "get":
 	default:
-		b.respondEphemeral(session, event, "Unknown config subcommand.")
+		b.respondEphemeral(session, event, "Unbekannter Konfigurations-Unterbefehl.")
 		return
 	}
 	value, err := b.runtime.ConfigGet(key)
 	if err != nil {
-		b.respondEphemeral(session, event, "Config read failed: "+err.Error())
+		b.respondEphemeral(session, event, "Konfiguration konnte nicht gelesen werden: "+err.Error())
 		return
 	}
 	if strings.Contains(key, "api_key") && strings.TrimSpace(value) != "" {
@@ -176,14 +188,14 @@ func (b *Bot) handleConfigSlashCommand(session *discordgo.Session, event *discor
 
 func (b *Bot) handleRestartSlashCommand(session *discordgo.Session, event *discordgo.InteractionCreate) {
 	if !b.isAdminInteraction(event) {
-		b.respondEphemeral(session, event, "Only the configured owner or Discord administrators can use this command.")
+		b.respondEphemeral(session, event, "Nur der konfigurierte Owner oder Discord-Administratoren können diesen Befehl verwenden.")
 		return
 	}
 	if b.runtime == nil {
-		b.respondEphemeral(session, event, "Runtime manager is not ready yet.")
+		b.respondEphemeral(session, event, "Der Laufzeitmanager ist noch nicht bereit.")
 		return
 	}
-	b.respondEphemeral(session, event, "Restarting Blitzcrank.")
+	b.respondEphemeral(session, event, "Blitzcrank wird neu gestartet.")
 	go func() {
 		time.Sleep(500 * time.Millisecond)
 		b.runtime.Restart()
@@ -192,15 +204,15 @@ func (b *Bot) handleRestartSlashCommand(session *discordgo.Session, event *disco
 
 func (b *Bot) handleAutomationSlashCommand(session *discordgo.Session, event *discordgo.InteractionCreate, sub *discordgo.ApplicationCommandInteractionDataOption) {
 	if !b.isAdminInteraction(event) {
-		b.respondEphemeral(session, event, "Only the configured owner or Discord administrators can use this command.")
+		b.respondEphemeral(session, event, "Nur der konfigurierte Owner oder Discord-Administratoren können diesen Befehl verwenden.")
 		return
 	}
 	if b.runtime == nil {
-		b.respondEphemeral(session, event, "Runtime manager is not ready yet.")
+		b.respondEphemeral(session, event, "Der Laufzeitmanager ist noch nicht bereit.")
 		return
 	}
 	if sub == nil {
-		b.respondEphemeral(session, event, "Automation subcommand is required.")
+		b.respondEphemeral(session, event, "Ein Automatisierungs-Unterbefehl ist erforderlich.")
 		return
 	}
 	switch sub.Name {
@@ -208,25 +220,25 @@ func (b *Bot) handleAutomationSlashCommand(session *discordgo.Session, event *di
 		b.respondEphemeral(session, event, b.runtime.AutomationStatus(time.Now()))
 	case "reload":
 		if err := b.runtime.ReloadAutomations(); err != nil {
-			b.respondEphemeral(session, event, "Automation reload failed: "+err.Error())
+			b.respondEphemeral(session, event, "Automatisierungen konnten nicht neu geladen werden: "+err.Error())
 			return
 		}
-		b.respondEphemeral(session, event, "Reloaded automations.")
+		b.respondEphemeral(session, event, "Automatisierungen wurden neu geladen.")
 	case "run":
 		name := commands.OptionString(sub, "name")
 		b.runAutomationFromSlash(session, event, name)
 	default:
-		b.respondEphemeral(session, event, "Unknown automation subcommand.")
+		b.respondEphemeral(session, event, "Unbekannter Automatisierungs-Unterbefehl.")
 	}
 }
 
 func (b *Bot) handleLeanAutomationSlashCommand(session *discordgo.Session, event *discordgo.InteractionCreate, data discordgo.ApplicationCommandInteractionData) {
 	if !b.isAdminInteraction(event) {
-		b.respondEphemeral(session, event, "Only the configured owner or Discord administrators can use this command.")
+		b.respondEphemeral(session, event, "Nur der konfigurierte Owner oder Discord-Administratoren können diesen Befehl verwenden.")
 		return
 	}
 	if b.runtime == nil {
-		b.respondEphemeral(session, event, "Runtime manager is not ready yet.")
+		b.respondEphemeral(session, event, "Der Laufzeitmanager ist noch nicht bereit.")
 		return
 	}
 	b.runAutomationFromSlash(session, event, commands.StringOption(data, "name"))
@@ -235,10 +247,10 @@ func (b *Bot) handleLeanAutomationSlashCommand(session *discordgo.Session, event
 func (b *Bot) runAutomationFromSlash(session *discordgo.Session, event *discordgo.InteractionCreate, name string) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		b.respondEphemeral(session, event, "Automation name is required.")
+		b.respondEphemeral(session, event, "Der Name der Automatisierung ist erforderlich.")
 		return
 	}
-	b.respondEphemeral(session, event, "Running automation `"+name+"`.")
+	b.respondEphemeral(session, event, "Automatisierung `"+name+"` wird ausgeführt.")
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), b.cfg.RunTimeout)
 		defer cancel()
@@ -270,7 +282,7 @@ func (b *Bot) automationChoices(input string) []*discordgo.ApplicationCommandOpt
 func (b *Bot) handleSkillSlashCommand(session *discordgo.Session, event *discordgo.InteractionCreate, skill string, groups []string) {
 	prompt := commands.SlashPrompt(event.ApplicationCommandData())
 	if strings.TrimSpace(prompt) == "" {
-		b.respondEphemeral(session, event, "Prompt is required.")
+		b.respondEphemeral(session, event, "Ein Prompt ist erforderlich.")
 		return
 	}
 	if err := session.InteractionRespond(event.Interaction, &discordgo.InteractionResponse{
@@ -298,7 +310,7 @@ func (b *Bot) handleSkillSlashCommand(session *discordgo.Session, event *discord
 	thread, err := session.MessageThreadStart(message.ChannelID, message.ID, threadTitle(prompt), b.cfg.DiscordThreadArchiveMinutes)
 	if err != nil {
 		log.Printf("create slash command thread failed: skill=%s message=%s error=%v", skill, message.ID, err)
-		fallback := "Thread-Erstellung fehlgeschlagen. Bitte pruefe die Bot-Berechtigungen fuer Threads."
+		fallback := "Thread-Erstellung fehlgeschlagen. Bitte prüfe die Bot-Berechtigungen für Threads."
 		if _, editErr := session.InteractionResponseEdit(event.Interaction, &discordgo.WebhookEdit{
 			Content:         &fallback,
 			AllowedMentions: &discordgo.MessageAllowedMentions{},

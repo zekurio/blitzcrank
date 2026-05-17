@@ -80,7 +80,6 @@ func (s *Scheduler) Start(ctx context.Context) {
 
 func (s *Scheduler) loop(ctx context.Context) {
 	for {
-		s.reloadTasks()
 		if !s.cronEnabled() {
 			timer := time.NewTimer(time.Minute)
 			select {
@@ -88,6 +87,7 @@ func (s *Scheduler) loop(ctx context.Context) {
 				timer.Stop()
 				return
 			case <-timer.C:
+				s.reloadTasks()
 				continue
 			}
 		}

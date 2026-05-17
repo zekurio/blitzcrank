@@ -142,7 +142,7 @@ Run the hourly stale import handler...
 
 Use a robfig/cron descriptor such as `@hourly` or a five-field cron expression prefixed with `cron:`.
 
-Set `SKILLS_DIR` and `AUTOMATIONS_DIR` to runtime-managed directories. Skills follow the `skills.sh` style: each skill is a directory containing `SKILL.md`, and the frontmatter `name` must match the directory name. Runtime management is exposed through admin-only Discord slash commands: `/blitzcrank-reload-skills` and `/blitzcrank-reload-automations`.
+Set `SKILLS_DIR` and `AUTOMATIONS_DIR` to runtime-managed directories. Skills follow the `skills.sh` style: each skill is a directory containing `SKILL.md`, and the frontmatter `name` must match the directory name. Runtime management is exposed through admin-only Discord slash commands under `/config`.
 
 Discord also exposes skill-specific slash commands that bypass natural-language capability detection:
 
@@ -181,13 +181,14 @@ blitzcrank config set automations_enabled true
 
 Discord admin slash commands expose the same fixed config surface:
 
-- `/blitzcrank-config global-get`
-- `/blitzcrank-config global-set`
-- `/blitzcrank-config profile-get`
-- `/blitzcrank-config profile-set`
+- `/config global get`
+- `/config global set`
+- `/config profile get`
+- `/config profile set`
 - `/config automation list|reload|run`
 - `/automation name:<automation>` to run an automation directly with autocomplete
-- `/blitzcrank-restart`
+- `/config reload-skills`
+- `/config restart`
 
 ## Nix
 
