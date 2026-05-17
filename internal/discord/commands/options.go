@@ -7,12 +7,27 @@ import (
 )
 
 func SlashPrompt(data discordgo.ApplicationCommandInteractionData) string {
-	for _, option := range data.Options {
-		if option != nil && option.Name == "prompt" && option.Type == discordgo.ApplicationCommandOptionString {
-			return strings.TrimSpace(option.StringValue())
-		}
+	if value := StringOption(data, QuestionOption); value != "" {
+		return value
+	}
+	if value := StringOption(data, LegacyPromptOption); value != "" {
+		return value
 	}
 	return ""
+}
+
+func ReleaseSpan(data discordgo.ApplicationCommandInteractionData) string {
+	if value := StringOption(data, SpanOption); value != "" {
+		return value
+	}
+	if value := StringOption(data, LegacySpanOption); value != "" {
+		return value
+	}
+	return ""
+}
+
+func AutomationName(data discordgo.ApplicationCommandInteractionData) string {
+	return StringOption(data, AutomationNameOption)
 }
 
 func FirstSubcommandPath(data discordgo.ApplicationCommandInteractionData) (string, *discordgo.ApplicationCommandInteractionDataOption) {
