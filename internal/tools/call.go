@@ -104,6 +104,32 @@ func (r *Registry) callSonarrTool(ctx context.Context, name string, args map[str
 			return nil, true, err
 		}
 		return handled(r.arr(ctx, "sonarr", http.MethodGet, fmt.Sprintf("/api/v3/series?tvdbId=%d", id), nil))
+	case "sonarr_lookup_series":
+		return handled(r.arr(ctx, "sonarr", http.MethodGet, arrLookupPath("/api/v3/series/lookup", args), nil))
+	case "sonarr_list_series":
+		return handled(r.arr(ctx, "sonarr", http.MethodGet, "/api/v3/series", nil))
+	case "sonarr_get_wanted_missing":
+		path, err := arrPagedPath("/api/v3/wanted/missing", args)
+		if err != nil {
+			return nil, true, err
+		}
+		return handled(r.arr(ctx, "sonarr", http.MethodGet, path, nil))
+	case "sonarr_get_history":
+		path, err := arrHistoryPath(args, "series_id", "seriesId")
+		if err != nil {
+			return nil, true, err
+		}
+		return handled(r.arr(ctx, "sonarr", http.MethodGet, path, nil))
+	case "sonarr_get_calendar":
+		path, err := arrCalendarPath(args, "includeSeries")
+		if err != nil {
+			return nil, true, err
+		}
+		return handled(r.arr(ctx, "sonarr", http.MethodGet, path, nil))
+	case "sonarr_get_system_status":
+		return handled(r.arr(ctx, "sonarr", http.MethodGet, "/api/v3/system/status", nil))
+	case "sonarr_list_quality_profiles":
+		return handled(r.arr(ctx, "sonarr", http.MethodGet, "/api/v3/qualityprofile", nil))
 	case "sonarr_get_queue":
 		return handled(r.arr(ctx, "sonarr", http.MethodGet, "/api/v3/queue?page=1&pageSize=20", nil))
 	case "sonarr_get_blocklist":
@@ -177,6 +203,32 @@ func (r *Registry) callRadarrTool(ctx context.Context, name string, args map[str
 			return nil, true, err
 		}
 		return handled(r.arr(ctx, "radarr", http.MethodGet, fmt.Sprintf("/api/v3/movie?tmdbId=%d", id), nil))
+	case "radarr_lookup_movie":
+		return handled(r.arr(ctx, "radarr", http.MethodGet, arrLookupPath("/api/v3/movie/lookup", args), nil))
+	case "radarr_list_movies":
+		return handled(r.arr(ctx, "radarr", http.MethodGet, "/api/v3/movie", nil))
+	case "radarr_get_wanted_missing":
+		path, err := arrPagedPath("/api/v3/wanted/missing", args)
+		if err != nil {
+			return nil, true, err
+		}
+		return handled(r.arr(ctx, "radarr", http.MethodGet, path, nil))
+	case "radarr_get_history":
+		path, err := arrHistoryPath(args, "movie_id", "movieId")
+		if err != nil {
+			return nil, true, err
+		}
+		return handled(r.arr(ctx, "radarr", http.MethodGet, path, nil))
+	case "radarr_get_calendar":
+		path, err := arrCalendarPath(args, "includeMovie")
+		if err != nil {
+			return nil, true, err
+		}
+		return handled(r.arr(ctx, "radarr", http.MethodGet, path, nil))
+	case "radarr_get_system_status":
+		return handled(r.arr(ctx, "radarr", http.MethodGet, "/api/v3/system/status", nil))
+	case "radarr_list_quality_profiles":
+		return handled(r.arr(ctx, "radarr", http.MethodGet, "/api/v3/qualityprofile", nil))
 	case "radarr_get_movie_by_id", "radarr_search_movie", "radarr_refresh_movie":
 		return r.callRadarrMovieTool(ctx, name, args)
 	case "radarr_get_movie_file":

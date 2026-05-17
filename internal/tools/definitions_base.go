@@ -149,6 +149,52 @@ var baseToolDefs = []toolDef{
 		Parameters:  objectSchema(map[string]any{"tvdb_id": stringSchema("TVDB id")}, []string{"tvdb_id"}),
 	},
 	{
+		Name:        "sonarr_lookup_series",
+		Description: "Search Sonarr's series lookup by title or external id before deciding whether a show can be added or matched.",
+		Parameters:  objectSchema(map[string]any{"term": stringSchema("Series title or external id to look up")}, []string{"term"}),
+	},
+	{
+		Name:        "sonarr_list_series",
+		Description: "List all Sonarr series so the agent can quickly check whether a show is already tracked.",
+		Parameters:  objectSchema(map[string]any{}, nil),
+	},
+	{
+		Name:        "sonarr_get_wanted_missing",
+		Description: "List monitored Sonarr episodes that are currently missing.",
+		Parameters: objectSchema(map[string]any{
+			"page":      numberSchema("Optional page number, defaults to 1"),
+			"page_size": numberSchema("Optional maximum entries to return, defaults to 50"),
+		}, nil),
+	},
+	{
+		Name:        "sonarr_get_history",
+		Description: "Read recent Sonarr history, optionally narrowed to one series id.",
+		Parameters: objectSchema(map[string]any{
+			"series_id": stringSchema("Optional Sonarr series id to narrow history"),
+			"page":      numberSchema("Optional page number, defaults to 1"),
+			"page_size": numberSchema("Optional maximum entries to return, defaults to 50"),
+		}, nil),
+	},
+	{
+		Name:        "sonarr_get_calendar",
+		Description: "Read Sonarr calendar entries, optionally constrained by start and end date/time.",
+		Parameters: objectSchema(map[string]any{
+			"start":       stringSchema("Optional start date/time accepted by Sonarr, for example 2026-05-17"),
+			"end":         stringSchema("Optional end date/time accepted by Sonarr, for example 2026-05-24"),
+			"unmonitored": boolSchema("Whether to include unmonitored episodes"),
+		}, nil),
+	},
+	{
+		Name:        "sonarr_get_system_status",
+		Description: "Read Sonarr system status including app name, version, OS, and runtime information.",
+		Parameters:  objectSchema(map[string]any{}, nil),
+	},
+	{
+		Name:        "sonarr_list_quality_profiles",
+		Description: "List Sonarr quality profiles for interpreting monitored settings and future add workflows.",
+		Parameters:  objectSchema(map[string]any{}, nil),
+	},
+	{
 		Name:        "sonarr_get_queue",
 		Description: "Read the current Sonarr queue.",
 		Parameters:  objectSchema(map[string]any{}, nil),
@@ -241,6 +287,52 @@ var baseToolDefs = []toolDef{
 		Name:        "radarr_get_movie_by_tmdb_id",
 		Description: "Find a Radarr movie by TMDB id.",
 		Parameters:  objectSchema(map[string]any{"tmdb_id": stringSchema("TMDB id")}, []string{"tmdb_id"}),
+	},
+	{
+		Name:        "radarr_lookup_movie",
+		Description: "Search Radarr's movie lookup by title or external id before deciding whether a movie can be added or matched.",
+		Parameters:  objectSchema(map[string]any{"term": stringSchema("Movie title or external id to look up")}, []string{"term"}),
+	},
+	{
+		Name:        "radarr_list_movies",
+		Description: "List all Radarr movies so the agent can quickly check whether a movie is already tracked.",
+		Parameters:  objectSchema(map[string]any{}, nil),
+	},
+	{
+		Name:        "radarr_get_wanted_missing",
+		Description: "List monitored Radarr movies that are currently missing.",
+		Parameters: objectSchema(map[string]any{
+			"page":      numberSchema("Optional page number, defaults to 1"),
+			"page_size": numberSchema("Optional maximum entries to return, defaults to 50"),
+		}, nil),
+	},
+	{
+		Name:        "radarr_get_history",
+		Description: "Read recent Radarr history, optionally narrowed to one movie id.",
+		Parameters: objectSchema(map[string]any{
+			"movie_id":  stringSchema("Optional Radarr movie id to narrow history"),
+			"page":      numberSchema("Optional page number, defaults to 1"),
+			"page_size": numberSchema("Optional maximum entries to return, defaults to 50"),
+		}, nil),
+	},
+	{
+		Name:        "radarr_get_calendar",
+		Description: "Read Radarr calendar entries, optionally constrained by start and end date/time.",
+		Parameters: objectSchema(map[string]any{
+			"start":       stringSchema("Optional start date/time accepted by Radarr, for example 2026-05-17"),
+			"end":         stringSchema("Optional end date/time accepted by Radarr, for example 2026-05-24"),
+			"unmonitored": boolSchema("Whether to include unmonitored movies"),
+		}, nil),
+	},
+	{
+		Name:        "radarr_get_system_status",
+		Description: "Read Radarr system status including app name, version, OS, and runtime information.",
+		Parameters:  objectSchema(map[string]any{}, nil),
+	},
+	{
+		Name:        "radarr_list_quality_profiles",
+		Description: "List Radarr quality profiles for interpreting monitored settings and future add workflows.",
+		Parameters:  objectSchema(map[string]any{}, nil),
 	},
 	{
 		Name:        "radarr_get_movie_by_id",
