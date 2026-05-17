@@ -1,9 +1,12 @@
 package discord
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"blitzcrank/internal/discord/commands"
 
@@ -31,6 +34,8 @@ func (b *Bot) onInteractionCreate(session *discordgo.Session, event *discordgo.I
 	switch data.Name {
 	case commands.AutomationCommand:
 		b.handleLeanAutomationSlashCommand(session, event, data)
+	case commands.ReleasesCommand:
+		b.handleReleasesSlashCommand(session, event, data)
 	default:
 		if groups, ok := commands.SkillCommandGroups[data.Name]; ok {
 			b.handleSkillSlashCommand(session, event, data.Name, groups)
@@ -85,6 +90,52 @@ func (b *Bot) runAutomationFromSlash(session *discordgo.Session, event *discordg
 		defer cancel()
 		if err := b.runtime.RunAutomation(ctx, name); err != nil {
 			log.Printf("manual automation run failed: automation=%s error=%v", name, err)
+		}
+	}()
+}
+
+func (b *Bot) handleReleasesSlashCommand(session *discordgo.Session, event *discordgo.InteractionCreate, data discordgo.ApplicationCommandInteractionData) {
+	start, end, label, err := releaseCalendarSpan(commands.StringOption(data, "span"), time.Now())
+	if err != nil {
+		b.respondEphemeral(session, event, err.Error())
+		return
+	}
+	if err := session.InteractionRespond(event.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			AllowedMentions: &discordgo.MessageAllowedMentions{},
+		},
+	}); err != nil {
+		log.Printf("defer releases slash command failed: error=%v", err)
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), b.cfg.RunTimeout)
+		defer cancel()
+		imageData, itemCount, err := b.releaseCalendarPNG(ctx, start, end, label)
+		if err != nil {
+			log.Printf("render release calendar failed: error=%v", err)
+			content := "Release-Kalender konnte nicht erstellt werden: " + err.Error()
+			if _, editErr := session.InteractionResponseEdit(event.Interaction, &discordgo.WebhookEdit{
+				Content:         &content,
+				AllowedMentions: &discordgo.MessageAllowedMentions{},
+			}); editErr != nil {
+				log.Printf("edit releases failure response failed: error=%v", editErr)
+			}
+			return
+		}
+		content := fmt.Sprintf("Release-Kalender %s (%d Einträge)", label, itemCount)
+		filename := "releases-" + start.Format("2006-01-02") + "-" + end.AddDate(0, 0, -1).Format("2006-01-02") + ".png"
+		if _, err := session.InteractionResponseEdit(event.Interaction, &discordgo.WebhookEdit{
+			Content: &content,
+			Files: []*discordgo.File{{
+				Name:        filename,
+				ContentType: "image/png",
+				Reader:      bytes.NewReader(imageData),
+			}},
+			AllowedMentions: &discordgo.MessageAllowedMentions{},
+		}); err != nil {
+			log.Printf("edit releases response failed: error=%v", err)
 		}
 	}()
 }

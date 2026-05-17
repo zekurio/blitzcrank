@@ -4,6 +4,7 @@ import "github.com/bwmarrin/discordgo"
 
 const (
 	AutomationCommand = "automation"
+	ReleasesCommand   = "releases"
 )
 
 var SkillCommandGroups = map[string][]string{
@@ -37,10 +38,31 @@ func RuntimeCommands() []*discordgo.ApplicationCommand {
 
 func ApplicationCommands() []*discordgo.ApplicationCommand {
 	commands := RuntimeCommands()
+	commands = append(commands, releasesCommand())
 	for _, name := range []string{"jellyfin", "jellyseerr", "sonarr", "radarr", "sabnzbd", "filesystem"} {
 		commands = append(commands, skillCommand(name))
 	}
 	return commands
+}
+
+func releasesCommand() *discordgo.ApplicationCommand {
+	dm := false
+	return &discordgo.ApplicationCommand{
+		Name:         ReleasesCommand,
+		Description:  "Release-Kalender für Sonarr und Radarr als PNG anzeigen.",
+		DMPermission: &dm,
+		Options: []*discordgo.ApplicationCommandOption{{
+			Type:        discordgo.ApplicationCommandOptionString,
+			Name:        "span",
+			Description: "Zeitraum: heute, Woche oder Monat",
+			Required:    false,
+			Choices: []*discordgo.ApplicationCommandOptionChoice{
+				{Name: "Heute", Value: "today"},
+				{Name: "Woche", Value: "week"},
+				{Name: "Monat", Value: "month"},
+			},
+		}},
+	}
 }
 
 func skillCommand(name string) *discordgo.ApplicationCommand {
