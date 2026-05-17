@@ -726,6 +726,66 @@ func TestSonarrSearchEpisodeCommandShape(t *testing.T) {
 	}
 }
 
+func TestSonarrListSeriesRequestShape(t *testing.T) {
+	var method, path, rawQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method = r.Method
+		path = r.URL.Path
+		rawQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"id":12,"title":"Some Show"}]`))
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(config.Config{SonarrBaseURL: server.URL, SonarrAPIKey: "secret"})
+	if _, err := registry.Call(context.Background(), "sonarr_list_series", map[string]any{}); err != nil {
+		t.Fatalf("sonarr_list_series error = %v", err)
+	}
+	if method != http.MethodGet || path != "/api/v3/series" || rawQuery != "" {
+		t.Fatalf("request = %s %s?%s", method, path, rawQuery)
+	}
+}
+
+func TestSonarrReadToolRequestShapes(t *testing.T) {
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+		requests = append(requests, r.URL.Path+"?"+r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(config.Config{SonarrBaseURL: server.URL, SonarrAPIKey: "secret"})
+	calls := []struct {
+		name string
+		args map[string]any
+	}{
+		{"sonarr_lookup_series", map[string]any{"term": "Some Show"}},
+		{"sonarr_get_wanted_missing", map[string]any{"page": "2", "page_size": "25"}},
+		{"sonarr_get_history", map[string]any{"series_id": "12", "page_size": "10"}},
+		{"sonarr_get_calendar", map[string]any{"start": "2026-05-17", "end": "2026-05-24", "unmonitored": true}},
+		{"sonarr_get_system_status", map[string]any{}},
+		{"sonarr_list_quality_profiles", map[string]any{}},
+	}
+	for _, call := range calls {
+		if _, err := registry.Call(context.Background(), call.name, call.args); err != nil {
+			t.Fatalf("%s error = %v", call.name, err)
+		}
+	}
+	if len(requests) != len(calls) {
+		t.Fatalf("requests = %#v", requests)
+	}
+	assertRequest(t, requests[0], "/api/v3/series/lookup", "term=Some Show")
+	assertRequest(t, requests[1], "/api/v3/wanted/missing", "page=2", "pageSize=25", "sortKey=date", "sortDirection=descending")
+	assertRequest(t, requests[2], "/api/v3/history", "page=1", "pageSize=10", "seriesId=12", "sortKey=date", "sortDirection=descending")
+	assertRequest(t, requests[3], "/api/v3/calendar", "start=2026-05-17", "end=2026-05-24", "unmonitored=true", "includeSeries=true")
+	assertRequest(t, requests[4], "/api/v3/system/status")
+	assertRequest(t, requests[5], "/api/v3/qualityprofile")
+}
+
 func TestNumericArgAcceptsDirectNumericIDs(t *testing.T) {
 	var body map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -932,6 +992,66 @@ func TestRadarrSearchMovieCommandShape(t *testing.T) {
 	}
 }
 
+func TestRadarrListMoviesRequestShape(t *testing.T) {
+	var method, path, rawQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method = r.Method
+		path = r.URL.Path
+		rawQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"id":456,"title":"Some Movie"}]`))
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(config.Config{RadarrBaseURL: server.URL, RadarrAPIKey: "secret"})
+	if _, err := registry.Call(context.Background(), "radarr_list_movies", map[string]any{}); err != nil {
+		t.Fatalf("radarr_list_movies error = %v", err)
+	}
+	if method != http.MethodGet || path != "/api/v3/movie" || rawQuery != "" {
+		t.Fatalf("request = %s %s?%s", method, path, rawQuery)
+	}
+}
+
+func TestRadarrReadToolRequestShapes(t *testing.T) {
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+		requests = append(requests, r.URL.Path+"?"+r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer server.Close()
+
+	registry := NewRegistry(config.Config{RadarrBaseURL: server.URL, RadarrAPIKey: "secret"})
+	calls := []struct {
+		name string
+		args map[string]any
+	}{
+		{"radarr_lookup_movie", map[string]any{"term": "Some Movie"}},
+		{"radarr_get_wanted_missing", map[string]any{"page": "2", "page_size": "25"}},
+		{"radarr_get_history", map[string]any{"movie_id": "456", "page_size": "10"}},
+		{"radarr_get_calendar", map[string]any{"start": "2026-05-17", "end": "2026-05-24", "unmonitored": true}},
+		{"radarr_get_system_status", map[string]any{}},
+		{"radarr_list_quality_profiles", map[string]any{}},
+	}
+	for _, call := range calls {
+		if _, err := registry.Call(context.Background(), call.name, call.args); err != nil {
+			t.Fatalf("%s error = %v", call.name, err)
+		}
+	}
+	if len(requests) != len(calls) {
+		t.Fatalf("requests = %#v", requests)
+	}
+	assertRequest(t, requests[0], "/api/v3/movie/lookup", "term=Some Movie")
+	assertRequest(t, requests[1], "/api/v3/wanted/missing", "page=2", "pageSize=25", "sortKey=date", "sortDirection=descending")
+	assertRequest(t, requests[2], "/api/v3/history", "page=1", "pageSize=10", "movieId=456", "sortKey=date", "sortDirection=descending")
+	assertRequest(t, requests[3], "/api/v3/calendar", "start=2026-05-17", "end=2026-05-24", "unmonitored=true", "includeMovie=true")
+	assertRequest(t, requests[4], "/api/v3/system/status")
+	assertRequest(t, requests[5], "/api/v3/qualityprofile")
+}
+
 func TestRadarrManualImportRequestShapes(t *testing.T) {
 	var listQuery string
 	var importBody map[string]any
@@ -1081,6 +1201,19 @@ func containsQueryPart(query, part string) bool {
 	}
 	key, value, ok := strings.Cut(part, "=")
 	return ok && values.Get(key) == value
+}
+
+func assertRequest(t *testing.T, request string, wantPath string, wantQueryParts ...string) {
+	t.Helper()
+	gotPath, gotQuery, _ := strings.Cut(request, "?")
+	if gotPath != wantPath {
+		t.Fatalf("path = %q, want %q; request = %q", gotPath, wantPath, request)
+	}
+	for _, want := range wantQueryParts {
+		if !containsQueryPart(gotQuery, want) {
+			t.Fatalf("query %q missing %q", gotQuery, want)
+		}
+	}
 }
 
 func hasTool(registry *Registry, name string) bool {

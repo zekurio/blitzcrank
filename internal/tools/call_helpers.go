@@ -35,6 +35,77 @@ func blocklistPath(args map[string]any) (string, error) {
 	return fmt.Sprintf("/api/v3/blocklist?page=1&pageSize=%d&sortKey=date&sortDirection=descending", pageSize), nil
 }
 
+func arrLookupPath(base string, args map[string]any) string {
+	values := url.Values{"term": []string{stringArg(args, "term")}}
+	return base + "?" + values.Encode()
+}
+
+func arrPagedPath(base string, args map[string]any) (string, error) {
+	values, err := arrPagedValues(args)
+	if err != nil {
+		return "", err
+	}
+	values.Set("sortKey", "date")
+	values.Set("sortDirection", "descending")
+	return base + "?" + values.Encode(), nil
+}
+
+func arrHistoryPath(args map[string]any, argIDKey string, queryIDKey string) (string, error) {
+	values, err := arrPagedValues(args)
+	if err != nil {
+		return "", err
+	}
+	values.Set("sortKey", "date")
+	values.Set("sortDirection", "descending")
+	if idText := strings.TrimSpace(stringArg(args, argIDKey)); idText != "" {
+		id, err := numericArg(args, argIDKey)
+		if err != nil {
+			return "", err
+		}
+		values.Set(queryIDKey, strconv.Itoa(id))
+	}
+	return "/api/v3/history?" + values.Encode(), nil
+}
+
+func arrCalendarPath(args map[string]any, includeKey string) (string, error) {
+	values := url.Values{includeKey: []string{"true"}}
+	if start := strings.TrimSpace(stringArg(args, "start")); start != "" {
+		values.Set("start", start)
+	}
+	if end := strings.TrimSpace(stringArg(args, "end")); end != "" {
+		values.Set("end", end)
+	}
+	if _, ok := args["unmonitored"]; ok {
+		unmonitored, err := boolArg(args, "unmonitored")
+		if err != nil {
+			return "", err
+		}
+		values.Set("unmonitored", strconv.FormatBool(unmonitored))
+	}
+	return "/api/v3/calendar?" + values.Encode(), nil
+}
+
+func arrPagedValues(args map[string]any) (url.Values, error) {
+	page, err := intArg(args, "page")
+	if err != nil {
+		return nil, err
+	}
+	if page <= 0 {
+		page = 1
+	}
+	pageSize, err := intArg(args, "page_size")
+	if err != nil {
+		return nil, err
+	}
+	if pageSize <= 0 || pageSize > 100 {
+		pageSize = 50
+	}
+	return url.Values{
+		"page":     []string{strconv.Itoa(page)},
+		"pageSize": []string{strconv.Itoa(pageSize)},
+	}, nil
+}
+
 func sonarrEpisodeFilesPath(args map[string]any) (string, error) {
 	seriesID, err := numericArg(args, "series_id")
 	if err != nil {
