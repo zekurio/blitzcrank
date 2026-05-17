@@ -65,20 +65,37 @@ func (b *Bot) SetRuntimeManager(runtime RuntimeManager) {
 }
 
 func (b *Bot) Start() error {
+	startedAt := time.Now()
 	api := b.discordAPI()
+	stepStartedAt := time.Now()
 	if err := api.Open(); err != nil {
+		log.Printf("discord startup step completed: name=open_gateway status=failed duration=%s", startupDuration(time.Since(stepStartedAt)))
 		return err
 	}
+	log.Printf("discord startup step completed: name=open_gateway status=ok duration=%s", startupDuration(time.Since(stepStartedAt)))
 	if b.session.State != nil && b.session.State.User != nil {
 		b.botID = b.session.State.User.ID
-		return b.registerRuntimeCommands()
+		if err := b.registerRuntimeCommands(); err != nil {
+			log.Printf("discord startup completed: status=failed bot_id=%s duration=%s", b.botID, startupDuration(time.Since(startedAt)))
+			return err
+		}
+		log.Printf("discord startup completed: status=ok bot_id=%s duration=%s", b.botID, startupDuration(time.Since(startedAt)))
+		return nil
 	}
+	stepStartedAt = time.Now()
 	user, err := api.User("@me")
 	if err != nil {
+		log.Printf("discord startup step completed: name=load_current_user status=failed duration=%s", startupDuration(time.Since(stepStartedAt)))
 		return err
 	}
+	log.Printf("discord startup step completed: name=load_current_user status=ok duration=%s", startupDuration(time.Since(stepStartedAt)))
 	b.botID = user.ID
-	return b.registerRuntimeCommands()
+	if err := b.registerRuntimeCommands(); err != nil {
+		log.Printf("discord startup completed: status=failed bot_id=%s duration=%s", b.botID, startupDuration(time.Since(startedAt)))
+		return err
+	}
+	log.Printf("discord startup completed: status=ok bot_id=%s duration=%s", b.botID, startupDuration(time.Since(startedAt)))
+	return nil
 }
 
 func (b *Bot) Close() {
@@ -90,26 +107,234 @@ func (b *Bot) registerRuntimeCommands() error {
 		return nil
 	}
 	api := b.discordAPI()
+	startedAt := time.Now()
+	stepStartedAt := time.Now()
 	registeredCommands, err := api.ApplicationCommands(b.botID, b.cfg.DiscordGuildID)
 	if err != nil {
+		log.Printf("discord startup step completed: name=list_application_commands status=failed duration=%s", startupDuration(time.Since(stepStartedAt)))
 		return err
 	}
+	log.Printf("discord startup step completed: name=list_application_commands status=ok count=%d duration=%s", len(registeredCommands), startupDuration(time.Since(stepStartedAt)))
 	existing := map[string]string{}
+	existingCommands := map[string]*discordgo.ApplicationCommand{}
 	for _, command := range registeredCommands {
-		existing[command.Name] = command.ID
-	}
-	for _, command := range commands.ApplicationCommands() {
-		if id := existing[command.Name]; id != "" {
-			if _, err := api.ApplicationCommandEdit(b.botID, b.cfg.DiscordGuildID, id, command); err != nil {
-				return err
-			}
+		if command == nil {
 			continue
 		}
+		existing[command.Name] = command.ID
+		existingCommands[command.Name] = command
+	}
+	var created, edited, unchanged int
+	for _, command := range commands.ApplicationCommands() {
+		if id := existing[command.Name]; id != "" {
+			if applicationCommandMatches(existingCommands[command.Name], command) {
+				unchanged++
+				continue
+			}
+			stepStartedAt = time.Now()
+			if _, err := api.ApplicationCommandEdit(b.botID, b.cfg.DiscordGuildID, id, command); err != nil {
+				log.Printf("discord startup step completed: name=edit_application_command command=%s status=failed duration=%s", command.Name, startupDuration(time.Since(stepStartedAt)))
+				return err
+			}
+			edited++
+			log.Printf("discord startup step completed: name=edit_application_command command=%s status=ok duration=%s", command.Name, startupDuration(time.Since(stepStartedAt)))
+			continue
+		}
+		stepStartedAt = time.Now()
 		if _, err := api.ApplicationCommandCreate(b.botID, b.cfg.DiscordGuildID, command); err != nil {
+			log.Printf("discord startup step completed: name=create_application_command command=%s status=failed duration=%s", command.Name, startupDuration(time.Since(stepStartedAt)))
 			return err
 		}
+		created++
+		log.Printf("discord startup step completed: name=create_application_command command=%s status=ok duration=%s", command.Name, startupDuration(time.Since(stepStartedAt)))
 	}
+	log.Printf("discord startup command sync completed: created=%d edited=%d unchanged=%d duration=%s", created, edited, unchanged, startupDuration(time.Since(startedAt)))
 	return nil
+}
+
+func applicationCommandMatches(existing, desired *discordgo.ApplicationCommand) bool {
+	if existing == nil || desired == nil {
+		return false
+	}
+	return existing.Name == desired.Name &&
+		existing.Description == desired.Description &&
+		applicationCommandType(existing.Type) == applicationCommandType(desired.Type) &&
+		int64PtrEqual(existing.DefaultMemberPermissions, desired.DefaultMemberPermissions) &&
+		omittedBoolPtrEqual(existing.DMPermission, desired.DMPermission) &&
+		commandBoolPtrEqual(existing.NSFW, desired.NSFW, false) &&
+		commandLocalizationPtrEqual(existing.NameLocalizations, desired.NameLocalizations) &&
+		commandLocalizationPtrEqual(existing.DescriptionLocalizations, desired.DescriptionLocalizations) &&
+		interactionContextsEqual(existing.Contexts, desired.Contexts) &&
+		applicationIntegrationTypesEqual(existing.IntegrationTypes, desired.IntegrationTypes) &&
+		applicationCommandOptionsEqual(existing.Options, desired.Options)
+}
+
+func applicationCommandType(commandType discordgo.ApplicationCommandType) discordgo.ApplicationCommandType {
+	if commandType == 0 {
+		return discordgo.ChatApplicationCommand
+	}
+	return commandType
+}
+
+func int64PtrEqual(a, b *int64) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+func commandBoolPtrEqual(existing, desired *bool, defaultValue bool) bool {
+	return boolValue(existing, defaultValue) == boolValue(desired, defaultValue)
+}
+
+func omittedBoolPtrEqual(existing, desired *bool) bool {
+	if existing == nil || desired == nil {
+		return true
+	}
+	return *existing == *desired
+}
+
+func boolValue(value *bool, defaultValue bool) bool {
+	if value == nil {
+		return defaultValue
+	}
+	return *value
+}
+
+func commandLocalizationPtrEqual(existing, desired *map[discordgo.Locale]string) bool {
+	return localizationMapEqual(localizationPtrValue(existing), localizationPtrValue(desired))
+}
+
+func localizationPtrValue(value *map[discordgo.Locale]string) map[discordgo.Locale]string {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func localizationMapEqual(existing, desired map[discordgo.Locale]string) bool {
+	if len(existing) != len(desired) {
+		return false
+	}
+	for key, value := range existing {
+		if desired[key] != value {
+			return false
+		}
+	}
+	return true
+}
+
+func interactionContextsEqual(existing, desired *[]discordgo.InteractionContextType) bool {
+	if desired == nil || len(*desired) == 0 {
+		return true
+	}
+	if existing == nil || len(*existing) != len(*desired) {
+		return false
+	}
+	for i := range *desired {
+		if (*existing)[i] != (*desired)[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func applicationIntegrationTypesEqual(existing, desired *[]discordgo.ApplicationIntegrationType) bool {
+	if desired == nil || len(*desired) == 0 {
+		return true
+	}
+	if existing == nil || len(*existing) != len(*desired) {
+		return false
+	}
+	for i := range *desired {
+		if (*existing)[i] != (*desired)[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func applicationCommandOptionsEqual(existing, desired []*discordgo.ApplicationCommandOption) bool {
+	if len(existing) != len(desired) {
+		return false
+	}
+	for i := range desired {
+		if !applicationCommandOptionEqual(existing[i], desired[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func applicationCommandOptionEqual(existing, desired *discordgo.ApplicationCommandOption) bool {
+	if existing == nil || desired == nil {
+		return existing == desired
+	}
+	return existing.Type == desired.Type &&
+		existing.Name == desired.Name &&
+		existing.Description == desired.Description &&
+		localizationMapEqual(existing.NameLocalizations, desired.NameLocalizations) &&
+		localizationMapEqual(existing.DescriptionLocalizations, desired.DescriptionLocalizations) &&
+		channelTypesEqual(existing.ChannelTypes, desired.ChannelTypes) &&
+		existing.Required == desired.Required &&
+		existing.Autocomplete == desired.Autocomplete &&
+		float64PtrEqual(existing.MinValue, desired.MinValue) &&
+		existing.MaxValue == desired.MaxValue &&
+		intPtrEqual(existing.MinLength, desired.MinLength) &&
+		existing.MaxLength == desired.MaxLength &&
+		applicationCommandOptionsEqual(existing.Options, desired.Options) &&
+		applicationCommandChoicesEqual(existing.Choices, desired.Choices)
+}
+
+func channelTypesEqual(existing, desired []discordgo.ChannelType) bool {
+	if len(existing) != len(desired) {
+		return false
+	}
+	for i := range desired {
+		if existing[i] != desired[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func applicationCommandChoicesEqual(existing, desired []*discordgo.ApplicationCommandOptionChoice) bool {
+	if len(existing) != len(desired) {
+		return false
+	}
+	for i := range desired {
+		if !applicationCommandChoiceEqual(existing[i], desired[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func applicationCommandChoiceEqual(existing, desired *discordgo.ApplicationCommandOptionChoice) bool {
+	if existing == nil || desired == nil {
+		return existing == desired
+	}
+	return existing.Name == desired.Name &&
+		existing.Value == desired.Value &&
+		localizationMapEqual(existing.NameLocalizations, desired.NameLocalizations)
+}
+
+func float64PtrEqual(a, b *float64) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+func intPtrEqual(a, b *int) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+func startupDuration(duration time.Duration) time.Duration {
+	return duration.Round(time.Millisecond)
 }
 
 func (b *Bot) discordAPI() discordSessionAPI {

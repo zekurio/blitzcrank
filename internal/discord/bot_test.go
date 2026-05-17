@@ -103,11 +103,20 @@ func TestRuntimeCommandsRequireAdministratorPermission(t *testing.T) {
 	if runtimeCommands[0].Name != "config" {
 		t.Fatalf("runtime command name = %q, want config", runtimeCommands[0].Name)
 	}
+	if runtimeCommands[0].Description != "Blitzcrank-Laufzeitkonfiguration und Betrieb verwalten." {
+		t.Fatalf("config command description = %q", runtimeCommands[0].Description)
+	}
 	if runtimeCommands[1].Name != "automation" {
 		t.Fatalf("runtime command name = %q, want automation", runtimeCommands[1].Name)
 	}
+	if runtimeCommands[1].Description != "Eine Blitzcrank-Automatisierung sofort ausführen." {
+		t.Fatalf("automation command description = %q", runtimeCommands[1].Description)
+	}
 	if len(runtimeCommands[1].Options) != 1 || runtimeCommands[1].Options[0].Name != "name" || !runtimeCommands[1].Options[0].Autocomplete {
 		t.Fatalf("automation command options = %#v, want autocompleted name", runtimeCommands[1].Options)
+	}
+	if runtimeCommands[1].Options[0].Description != "Name der Automatisierung" {
+		t.Fatalf("automation option description = %q", runtimeCommands[1].Options[0].Description)
 	}
 	if findCommandOption(runtimeCommands[0].Options, "profile", discordgo.ApplicationCommandOptionSubCommandGroup) == nil {
 		t.Fatal("config command missing profile group")
@@ -121,6 +130,34 @@ func TestRuntimeCommandsRequireAdministratorPermission(t *testing.T) {
 	profile := findCommandOption(runtimeCommands[0].Options, "profile", discordgo.ApplicationCommandOptionSubCommandGroup)
 	if findCommandOption(profile.Options, "set", discordgo.ApplicationCommandOptionSubCommand) == nil {
 		t.Fatal("config profile group missing set subcommand")
+	}
+}
+
+func TestDiscordCommandDescriptionsAreGerman(t *testing.T) {
+	for _, command := range commands.ApplicationCommands() {
+		if strings.Contains(command.Description, "Ask Blitzcrank") ||
+			strings.Contains(command.Description, "Manage ") ||
+			strings.Contains(command.Description, "Run a ") {
+			t.Fatalf("command %s description is not localized: %q", command.Name, command.Description)
+		}
+		for _, option := range command.Options {
+			assertGermanCommandOptionDescription(t, command.Name, option)
+		}
+	}
+}
+
+func assertGermanCommandOptionDescription(t *testing.T, commandName string, option *discordgo.ApplicationCommandOption) {
+	t.Helper()
+	if option == nil {
+		return
+	}
+	for _, english := range []string{"Runtime profile", "Profile field", "Global setting", "New value", "Automation name", "What should"} {
+		if strings.Contains(option.Description, english) {
+			t.Fatalf("command %s option %s description is not localized: %q", commandName, option.Name, option.Description)
+		}
+	}
+	for _, child := range option.Options {
+		assertGermanCommandOptionDescription(t, commandName, child)
 	}
 }
 
@@ -184,6 +221,49 @@ func TestRegisterRuntimeCommandsEditsExistingAndCreatesMissing(t *testing.T) {
 	}
 	if !fakeCreatedCommand(api.created, commands.AutomationCommand) || !fakeCreatedCommand(api.created, "jellyfin") {
 		t.Fatalf("created commands = %#v, want automation and jellyfin", api.created)
+	}
+}
+
+func TestRegisterRuntimeCommandsSkipsSemanticallyUnchangedCommands(t *testing.T) {
+	var existing []*discordgo.ApplicationCommand
+	for _, command := range commands.ApplicationCommands() {
+		existing = append(existing, discordReturnedApplicationCommand(command, "existing-"+command.Name))
+	}
+	api := &fakeDiscordAPI{existing: existing}
+	bot := &Bot{
+		cfg:   config.Config{DiscordGuildID: "guild-1"},
+		api:   api,
+		botID: "bot-1",
+	}
+
+	if err := bot.registerRuntimeCommands(); err != nil {
+		t.Fatalf("registerRuntimeCommands() error = %v", err)
+	}
+	if len(api.edited) != 0 {
+		t.Fatalf("edited commands = %#v, want none", api.edited)
+	}
+	if len(api.created) != 0 {
+		t.Fatalf("created commands = %#v, want none", api.created)
+	}
+}
+
+func TestApplicationCommandMatchesDetectsBehaviorChanges(t *testing.T) {
+	desired := commands.ApplicationCommands()[0]
+	existing := discordReturnedApplicationCommand(desired, "existing-config")
+
+	if !applicationCommandMatches(existing, desired) {
+		t.Fatal("applicationCommandMatches() = false, want true for Discord response defaults")
+	}
+
+	existing.Description = "old description"
+	if applicationCommandMatches(existing, desired) {
+		t.Fatal("applicationCommandMatches() = true after command description changed, want false")
+	}
+
+	existing = discordReturnedApplicationCommand(desired, "existing-config")
+	existing.Options[0].Description = "old option description"
+	if applicationCommandMatches(existing, desired) {
+		t.Fatal("applicationCommandMatches() = true after nested option description changed, want false")
 	}
 }
 
@@ -467,7 +547,7 @@ func TestSeerrRequestContextUsesRequesterAndMentionMappings(t *testing.T) {
 		"1001": "42",
 		"1002": "84",
 	}}}
-	seerrUserID, contextText := bot.seerrRequestContext("bitte fuer <@1002> anfragen", "1001")
+	seerrUserID, contextText := bot.seerrRequestContext("bitte für <@1002> anfragen", "1001")
 	if seerrUserID != "42" {
 		t.Fatalf("seerrUserID = %q", seerrUserID)
 	}
@@ -985,6 +1065,82 @@ func fakeCreatedCommand(calls []fakeCommandCall, name string) bool {
 		}
 	}
 	return false
+}
+
+func discordReturnedApplicationCommand(command *discordgo.ApplicationCommand, id string) *discordgo.ApplicationCommand {
+	if command == nil {
+		return nil
+	}
+	nsfw := false
+	nameLocalizations := map[discordgo.Locale]string{}
+	descriptionLocalizations := map[discordgo.Locale]string{}
+	contexts := []discordgo.InteractionContextType{discordgo.InteractionContextGuild}
+	integrationTypes := []discordgo.ApplicationIntegrationType{discordgo.ApplicationIntegrationGuildInstall}
+	return &discordgo.ApplicationCommand{
+		ID:                       id,
+		ApplicationID:            "bot-1",
+		GuildID:                  "guild-1",
+		Version:                  "1",
+		Type:                     applicationCommandType(command.Type),
+		Name:                     command.Name,
+		NameLocalizations:        &nameLocalizations,
+		DefaultMemberPermissions: command.DefaultMemberPermissions,
+		NSFW:                     &nsfw,
+		Contexts:                 &contexts,
+		IntegrationTypes:         &integrationTypes,
+		Description:              command.Description,
+		DescriptionLocalizations: &descriptionLocalizations,
+		Options:                  discordReturnedApplicationCommandOptions(command.Options),
+	}
+}
+
+func discordReturnedApplicationCommandOptions(options []*discordgo.ApplicationCommandOption) []*discordgo.ApplicationCommandOption {
+	if len(options) == 0 {
+		return []*discordgo.ApplicationCommandOption{}
+	}
+	returned := make([]*discordgo.ApplicationCommandOption, 0, len(options))
+	for _, option := range options {
+		if option == nil {
+			returned = append(returned, nil)
+			continue
+		}
+		returned = append(returned, &discordgo.ApplicationCommandOption{
+			Type:                     option.Type,
+			Name:                     option.Name,
+			NameLocalizations:        map[discordgo.Locale]string{},
+			Description:              option.Description,
+			DescriptionLocalizations: map[discordgo.Locale]string{},
+			ChannelTypes:             append([]discordgo.ChannelType{}, option.ChannelTypes...),
+			Required:                 option.Required,
+			Options:                  discordReturnedApplicationCommandOptions(option.Options),
+			Autocomplete:             option.Autocomplete,
+			Choices:                  discordReturnedApplicationCommandChoices(option.Choices),
+			MinValue:                 option.MinValue,
+			MaxValue:                 option.MaxValue,
+			MinLength:                option.MinLength,
+			MaxLength:                option.MaxLength,
+		})
+	}
+	return returned
+}
+
+func discordReturnedApplicationCommandChoices(choices []*discordgo.ApplicationCommandOptionChoice) []*discordgo.ApplicationCommandOptionChoice {
+	if len(choices) == 0 {
+		return []*discordgo.ApplicationCommandOptionChoice{}
+	}
+	returned := make([]*discordgo.ApplicationCommandOptionChoice, 0, len(choices))
+	for _, choice := range choices {
+		if choice == nil {
+			returned = append(returned, nil)
+			continue
+		}
+		returned = append(returned, &discordgo.ApplicationCommandOptionChoice{
+			Name:              choice.Name,
+			NameLocalizations: map[discordgo.Locale]string{},
+			Value:             choice.Value,
+		})
+	}
+	return returned
 }
 
 func stringSliceContains(values []string, want string) bool {
