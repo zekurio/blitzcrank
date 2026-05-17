@@ -1,12 +1,19 @@
 package discord
 
 import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"blitzcrank/internal/agent"
+	"blitzcrank/internal/config"
 	"blitzcrank/internal/store"
+
+	"github.com/bwmarrin/discordgo"
 )
 
 func TestThreadTitleCompactsAndLimitsContent(t *testing.T) {
@@ -139,5 +146,159 @@ func TestRecentRunsIncludesOutcomeWithoutRawEmptyRows(t *testing.T) {
 	out := recentRuns(runs, 5)
 	if !strings.Contains(out, "fixed") || !strings.Contains(out, "discord response posted") {
 		t.Fatalf("recentRuns() = %q", out)
+	}
+}
+
+func TestDiscordThreadWritesJSONLTrace(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	state, err := store.Open(ctx, filepath.Join(dir, "blitzcrank.sqlite"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer state.Close()
+
+	bot := &Bot{
+		cfg:   config.Config{ThreadsDirectory: filepath.Join(dir, "threads")},
+		store: state,
+	}
+	event := &discordgo.MessageCreate{Message: &discordgo.Message{
+		ID:        "message-1",
+		ChannelID: "channel-1",
+		GuildID:   "guild-1",
+		Timestamp: time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC),
+		Author:    &discordgo.User{ID: "user-1", Username: "alice"},
+	}}
+	if err := bot.recordDiscordThread(ctx, recordDiscordThreadRequest{
+		ThreadID:      "thread-1",
+		ParentID:      "channel-1",
+		RootMessageID: "message-1",
+		Title:         "Missing episode",
+		Event:         event,
+		EventType:     "root_message",
+		Content:       "S02E05 fehlt",
+	}); err != nil {
+		t.Fatalf("recordDiscordThread() error = %v", err)
+	}
+
+	completedAt := time.Date(2026, 5, 16, 10, 1, 0, 0, time.UTC)
+	bot.persistDiscordRun("discord:thread-1", store.AgentRun{
+		ThreadID:         "discord:thread-1",
+		SourceEventType:  "root_message",
+		StartedAt:        completedAt.Add(-time.Minute),
+		CompletedAt:      &completedAt,
+		FinalResponse:    "Ist erledigt.",
+		Posted:           true,
+		Attribution:      "discord:gpt-5.5",
+		CompletionReason: "discord response posted",
+		Summary:          "Episode fixed.",
+	})
+
+	data, err := os.ReadFile(filepath.Join(dir, "threads", "discord", "thread-1.jsonl"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("trace line count = %d, want 3\n%s", len(lines), string(data))
+	}
+	var records []map[string]any
+	for _, line := range lines {
+		var record map[string]any
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatalf("Unmarshal(%q) error = %v", line, err)
+		}
+		records = append(records, record)
+	}
+	if records[0]["type"] != "discord_thread" || records[1]["type"] != "discord_event" || records[2]["type"] != "discord_run" {
+		t.Fatalf("trace record types = %#v", records)
+	}
+	if records[2]["final_response"] != "Ist erledigt." || records[2]["posted"] != true {
+		t.Fatalf("run trace = %#v", records[2])
+	}
+	loaded, ok, err := state.LoadAgentThreadByExternalID(ctx, "discord", "thread-1")
+	if err != nil {
+		t.Fatalf("LoadAgentThreadByExternalID() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("LoadAgentThreadByExternalID() ok = false")
+	}
+	if loaded.ThreadID != records[0]["thread_id"] || loaded.ExternalID != records[0]["discord_thread_id"] {
+		t.Fatalf("thread DB/JSONL mismatch: loaded=%#v trace=%#v", loaded, records[0])
+	}
+	if len(loaded.Events) != 1 || loaded.Events[0].ExternalMessageID != records[1]["external_message_id"] {
+		t.Fatalf("event DB/JSONL mismatch: loaded=%#v trace=%#v", loaded.Events, records[1])
+	}
+	if loaded.Summary != "Episode fixed." {
+		t.Fatalf("thread summary = %q", loaded.Summary)
+	}
+	if len(loaded.Runs) != 1 || loaded.Runs[0].FinalResponse != records[2]["final_response"] {
+		t.Fatalf("run DB/JSONL mismatch: loaded=%#v trace=%#v", loaded.Runs, records[2])
+	}
+}
+
+func TestDiscordDirectInteractionWritesJSONLTrace(t *testing.T) {
+	dir := t.TempDir()
+	bot := &Bot{cfg: config.Config{ThreadsDirectory: filepath.Join(dir, "threads")}}
+	event := &discordgo.MessageCreate{Message: &discordgo.Message{
+		ID:        "message-1",
+		ChannelID: "channel-1",
+		GuildID:   "guild-1",
+		Timestamp: time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC),
+		Author:    &discordgo.User{ID: "user-1", Username: "alice"},
+	}}
+	startedAt := time.Date(2026, 5, 16, 10, 1, 0, 0, time.UTC)
+	bot.appendDiscordInteractionTrace(event, "direct_agent_reply", "ping", "pong", "", startedAt, startedAt.Add(time.Second), map[string]any{
+		"attribution": "discord:gpt-5.5",
+	})
+
+	data, err := os.ReadFile(filepath.Join(dir, "threads", "discord", "interactions", "message-1.jsonl"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var record map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(data))), &record); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if record["type"] != "discord_interaction" || record["interaction_type"] != "direct_agent_reply" {
+		t.Fatalf("interaction trace = %#v", record)
+	}
+	if record["message_id"] != "message-1" || record["reply"] != "pong" || record["attribution"] != "discord:gpt-5.5" {
+		t.Fatalf("interaction trace = %#v", record)
+	}
+}
+
+func TestDiscordAutomationReportWritesJSONLOnly(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	state, err := store.Open(ctx, filepath.Join(dir, "blitzcrank.sqlite"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer state.Close()
+
+	bot := &Bot{
+		cfg:   config.Config{ThreadsDirectory: filepath.Join(dir, "threads"), BotPublicName: "Blitzcrank"},
+		store: state,
+	}
+	bot.recordAutomationReport(ctx, "hourly-stale-import-handler", "done")
+
+	data, err := os.ReadFile(filepath.Join(dir, "threads", "automations", "hourly-stale-import-handler.jsonl"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var record map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(data))), &record); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if record["type"] != "discord_automation_report" || record["message"] != "done" {
+		t.Fatalf("automation report trace = %#v", record)
+	}
+	events, err := state.LoadAgentThreadEvents(ctx, "discord_automation:hourly-stale-import-handler")
+	if err != nil {
+		t.Fatalf("LoadAgentThreadEvents() error = %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("automation report events = %#v, want none", events)
 	}
 }

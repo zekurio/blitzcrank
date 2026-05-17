@@ -37,7 +37,6 @@ type Scheduler struct {
 	cfg           config.Config
 	runner        Runner
 	reporter      Reporter
-	store         *store.Store
 	tasks         []Task
 	lastLoadError string
 }
@@ -56,7 +55,6 @@ func NewScheduler(cfg config.Config, runner Runner, reporter Reporter, state *st
 		cfg:      cfg,
 		runner:   runner,
 		reporter: reporter,
-		store:    state,
 	}
 	scheduler.reloadTasks()
 	return scheduler
@@ -142,7 +140,6 @@ func (s *Scheduler) runDue(ctx context.Context, now time.Time) {
 		completedAt := time.Now().UTC()
 		if err != nil {
 			log.Printf("automation task %s failed: %v", task.Name, err)
-			s.recordAutomationRun(task.Name, startedAt, completedAt, "", err.Error())
 			s.appendTrace("automations/"+task.Name+".jsonl", map[string]any{
 				"type":       "automation_run",
 				"automation": task.Name,
@@ -152,7 +149,6 @@ func (s *Scheduler) runDue(ctx context.Context, now time.Time) {
 			})
 			continue
 		}
-		s.recordAutomationRun(task.Name, startedAt, completedAt, result, "")
 		s.appendTrace("automations/"+task.Name+".jsonl", map[string]any{
 			"type":       "automation_run",
 			"automation": task.Name,
@@ -162,33 +158,39 @@ func (s *Scheduler) runDue(ctx context.Context, now time.Time) {
 		})
 		log.Printf("automation task %s completed: %s", task.Name, strings.ReplaceAll(result, "\n", " "))
 		if s.reporter != nil {
+			reportStartedAt := time.Now().UTC()
 			reportCtx, reportCancel := context.WithTimeout(context.Background(), 30*time.Second)
 			var err error
+			reporterType := "channel"
 			if automationReporter, ok := s.reporter.(AutomationReporter); ok {
+				reporterType = "automation_thread"
 				err = automationReporter.SendAutomationReport(reportCtx, task.Name, result)
 			} else {
 				err = s.reporter.SendMessage(reportCtx, "[automation: "+task.Name+"]\n\n"+result)
 			}
+			reportCompletedAt := time.Now().UTC()
 			if err != nil {
 				log.Printf("automation task %s report failed: %v", task.Name, err)
+				s.appendTrace("automations/"+task.Name+".jsonl", map[string]any{
+					"type":       "automation_report_delivery",
+					"automation": task.Name,
+					"reporter":   reporterType,
+					"started_at": reportStartedAt.Format(time.RFC3339Nano),
+					"completed":  reportCompletedAt.Format(time.RFC3339Nano),
+					"error":      err.Error(),
+				})
+			} else {
+				s.appendTrace("automations/"+task.Name+".jsonl", map[string]any{
+					"type":       "automation_report_delivery",
+					"automation": task.Name,
+					"reporter":   reporterType,
+					"started_at": reportStartedAt.Format(time.RFC3339Nano),
+					"completed":  reportCompletedAt.Format(time.RFC3339Nano),
+					"posted":     true,
+				})
 			}
 			reportCancel()
 		}
-	}
-}
-
-func (s *Scheduler) recordAutomationRun(name string, startedAt, completedAt time.Time, result, errText string) {
-	if s.store == nil {
-		return
-	}
-	if err := s.store.InsertAutomationRun(context.Background(), store.AutomationRun{
-		AutomationName: name,
-		StartedAt:      startedAt,
-		CompletedAt:    &completedAt,
-		Result:         result,
-		Error:          errText,
-	}); err != nil {
-		log.Printf("insert automation run %s: %v", name, err)
 	}
 }
 

@@ -90,11 +90,13 @@ Blitzcrank stores queryable runtime state in SQLite at `DATABASE_PATH`:
 - Discord agent threads
 - webhook and Discord events
 - issue solver runs
-- automation run summaries
+- Discord automation thread mappings
 
 It also writes append-only JSONL traces under `AGENT_THREADS_DIR`:
 
 - `issues/issue-<id>.jsonl`
+- `discord/<thread-id>.jsonl`
+- `discord/interactions/<message-id>.jsonl`
 - `automations/<name>.jsonl`
 
 Bundled prompt, skill, and automation Markdown files are embedded in the binary. Override paths and directories are runtime inputs, not database state.

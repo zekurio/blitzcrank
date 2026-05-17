@@ -276,23 +276,19 @@ func (m *Manager) run(ctx context.Context, thread *IssueThread, payload map[stri
 }
 
 func (m *Manager) recordToolCall(issueID, sourceEventType string, runStartedAt time.Time, record agent.ToolAuditRecord) {
-	if m.store == nil {
-		return
-	}
-	if err := m.store.InsertIssueToolCall(context.Background(), store.IssueToolCall{
-		IssueID:          issueID,
-		SourceEventType:  sourceEventType,
-		RunStartedAt:     runStartedAt,
-		ToolName:         record.Name,
-		Mutating:         record.Mutating,
-		ArgumentsSummary: record.ArgumentsSummary,
-		ResultSummary:    record.ResultSummary,
-		Error:            record.Error,
-		StartedAt:        record.StartedAt,
-		CompletedAt:      record.CompletedAt,
-	}); err != nil {
-		log.Printf("insert issue tool call failed: issue=%s tool=%s error=%v", issueID, record.Name, err)
-	}
+	m.appendTrace("issues/issue-"+issueID+".jsonl", map[string]any{
+		"type":              "tool_call",
+		"issue":             issueID,
+		"source_event_type": sourceEventType,
+		"run_started_at":    runStartedAt.Format(time.RFC3339Nano),
+		"tool_name":         record.Name,
+		"mutating":          record.Mutating,
+		"arguments_summary": record.ArgumentsSummary,
+		"result_summary":    record.ResultSummary,
+		"error":             record.Error,
+		"started_at":        record.StartedAt.Format(time.RFC3339Nano),
+		"completed_at":      record.CompletedAt.Format(time.RFC3339Nano),
+	})
 }
 
 func (m *Manager) recordRun(thread *IssueThread, record RunRecord) {
@@ -313,6 +309,7 @@ func (m *Manager) recordRun(thread *IssueThread, record RunRecord) {
 		"attribution":       record.Attribution,
 		"error":             record.Error,
 		"completion_reason": record.CompletionReason,
+		"summary":           thread.Summary,
 	})
 }
 
