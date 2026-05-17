@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"syscall"
 
 	"blitzcrank/internal/config"
 )
@@ -14,13 +13,13 @@ func loadCodexCredential(cfg config.Config) (CodexCredential, error) {
 	path := AuthPath(cfg)
 	unlock, err := lockAuthStore(path)
 	if err != nil {
-		return CodexCredential{}, err
+		return CodexCredential{}, fmt.Errorf("lock Codex auth store: %w", err)
 	}
 	defer unlock()
 
 	store, err := loadAuthStoreUnlocked(path)
 	if err != nil {
-		return CodexCredential{}, err
+		return CodexCredential{}, fmt.Errorf("load Codex auth store: %w", err)
 	}
 	cred, ok := store.Profiles[cfg.CodexAuthProfile]
 	if !ok {
@@ -33,16 +32,19 @@ func saveCodexCredential(cfg config.Config, cred CodexCredential) error {
 	path := AuthPath(cfg)
 	unlock, err := lockAuthStore(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("lock Codex auth store: %w", err)
 	}
 	defer unlock()
 
 	store, err := loadAuthStoreUnlocked(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("load Codex auth store: %w", err)
 	}
 	store.Profiles[cfg.CodexAuthProfile] = cred
-	return saveAuthStoreUnlocked(path, store)
+	if err := saveAuthStoreUnlocked(path, store); err != nil {
+		return fmt.Errorf("save Codex auth store: %w", err)
+	}
+	return nil
 }
 
 func loadAuthStoreUnlocked(path string) (AuthStore, error) {
@@ -54,11 +56,11 @@ func loadAuthStoreUnlocked(path string) (AuthStore, error) {
 		if os.IsNotExist(err) {
 			return AuthStore{Version: 1, Profiles: map[string]CodexCredential{}}, nil
 		}
-		return AuthStore{}, err
+		return AuthStore{}, fmt.Errorf("read %s: %w", path, err)
 	}
 	var store AuthStore
 	if err := json.Unmarshal(data, &store); err != nil {
-		return AuthStore{}, err
+		return AuthStore{}, fmt.Errorf("parse %s: %w", path, err)
 	}
 	if store.Profiles == nil {
 		store.Profiles = map[string]CodexCredential{}
@@ -75,44 +77,31 @@ func tightenAuthStorePermissions(path string) error {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return err
+		return fmt.Errorf("stat %s: %w", path, err)
 	}
 	if info.Mode().Perm()&0o077 == 0 {
 		return nil
 	}
-	return os.Chmod(path, 0o600)
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("chmod %s: %w", path, err)
+	}
+	return nil
 }
 
 func saveAuthStoreUnlocked(path string, store AuthStore) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
+		return fmt.Errorf("create auth store directory: %w", err)
 	}
 	data, err := json.MarshalIndent(store, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("encode auth store: %w", err)
 	}
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
+		return fmt.Errorf("write %s: %w", tmp, err)
 	}
-	return os.Rename(tmp, path)
-}
-
-func lockAuthStore(path string) (func(), error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, err
+	if err := os.Rename(tmp, path); err != nil {
+		return fmt.Errorf("replace %s: %w", path, err)
 	}
-	lockPath := path + ".lock"
-	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-	return func() {
-		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-		_ = file.Close()
-	}, nil
+	return nil
 }

@@ -52,7 +52,7 @@ func (s *Scheduler) automationHistory(name string, cfg config.Config) string {
 }
 
 func readAutomationHistory(scanner *bufio.Scanner) ([]string, string) {
-	var records []string
+	records := make([]string, 0, automationHistoryLimit)
 	manualLedger := newAutomationManualLedger(automationManualLedgerLimit)
 	for scanner.Scan() {
 		record := automationHistoryRecord(scanner.Bytes())
@@ -83,8 +83,9 @@ type automationManualLedger struct {
 
 func newAutomationManualLedger(limit int) *automationManualLedger {
 	return &automationManualLedger{
-		limit: limit,
-		keys:  map[string]struct{}{},
+		limit:   limit,
+		keys:    make(map[string]struct{}, limit),
+		entries: make([]string, 0, limit),
 	}
 }
 

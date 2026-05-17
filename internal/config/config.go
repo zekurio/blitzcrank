@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"strings"
 	"time"
 )
@@ -75,20 +76,20 @@ func LoadRelaxed(dotenvPath string) (Config, error) {
 func load(dotenvPath string, validate bool) (Config, error) {
 	var cfg Config
 	if err := applyDefaults(&cfg); err != nil {
-		return cfg, err
+		return cfg, fmt.Errorf("apply config defaults: %w", err)
 	}
 	_ = loadDotenv(dotenvPath)
 	if err := applyEnv(&cfg); err != nil {
-		return cfg, err
+		return cfg, fmt.Errorf("apply environment config: %w", err)
 	}
 	if strings.TrimSpace(cfg.ConfigPath) != "" {
 		if err := applyTOMLFile(&cfg, cfg.ConfigPath); err != nil {
-			return cfg, err
+			return cfg, fmt.Errorf("apply TOML config: %w", err)
 		}
 	}
 	tomlProfiles := cloneRuntimeProfiles(cfg.RuntimeProfiles)
 	if err := applyEnv(&cfg); err != nil {
-		return cfg, err
+		return cfg, fmt.Errorf("apply environment config overrides: %w", err)
 	}
 	applyLegacyEnv(&cfg)
 	cfg.RuntimeProfiles = runtimeProfiles(cfg, tomlProfiles)
@@ -97,7 +98,7 @@ func load(dotenvPath string, validate bool) (Config, error) {
 		return cfg, nil
 	}
 	if err := validateStrictConfig(cfg); err != nil {
-		return cfg, err
+		return cfg, fmt.Errorf("validate config: %w", err)
 	}
 	return cfg, nil
 }

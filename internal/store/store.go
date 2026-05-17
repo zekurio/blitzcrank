@@ -104,16 +104,16 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		return nil, errors.New("database path is required")
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil && filepath.Dir(path) != "." {
-		return nil, err
+		return nil, fmt.Errorf("create database directory %s: %w", filepath.Dir(path), err)
 	}
 	db, err := sql.Open("sqlite", sqliteDSN(path))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open sqlite database %s: %w", path, err)
 	}
 	store := &Store{db: db}
 	if err := store.migrate(ctx); err != nil {
 		_ = db.Close()
-		return nil, err
+		return nil, fmt.Errorf("migrate sqlite database %s: %w", path, err)
 	}
 	return store, nil
 }
@@ -126,8 +126,12 @@ func sqliteDSN(path string) string {
 	if err != nil {
 		absPath = path
 	}
-	uri := url.URL{Scheme: "file", Path: absPath}
-	query := uri.Query()
+	uriPath := filepath.ToSlash(absPath)
+	if volume := filepath.VolumeName(absPath); volume != "" && !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	uri := url.URL{Scheme: "file", Path: uriPath}
+	query := url.Values{}
 	query.Add("_pragma", "foreign_keys(1)")
 	uri.RawQuery = query.Encode()
 	return uri.String()
@@ -235,9 +239,9 @@ CREATE TABLE IF NOT EXISTS agent_runs (
   summary TEXT,
   FOREIGN KEY (thread_id) REFERENCES agent_threads(thread_id)
 );
-`)
+	`)
 	if err != nil {
-		return err
+		return fmt.Errorf("run base schema migration: %w", err)
 	}
 	for _, column := range []struct {
 		table string
@@ -249,7 +253,7 @@ CREATE TABLE IF NOT EXISTS agent_runs (
 		{table: "agent_runs", name: "summary", ddl: "ALTER TABLE agent_runs ADD COLUMN summary TEXT"},
 	} {
 		if err := s.ensureColumn(ctx, column.table, column.name, column.ddl); err != nil {
-			return err
+			return fmt.Errorf("ensure column %s.%s: %w", column.table, column.name, err)
 		}
 	}
 	_, err = s.db.ExecContext(ctx, `
@@ -258,13 +262,16 @@ ON issue_thread_events(issue_id, event_key)
 WHERE event_key IS NOT NULL AND event_key != '';
 
 `)
-	return err
+	if err != nil {
+		return fmt.Errorf("create issue event unique index: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) ensureColumn(ctx context.Context, table, name, ddl string) error {
 	rows, err := s.db.QueryContext(ctx, "PRAGMA table_info("+sanitizeIdentifier(table)+")")
 	if err != nil {
-		return err
+		return fmt.Errorf("inspect table %s: %w", table, err)
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -274,17 +281,20 @@ func (s *Store) ensureColumn(ctx context.Context, table, name, ddl string) error
 		var defaultValue any
 		var pk int
 		if err := rows.Scan(&cid, &columnName, &columnType, &notNull, &defaultValue, &pk); err != nil {
-			return err
+			return fmt.Errorf("scan table %s column info: %w", table, err)
 		}
 		if strings.EqualFold(columnName, name) {
 			return rows.Err()
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return err
+		return fmt.Errorf("iterate table %s column info: %w", table, err)
 	}
 	_, err = s.db.ExecContext(ctx, ddl)
-	return err
+	if err != nil {
+		return fmt.Errorf("add column %s.%s: %w", table, name, err)
+	}
+	return nil
 }
 
 func sanitizeIdentifier(value string) string {

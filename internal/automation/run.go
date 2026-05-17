@@ -24,7 +24,7 @@ func (s *Scheduler) runTask(ctx context.Context, task Task) {
 	if !s.recordAutomationRun(task, outcome) {
 		return
 	}
-	s.deliverAutomationReport(task, outcome.result)
+	s.deliverAutomationReport(ctx, task, outcome.result)
 }
 
 func (s *Scheduler) executeAutomationTask(ctx context.Context, task Task) automationRunOutcome {
@@ -92,12 +92,14 @@ func automationRunTraceFields(task Task, outcome automationRunOutcome) map[strin
 	return fields
 }
 
-func (s *Scheduler) deliverAutomationReport(task Task, result string) {
+func (s *Scheduler) deliverAutomationReport(ctx context.Context, task Task, result string) {
 	if s.reporter == nil {
 		return
 	}
 	reportStartedAt := time.Now().UTC()
-	reportCtx, reportCancel := context.WithTimeout(context.Background(), automationRunTimeout)
+	reportCtx, reportCancel := context.WithTimeout(ctx, automationRunTimeout)
+	defer reportCancel()
+
 	reporterType, err := s.sendAutomationReport(reportCtx, task, result)
 	reportCompletedAt := time.Now().UTC()
 	if err != nil {
@@ -106,7 +108,6 @@ func (s *Scheduler) deliverAutomationReport(task Task, result string) {
 	} else {
 		s.appendTrace(automationTracePath(task), automationReportTraceFields(task, reporterType, reportStartedAt, reportCompletedAt, nil))
 	}
-	reportCancel()
 }
 
 func (s *Scheduler) sendAutomationReport(ctx context.Context, task Task, result string) (string, error) {

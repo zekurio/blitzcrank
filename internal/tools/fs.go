@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -17,7 +16,7 @@ func (r *Registry) fsStat(path string) (any, error) {
 	}
 	info, err := os.Stat(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("stat %s: %w", path, err)
 	}
 	return map[string]any{
 		"path":     path,
@@ -36,7 +35,7 @@ func (r *Registry) fsList(path string) (any, error) {
 	}
 	entries, err := os.ReadDir(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read directory %s: %w", path, err)
 	}
 	var out []map[string]any
 	for i, entry := range entries {
@@ -98,36 +97,17 @@ func (r *Registry) fsFindRecent(root string, limit int) (any, error) {
 	return map[string]any{"root": root, "files": files}, nil
 }
 
-func (r *Registry) fsDiskUsage(path string) (any, error) {
-	path, err := r.allowedPath(path)
-	if err != nil {
-		return nil, err
-	}
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs(path, &stat); err != nil {
-		return nil, err
-	}
-	total := stat.Blocks * uint64(stat.Bsize)
-	free := stat.Bavail * uint64(stat.Bsize)
-	return map[string]any{
-		"path":        path,
-		"total_bytes": total,
-		"free_bytes":  free,
-		"used_bytes":  total - free,
-	}, nil
-}
-
 func (r *Registry) allowedPath(path string) (string, error) {
 	if len(r.cfg.FSAllowedRoots) == 0 {
 		return "", fmt.Errorf("filesystem tools are not configured; set FS_TOOL_ALLOWED_ROOTS")
 	}
 	clean, err := filepath.Abs(strings.TrimSpace(path))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("resolve absolute path %q: %w", path, err)
 	}
 	resolved, err := filepath.EvalSymlinks(clean)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("resolve symlinks for %s: %w", clean, err)
 	}
 	for _, root := range r.cfg.FSAllowedRoots {
 		root = strings.TrimSpace(root)

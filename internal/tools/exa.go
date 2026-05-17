@@ -44,17 +44,17 @@ func (r *Registry) exaSearch(ctx context.Context, query string, limit int) (any,
 
 	req, err := r.newExaSearchRequest(ctx, query, limit)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create Exa search request: %w", err)
 	}
 	resp, err := r.http.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("send Exa search request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	envelope, err := decodeExaSearchResponse(resp)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decode Exa search response: %w", err)
 	}
 	return formatExaSearchOutput(query, envelope), nil
 }
@@ -70,7 +70,7 @@ func (r *Registry) newExaSearchRequest(ctx context.Context, query string, limit 
 	}
 	data, err := json.Marshal(body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("encode Exa search body: %w", err)
 	}
 	baseURL := strings.TrimSpace(r.cfg.ExaBaseURL)
 	if baseURL == "" {
@@ -78,7 +78,7 @@ func (r *Registry) newExaSearchRequest(ctx context.Context, query string, limit 
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/search", bytes.NewReader(data))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create HTTP request: %w", err)
 	}
 	req.Header.Set("x-api-key", r.cfg.ExaAPIKey)
 	req.Header.Set("Accept", "application/json")
@@ -89,7 +89,7 @@ func (r *Registry) newExaSearchRequest(ctx context.Context, query string, limit 
 func decodeExaSearchResponse(resp *http.Response) (exaSearchEnvelope, error) {
 	payload, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
-		return exaSearchEnvelope{}, err
+		return exaSearchEnvelope{}, fmt.Errorf("read response body: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return exaSearchEnvelope{}, fmt.Errorf("Exa search failed: %s: %s", resp.Status, strings.TrimSpace(string(payload)))
@@ -97,7 +97,7 @@ func decodeExaSearchResponse(resp *http.Response) (exaSearchEnvelope, error) {
 
 	var envelope exaSearchEnvelope
 	if err := json.Unmarshal(payload, &envelope); err != nil {
-		return exaSearchEnvelope{}, err
+		return exaSearchEnvelope{}, fmt.Errorf("parse response body: %w", err)
 	}
 	if envelope.Error != nil {
 		return exaSearchEnvelope{}, fmt.Errorf("Exa search error: %v", envelope.Error)

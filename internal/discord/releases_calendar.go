@@ -19,6 +19,7 @@ import (
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/opentype"
 	"golang.org/x/image/math/fixed"
+	"golang.org/x/image/vector"
 )
 
 const (
@@ -30,8 +31,23 @@ var (
 	radarrReleaseColor = color.RGBA{R: 232, G: 160, B: 32, A: 255}
 )
 
+var (
+	releaseCalendarBackgroundColor  = color.RGBA{R: 11, G: 11, B: 12, A: 255}
+	releaseCalendarCellColor        = color.RGBA{R: 31, G: 31, B: 34, A: 255}
+	releaseCalendarMutedCellColor   = color.RGBA{R: 23, G: 23, B: 25, A: 255}
+	releaseCalendarBorderColor      = color.RGBA{R: 61, G: 61, B: 66, A: 255}
+	releaseCalendarMutedBorderColor = color.RGBA{R: 43, G: 43, B: 47, A: 255}
+	releaseCalendarInkColor         = color.RGBA{R: 12, G: 12, B: 13, A: 255}
+)
+
 //go:embed assets/fonts/OpenSans-Regular.ttf
 var releaseCalendarFontData []byte
+
+//go:embed assets/fonts/OpenSans-SemiBold.ttf
+var releaseCalendarSemiBoldFontData []byte
+
+//go:embed assets/fonts/OpenSans-Bold.ttf
+var releaseCalendarBoldFontData []byte
 
 type releaseCalendarItem struct {
 	Service string
@@ -247,14 +263,40 @@ func parseReleaseTime(values ...any) (time.Time, bool) {
 }
 
 func renderReleaseCalendarPNG(start, end time.Time, label string, items []releaseCalendarItem, warnings []string) ([]byte, error) {
-	const width = 1280
+	const width = 1400
 	const margin = 36
 	const headerHeight = 118
 	const weekdayHeight = 30
 	const dayHeaderHeight = 24
-	const itemHeight = 22
 	const rowGap = 12
 	const cellPadding = 8
+	const dateReleaseGap = 8
+	const chipPadding = 6
+	const itemGap = 4
+	const chipRadius = 5
+	const cellRadius = 5
+
+	face, err := releaseCalendarFontFace()
+	if err != nil {
+		return nil, err
+	}
+	defer face.Close()
+	boldFace, err := releaseCalendarBoldFontFace()
+	if err != nil {
+		return nil, err
+	}
+	defer boldFace.Close()
+	semiBoldFace, err := releaseCalendarSemiBoldFontFace()
+	if err != nil {
+		return nil, err
+	}
+	defer semiBoldFace.Close()
+	chipMetrics := semiBoldFace.Metrics()
+	chipAscent := chipMetrics.Ascent.Ceil()
+	chipDescent := chipMetrics.Descent.Ceil()
+	chipLineHeight := chipMetrics.Height.Ceil()
+	dateAscent := face.Metrics().Ascent.Ceil()
+
 	gridStart := calendarGridStart(start)
 	gridEnd := calendarGridEnd(end)
 	days := int(gridEnd.Sub(gridStart).Hours() / 24)
@@ -263,45 +305,68 @@ func renderReleaseCalendarPNG(start, end time.Time, label string, items []releas
 	}
 	rows := (days + 6) / 7
 	byDay := map[int][]releaseCalendarItem{}
-	maxItemsInRow := make([]int, rows)
 	for _, item := range items {
 		index := int(dayStart(item.Date).Sub(gridStart).Hours() / 24)
 		if index < 0 || index >= days {
 			continue
 		}
 		byDay[index] = append(byDay[index], item)
-		row := index / 7
-		if len(byDay[index]) > maxItemsInRow[row] {
-			maxItemsInRow[row] = len(byDay[index])
-		}
 	}
+
+	cellWidth := (width - margin*2) / 7
+	chipTextWidth := cellWidth - cellPadding*2 - 14 - chipPadding*2
+
+	dayHeights := make([]int, days)
+	for i := 0; i < days; i++ {
+		h := dayHeaderHeight + cellPadding
+		if len(byDay[i]) > 0 {
+			h += dateReleaseGap
+		}
+		for idx, item := range byDay[i] {
+			lines := wrapCalendarText(semiBoldFace, item.Title, chipTextWidth)
+			itemH := chipHeight(len(lines), chipPadding, chipAscent, chipDescent, chipLineHeight)
+			h += itemH
+			if idx < len(byDay[i])-1 {
+				h += itemGap
+			}
+		}
+		if len(byDay[i]) > 0 {
+			h += cellPadding
+		}
+		dayHeights[i] = h
+	}
+
 	rowHeights := make([]int, rows)
-	gridHeight := weekdayHeight
-	for row := range rowHeights {
-		rowHeights[row] = dayHeaderHeight + cellPadding*2 + max(1, maxItemsInRow[row])*itemHeight
-		if rowHeights[row] < 112 {
-			rowHeights[row] = 112
+	for i, h := range dayHeights {
+		r := i / 7
+		if h > rowHeights[r] {
+			rowHeights[r] = h
 		}
-		gridHeight += rowHeights[row] + rowGap
 	}
+	for r := range rowHeights {
+		if rowHeights[r] < 48 {
+			rowHeights[r] = 48
+		}
+	}
+
+	gridHeight := weekdayHeight
+	for _, h := range rowHeights {
+		gridHeight += h + rowGap
+	}
+
 	warningHeight := 0
 	if len(warnings) > 0 {
 		warningHeight = 28 + len(warnings)*18
 	}
 	height := margin*2 + headerHeight + gridHeight + warningHeight
-	face, err := releaseCalendarFontFace()
-	if err != nil {
-		return nil, err
-	}
-	defer face.Close()
 
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
-	draw.Draw(img, img.Bounds(), &image.Uniform{C: color.RGBA{R: 15, G: 23, B: 42, A: 255}}, image.Point{}, draw.Src)
-	drawText(img, face, margin, 50, "Release-Kalender", color.RGBA{R: 241, G: 245, B: 249, A: 255})
+	draw.Draw(img, img.Bounds(), &image.Uniform{C: releaseCalendarBackgroundColor}, image.Point{}, draw.Src)
+	drawText(img, boldFace, margin, 50, "Release-Kalender", color.RGBA{R: 241, G: 245, B: 249, A: 255})
 	drawText(img, face, margin, 76, label, color.RGBA{R: 148, G: 163, B: 184, A: 255})
-	drawLegend(img, face, width-margin-280, 42, "Sonarr", sonarrReleaseColor)
-	drawLegend(img, face, width-margin-160, 42, "Radarr", radarrReleaseColor)
-	cellWidth := (width - margin*2) / 7
+	drawLegend(img, face, width-margin-420, 42, "Sonarr (Serien)", sonarrReleaseColor)
+	drawLegend(img, face, width-margin-210, 42, "Radarr (Filme)", radarrReleaseColor)
+
 	y := margin + headerHeight
 	for i, weekday := range []string{"Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"} {
 		drawText(img, face, margin+i*cellWidth+cellPadding, y+18, weekday, color.RGBA{R: 203, G: 213, B: 225, A: 255})
@@ -313,25 +378,36 @@ func renderReleaseCalendarPNG(start, end time.Time, label string, items []releas
 			index := row*7 + col
 			x := margin + col*cellWidth
 			rect := image.Rect(x, y, x+cellWidth-6, y+rowHeight)
-			fill := color.RGBA{R: 30, G: 41, B: 59, A: 255}
+			fill := releaseCalendarCellColor
+			border := releaseCalendarBorderColor
 			if index >= days {
-				fill = color.RGBA{R: 23, G: 32, B: 48, A: 255}
+				fill = releaseCalendarMutedCellColor
+				border = releaseCalendarMutedBorderColor
 			}
-			draw.Draw(img, rect, &image.Uniform{C: fill}, image.Point{}, draw.Src)
-			drawRectBorder(img, rect, color.RGBA{R: 51, G: 65, B: 85, A: 255})
+			fillRoundedRect(img, rect, cellRadius, border)
+			fillRoundedRect(img, image.Rect(rect.Min.X+1, rect.Min.Y+1, rect.Max.X-1, rect.Max.Y-1), cellRadius-1, fill)
 			if index < days {
 				day := gridStart.AddDate(0, 0, index)
 				dayColor := color.RGBA{R: 226, G: 232, B: 240, A: 255}
 				if day.Before(start) || !day.Before(end) {
 					dayColor = color.RGBA{R: 148, G: 163, B: 184, A: 255}
 				}
-				drawText(img, face, x+cellPadding, y+18, day.Format("02.01."), dayColor)
-				itemY := y + dayHeaderHeight + cellPadding
-				for _, item := range byDay[index] {
-					chip := image.Rect(x+cellPadding, itemY, x+cellWidth-14, itemY+itemHeight-4)
-					draw.Draw(img, chip, &image.Uniform{C: item.Color}, image.Point{}, draw.Src)
-					drawText(img, face, chip.Min.X+6, chip.Min.Y+14, compactCalendarText(item.Title, 18), color.RGBA{R: 15, G: 23, B: 42, A: 255})
-					itemY += itemHeight
+				drawText(img, face, x+cellPadding, y+cellPadding+dateAscent, day.Format("02.01."), dayColor)
+				itemY := y + dayHeaderHeight + cellPadding + dateReleaseGap
+				for idx, item := range byDay[index] {
+					lines := wrapCalendarText(semiBoldFace, item.Title, chipTextWidth)
+					itemH := chipHeight(len(lines), chipPadding, chipAscent, chipDescent, chipLineHeight)
+					chip := image.Rect(x+cellPadding, itemY, x+cellWidth-14, itemY+itemH)
+					fillRoundedRect(img, chip, chipRadius, item.Color)
+					textY := chip.Min.Y + chipPadding + chipAscent
+					for _, line := range lines {
+						drawText(img, semiBoldFace, chip.Min.X+chipPadding, textY, line, releaseCalendarInkColor)
+						textY += chipLineHeight
+					}
+					itemY += itemH
+					if idx < len(byDay[index])-1 {
+						itemY += itemGap
+					}
 				}
 			}
 		}
@@ -381,8 +457,43 @@ func releaseCalendarFontFace() (font.Face, error) {
 	})
 }
 
+func releaseCalendarSemiBoldFontFace() (font.Face, error) {
+	parsed, err := opentype.Parse(releaseCalendarSemiBoldFontData)
+	if err != nil {
+		return nil, fmt.Errorf("parse embedded release calendar semibold font: %w", err)
+	}
+	return opentype.NewFace(parsed, &opentype.FaceOptions{
+		Size:    13,
+		DPI:     96,
+		Hinting: font.HintingFull,
+	})
+}
+
+func releaseCalendarBoldFontFace() (font.Face, error) {
+	parsed, err := opentype.Parse(releaseCalendarBoldFontData)
+	if err != nil {
+		return nil, fmt.Errorf("parse embedded release calendar bold font: %w", err)
+	}
+	return opentype.NewFace(parsed, &opentype.FaceOptions{
+		Size:    13,
+		DPI:     96,
+		Hinting: font.HintingFull,
+	})
+}
+
+func chipHeight(lineCount, padding, ascent, descent, lineHeight int) int {
+	if lineCount < 1 {
+		lineCount = 1
+	}
+	textHeight := ascent + descent
+	if lineCount > 1 {
+		textHeight += (lineCount - 1) * lineHeight
+	}
+	return padding*2 + textHeight
+}
+
 func drawLegend(img *image.RGBA, face font.Face, x, y int, label string, c color.RGBA) {
-	draw.Draw(img, image.Rect(x, y, x+18, y+18), &image.Uniform{C: c}, image.Point{}, draw.Src)
+	fillRoundedRect(img, image.Rect(x, y, x+18, y+18), 5, c)
 	drawText(img, face, x+26, y+14, label, color.RGBA{R: 226, G: 232, B: 240, A: 255})
 }
 
@@ -396,11 +507,39 @@ func drawText(img *image.RGBA, face font.Face, x, y int, text string, c color.Co
 	d.DrawString(text)
 }
 
-func drawRectBorder(img *image.RGBA, rect image.Rectangle, c color.Color) {
-	draw.Draw(img, image.Rect(rect.Min.X, rect.Min.Y, rect.Max.X, rect.Min.Y+1), &image.Uniform{C: c}, image.Point{}, draw.Src)
-	draw.Draw(img, image.Rect(rect.Min.X, rect.Max.Y-1, rect.Max.X, rect.Max.Y), &image.Uniform{C: c}, image.Point{}, draw.Src)
-	draw.Draw(img, image.Rect(rect.Min.X, rect.Min.Y, rect.Min.X+1, rect.Max.Y), &image.Uniform{C: c}, image.Point{}, draw.Src)
-	draw.Draw(img, image.Rect(rect.Max.X-1, rect.Min.Y, rect.Max.X, rect.Max.Y), &image.Uniform{C: c}, image.Point{}, draw.Src)
+func fillRoundedRect(img *image.RGBA, rect image.Rectangle, r int, c color.Color) {
+	rect = rect.Intersect(img.Bounds())
+	if rect.Empty() {
+		return
+	}
+	if r <= 0 {
+		draw.Draw(img, rect, &image.Uniform{C: c}, image.Point{}, draw.Src)
+		return
+	}
+	maxRadius := min(rect.Dx(), rect.Dy()) / 2
+	if r > maxRadius {
+		r = maxRadius
+	}
+
+	const kappa = 0.55228475
+	x0, y0 := float32(rect.Min.X), float32(rect.Min.Y)
+	x1, y1 := float32(rect.Max.X), float32(rect.Max.Y)
+	radius := float32(r)
+	control := radius * kappa
+
+	bounds := img.Bounds()
+	rasterizer := vector.NewRasterizer(bounds.Dx(), bounds.Dy())
+	rasterizer.MoveTo(x0+radius, y0)
+	rasterizer.LineTo(x1-radius, y0)
+	rasterizer.CubeTo(x1-radius+control, y0, x1, y0+radius-control, x1, y0+radius)
+	rasterizer.LineTo(x1, y1-radius)
+	rasterizer.CubeTo(x1, y1-radius+control, x1-radius+control, y1, x1-radius, y1)
+	rasterizer.LineTo(x0+radius, y1)
+	rasterizer.CubeTo(x0+radius-control, y1, x0, y1-radius+control, x0, y1-radius)
+	rasterizer.LineTo(x0, y0+radius)
+	rasterizer.CubeTo(x0, y0+radius-control, x0+radius-control, y0, x0+radius, y0)
+	rasterizer.ClosePath()
+	rasterizer.Draw(img, bounds, &image.Uniform{C: c}, image.Point{})
 }
 
 func compactCalendarText(text string, maxRunes int) string {
@@ -416,6 +555,54 @@ func compactCalendarText(text string, maxRunes int) string {
 		return string(runes[:maxRunes])
 	}
 	return string(runes[:maxRunes-3]) + "..."
+}
+
+func measureStringWidth(face font.Face, text string) int {
+	return font.MeasureString(face, text).Ceil()
+}
+
+func truncateToWidth(face font.Face, text string, maxWidth int) string {
+	if measureStringWidth(face, text) <= maxWidth {
+		return text
+	}
+	runes := []rune(text)
+	low, high := 0, len(runes)
+	for low < high {
+		mid := (low + high + 1) / 2
+		t := string(runes[:mid]) + "..."
+		if measureStringWidth(face, t) <= maxWidth {
+			low = mid
+		} else {
+			high = mid - 1
+		}
+	}
+	if low == 0 {
+		return "..."
+	}
+	return string(runes[:low]) + "..."
+}
+
+func wrapCalendarText(face font.Face, text string, maxWidth int) []string {
+	if maxWidth <= 0 {
+		return []string{text}
+	}
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return nil
+	}
+	var lines []string
+	currentLine := words[0]
+	for _, word := range words[1:] {
+		testLine := currentLine + " " + word
+		if measureStringWidth(face, testLine) <= maxWidth {
+			currentLine = testLine
+		} else {
+			lines = append(lines, truncateToWidth(face, currentLine, maxWidth))
+			currentLine = word
+		}
+	}
+	lines = append(lines, truncateToWidth(face, currentLine, maxWidth))
+	return lines
 }
 
 func stringFromMap(object map[string]any, key string) string {

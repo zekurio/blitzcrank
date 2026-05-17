@@ -37,13 +37,18 @@ func (a *Agent) Respond(ctx context.Context, req Request) (string, error) {
 	availableTools := a.registry.OpenAIToolsForPolicy(toolPolicy)
 	systemPrompt := a.systemPrompt(req)
 	runtimePrompt := a.runtimeMetadata(model, reasoningEffort, toolPolicy)
-	messages := []llm.Message{
-		{Role: "system", Content: systemPrompt},
-		{Role: "system", Content: a.workflowPrompt(req, toolPolicy)},
-		{Role: "system", Content: a.toolContextPrompt(toolPolicy)},
-		{Role: "system", Content: runtimePrompt},
-		{Role: "user", Content: requestMessage(req)},
+	messageCap := 5
+	if cfg.MaxToolIterations > 0 {
+		messageCap += cfg.MaxToolIterations * (1 + len(availableTools))
 	}
+	messages := make([]llm.Message, 0, messageCap)
+	messages = append(messages,
+		llm.Message{Role: "system", Content: systemPrompt},
+		llm.Message{Role: "system", Content: a.workflowPrompt(req, toolPolicy)},
+		llm.Message{Role: "system", Content: a.toolContextPrompt(toolPolicy)},
+		llm.Message{Role: "system", Content: runtimePrompt},
+		llm.Message{Role: "user", Content: requestMessage(req)},
+	)
 
 	for range cfg.MaxToolIterations {
 		response, err := client.Chat(ctx, llm.ChatRequest{

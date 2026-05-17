@@ -16,7 +16,7 @@ import (
 func loadDotenv(path string) error {
 	file, err := os.Open(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("open dotenv %s: %w", path, err)
 	}
 	defer file.Close()
 
@@ -33,7 +33,10 @@ func loadDotenv(path string) error {
 			_ = os.Setenv(key, value)
 		}
 	}
-	return scanner.Err()
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("read dotenv %s: %w", path, err)
+	}
+	return nil
 }
 
 func getenv(key, fallback string) string {
@@ -113,7 +116,7 @@ func applyTOMLFile(cfg *Config, path string) error {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return err
+		return fmt.Errorf("open config %s: %w", path, err)
 	}
 	defer file.Close()
 
@@ -123,9 +126,12 @@ func applyTOMLFile(cfg *Config, path string) error {
 	}
 	flat := flattenTOML(tree, nil, map[string]any{})
 	if err := applyTOMLValues(cfg, flat); err != nil {
-		return err
+		return fmt.Errorf("apply config values: %w", err)
 	}
-	return applyRuntimeProfilesFromTOML(cfg, flat)
+	if err := applyRuntimeProfilesFromTOML(cfg, flat); err != nil {
+		return fmt.Errorf("apply runtime profiles: %w", err)
+	}
+	return nil
 }
 
 func applyTOMLValues(cfg *Config, values map[string]any) error {

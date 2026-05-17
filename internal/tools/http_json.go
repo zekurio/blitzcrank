@@ -31,14 +31,14 @@ func (r *Registry) doJSON(ctx context.Context, request jsonRequest) (any, error)
 	if request.Body != nil {
 		data, err := json.Marshal(request.Body)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("encode %s %s request body: %w", request.Method, request.Path, err)
 		}
 		reader = bytes.NewReader(data)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, request.Method, strings.TrimRight(request.BaseURL, "/")+request.Path, reader)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create %s %s request: %w", request.Method, request.Path, err)
 	}
 	req.Header.Set(request.APIHeader, request.APIKey)
 	req.Header.Set("Accept", "application/json")
@@ -53,13 +53,13 @@ func (r *Registry) doJSON(ctx context.Context, request jsonRequest) (any, error)
 
 	resp, err := r.http.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("send %s %s request: %w", request.Method, request.Path, err)
 	}
 	defer resp.Body.Close()
 
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxJSONResponseBytes+1))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read %s %s response: %w", request.Method, request.Path, err)
 	}
 	if len(data) > maxJSONResponseBytes {
 		return nil, fmt.Errorf("%s %s response exceeded %d bytes", request.Method, request.Path, maxJSONResponseBytes)
