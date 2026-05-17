@@ -33,17 +33,12 @@ type discordSessionAPI interface {
 	ApplicationCommands(string, string, ...discordgo.RequestOption) ([]*discordgo.ApplicationCommand, error)
 	ApplicationCommandEdit(string, string, string, *discordgo.ApplicationCommand, ...discordgo.RequestOption) (*discordgo.ApplicationCommand, error)
 	ApplicationCommandCreate(string, string, *discordgo.ApplicationCommand, ...discordgo.RequestOption) (*discordgo.ApplicationCommand, error)
+	ApplicationCommandDelete(string, string, string, ...discordgo.RequestOption) error
 }
 
 type RuntimeManager interface {
-	ReloadSkills() error
-	ReloadAutomations() error
-	ConfigGet(string) (string, error)
-	ConfigSet(string, string) error
-	Restart()
 	RunAutomation(context.Context, string) error
 	AutomationNames() []string
-	AutomationStatus(time.Time) string
 }
 
 func NewBot(cfg config.Config, assistant *agent.Agent, state *store.Store) (*Bot, error) {
@@ -124,8 +119,10 @@ func (b *Bot) registerRuntimeCommands() error {
 		existing[command.Name] = command.ID
 		existingCommands[command.Name] = command
 	}
-	var created, edited, unchanged int
+	desiredNames := map[string]bool{}
+	var created, edited, unchanged, deleted int
 	for _, command := range commands.ApplicationCommands() {
+		desiredNames[command.Name] = true
 		if id := existing[command.Name]; id != "" {
 			if applicationCommandMatches(existingCommands[command.Name], command) {
 				unchanged++
@@ -148,8 +145,28 @@ func (b *Bot) registerRuntimeCommands() error {
 		created++
 		log.Printf("discord startup step completed: name=create_application_command command=%s status=ok duration=%s", command.Name, startupDuration(time.Since(stepStartedAt)))
 	}
-	log.Printf("discord startup command sync completed: created=%d edited=%d unchanged=%d duration=%s", created, edited, unchanged, startupDuration(time.Since(startedAt)))
+	for _, name := range retiredApplicationCommands() {
+		if desiredNames[name] {
+			continue
+		}
+		id := existing[name]
+		if id == "" {
+			continue
+		}
+		stepStartedAt = time.Now()
+		if err := api.ApplicationCommandDelete(b.botID, b.cfg.DiscordGuildID, id); err != nil {
+			log.Printf("discord startup step completed: name=delete_application_command command=%s status=failed duration=%s", name, startupDuration(time.Since(stepStartedAt)))
+			return err
+		}
+		deleted++
+		log.Printf("discord startup step completed: name=delete_application_command command=%s status=ok duration=%s", name, startupDuration(time.Since(stepStartedAt)))
+	}
+	log.Printf("discord startup command sync completed: created=%d edited=%d deleted=%d unchanged=%d duration=%s", created, edited, deleted, unchanged, startupDuration(time.Since(startedAt)))
 	return nil
+}
+
+func retiredApplicationCommands() []string {
+	return []string{"config"}
 }
 
 func applicationCommandMatches(existing, desired *discordgo.ApplicationCommand) bool {

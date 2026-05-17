@@ -8,8 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -36,7 +34,6 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	var restartRequested atomic.Bool
 
 	startup := newStartupLogger()
 	finishStep := startup.start("load_config")
@@ -103,11 +100,7 @@ func main() {
 
 	finishStep = startup.start("wire_runtime_control")
 	runtime := &runtimeControl{
-		cfg:         cfg,
-		skills:      assistant,
 		automations: scheduler,
-		stop:        stop,
-		restarting:  &restartRequested,
 	}
 	if bot != nil {
 		bot.SetRuntimeManager(runtime)
@@ -127,24 +120,13 @@ func main() {
 	if err := webhookServer.Shutdown(shutdownCtx); err != nil && !errors.Is(err, context.Canceled) {
 		log.Printf("shutdown webhook server: %v", err)
 	}
-	if restartRequested.Load() {
-		os.Exit(42)
-	}
 }
 
 type runtimeControl struct {
-	mu          sync.Mutex
-	cfg         config.Config
-	skills      interface{ ReloadSkills() error }
 	automations interface {
-		ReloadAutomations() error
-		UpdateConfig(config.Config)
 		RunAutomation(context.Context, string) error
 		AutomationNames() []string
-		AutomationStatus(time.Time) string
 	}
-	stop       context.CancelFunc
-	restarting *atomic.Bool
 }
 
 type startupLogger struct {
@@ -181,57 +163,12 @@ func startupDuration(duration time.Duration) time.Duration {
 	return duration.Round(time.Millisecond)
 }
 
-func (r *runtimeControl) ReloadSkills() error {
-	return r.skills.ReloadSkills()
-}
-
-func (r *runtimeControl) ReloadAutomations() error {
-	return r.automations.ReloadAutomations()
-}
-
-func (r *runtimeControl) Restart() {
-	if r.restarting != nil {
-		r.restarting.Store(true)
-	}
-	if r.stop != nil {
-		r.stop()
-	}
-}
-
-func (r *runtimeControl) ConfigGet(key string) (string, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return config.GetRuntimeConfigValue(r.cfg, key)
-}
-
-func (r *runtimeControl) ConfigSet(key, value string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if err := config.SetRuntimeConfigValue(r.cfg.RuntimeConfigPath, key, value); err != nil {
-		return err
-	}
-	next := r.cfg
-	if err := config.ApplyRuntimeConfigFile(&next); err != nil {
-		return err
-	}
-	r.cfg = next
-	if updater, ok := r.skills.(interface{ UpdateConfig(config.Config) }); ok {
-		updater.UpdateConfig(next)
-	}
-	r.automations.UpdateConfig(next)
-	return nil
-}
-
 func (r *runtimeControl) RunAutomation(ctx context.Context, name string) error {
 	return r.automations.RunAutomation(ctx, name)
 }
 
 func (r *runtimeControl) AutomationNames() []string {
 	return r.automations.AutomationNames()
-}
-
-func (r *runtimeControl) AutomationStatus(now time.Time) string {
-	return r.automations.AutomationStatus(now)
 }
 
 func runConfigCommand(command string, args []string) {
