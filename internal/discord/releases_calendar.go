@@ -3,6 +3,7 @@ package discord
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"fmt"
 	"image"
 	"image/color"
@@ -16,7 +17,7 @@ import (
 	"blitzcrank/internal/tools"
 
 	"golang.org/x/image/font"
-	"golang.org/x/image/font/basicfont"
+	"golang.org/x/image/font/opentype"
 	"golang.org/x/image/math/fixed"
 )
 
@@ -25,9 +26,12 @@ const (
 )
 
 var (
-	sonarrReleaseColor = color.RGBA{R: 53, G: 197, B: 244, A: 255}
-	radarrReleaseColor = color.RGBA{R: 255, G: 194, B: 48, A: 255}
+	sonarrReleaseColor = color.RGBA{R: 24, G: 172, B: 219, A: 255}
+	radarrReleaseColor = color.RGBA{R: 232, G: 160, B: 32, A: 255}
 )
+
+//go:embed assets/fonts/OpenSans-Regular.ttf
+var releaseCalendarFontData []byte
 
 type releaseCalendarItem struct {
 	Service string
@@ -225,16 +229,22 @@ func renderReleaseCalendarPNG(start, end time.Time, label string, items []releas
 		warningHeight = 28 + len(warnings)*18
 	}
 	height := margin*2 + headerHeight + gridHeight + warningHeight
+	face, err := releaseCalendarFontFace()
+	if err != nil {
+		return nil, err
+	}
+	defer face.Close()
+
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
-	draw.Draw(img, img.Bounds(), &image.Uniform{C: color.RGBA{R: 248, G: 250, B: 252, A: 255}}, image.Point{}, draw.Src)
-	drawText(img, margin, 50, "Release-Kalender", color.RGBA{R: 15, G: 23, B: 42, A: 255})
-	drawText(img, margin, 74, label, color.RGBA{R: 71, G: 85, B: 105, A: 255})
-	drawLegend(img, width-margin-280, 42, "Sonarr", sonarrReleaseColor)
-	drawLegend(img, width-margin-160, 42, "Radarr", radarrReleaseColor)
+	draw.Draw(img, img.Bounds(), &image.Uniform{C: color.RGBA{R: 15, G: 23, B: 42, A: 255}}, image.Point{}, draw.Src)
+	drawText(img, face, margin, 50, "Release-Kalender", color.RGBA{R: 241, G: 245, B: 249, A: 255})
+	drawText(img, face, margin, 76, label, color.RGBA{R: 148, G: 163, B: 184, A: 255})
+	drawLegend(img, face, width-margin-280, 42, "Sonarr", sonarrReleaseColor)
+	drawLegend(img, face, width-margin-160, 42, "Radarr", radarrReleaseColor)
 	cellWidth := (width - margin*2) / 7
 	y := margin + headerHeight
 	for i, weekday := range []string{"Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"} {
-		drawText(img, margin+i*cellWidth+cellPadding, y+18, weekday, color.RGBA{R: 71, G: 85, B: 105, A: 255})
+		drawText(img, face, margin+i*cellWidth+cellPadding, y+18, weekday, color.RGBA{R: 203, G: 213, B: 225, A: 255})
 	}
 	y += weekdayHeight
 	for row := 0; row < rows; row++ {
@@ -243,20 +253,20 @@ func renderReleaseCalendarPNG(start, end time.Time, label string, items []releas
 			index := row*7 + col
 			x := margin + col*cellWidth
 			rect := image.Rect(x, y, x+cellWidth-6, y+rowHeight)
-			fill := color.RGBA{R: 255, G: 255, B: 255, A: 255}
+			fill := color.RGBA{R: 30, G: 41, B: 59, A: 255}
 			if index >= days {
-				fill = color.RGBA{R: 241, G: 245, B: 249, A: 255}
+				fill = color.RGBA{R: 23, G: 32, B: 48, A: 255}
 			}
 			draw.Draw(img, rect, &image.Uniform{C: fill}, image.Point{}, draw.Src)
-			drawRectBorder(img, rect, color.RGBA{R: 226, G: 232, B: 240, A: 255})
+			drawRectBorder(img, rect, color.RGBA{R: 51, G: 65, B: 85, A: 255})
 			if index < days {
 				day := start.AddDate(0, 0, index)
-				drawText(img, x+cellPadding, y+18, day.Format("02.01."), color.RGBA{R: 15, G: 23, B: 42, A: 255})
+				drawText(img, face, x+cellPadding, y+18, day.Format("02.01."), color.RGBA{R: 226, G: 232, B: 240, A: 255})
 				itemY := y + dayHeaderHeight + cellPadding
 				for _, item := range byDay[index] {
 					chip := image.Rect(x+cellPadding, itemY, x+cellWidth-14, itemY+itemHeight-4)
 					draw.Draw(img, chip, &image.Uniform{C: item.Color}, image.Point{}, draw.Src)
-					drawText(img, chip.Min.X+5, chip.Min.Y+13, compactCalendarText(item.Title, 24), color.RGBA{R: 15, G: 23, B: 42, A: 255})
+					drawText(img, face, chip.Min.X+6, chip.Min.Y+14, compactCalendarText(item.Title, 18), color.RGBA{R: 15, G: 23, B: 42, A: 255})
 					itemY += itemHeight
 				}
 			}
@@ -264,10 +274,10 @@ func renderReleaseCalendarPNG(start, end time.Time, label string, items []releas
 		y += rowHeight + rowGap
 	}
 	if len(warnings) > 0 {
-		drawText(img, margin, y+18, "Hinweise", color.RGBA{R: 100, G: 116, B: 139, A: 255})
+		drawText(img, face, margin, y+18, "Hinweise", color.RGBA{R: 203, G: 213, B: 225, A: 255})
 		y += 28
 		for _, warning := range warnings {
-			drawText(img, margin, y+14, compactCalendarText(warning, 150), color.RGBA{R: 148, G: 69, B: 69, A: 255})
+			drawText(img, face, margin, y+14, compactCalendarText(warning, 150), color.RGBA{R: 252, G: 165, B: 165, A: 255})
 			y += 18
 		}
 	}
@@ -283,16 +293,28 @@ func dayStart(value time.Time) time.Time {
 	return time.Date(value.Year(), value.Month(), value.Day(), 0, 0, 0, 0, value.Location())
 }
 
-func drawLegend(img *image.RGBA, x, y int, label string, c color.RGBA) {
-	draw.Draw(img, image.Rect(x, y, x+18, y+18), &image.Uniform{C: c}, image.Point{}, draw.Src)
-	drawText(img, x+26, y+14, label, color.RGBA{R: 15, G: 23, B: 42, A: 255})
+func releaseCalendarFontFace() (font.Face, error) {
+	parsed, err := opentype.Parse(releaseCalendarFontData)
+	if err != nil {
+		return nil, fmt.Errorf("parse embedded release calendar font: %w", err)
+	}
+	return opentype.NewFace(parsed, &opentype.FaceOptions{
+		Size:    13,
+		DPI:     96,
+		Hinting: font.HintingFull,
+	})
 }
 
-func drawText(img *image.RGBA, x, y int, text string, c color.Color) {
+func drawLegend(img *image.RGBA, face font.Face, x, y int, label string, c color.RGBA) {
+	draw.Draw(img, image.Rect(x, y, x+18, y+18), &image.Uniform{C: c}, image.Point{}, draw.Src)
+	drawText(img, face, x+26, y+14, label, color.RGBA{R: 226, G: 232, B: 240, A: 255})
+}
+
+func drawText(img *image.RGBA, face font.Face, x, y int, text string, c color.Color) {
 	d := &font.Drawer{
 		Dst:  img,
 		Src:  image.NewUniform(c),
-		Face: basicfont.Face7x13,
+		Face: face,
 		Dot:  fixed.P(x, y),
 	}
 	d.DrawString(text)
