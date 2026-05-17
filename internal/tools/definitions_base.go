@@ -319,9 +319,10 @@ var baseToolDefs = []toolDef{
 		Name:        "radarr_get_calendar",
 		Description: "Read Radarr calendar entries, optionally constrained by start and end date/time.",
 		Parameters: objectSchema(map[string]any{
-			"start":       stringSchema("Optional start date/time accepted by Radarr, for example 2026-05-17"),
-			"end":         stringSchema("Optional end date/time accepted by Radarr, for example 2026-05-24"),
-			"unmonitored": boolSchema("Whether to include unmonitored movies"),
+			"start":         stringSchema("Optional start date/time accepted by Radarr, for example 2026-05-17"),
+			"end":           stringSchema("Optional end date/time accepted by Radarr, for example 2026-05-24"),
+			"unmonitored":   boolSchema("Whether to include unmonitored movies"),
+			"release_types": stringSchema("Optional comma-separated Radarr release types to include, for example cinema,digital,physical"),
 		}, nil),
 	},
 	{

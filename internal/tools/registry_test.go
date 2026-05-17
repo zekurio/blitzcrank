@@ -1032,7 +1032,7 @@ func TestRadarrReadToolRequestShapes(t *testing.T) {
 		{"radarr_lookup_movie", map[string]any{"term": "Some Movie"}},
 		{"radarr_get_wanted_missing", map[string]any{"page": "2", "page_size": "25"}},
 		{"radarr_get_history", map[string]any{"movie_id": "456", "page_size": "10"}},
-		{"radarr_get_calendar", map[string]any{"start": "2026-05-17", "end": "2026-05-24", "unmonitored": true}},
+		{"radarr_get_calendar", map[string]any{"start": "2026-05-17", "end": "2026-05-24", "unmonitored": true, "release_types": "cinema,digital,physical"}},
 		{"radarr_get_system_status", map[string]any{}},
 		{"radarr_list_quality_profiles", map[string]any{}},
 	}
@@ -1047,7 +1047,7 @@ func TestRadarrReadToolRequestShapes(t *testing.T) {
 	assertRequest(t, requests[0], "/api/v3/movie/lookup", "term=Some Movie")
 	assertRequest(t, requests[1], "/api/v3/wanted/missing", "page=2", "pageSize=25", "sortKey=date", "sortDirection=descending")
 	assertRequest(t, requests[2], "/api/v3/history", "page=1", "pageSize=10", "movieId=456", "sortKey=date", "sortDirection=descending")
-	assertRequest(t, requests[3], "/api/v3/calendar", "start=2026-05-17", "end=2026-05-24", "unmonitored=true", "includeMovie=true")
+	assertRequest(t, requests[3], "/api/v3/calendar", "start=2026-05-17", "end=2026-05-24", "unmonitored=true", "includeMovie=true", "releaseTypes=cinema,digital,physical")
 	assertRequest(t, requests[4], "/api/v3/system/status")
 	assertRequest(t, requests[5], "/api/v3/qualityprofile")
 }

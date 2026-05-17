@@ -82,6 +82,9 @@ func arrCalendarPath(args map[string]any, includeKey string) (string, error) {
 		}
 		values.Set("unmonitored", strconv.FormatBool(unmonitored))
 	}
+	if releaseTypes := strings.TrimSpace(stringArg(args, "release_types")); releaseTypes != "" {
+		values.Set("releaseTypes", releaseTypes)
+	}
 	return "/api/v3/calendar?" + values.Encode(), nil
 }
 

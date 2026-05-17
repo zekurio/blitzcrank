@@ -42,20 +42,31 @@ type releaseCalendarItem struct {
 
 func releaseCalendarSpan(span string, now time.Time) (time.Time, time.Time, string, error) {
 	location := now.Location()
-	start := time.Date(now.In(location).Year(), now.In(location).Month(), now.In(location).Day(), 0, 0, 0, 0, location)
+	now = now.In(location)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location)
 	switch strings.ToLower(strings.TrimSpace(span)) {
 	case "", releaseCalendarDefaultSpan:
+		start := today.AddDate(0, 0, -daysSinceMonday(today))
 		end := start.AddDate(0, 0, 7)
 		return start, end, "diese Woche (" + releaseCalendarDateRange(start, end) + ")", nil
 	case "today":
-		end := start.AddDate(0, 0, 1)
-		return start, end, "heute (" + start.Format("2006-01-02") + ")", nil
+		end := today.AddDate(0, 0, 1)
+		return today, end, "heute (" + today.Format("2006-01-02") + ")", nil
 	case "month":
+		start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, location)
 		end := start.AddDate(0, 1, 0)
 		return start, end, "dieser Monat (" + releaseCalendarDateRange(start, end) + ")", nil
 	default:
 		return time.Time{}, time.Time{}, "", fmt.Errorf("Unbekannter Zeitraum. Erlaubt sind today, week oder month.")
 	}
+}
+
+func daysSinceMonday(value time.Time) int {
+	weekday := int(value.Weekday())
+	if weekday == 0 {
+		return 6
+	}
+	return weekday - 1
 }
 
 func releaseCalendarDateRange(start, end time.Time) string {
@@ -81,6 +92,12 @@ func (b *Bot) fetchReleaseCalendarItems(ctx context.Context, start, end time.Tim
 		"end":         end.Format("2006-01-02"),
 		"unmonitored": false,
 	}
+	radarrArgs := map[string]any{
+		"start":         start.Format("2006-01-02"),
+		"end":           end.Format("2006-01-02"),
+		"unmonitored":   false,
+		"release_types": "cinema,digital,physical",
+	}
 	var items []releaseCalendarItem
 	var warnings []string
 	sonarrResult, sonarrErr := registry.Call(ctx, "sonarr_get_calendar", args)
@@ -89,7 +106,7 @@ func (b *Bot) fetchReleaseCalendarItems(ctx context.Context, start, end time.Tim
 	} else {
 		items = append(items, sonarrCalendarItems(sonarrResult)...)
 	}
-	radarrResult, radarrErr := registry.Call(ctx, "radarr_get_calendar", args)
+	radarrResult, radarrErr := registry.Call(ctx, "radarr_get_calendar", radarrArgs)
 	if radarrErr != nil {
 		warnings = append(warnings, "Radarr: "+radarrErr.Error())
 	} else {
@@ -142,12 +159,25 @@ func radarrCalendarItems(value any) []releaseCalendarItem {
 		if !ok {
 			continue
 		}
-		date, ok := parseReleaseTime(object["digitalRelease"], object["physicalRelease"], object["inCinemas"])
+		movie, _ := object["movie"].(map[string]any)
+		date, ok := parseReleaseTime(
+			object["releaseDate"],
+			object["digitalRelease"], object["physicalRelease"], object["inCinemas"],
+			movie["releaseDate"],
+			movie["digitalRelease"], movie["physicalRelease"], movie["inCinemas"],
+		)
 		if !ok {
 			continue
 		}
 		title := strings.TrimSpace(stringFromMap(object, "title"))
-		if year := intFromInterface(object["year"]); year > 0 {
+		if title == "" {
+			title = strings.TrimSpace(stringFromMap(movie, "title"))
+		}
+		year := intFromInterface(object["year"])
+		if year == 0 {
+			year = intFromInterface(movie["year"])
+		}
+		if year > 0 && title != "" {
 			title += " (" + strconv.Itoa(year) + ")"
 		}
 		if title == "" {
