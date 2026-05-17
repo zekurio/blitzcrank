@@ -207,7 +207,7 @@
               in
               base != ".git" && base != ".direnv" && base != ".env" && base != "result";
           };
-          vendorHash = "sha256-mY6LMl7G2eFpK/MaaHzFG1A20nhPEkfafmt3fFJ5zLo=";
+          vendorHash = "sha256-YQhHihBJZ6gOicaoRGg6s+fdy+2FhW4B3EL6OM/OghU=";
           subPackages = [ "cmd/blitzcrank" ];
           nativeBuildInputs = [ pkgs.makeWrapper ];
           ldflags = [
