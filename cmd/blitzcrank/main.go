@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -23,10 +22,6 @@ import (
 )
 
 func main() {
-	if len(os.Args) >= 3 && os.Args[1] == "config" {
-		runConfigCommand(os.Args[2], os.Args[3:])
-		return
-	}
 	if len(os.Args) >= 3 && os.Args[1] == "codex" {
 		runCodexCommand(os.Args[2])
 		return
@@ -169,37 +164,6 @@ func (r *runtimeControl) RunAutomation(ctx context.Context, name string) error {
 
 func (r *runtimeControl) AutomationNames() []string {
 	return r.automations.AutomationNames()
-}
-
-func runConfigCommand(command string, args []string) {
-	cfg, err := config.LoadRelaxed(".env")
-	if err != nil {
-		log.Fatalf("load config: %v", err)
-	}
-	switch command {
-	case "get":
-		if len(args) != 1 {
-			log.Fatalf("usage: blitzcrank config get <key>")
-		}
-		value, err := config.GetRuntimeConfigValue(cfg, args[0])
-		if err != nil {
-			log.Fatal(err)
-		}
-		fmt.Println(value)
-	case "set":
-		if len(args) < 2 {
-			log.Fatalf("usage: blitzcrank config set <key> <value>")
-		}
-		if err := config.SetRuntimeConfigValue(cfg.RuntimeConfigPath, args[0], strings.Join(args[1:], " ")); err != nil {
-			log.Fatal(err)
-		}
-	case "keys":
-		for _, key := range config.RuntimeConfigKeys() {
-			fmt.Println(key)
-		}
-	default:
-		log.Fatalf("unknown config command %q; expected get, set, or keys", command)
-	}
 }
 
 func runCodexCommand(command string) {

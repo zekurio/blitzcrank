@@ -23,35 +23,45 @@
         }:
         let
           cfg = config.services.blitzcrank;
-          jsonFormat = pkgs.formats.json { };
-          runtimeDefaults = jsonFormat.generate "blitzcrank-runtime-defaults.json" {
-            skills_dir = cfg.skillsDir;
-            automations_dir = cfg.automationsDir;
-            automations_enabled = cfg.automations.enable;
-            timezone = cfg.timezone;
-            runtime_profiles = {
-              default = runtimeProfileJSON cfg.runtime.default;
-              seerr = runtimeProfileJSON cfg.runtime.seerr;
-              discord = runtimeProfileJSON cfg.runtime.discord;
-              automation = runtimeProfileJSON cfg.runtime.automation;
-              discord_triage = runtimeProfileJSON cfg.runtime.discordTriage;
+          tomlFormat = pkgs.formats.toml { };
+          defaultSettings = {
+            bot.public_name = cfg.publicName;
+            storage.database_path = "${cfg.dataDir}/blitzcrank.sqlite";
+            runtime = {
+              skills_dir = cfg.skillsDir;
+              automations_dir = cfg.automationsDir;
+              automations_enabled = cfg.automations.enable;
+              automations_extra_dirs = cfg.extraAutomationDirs;
+              threads_dir = "${cfg.dataDir}/threads";
+              timezone = cfg.timezone;
+              profiles = {
+                default = runtimeProfileJSON cfg.runtime.default;
+                seerr = runtimeProfileJSON cfg.runtime.seerr;
+                discord = runtimeProfileJSON cfg.runtime.discord;
+                automation = runtimeProfileJSON cfg.runtime.automation;
+                discord_triage = runtimeProfileJSON cfg.runtime.discordTriage;
+              };
             };
           };
+          serviceConfigFile = tomlFormat.generate "blitzcrank.toml" (
+            lib.recursiveUpdate defaultSettings cfg.settings
+          );
+          serviceConfigPath =
+            if cfg.configFile != null then
+              cfg.configFile
+            else
+              serviceConfigFile;
           runtimeProfileJSON = profile: {
             provider = profile.provider;
             model = profile.model;
             reasoning_effort = profile.reasoningEffort;
           };
           settingsEnv = {
-            BOT_PUBLIC_NAME = cfg.publicName;
-            DATABASE_PATH = "${cfg.dataDir}/blitzcrank.sqlite";
-            RUNTIME_DEFAULT_CONFIG_PATH = runtimeDefaults;
-            RUNTIME_CONFIG_PATH = cfg.runtimeConfigFile;
-            AGENT_THREADS_DIR = "${cfg.dataDir}/threads";
-            AUTOMATIONS_EXTRA_DIRS = lib.concatStringsSep "," cfg.extraAutomationDirs;
+            BLITZCRANK_CONFIG = serviceConfigPath;
           };
           runtimeProfileOptions =
             {
+              defaultProvider ? "",
               defaultModel ? "gpt-5.5",
               defaultReasoningEffort ? "",
             }:
@@ -60,7 +70,7 @@
               options = {
                 provider = lib.mkOption {
                   type = lib.types.str;
-                  default = "openai-compatible";
+                  default = defaultProvider;
                 };
                 model = lib.mkOption {
                   type = lib.types.str;
@@ -103,9 +113,26 @@
               type = lib.types.nullOr lib.types.path;
               default = null;
             };
-            runtimeConfigFile = lib.mkOption {
-              type = lib.types.str;
-              default = "${cfg.dataDir}/runtime-config.json";
+            configFile = lib.mkOption {
+              type = lib.types.nullOr lib.types.path;
+              default = null;
+              description = "Path to a TOML config file. When unset, the module generates one from services.blitzcrank.settings and convenience options.";
+            };
+            settings = lib.mkOption {
+              type = tomlFormat.type;
+              default = { };
+              example = {
+                discord.channel_id = "123456789012345678";
+                seerr = {
+                  base_url = "https://jellyseerr.example";
+                  webhook_listen_addr = "127.0.0.1:8080";
+                };
+                runtime.profiles.default = {
+                  provider = "openrouter";
+                  model = "openai/gpt-5.5";
+                };
+              };
+              description = "Blitzcrank TOML settings. Secrets should usually stay in environmentFile.";
             };
             publicName = lib.mkOption {
               type = lib.types.str;
@@ -130,19 +157,27 @@
             automations.enable = lib.mkEnableOption "Blitzcrank Markdown automations";
             runtime = {
               default = lib.mkOption {
-                type = lib.types.submodule (runtimeProfileOptions { });
+                type = lib.types.submodule (runtimeProfileOptions {
+                  defaultProvider = "openai-compatible";
+                });
                 default = { };
               };
               seerr = lib.mkOption {
-                type = lib.types.submodule (runtimeProfileOptions { });
+                type = lib.types.submodule (runtimeProfileOptions {
+                  defaultModel = "";
+                });
                 default = { };
               };
               discord = lib.mkOption {
-                type = lib.types.submodule (runtimeProfileOptions { });
+                type = lib.types.submodule (runtimeProfileOptions {
+                  defaultModel = "";
+                });
                 default = { };
               };
               automation = lib.mkOption {
-                type = lib.types.submodule (runtimeProfileOptions { });
+                type = lib.types.submodule (runtimeProfileOptions {
+                  defaultModel = "";
+                });
                 default = { };
               };
               discordTriage = lib.mkOption {
@@ -217,10 +252,13 @@
           postInstall = ''
             mkdir -p $out/share/blitzcrank
             cp -R skills automations $out/share/blitzcrank/
+            cat > $out/share/blitzcrank/config.toml <<EOF
+[runtime]
+skills_dir = "$out/share/blitzcrank/skills"
+automations_dir = "$out/share/blitzcrank/automations"
+EOF
             wrapProgram $out/bin/blitzcrank \
-              --set-default SKILLS_DIR $out/share/blitzcrank/skills \
-              --set-default AUTOMATIONS_DIR $out/share/blitzcrank/automations \
-              --set-default RUNTIME_CONFIG_PATH ./runtime-config.json
+              --set-default BLITZCRANK_CONFIG $out/share/blitzcrank/config.toml
           '';
         };
 
