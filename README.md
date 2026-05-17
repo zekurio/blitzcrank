@@ -142,7 +142,7 @@ Run the hourly stale import handler...
 
 Use a robfig/cron descriptor such as `@hourly` or a five-field cron expression prefixed with `cron:`.
 
-Set `SKILLS_DIR` and `AUTOMATIONS_DIR` to runtime-managed directories. Skills follow the `skills.sh` style: each skill is a directory containing `SKILL.md`, and the frontmatter `name` must match the directory name. Runtime management is exposed through admin-only Discord slash commands under `/config`.
+Set `SKILLS_DIR` and `AUTOMATIONS_DIR` to runtime-managed directories. Skills follow the `skills.sh` style: each skill is a directory containing `SKILL.md`, and the frontmatter `name` must match the directory name.
 
 Discord also exposes skill-specific slash commands that bypass natural-language capability detection:
 
@@ -179,16 +179,7 @@ blitzcrank config set runtime.automation.model anthropic/claude-sonnet-4.6
 blitzcrank config set automations_enabled true
 ```
 
-Discord admin slash commands expose the same fixed config surface:
-
-- `/config global get`
-- `/config global set`
-- `/config profile get`
-- `/config profile set`
-- `/config automation list|reload|run`
-- `/automation name:<automation>` to run an automation directly with autocomplete
-- `/config reload-skills`
-- `/config restart`
+Discord exposes `/automation name:<automation>` as an admin-only command to run an automation directly with autocomplete. Runtime configuration is not mutable through Discord.
 
 ## Nix
 
@@ -202,7 +193,7 @@ nix build
 
 The flake also exports `nixosModules.default`, which defines `services.blitzcrank`. The module creates a system user, stores mutable state in `/var/lib/blitzcrank`, uses the embedded Markdown defaults, writes Nix-managed runtime defaults as JSON, and accepts an `environmentFile` for secrets and service credentials.
 
-The Nix-managed runtime JSON is read-only and acts as a defaults layer. Changes made through the CLI or Discord config commands are written to `/var/lib/blitzcrank/runtime-config.json`, so runtime edits survive restarts and override the Nix defaults without being clobbered by rebuilds.
+The Nix-managed runtime JSON is read-only and acts as a defaults layer. Changes made through the CLI are written to `/var/lib/blitzcrank/runtime-config.json`, so runtime edits survive restarts and override the Nix defaults without being clobbered by rebuilds.
 
 Example:
 

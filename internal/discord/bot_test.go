@@ -89,8 +89,8 @@ func TestAutomationScheduleQuestionDetection(t *testing.T) {
 
 func TestRuntimeCommandsRequireAdministratorPermission(t *testing.T) {
 	runtimeCommands := commands.RuntimeCommands()
-	if len(runtimeCommands) != 2 {
-		t.Fatalf("RuntimeCommands() len = %d, want 2", len(runtimeCommands))
+	if len(runtimeCommands) != 1 {
+		t.Fatalf("RuntimeCommands() len = %d, want 1", len(runtimeCommands))
 	}
 	for _, command := range runtimeCommands {
 		if command.DefaultMemberPermissions == nil || *command.DefaultMemberPermissions&discordgo.PermissionAdministrator == 0 {
@@ -100,39 +100,17 @@ func TestRuntimeCommandsRequireAdministratorPermission(t *testing.T) {
 			t.Fatalf("command %s DMPermission = %#v, want false", command.Name, command.DMPermission)
 		}
 	}
-	if runtimeCommands[0].Name != "config" {
-		t.Fatalf("runtime command name = %q, want config", runtimeCommands[0].Name)
+	if runtimeCommands[0].Name != "automation" {
+		t.Fatalf("runtime command name = %q, want automation", runtimeCommands[0].Name)
 	}
-	if runtimeCommands[0].Description != "Blitzcrank-Laufzeitkonfiguration und Betrieb verwalten." {
-		t.Fatalf("config command description = %q", runtimeCommands[0].Description)
+	if runtimeCommands[0].Description != "Eine Blitzcrank-Automatisierung sofort ausführen." {
+		t.Fatalf("automation command description = %q", runtimeCommands[0].Description)
 	}
-	if runtimeCommands[1].Name != "automation" {
-		t.Fatalf("runtime command name = %q, want automation", runtimeCommands[1].Name)
+	if len(runtimeCommands[0].Options) != 1 || runtimeCommands[0].Options[0].Name != "name" || !runtimeCommands[0].Options[0].Autocomplete {
+		t.Fatalf("automation command options = %#v, want autocompleted name", runtimeCommands[0].Options)
 	}
-	if runtimeCommands[1].Description != "Eine Blitzcrank-Automatisierung sofort ausführen." {
-		t.Fatalf("automation command description = %q", runtimeCommands[1].Description)
-	}
-	if len(runtimeCommands[1].Options) != 1 || runtimeCommands[1].Options[0].Name != "name" || !runtimeCommands[1].Options[0].Autocomplete {
-		t.Fatalf("automation command options = %#v, want autocompleted name", runtimeCommands[1].Options)
-	}
-	if runtimeCommands[1].Options[0].Description != "Name der Automatisierung" {
-		t.Fatalf("automation option description = %q", runtimeCommands[1].Options[0].Description)
-	}
-	if findCommandOption(runtimeCommands[0].Options, "profile", discordgo.ApplicationCommandOptionSubCommandGroup) == nil {
-		t.Fatal("config command missing profile group")
-	}
-	if findCommandOption(runtimeCommands[0].Options, "global", discordgo.ApplicationCommandOptionSubCommandGroup) == nil {
-		t.Fatal("config command missing global group")
-	}
-	if findCommandOption(runtimeCommands[0].Options, "automation", discordgo.ApplicationCommandOptionSubCommandGroup) == nil {
-		t.Fatal("config command missing automation group")
-	}
-	if findCommandOption(runtimeCommands[0].Options, "reload-automations", discordgo.ApplicationCommandOptionSubCommand) != nil {
-		t.Fatal("config command includes duplicate top-level reload-automations subcommand")
-	}
-	profile := findCommandOption(runtimeCommands[0].Options, "profile", discordgo.ApplicationCommandOptionSubCommandGroup)
-	if findCommandOption(profile.Options, "set", discordgo.ApplicationCommandOptionSubCommand) == nil {
-		t.Fatal("config profile group missing set subcommand")
+	if runtimeCommands[0].Options[0].Description != "Name der Automatisierung" {
+		t.Fatalf("automation option description = %q", runtimeCommands[0].Options[0].Description)
 	}
 }
 
@@ -205,7 +183,10 @@ func TestBotStartRegistersRuntimeCommandsFromStateUser(t *testing.T) {
 }
 
 func TestRegisterRuntimeCommandsEditsExistingAndCreatesMissing(t *testing.T) {
-	api := &fakeDiscordAPI{existing: []*discordgo.ApplicationCommand{{ID: "existing-config", Name: commands.ConfigCommand}}}
+	api := &fakeDiscordAPI{existing: []*discordgo.ApplicationCommand{
+		{ID: "existing-automation", Name: commands.AutomationCommand},
+		{ID: "existing-config", Name: "config"},
+	}}
 	bot := &Bot{
 		cfg:   config.Config{DiscordGuildID: "guild-1"},
 		api:   api,
@@ -215,15 +196,18 @@ func TestRegisterRuntimeCommandsEditsExistingAndCreatesMissing(t *testing.T) {
 	if err := bot.registerRuntimeCommands(); err != nil {
 		t.Fatalf("registerRuntimeCommands() error = %v", err)
 	}
-	if len(api.edited) != 1 || api.edited[0].cmdID != "existing-config" || api.edited[0].name != commands.ConfigCommand {
-		t.Fatalf("edited commands = %#v, want existing config edit", api.edited)
+	if len(api.edited) != 1 || api.edited[0].cmdID != "existing-automation" || api.edited[0].name != commands.AutomationCommand {
+		t.Fatalf("edited commands = %#v, want existing automation edit", api.edited)
 	}
 	wantCreates := len(commands.ApplicationCommands()) - 1
 	if len(api.created) != wantCreates {
 		t.Fatalf("created commands = %d, want %d", len(api.created), wantCreates)
 	}
-	if !fakeCreatedCommand(api.created, commands.AutomationCommand) || !fakeCreatedCommand(api.created, "jellyfin") {
-		t.Fatalf("created commands = %#v, want automation and jellyfin", api.created)
+	if !fakeCreatedCommand(api.created, "jellyfin") {
+		t.Fatalf("created commands = %#v, want jellyfin", api.created)
+	}
+	if len(api.deleted) != 1 || api.deleted[0].cmdID != "existing-config" {
+		t.Fatalf("deleted commands = %#v, want existing config delete", api.deleted)
 	}
 }
 
@@ -268,15 +252,6 @@ func TestApplicationCommandMatchesDetectsBehaviorChanges(t *testing.T) {
 	if applicationCommandMatches(existing, desired) {
 		t.Fatal("applicationCommandMatches() = true after nested option description changed, want false")
 	}
-}
-
-func findCommandOption(options []*discordgo.ApplicationCommandOption, name string, typ discordgo.ApplicationCommandOptionType) *discordgo.ApplicationCommandOption {
-	for _, option := range options {
-		if option != nil && option.Name == name && option.Type == typ {
-			return option
-		}
-	}
-	return nil
 }
 
 func TestDiscordApplicationCommandsIncludeSkillCommands(t *testing.T) {
@@ -1022,6 +997,7 @@ type fakeDiscordAPI struct {
 	existing   []*discordgo.ApplicationCommand
 	created    []fakeCommandCall
 	edited     []fakeCommandCall
+	deleted    []fakeCommandCall
 }
 
 type fakeCommandCall struct {
@@ -1059,6 +1035,11 @@ func (f *fakeDiscordAPI) ApplicationCommandEdit(appID, guildID, cmdID string, cm
 func (f *fakeDiscordAPI) ApplicationCommandCreate(appID, guildID string, cmd *discordgo.ApplicationCommand, _ ...discordgo.RequestOption) (*discordgo.ApplicationCommand, error) {
 	f.created = append(f.created, fakeCommandCall{appID: appID, guildID: guildID, name: cmd.Name})
 	return cmd, nil
+}
+
+func (f *fakeDiscordAPI) ApplicationCommandDelete(appID, guildID, cmdID string, _ ...discordgo.RequestOption) error {
+	f.deleted = append(f.deleted, fakeCommandCall{appID: appID, guildID: guildID, cmdID: cmdID})
+	return nil
 }
 
 func fakeCreatedCommand(calls []fakeCommandCall, name string) bool {
