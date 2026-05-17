@@ -98,13 +98,13 @@ func (b *Bot) handleFeedbackComponent(session *discordgo.Session, event *discord
 		Type: discordgo.InteractionResponseModal,
 		Data: &discordgo.InteractionResponseData{
 			CustomID: feedbackModalCustomID(channelID, messageID),
-			Title:    "Feedback fuer Blitzcrank",
+			Title:    "Feedback für Blitzcrank",
 			Components: []discordgo.MessageComponent{
 				discordgo.ActionsRow{
 					Components: []discordgo.MessageComponent{
 						discordgo.TextInput{
 							CustomID:    feedbackTextInputCustomID,
-							Label:       "Was soll geaendert oder geprueft werden?",
+							Label:       "Was soll geändert oder geprüft werden?",
 							Style:       discordgo.TextInputParagraph,
 							Placeholder: "Kurz beschreiben, was falsch oder hilfreich war.",
 							Required:    true,

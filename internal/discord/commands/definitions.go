@@ -59,7 +59,6 @@ func configCommandOptions() []*discordgo.ApplicationCommandOption {
 	return []*discordgo.ApplicationCommandOption{
 		{Type: discordgo.ApplicationCommandOptionSubCommand, Name: "restart", Description: "Blitzcrank über den Supervisor neu starten."},
 		{Type: discordgo.ApplicationCommandOptionSubCommand, Name: "reload-skills", Description: "Laufzeit-Skills aus SKILLS_DIR neu laden."},
-		{Type: discordgo.ApplicationCommandOptionSubCommand, Name: "reload-automations", Description: "Laufzeit-Automatisierungen aus AUTOMATIONS_DIR neu laden."},
 		{
 			Type:        discordgo.ApplicationCommandOptionSubCommandGroup,
 			Name:        "global",
