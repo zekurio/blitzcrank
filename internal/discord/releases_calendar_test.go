@@ -44,6 +44,30 @@ func TestReleaseCalendarSpanUsesCalendarBoundaries(t *testing.T) {
 	}
 }
 
+func TestReleaseCalendarGridAlignsMonthToWeekdays(t *testing.T) {
+	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+
+	if got := calendarGridStart(start).Format("2006-01-02"); got != "2026-04-27" {
+		t.Fatalf("calendarGridStart() = %s, want 2026-04-27", got)
+	}
+	if got := calendarGridEnd(end).Format("2006-01-02"); got != "2026-06-01" {
+		t.Fatalf("calendarGridEnd() = %s, want 2026-06-01", got)
+	}
+}
+
+func TestReleaseCalendarGridKeepsMondayToSundayWeek(t *testing.T) {
+	start := time.Date(2026, 5, 11, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 5, 18, 0, 0, 0, 0, time.UTC)
+
+	if got := calendarGridStart(start).Format("2006-01-02"); got != "2026-05-11" {
+		t.Fatalf("calendarGridStart() = %s, want 2026-05-11", got)
+	}
+	if got := calendarGridEnd(end).Format("2006-01-02"); got != "2026-05-18" {
+		t.Fatalf("calendarGridEnd() = %s, want 2026-05-18", got)
+	}
+}
+
 func TestReleaseCalendarFetchesSonarrAndRadarr(t *testing.T) {
 	var sonarrQueries, radarrQueries []url.Values
 	sonarr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -66,8 +90,9 @@ func TestReleaseCalendarFetchesSonarrAndRadarr(t *testing.T) {
 		}
 		radarrQueries = append(radarrQueries, r.URL.Query())
 		writeJSON(t, w, []map[string]any{{
-			"releaseDate": "2026-05-13",
-			"movie":       map[string]any{"title": "Movie title", "year": 2026},
+			"digitalRelease": "2026-05-12",
+			"inCinemas":      "2026-05-13",
+			"movie":          map[string]any{"title": "Movie title", "year": 2026},
 		}})
 	}))
 	defer radarr.Close()
@@ -107,8 +132,34 @@ func TestReleaseCalendarFetchesSonarrAndRadarr(t *testing.T) {
 	for _, item := range items {
 		titles = append(titles, item.Title)
 	}
-	if !slices.Contains(titles, "Series title S01E02 - Episode title") || !slices.Contains(titles, "Movie title (2026)") {
+	if !slices.Contains(titles, "Series title S01E02 - Episode title") ||
+		!slices.Contains(titles, "Movie title (2026) - Digital") ||
+		!slices.Contains(titles, "Movie title (2026) - Cinemas") {
 		t.Fatalf("titles = %#v", titles)
+	}
+}
+
+func TestRadarrCalendarItemsEmitsSeparateReleaseKinds(t *testing.T) {
+	items := radarrCalendarItems([]any{map[string]any{
+		"title":           "Swapped",
+		"year":            2026,
+		"digitalRelease":  "2026-04-30",
+		"inCinemas":       "2026-05-01",
+		"physicalRelease": "2026-05-20",
+	}})
+
+	var releases []string
+	for _, item := range items {
+		releases = append(releases, item.Date.Format("2006-01-02")+" "+item.Title)
+	}
+	for _, want := range []string{
+		"2026-04-30 Swapped (2026) - Digital",
+		"2026-05-01 Swapped (2026) - Cinemas",
+		"2026-05-20 Swapped (2026) - Physical",
+	} {
+		if !slices.Contains(releases, want) {
+			t.Fatalf("releases = %#v, missing %q", releases, want)
+		}
 	}
 }
 
