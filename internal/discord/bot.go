@@ -130,6 +130,16 @@ func (b *Bot) createAutomationThread(ctx context.Context, automationName string)
 		if err := b.store.UpsertAgentThread(ctx, record); err != nil {
 			log.Printf("record automation thread failed: automation=%s error=%v", automationName, err)
 		}
+		b.appendAutomationTrace(automationName, map[string]any{
+			"type":               "discord_automation_thread",
+			"thread_id":          record.ThreadID,
+			"automation":         automationName,
+			"discord_thread_id":  thread.ID,
+			"parent_channel_id":  b.cfg.AgentDiscordChannelID,
+			"title":              record.Title,
+			"created_at":         now.Format(time.RFC3339Nano),
+			"sqlite_state_usage": "reuses Discord automation report thread and ignores user messages inside it",
+		})
 	}
 	return thread.ID, nil
 }
@@ -157,18 +167,13 @@ func (b *Bot) isAutomationThread(ctx context.Context, channelID string) bool {
 }
 
 func (b *Bot) recordAutomationReport(ctx context.Context, automationName, content string) {
-	if b.store == nil {
-		return
-	}
-	if err := b.store.InsertAgentThreadEvent(ctx, store.AgentThreadEvent{
-		ThreadID:  "discord_automation:" + automationName,
-		EventType: "automation_report",
-		Actor:     b.cfg.BotPublicName,
-		Message:   content,
-		CreatedAt: time.Now().UTC(),
-	}); err != nil {
-		log.Printf("record automation report failed: automation=%s error=%v", automationName, err)
-	}
+	b.appendAutomationTrace(automationName, map[string]any{
+		"type":       "discord_automation_report",
+		"automation": automationName,
+		"actor":      b.cfg.BotPublicName,
+		"message":    content,
+		"at":         time.Now().UTC().Format(time.RFC3339Nano),
+	})
 }
 
 func automationThreadTitle(automationName string) string {
@@ -289,14 +294,21 @@ func (b *Bot) replyToParentModelRuntimeQuestion(session *discordgo.Session, even
 	if !b.mentionsBot(session, event.Message) || !isModelRuntimeQuestion(content) {
 		return false
 	}
+	startedAt := time.Now().UTC()
 	request := agent.Request{
 		Source:  "discord_mention",
 		Author:  discordAuthor(event.Author),
 		Content: content,
 	}
-	if err := b.sendMessageReference(context.Background(), event.ChannelID, event.ID, b.modelRuntimeReply(content, request)); err != nil {
+	reply := b.modelRuntimeReply(content, request)
+	errText := ""
+	if err := b.sendMessageReference(context.Background(), event.ChannelID, event.ID, reply); err != nil {
 		log.Printf("send discord model info response failed: %v", err)
+		errText = err.Error()
 	}
+	b.appendDiscordInteractionTrace(event, "model_runtime_reply", content, reply, errText, startedAt, time.Now().UTC(), map[string]any{
+		"attribution": b.discordAttribution(request),
+	})
 	return true
 }
 
@@ -304,6 +316,7 @@ func (b *Bot) triageParentChannelMessage(session *discordgo.Session, event *disc
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
+	startedAt := time.Now().UTC()
 	mentioned := b.mentionsBot(session, event.Message)
 	triage, err := b.agent.TriageDiscordMessage(ctx, agent.DiscordTriageRequest{
 		Author:  discordAuthor(event.Author),
@@ -311,13 +324,32 @@ func (b *Bot) triageParentChannelMessage(session *discordgo.Session, event *disc
 		Mention: mentioned,
 	})
 	if err == nil {
+		b.appendDiscordInteractionTrace(event, "triage_result", content, triage.Reply, "", startedAt, time.Now().UTC(), map[string]any{
+			"mentioned":       mentioned,
+			"triage_action":   triage.Action,
+			"actionable":      triage.Actionable,
+			"needs_agent_run": triage.NeedsAgentRun,
+			"confidence":      triage.Confidence,
+			"reason":          triage.Reason,
+			"thread_title":    triage.ThreadTitle,
+		})
 		return triage, mentioned, true
 	}
 	log.Printf("discord triage failed: message=%s error=%v", event.ID, err)
 	if mentioned {
-		if err := b.sendMessageReference(context.Background(), event.ChannelID, event.ID, fallbackIntakeReply(content, "clarify")); err != nil {
-			log.Printf("send discord intake fallback response failed: %v", err)
+		reply := fallbackIntakeReply(content, "clarify")
+		errText := err.Error()
+		if sendErr := b.sendMessageReference(context.Background(), event.ChannelID, event.ID, reply); sendErr != nil {
+			log.Printf("send discord intake fallback response failed: %v", sendErr)
+			errText = errText + "; send: " + sendErr.Error()
 		}
+		b.appendDiscordInteractionTrace(event, "triage_fallback", content, reply, errText, startedAt, time.Now().UTC(), map[string]any{
+			"mentioned": mentioned,
+		})
+	} else {
+		b.appendDiscordInteractionTrace(event, "triage_error", content, "", err.Error(), startedAt, time.Now().UTC(), map[string]any{
+			"mentioned": mentioned,
+		})
 	}
 	return agent.DiscordTriageResult{}, mentioned, false
 }
@@ -350,18 +382,25 @@ func (b *Bot) handleUnactionableParentTriage(event *discordgo.MessageCreate, con
 }
 
 func (b *Bot) replyToParentTriage(event *discordgo.MessageCreate, content, action, reply string) {
+	startedAt := time.Now().UTC()
 	reply = strings.TrimSpace(reply)
 	if reply == "" {
 		reply = fallbackIntakeReply(content, action)
 	}
+	errText := ""
 	if err := b.sendMessageReference(context.Background(), event.ChannelID, event.ID, reply); err != nil {
 		log.Printf("send discord intake response failed: %v", err)
+		errText = err.Error()
 	}
+	b.appendDiscordInteractionTrace(event, "triage_"+strings.TrimSpace(action), content, reply, errText, startedAt, time.Now().UTC(), map[string]any{
+		"triage_action": action,
+	})
 }
 
 func (b *Bot) runDirectAgent(ctx context.Context, session *discordgo.Session, event *discordgo.MessageCreate, content string) {
 	runCtx, cancel := context.WithTimeout(ctx, b.cfg.RunTimeout)
 	defer cancel()
+	startedAt := time.Now().UTC()
 
 	request := agent.Request{
 		Source:  "discord_mention",
@@ -369,9 +408,15 @@ func (b *Bot) runDirectAgent(ctx context.Context, session *discordgo.Session, ev
 		Content: content,
 	}
 	if isModelRuntimeQuestion(content) {
-		if err := b.sendMessageReference(runCtx, event.ChannelID, event.ID, b.modelRuntimeReply(content, request)); err != nil {
+		reply := b.modelRuntimeReply(content, request)
+		errText := ""
+		if err := b.sendMessageReference(runCtx, event.ChannelID, event.ID, reply); err != nil {
 			log.Printf("send discord model info response failed: %v", err)
+			errText = err.Error()
 		}
+		b.appendDiscordInteractionTrace(event, "model_runtime_reply", content, reply, errText, startedAt, time.Now().UTC(), map[string]any{
+			"attribution": b.discordAttribution(request),
+		})
 		return
 	}
 
@@ -380,16 +425,26 @@ func (b *Bot) runDirectAgent(ctx context.Context, session *discordgo.Session, ev
 	}
 
 	reply, err := b.agent.Respond(runCtx, request)
+	errText := ""
 	if err != nil {
 		log.Printf("agent discord mention response failed: %v", err)
+		errText = err.Error()
 		reply = "I could not process that request. Check the bot logs for details."
 	} else if reply, err = validateDiscordReply(reply); err != nil {
 		log.Printf("agent discord mention response invalid: %v", err)
+		errText = err.Error()
 		reply = safeDiscordFailureReply(content)
 	}
 	if err := b.sendMessageReference(runCtx, event.ChannelID, event.ID, reply); err != nil {
 		log.Printf("send discord mention response failed: %v", err)
+		if errText != "" {
+			errText += "; send: "
+		}
+		errText += err.Error()
 	}
+	b.appendDiscordInteractionTrace(event, "direct_agent_reply", content, reply, errText, startedAt, time.Now().UTC(), map[string]any{
+		"attribution": b.discordAttribution(request),
+	})
 }
 
 func (b *Bot) modelRuntimeReply(content string, request agent.Request) string {
@@ -444,6 +499,15 @@ func (b *Bot) handleThreadMessage(session *discordgo.Session, event *discordgo.M
 				log.Printf("adopt discord thread failed: thread=%s error=%v", event.ChannelID, err)
 			}
 		}
+		b.appendDiscordTrace(loaded.ThreadID, map[string]any{
+			"type":              "discord_thread",
+			"thread_id":         loaded.ThreadID,
+			"discord_thread_id": event.ChannelID,
+			"parent_channel_id": channel.ParentID,
+			"title":             channel.Name,
+			"created_at":        now.Format(time.RFC3339Nano),
+			"adopted":           true,
+		})
 	}
 
 	if err := b.recordDiscordEvent(context.Background(), loaded.ThreadID, event, "message", content); err != nil {

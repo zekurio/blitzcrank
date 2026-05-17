@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"blitzcrank/internal/agent"
@@ -39,17 +41,29 @@ func (b *Bot) runThreadAgent(ctx context.Context, session *discordgo.Session, di
 	reply, err := b.agent.Respond(runCtx, request)
 	record := b.newDiscordRunRecord(thread.ThreadID, eventType, start, request)
 	if err != nil {
-		b.recordFailedDiscordRun(record, "agent run failed", err)
 		log.Printf("agent discord response failed: thread=%s error=%v", discordThreadID, err)
-		_ = b.sendMessage(context.Background(), discordThreadID, "I could not process that request. Check the bot logs for details.")
+		fallback := "I could not process that request. Check the bot logs for details."
+		record.FinalResponse = fallback
+		if sendErr := b.sendMessage(context.Background(), discordThreadID, fallback); sendErr != nil {
+			err = fmt.Errorf("%w; fallback send: %w", err, sendErr)
+		} else {
+			record.Posted = true
+		}
+		b.recordFailedDiscordRun(record, "agent run failed", err)
 		return
 	}
 
 	reply, err = validateDiscordReply(reply)
 	if err != nil {
-		b.recordFailedDiscordRun(record, "agent response failed validation", err)
 		log.Printf("agent discord response invalid: thread=%s error=%v", discordThreadID, err)
-		_ = b.sendMessage(context.Background(), discordThreadID, safeDiscordFailureReply(content))
+		fallback := safeDiscordFailureReply(content)
+		record.FinalResponse = fallback
+		if sendErr := b.sendMessage(context.Background(), discordThreadID, fallback); sendErr != nil {
+			err = fmt.Errorf("%w; fallback send: %w", err, sendErr)
+		} else {
+			record.Posted = true
+		}
+		b.recordFailedDiscordRun(record, "agent response failed validation", err)
 		return
 	}
 
@@ -94,6 +108,18 @@ func (b *Bot) recordFailedDiscordRun(record store.AgentRun, reason string, err e
 	if b.store != nil {
 		_ = b.store.InsertAgentRun(context.Background(), record)
 	}
+	b.appendDiscordTrace(record.ThreadID, map[string]any{
+		"type":              "discord_run",
+		"thread_id":         record.ThreadID,
+		"source_event_type": record.SourceEventType,
+		"started_at":        record.StartedAt.Format(time.RFC3339Nano),
+		"completed_at":      formatOptionalTime(record.CompletedAt),
+		"final_response":    record.FinalResponse,
+		"posted":            record.Posted,
+		"attribution":       record.Attribution,
+		"error":             record.Error,
+		"completion_reason": record.CompletionReason,
+	})
 }
 
 func (b *Bot) summarizeDiscordThread(threadID, priorSummary, content, reply string) string {
@@ -116,6 +142,19 @@ func (b *Bot) persistDiscordRun(threadID string, record store.AgentRun) {
 			log.Printf("update discord summary failed: thread=%s error=%v", threadID, err)
 		}
 	}
+	b.appendDiscordTrace(threadID, map[string]any{
+		"type":              "discord_run",
+		"thread_id":         threadID,
+		"source_event_type": record.SourceEventType,
+		"started_at":        record.StartedAt.Format(time.RFC3339Nano),
+		"completed_at":      formatOptionalTime(record.CompletedAt),
+		"final_response":    record.FinalResponse,
+		"posted":            record.Posted,
+		"attribution":       record.Attribution,
+		"error":             record.Error,
+		"completion_reason": record.CompletionReason,
+		"summary":           record.Summary,
+	})
 }
 
 type recordDiscordThreadRequest struct {
@@ -150,6 +189,18 @@ func (b *Bot) recordDiscordThread(ctx context.Context, request recordDiscordThre
 	if err := b.store.UpsertAgentThread(ctx, thread); err != nil {
 		return err
 	}
+	b.appendDiscordTrace(thread.ThreadID, map[string]any{
+		"type":                "discord_thread",
+		"thread_id":           thread.ThreadID,
+		"discord_thread_id":   request.ThreadID,
+		"parent_channel_id":   request.ParentID,
+		"root_message_id":     request.RootMessageID,
+		"title":               request.Title,
+		"created_at":          now.Format(time.RFC3339Nano),
+		"last_payload":        payload,
+		"source_event_type":   request.EventType,
+		"source_message_text": request.Content,
+	})
 	return b.recordDiscordEvent(ctx, thread.ThreadID, request.Event, request.EventType, request.Content)
 }
 
@@ -159,7 +210,7 @@ func (b *Bot) recordDiscordEvent(ctx context.Context, threadID string, event *di
 	}
 	payload := discordEventPayload(event, "")
 	data, _ := json.Marshal(payload)
-	return b.store.InsertAgentThreadEvent(ctx, store.AgentThreadEvent{
+	record := store.AgentThreadEvent{
 		ThreadID:          threadID,
 		EventType:         eventType,
 		Actor:             event.Author.Username,
@@ -168,7 +219,22 @@ func (b *Bot) recordDiscordEvent(ctx context.Context, threadID string, event *di
 		ExternalMessageID: event.ID,
 		PayloadJSON:       string(data),
 		CreatedAt:         time.Now().UTC(),
+	}
+	if err := b.store.InsertAgentThreadEvent(ctx, record); err != nil {
+		return err
+	}
+	b.appendDiscordTrace(threadID, map[string]any{
+		"type":                "discord_event",
+		"thread_id":           threadID,
+		"event_type":          eventType,
+		"actor":               record.Actor,
+		"actor_id":            record.ActorID,
+		"message":             content,
+		"external_message_id": event.ID,
+		"created_at":          record.CreatedAt.Format(time.RFC3339Nano),
+		"payload":             payload,
 	})
+	return nil
 }
 
 func (b *Bot) loadDiscordThread(ctx context.Context, externalID string) (store.AgentThread, bool, error) {
@@ -176,6 +242,77 @@ func (b *Bot) loadDiscordThread(ctx context.Context, externalID string) (store.A
 		return store.AgentThread{}, false, nil
 	}
 	return b.store.LoadAgentThreadByExternalID(ctx, "discord", externalID)
+}
+
+func (b *Bot) appendDiscordTrace(threadID string, value any) {
+	if strings.TrimSpace(b.cfg.ThreadsDirectory) == "" {
+		return
+	}
+	if err := store.AppendJSONL(filepath.Join(b.cfg.ThreadsDirectory, "discord", discordTraceID(threadID)+".jsonl"), value); err != nil {
+		log.Printf("append discord trace %s: %v", threadID, err)
+	}
+}
+
+func (b *Bot) appendAutomationTrace(automationName string, value any) {
+	if strings.TrimSpace(b.cfg.ThreadsDirectory) == "" {
+		return
+	}
+	if err := store.AppendJSONL(filepath.Join(b.cfg.ThreadsDirectory, "automations", discordTraceID(automationName)+".jsonl"), value); err != nil {
+		log.Printf("append automation trace %s: %v", automationName, err)
+	}
+}
+
+func (b *Bot) appendDiscordInteractionTrace(event *discordgo.MessageCreate, interactionType, content, reply, errorText string, startedAt, completedAt time.Time, extra map[string]any) {
+	if event == nil || strings.TrimSpace(b.cfg.ThreadsDirectory) == "" {
+		return
+	}
+	payload := map[string]any{
+		"type":             "discord_interaction",
+		"interaction_type": interactionType,
+		"content":          content,
+		"reply":            reply,
+		"started_at":       startedAt.Format(time.RFC3339Nano),
+		"completed_at":     completedAt.Format(time.RFC3339Nano),
+	}
+	if errorText != "" {
+		payload["error"] = errorText
+	}
+	for key, value := range discordEventPayload(event, "") {
+		payload[key] = value
+	}
+	for key, value := range extra {
+		payload[key] = value
+	}
+	traceID := discordTraceID(event.ID)
+	if traceID == "unknown" {
+		traceID = discordTraceID(event.ChannelID)
+	}
+	if err := store.AppendJSONL(filepath.Join(b.cfg.ThreadsDirectory, "discord", "interactions", traceID+".jsonl"), payload); err != nil {
+		log.Printf("append discord interaction trace %s: %v", traceID, err)
+	}
+}
+
+func discordTraceID(threadID string) string {
+	traceID := strings.TrimPrefix(threadID, "discord:")
+	traceID = strings.TrimSpace(traceID)
+	if traceID == "" {
+		return "unknown"
+	}
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '/', '\\', ':':
+			return '-'
+		default:
+			return r
+		}
+	}, traceID)
+}
+
+func formatOptionalTime(value *time.Time) string {
+	if value == nil {
+		return ""
+	}
+	return value.Format(time.RFC3339Nano)
 }
 
 func (b *Bot) discordPrompt(thread store.AgentThread, latestMessage string) string {

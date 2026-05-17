@@ -72,21 +72,3 @@ func (s *Store) UpdateIssueThreadSummary(ctx context.Context, issueID, summary s
 	_, err := s.db.ExecContext(ctx, `UPDATE issue_threads SET summary = ?, updated_at = ? WHERE issue_id = ?`, summary, formatTime(updatedAt), issueID)
 	return err
 }
-
-func (s *Store) InsertIssueToolCall(ctx context.Context, call IssueToolCall) error {
-	mutating := 0
-	if call.Mutating {
-		mutating = 1
-	}
-	_, err := s.db.ExecContext(ctx, `
-INSERT INTO issue_tool_calls(issue_id,source_event_type,run_started_at,tool_name,mutating,arguments_summary,result_summary,error,started_at,completed_at)
-VALUES(?,?,?,?,?,?,?,?,?,?)`,
-		call.IssueID, call.SourceEventType, formatTime(call.RunStartedAt), call.ToolName, mutating, call.ArgumentsSummary, call.ResultSummary, call.Error, formatTime(call.StartedAt), formatTime(call.CompletedAt))
-	return err
-}
-
-func (s *Store) InsertAutomationRun(ctx context.Context, run AutomationRun) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO automation_runs(automation_name,started_at,completed_at,result,error) VALUES(?,?,?,?,?)`,
-		run.AutomationName, formatTime(run.StartedAt), formatTimePtr(run.CompletedAt), run.Result, run.Error)
-	return err
-}

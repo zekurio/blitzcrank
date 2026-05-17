@@ -306,6 +306,32 @@ func TestHandleWebhookResolvedPersistsThread(t *testing.T) {
 	}
 }
 
+func TestIssueToolCallWritesJSONLTrace(t *testing.T) {
+	dir := t.TempDir()
+	cfg := testConfig("http://127.0.0.1.invalid", dir)
+	manager := NewManager(cfg, &fakeRunner{}, tools.NewRegistry(cfg), nil)
+	startedAt := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)
+	manager.recordToolCall("42", "reported", startedAt, agent.ToolAuditRecord{
+		Name:             "seerr_get_issue",
+		ArgumentsSummary: `{"issue_id":"42"}`,
+		ResultSummary:    `{"id":42}`,
+		StartedAt:        startedAt,
+		CompletedAt:      startedAt.Add(time.Second),
+	})
+
+	data, err := os.ReadFile(filepath.Join(dir, "issues", "issue-42.jsonl"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var record map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(data))), &record); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if record["type"] != "tool_call" || record["tool_name"] != "seerr_get_issue" {
+		t.Fatalf("tool call trace = %#v", record)
+	}
+}
+
 func testConfig(baseURL, threadDir string) config.Config {
 	return config.Config{
 		SeerrBaseURL:        baseURL,

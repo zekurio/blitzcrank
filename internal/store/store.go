@@ -54,28 +54,6 @@ type IssueRun struct {
 	CompletionReason string
 }
 
-type IssueToolCall struct {
-	ID               int64
-	IssueID          string
-	SourceEventType  string
-	RunStartedAt     time.Time
-	ToolName         string
-	Mutating         bool
-	ArgumentsSummary string
-	ResultSummary    string
-	Error            string
-	StartedAt        time.Time
-	CompletedAt      time.Time
-}
-
-type AutomationRun struct {
-	AutomationName string
-	StartedAt      time.Time
-	CompletedAt    *time.Time
-	Result         string
-	Error          string
-}
-
 type AgentThread struct {
 	ThreadID         string
 	Source           string
@@ -192,33 +170,6 @@ CREATE TABLE IF NOT EXISTS issue_runs (
   FOREIGN KEY (issue_id) REFERENCES issue_threads(issue_id)
 );
 
-CREATE TABLE IF NOT EXISTS issue_tool_calls (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  issue_id TEXT NOT NULL,
-  source_event_type TEXT NOT NULL,
-  run_started_at TEXT NOT NULL,
-  tool_name TEXT NOT NULL,
-  mutating INTEGER NOT NULL DEFAULT 0,
-  arguments_summary TEXT,
-  result_summary TEXT,
-  error TEXT,
-  started_at TEXT NOT NULL,
-  completed_at TEXT NOT NULL,
-  FOREIGN KEY (issue_id) REFERENCES issue_threads(issue_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_issue_tool_calls_issue_id
-ON issue_tool_calls(issue_id, id);
-
-CREATE TABLE IF NOT EXISTS automation_runs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  automation_name TEXT NOT NULL,
-  started_at TEXT NOT NULL,
-  completed_at TEXT,
-  result TEXT,
-  error TEXT
-);
-
 CREATE TABLE IF NOT EXISTS agent_threads (
   thread_id TEXT PRIMARY KEY,
   source TEXT NOT NULL,
@@ -265,7 +216,6 @@ CREATE TABLE IF NOT EXISTS agent_runs (
   attribution TEXT,
   error TEXT,
   completion_reason TEXT,
-  summary TEXT,
   FOREIGN KEY (thread_id) REFERENCES agent_threads(thread_id)
 );
 `)
@@ -289,23 +239,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_issue_thread_events_issue_event_key
 ON issue_thread_events(issue_id, event_key)
 WHERE event_key IS NOT NULL AND event_key != '';
 
-CREATE TABLE IF NOT EXISTS issue_tool_calls (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  issue_id TEXT NOT NULL,
-  source_event_type TEXT NOT NULL,
-  run_started_at TEXT NOT NULL,
-  tool_name TEXT NOT NULL,
-  mutating INTEGER NOT NULL DEFAULT 0,
-  arguments_summary TEXT,
-  result_summary TEXT,
-  error TEXT,
-  started_at TEXT NOT NULL,
-  completed_at TEXT NOT NULL,
-  FOREIGN KEY (issue_id) REFERENCES issue_threads(issue_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_issue_tool_calls_issue_id
-ON issue_tool_calls(issue_id, id);
 `)
 	return err
 }

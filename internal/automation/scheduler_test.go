@@ -1,15 +1,36 @@
 package automation
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"blitzcrank/internal/agent"
 	"blitzcrank/internal/config"
 	"github.com/robfig/cron/v3"
 )
+
+type fakeRunner struct {
+	reply string
+	err   error
+}
+
+func (f fakeRunner) Respond(context.Context, agent.Request) (string, error) {
+	return f.reply, f.err
+}
+
+type fakeReporter struct {
+	err error
+}
+
+func (f fakeReporter) SendMessage(context.Context, string) error {
+	return f.err
+}
 
 func TestNextRunUsesConfiguredTimezone(t *testing.T) {
 	scheduler := NewScheduler(config.Config{
@@ -66,6 +87,34 @@ func TestAutomationRuntimeMetadataIncludesNextRuns(t *testing.T) {
 	}
 	if task.NextRun.Location().String() != "Europe/Vienna" || task.NextRun.Hour() != 9 || task.NextRun.Minute() != 0 {
 		t.Fatalf("next run = %s, want 09:00 Europe/Vienna", task.NextRun)
+	}
+}
+
+func TestAutomationReportDeliveryWritesTrace(t *testing.T) {
+	dir := t.TempDir()
+	scheduler := NewScheduler(config.Config{
+		ThreadsDirectory: dir,
+		RunTimeout:       time.Minute,
+		Timezone:         "UTC",
+	}, fakeRunner{reply: "done"}, fakeReporter{err: errors.New("discord down")}, nil)
+	scheduler.tasks = []Task{{Name: "test", cron: mustSchedule(t, "* * * * *")}}
+
+	scheduler.runDue(context.Background(), time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC))
+
+	data, err := os.ReadFile(filepath.Join(dir, "automations", "test.jsonl"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("trace line count = %d, want 2\n%s", len(lines), string(data))
+	}
+	var delivery map[string]any
+	if err := json.Unmarshal([]byte(lines[1]), &delivery); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if delivery["type"] != "automation_report_delivery" || delivery["error"] != "discord down" {
+		t.Fatalf("delivery trace = %#v", delivery)
 	}
 }
 

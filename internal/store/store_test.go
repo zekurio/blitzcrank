@@ -51,18 +51,6 @@ func TestStorePersistsIssueThreadEventAndRun(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("InsertIssueRun() error = %v", err)
 	}
-	if err := store.InsertIssueToolCall(ctx, IssueToolCall{
-		IssueID:          "42",
-		SourceEventType:  "reported",
-		RunStartedAt:     now,
-		ToolName:         "seerr_get_issue",
-		ArgumentsSummary: `{"issue_id":"42"}`,
-		ResultSummary:    `{"id":42}`,
-		StartedAt:        now,
-		CompletedAt:      completed,
-	}); err != nil {
-		t.Fatalf("InsertIssueToolCall() error = %v", err)
-	}
 
 	loaded, ok, err := store.LoadIssueThread(ctx, "42")
 	if err != nil {
@@ -79,13 +67,6 @@ func TestStorePersistsIssueThreadEventAndRun(t *testing.T) {
 	}
 	if len(loaded.Runs) != 1 || !loaded.Runs[0].Posted {
 		t.Fatalf("runs = %#v", loaded.Runs)
-	}
-	calls, err := store.LoadIssueToolCalls(ctx, "42")
-	if err != nil {
-		t.Fatalf("LoadIssueToolCalls() error = %v", err)
-	}
-	if len(calls) != 1 || calls[0].ToolName != "seerr_get_issue" {
-		t.Fatalf("tool calls = %#v", calls)
 	}
 }
 
@@ -154,7 +135,7 @@ func TestStorePersistsAgentThreadEventAndRun(t *testing.T) {
 	if len(loaded.Events) != 1 || loaded.Events[0].ExternalMessageID != "message-1" {
 		t.Fatalf("events = %#v", loaded.Events)
 	}
-	if len(loaded.Runs) != 1 || !loaded.Runs[0].Posted || loaded.Runs[0].Summary != "Resolved." {
+	if len(loaded.Runs) != 1 || !loaded.Runs[0].Posted {
 		t.Fatalf("runs = %#v", loaded.Runs)
 	}
 }
