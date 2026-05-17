@@ -187,6 +187,7 @@ func TestRegisterRuntimeCommandsEditsExistingAndCreatesMissing(t *testing.T) {
 	api := &fakeDiscordAPI{existing: []*discordgo.ApplicationCommand{
 		{ID: "existing-automation", Name: commands.AutomationCommand},
 		{ID: "existing-config", Name: "config"},
+		{ID: "existing-releases", Name: commands.LegacyReleasesCommand},
 	}}
 	bot := &Bot{
 		cfg:   config.Config{DiscordGuildID: "guild-1"},
@@ -207,8 +208,11 @@ func TestRegisterRuntimeCommandsEditsExistingAndCreatesMissing(t *testing.T) {
 	if !fakeCreatedCommand(api.created, "jellyfin") {
 		t.Fatalf("created commands = %#v, want jellyfin", api.created)
 	}
-	if len(api.deleted) != 1 || api.deleted[0].cmdID != "existing-config" {
-		t.Fatalf("deleted commands = %#v, want existing config delete", api.deleted)
+	if len(api.deleted) != 2 {
+		t.Fatalf("deleted commands = %#v, want retired config and releases deletes", api.deleted)
+	}
+	if !fakeDeletedCommand(api.deleted, "existing-config") || !fakeDeletedCommand(api.deleted, "existing-releases") {
+		t.Fatalf("deleted commands = %#v, want retired config and releases deletes", api.deleted)
 	}
 }
 
@@ -1071,6 +1075,15 @@ func (f *fakeDiscordAPI) ApplicationCommandDelete(appID, guildID, cmdID string, 
 func fakeCreatedCommand(calls []fakeCommandCall, name string) bool {
 	for _, call := range calls {
 		if call.name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func fakeDeletedCommand(calls []fakeCommandCall, cmdID string) bool {
+	for _, call := range calls {
+		if call.cmdID == cmdID {
 			return true
 		}
 	}

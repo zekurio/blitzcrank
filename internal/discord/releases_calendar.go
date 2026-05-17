@@ -80,7 +80,7 @@ func releaseCalendarDateRange(start, end time.Time) string {
 }
 
 func (b *Bot) releaseCalendarPNG(ctx context.Context, start, end time.Time, label string) ([]byte, int, error) {
-	items, warnings, err := b.fetchReleaseCalendarItems(ctx, start, end)
+	items, warnings, err := b.fetchReleaseCalendarItems(ctx, calendarGridStart(start), calendarGridEnd(end))
 	if err != nil {
 		return nil, 0, err
 	}
@@ -160,19 +160,6 @@ func radarrCalendarItems(value any) []releaseCalendarItem {
 			continue
 		}
 		movie, _ := object["movie"].(map[string]any)
-		date, ok := parseReleaseTime(
-			object["digitalRelease"],
-			object["physicalRelease"],
-			object["inCinemas"],
-			object["releaseDate"],
-			movie["digitalRelease"],
-			movie["physicalRelease"],
-			movie["inCinemas"],
-			movie["releaseDate"],
-		)
-		if !ok {
-			continue
-		}
 		title := strings.TrimSpace(stringFromMap(object, "title"))
 		if title == "" {
 			title = strings.TrimSpace(stringFromMap(movie, "title"))
@@ -185,9 +172,48 @@ func radarrCalendarItems(value any) []releaseCalendarItem {
 		if title == "" {
 			title = "Radarr release"
 		}
-		items = append(items, releaseCalendarItem{Service: "Radarr", Date: date, Title: title, Color: radarrReleaseColor})
+		for _, release := range radarrReleaseDates(object, movie) {
+			items = append(items, releaseCalendarItem{
+				Service: "Radarr",
+				Date:    release.Date,
+				Title:   title + " - " + release.Kind,
+				Color:   radarrReleaseColor,
+			})
+		}
 	}
 	return items
+}
+
+type radarrReleaseDate struct {
+	Date time.Time
+	Kind string
+}
+
+func radarrReleaseDates(object, movie map[string]any) []radarrReleaseDate {
+	candidates := []struct {
+		kind   string
+		values []any
+	}{
+		{kind: "Digital", values: []any{object["digitalRelease"], movie["digitalRelease"]}},
+		{kind: "Physical", values: []any{object["physicalRelease"], movie["physicalRelease"]}},
+		{kind: "Cinemas", values: []any{object["inCinemas"], movie["inCinemas"]}},
+		{kind: "Release", values: []any{object["releaseDate"], movie["releaseDate"]}},
+	}
+	var releases []radarrReleaseDate
+	seen := map[string]bool{}
+	for _, candidate := range candidates {
+		date, ok := parseReleaseTime(candidate.values...)
+		if !ok {
+			continue
+		}
+		key := candidate.kind + ":" + date.Format("2006-01-02")
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		releases = append(releases, radarrReleaseDate{Date: date, Kind: candidate.kind})
+	}
+	return releases
 }
 
 func sonarrEpisodeLabel(object map[string]any, episodeTitle string) string {
@@ -229,7 +255,9 @@ func renderReleaseCalendarPNG(start, end time.Time, label string, items []releas
 	const itemHeight = 22
 	const rowGap = 12
 	const cellPadding = 8
-	days := int(end.Sub(start).Hours() / 24)
+	gridStart := calendarGridStart(start)
+	gridEnd := calendarGridEnd(end)
+	days := int(gridEnd.Sub(gridStart).Hours() / 24)
 	if days < 1 {
 		days = 1
 	}
@@ -237,7 +265,7 @@ func renderReleaseCalendarPNG(start, end time.Time, label string, items []releas
 	byDay := map[int][]releaseCalendarItem{}
 	maxItemsInRow := make([]int, rows)
 	for _, item := range items {
-		index := int(dayStart(item.Date).Sub(start).Hours() / 24)
+		index := int(dayStart(item.Date).Sub(gridStart).Hours() / 24)
 		if index < 0 || index >= days {
 			continue
 		}
@@ -292,8 +320,12 @@ func renderReleaseCalendarPNG(start, end time.Time, label string, items []releas
 			draw.Draw(img, rect, &image.Uniform{C: fill}, image.Point{}, draw.Src)
 			drawRectBorder(img, rect, color.RGBA{R: 51, G: 65, B: 85, A: 255})
 			if index < days {
-				day := start.AddDate(0, 0, index)
-				drawText(img, face, x+cellPadding, y+18, day.Format("02.01."), color.RGBA{R: 226, G: 232, B: 240, A: 255})
+				day := gridStart.AddDate(0, 0, index)
+				dayColor := color.RGBA{R: 226, G: 232, B: 240, A: 255}
+				if day.Before(start) || !day.Before(end) {
+					dayColor = color.RGBA{R: 148, G: 163, B: 184, A: 255}
+				}
+				drawText(img, face, x+cellPadding, y+18, day.Format("02.01."), dayColor)
 				itemY := y + dayHeaderHeight + cellPadding
 				for _, item := range byDay[index] {
 					chip := image.Rect(x+cellPadding, itemY, x+cellWidth-14, itemY+itemHeight-4)
@@ -318,6 +350,18 @@ func renderReleaseCalendarPNG(start, end time.Time, label string, items []releas
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+func calendarGridStart(start time.Time) time.Time {
+	start = dayStart(start)
+	offset := (int(start.Weekday()) + 6) % 7
+	return start.AddDate(0, 0, -offset)
+}
+
+func calendarGridEnd(end time.Time) time.Time {
+	lastDay := dayStart(end).AddDate(0, 0, -1)
+	offset := (7 - int(lastDay.Weekday())) % 7
+	return lastDay.AddDate(0, 0, offset+1)
 }
 
 func dayStart(value time.Time) time.Time {

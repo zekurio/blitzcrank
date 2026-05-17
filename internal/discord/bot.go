@@ -166,7 +166,7 @@ func (b *Bot) registerRuntimeCommands() error {
 }
 
 func retiredApplicationCommands() []string {
-	return []string{"config"}
+	return []string{"config", commands.LegacyReleasesCommand}
 }
 
 func applicationCommandMatches(existing, desired *discordgo.ApplicationCommand) bool {
