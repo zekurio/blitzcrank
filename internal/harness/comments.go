@@ -53,6 +53,7 @@ Required final comment:
 - Do not mention searches, retries, refreshes, or replacement attempts that were not performed.
 - For fixed issues, explain what caused the issue and what was done to fix it.
 - For unresolved issues, explain why it could not be fixed; do not instruct the user what to do next.
+- For verified external availability blockers, write a natural availability answer instead of failure phrasing like "konnte nicht repariert werden"; for example, say that the German version is available on the verified date and the user has to wait until then.
 - For diagnostic/test instructions, report the diagnostic action and result instead of inventing a cause/fix.
 - Mention verification only when a fix or diagnostic action was actually checked, and write it as a normal sentence.
 - Do not use labeled sections such as "Validierung:", "Ursache:", "Fix:", or "Nächste Schritte:".
