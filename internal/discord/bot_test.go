@@ -186,8 +186,9 @@ func TestBotStartRegistersRuntimeCommandsFromStateUser(t *testing.T) {
 func TestRegisterRuntimeCommandsEditsExistingAndCreatesMissing(t *testing.T) {
 	api := &fakeDiscordAPI{existing: []*discordgo.ApplicationCommand{
 		{ID: "existing-automation", Name: commands.AutomationCommand},
+		{ID: "existing-legacy-automation", Name: "automation"},
 		{ID: "existing-config", Name: "config"},
-		{ID: "existing-releases", Name: commands.LegacyReleasesCommand},
+		{ID: "existing-releases", Name: "releases"},
 	}}
 	bot := &Bot{
 		cfg:   config.Config{DiscordGuildID: "guild-1"},
@@ -208,11 +209,11 @@ func TestRegisterRuntimeCommandsEditsExistingAndCreatesMissing(t *testing.T) {
 	if !fakeCreatedCommand(api.created, "jellyfin") {
 		t.Fatalf("created commands = %#v, want jellyfin", api.created)
 	}
-	if len(api.deleted) != 2 {
-		t.Fatalf("deleted commands = %#v, want retired config and releases deletes", api.deleted)
+	if len(api.deleted) != 3 {
+		t.Fatalf("deleted commands = %#v, want retired legacy automation, config and releases deletes", api.deleted)
 	}
-	if !fakeDeletedCommand(api.deleted, "existing-config") || !fakeDeletedCommand(api.deleted, "existing-releases") {
-		t.Fatalf("deleted commands = %#v, want retired config and releases deletes", api.deleted)
+	if !fakeDeletedCommand(api.deleted, "existing-legacy-automation") || !fakeDeletedCommand(api.deleted, "existing-config") || !fakeDeletedCommand(api.deleted, "existing-releases") {
+		t.Fatalf("deleted commands = %#v, want retired legacy automation, config and releases deletes", api.deleted)
 	}
 }
 
@@ -327,7 +328,7 @@ func TestSplitDiscordMessagePreservesLongUnicode(t *testing.T) {
 }
 
 func TestAdminInteractionAllowsOwnerOrAdministrator(t *testing.T) {
-	bot := &Bot{cfg: config.Config{InstanceOwnerID: "owner-1"}}
+	bot := &Bot{cfg: config.Config{InstanceOwnerID: "owner-1", DiscordAdminRoleID: "role-admin"}}
 	owner := &discordgo.InteractionCreate{Interaction: &discordgo.Interaction{
 		Member: &discordgo.Member{User: &discordgo.User{ID: "owner-1"}},
 	}}
@@ -340,6 +341,12 @@ func TestAdminInteractionAllowsOwnerOrAdministrator(t *testing.T) {
 	if !bot.isAdminInteraction(admin) {
 		t.Fatal("administrator interaction was not allowed")
 	}
+	roleAdmin := &discordgo.InteractionCreate{Interaction: &discordgo.Interaction{
+		Member: &discordgo.Member{User: &discordgo.User{ID: "user-role-admin"}, Roles: []string{"role-admin"}},
+	}}
+	if !bot.isAdminInteraction(roleAdmin) {
+		t.Fatal("configured admin role interaction was not allowed")
+	}
 	user := &discordgo.InteractionCreate{Interaction: &discordgo.Interaction{
 		Member: &discordgo.Member{User: &discordgo.User{ID: "user-2"}},
 	}}
@@ -349,12 +356,15 @@ func TestAdminInteractionAllowsOwnerOrAdministrator(t *testing.T) {
 }
 
 func TestIsAdminUserAllowsOwnerOrAdministrator(t *testing.T) {
-	bot := &Bot{cfg: config.Config{InstanceOwnerID: "owner-1"}}
+	bot := &Bot{cfg: config.Config{InstanceOwnerID: "owner-1", DiscordAdminRoleID: "role-admin"}}
 	if !bot.isAdminUser("guild-1", "channel-1", "owner-1", nil) {
 		t.Fatal("owner user was not allowed")
 	}
 	if !bot.isAdminUser("guild-1", "channel-1", "user-1", &discordgo.Member{Permissions: discordgo.PermissionAdministrator}) {
 		t.Fatal("administrator user was not allowed")
+	}
+	if !bot.isAdminUser("guild-1", "channel-1", "user-3", &discordgo.Member{Roles: []string{"role-admin"}}) {
+		t.Fatal("configured admin role user was not allowed")
 	}
 	if bot.isAdminUser("guild-1", "channel-1", "user-2", &discordgo.Member{}) {
 		t.Fatal("normal user was allowed")
@@ -519,24 +529,40 @@ func TestModalTextInputValue(t *testing.T) {
 }
 
 func TestToolApprovalPromptMentionsOwner(t *testing.T) {
-	bot := &Bot{cfg: config.Config{InstanceOwnerID: "owner-1"}}
+	bot := &Bot{cfg: config.Config{InstanceOwnerID: "owner-1", DiscordAdminRoleID: "role-admin"}}
 	event := &discordgo.MessageCreate{Message: &discordgo.Message{GuildID: "guild-1"}}
 	prompt := bot.toolApprovalPrompt(event, agent.ToolApprovalRequest{
-		Name:             "sonarr_delete_blocklist_item",
-		ArgumentsSummary: `{"blocklist_id":"42"}`,
+		Name:             "sandbox_run_typescript",
+		ArgumentsSummary: `{"purpose":"check status"}`,
 	})
-	for _, want := range []string{"<@owner-1>", "👍", "👎", "sonarr_delete_blocklist_item"} {
+	for _, want := range []string{"<@owner-1>", "<@&role-admin>", "👍", "👎", "geschützte Aktion", "Was bedeutet das?", "sandbox_run_typescript"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("toolApprovalPrompt() missing %q: %s", want, prompt)
 		}
 	}
+	if strings.Contains(prompt, "Löschaktion") {
+		t.Fatalf("toolApprovalPrompt() used destructive wording for generic tool call: %s", prompt)
+	}
 }
 
-func TestToolApprovalAllowedMentionsOnlyOwner(t *testing.T) {
+func TestToolApprovalPromptUsesDestructiveWording(t *testing.T) {
 	bot := &Bot{cfg: config.Config{InstanceOwnerID: "owner-1"}}
+	event := &discordgo.MessageCreate{Message: &discordgo.Message{GuildID: "guild-1"}}
+	prompt := bot.toolApprovalPrompt(event, agent.ToolApprovalRequest{
+		Name:             "sandbox_run_typescript",
+		Destructive:      true,
+		ArgumentsSummary: `{"purpose":"remove queue item"}`,
+	})
+	if !strings.Contains(prompt, "Löschaktion") || !strings.Contains(prompt, "Daten entfernen") {
+		t.Fatalf("toolApprovalPrompt() missing destructive wording: %s", prompt)
+	}
+}
+
+func TestToolApprovalAllowedMentionsIncludesOwnerAndAdminRole(t *testing.T) {
+	bot := &Bot{cfg: config.Config{InstanceOwnerID: "owner-1", DiscordAdminRoleID: "role-admin"}}
 	mentions := bot.toolApprovalAllowedMentions()
-	if mentions == nil || len(mentions.Users) != 1 || mentions.Users[0] != "owner-1" || mentions.RepliedUser {
-		t.Fatalf("toolApprovalAllowedMentions() = %#v, want only owner", mentions)
+	if mentions == nil || len(mentions.Users) != 1 || mentions.Users[0] != "owner-1" || len(mentions.Roles) != 1 || mentions.Roles[0] != "role-admin" || mentions.RepliedUser {
+		t.Fatalf("toolApprovalAllowedMentions() = %#v, want owner and role", mentions)
 	}
 }
 
@@ -586,6 +612,25 @@ func TestValidateDiscordReplyRejectsInternalOutput(t *testing.T) {
 	}
 }
 
+func TestDiscordProgressLineReflectsToolWork(t *testing.T) {
+	line := discordProgressLine(agent.ProgressEvent{Phase: "tools_selected", Count: 1, Iteration: 1})
+	if !strings.Contains(line, "1 Tool-Aufruf") || strings.Contains(line, "Tool-Aufrufe") {
+		t.Fatalf("discordProgressLine(single tool) = %q, want singular German tool call", line)
+	}
+	line = discordProgressLine(agent.ProgressEvent{Phase: "tools_selected", Count: 2, Iteration: 1})
+	if !strings.Contains(line, "2 Tool-Aufrufe") {
+		t.Fatalf("discordProgressLine(multiple tools) = %q, want plural German tool calls", line)
+	}
+	line = discordProgressLine(agent.ProgressEvent{Phase: "tool_start", ToolName: "jellyfin_search"})
+	if !strings.Contains(line, "jellyfin_search") || !strings.Contains(line, "führe") {
+		t.Fatalf("discordProgressLine() = %q, want tool progress", line)
+	}
+	line = discordProgressLine(agent.ProgressEvent{Phase: "approval_wait", ToolName: "sonarr_queue_remove"})
+	if !strings.Contains(line, "Freigabe") || !strings.Contains(line, "sonarr_queue_remove") {
+		t.Fatalf("discordProgressLine(approval) = %q, want approval progress", line)
+	}
+}
+
 func TestOneOffDiscordQuestionRouting(t *testing.T) {
 	triage := agent.DiscordTriageResult{Action: "support_request", Actionable: true, NeedsAgentRun: true}
 	tests := []struct {
@@ -604,6 +649,27 @@ func TestOneOffDiscordQuestionRouting(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := isOneOffDiscordQuestion(tt.message, triage); got != tt.want {
 				t.Fatalf("isOneOffDiscordQuestion() = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParentSupportSurface(t *testing.T) {
+	triage := agent.DiscordTriageResult{Action: "support_request", Actionable: true, NeedsAgentRun: true}
+	tests := []struct {
+		name      string
+		content   string
+		mentioned bool
+		want      discordSupportSurface
+	}{
+		{name: "mention is inline", content: "<@bot> why are downloads stuck?", mentioned: true, want: discordSurfaceInline},
+		{name: "one-off availability is inline", content: "ist Project Hail Mary auf Jellyfin verfügbar?", want: discordSurfaceInline},
+		{name: "ambient support opens public thread", content: "download stuck for Ghost in the Shell", want: discordSurfacePublicThread},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parentSupportSurface(tt.content, tt.mentioned, triage); got != tt.want {
+				t.Fatalf("parentSupportSurface() = %s, want %s", got, tt.want)
 			}
 		})
 	}
@@ -663,6 +729,49 @@ func TestRecentTranscriptUsesLatestMessages(t *testing.T) {
 	transcript := recentTranscript(events, 1)
 	if strings.Contains(transcript, "old") || !strings.Contains(transcript, "new") {
 		t.Fatalf("recentTranscript() = %q", transcript)
+	}
+}
+
+func TestDiscordPromptCompactsTranscriptWhenContextBudgetIsSmall(t *testing.T) {
+	now := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)
+	bot := &Bot{cfg: config.Config{
+		Model:                        "tiny-model",
+		ContextAutoCompact:           true,
+		ContextReservedTokens:        0,
+		ContextPreserveRecentTokens:  30,
+		ContextTailTurns:             2,
+		DiscordContextRecentMessages: 12,
+		RuntimeProfiles: map[string]config.RuntimeProfile{
+			"discord": {
+				Model:        "tiny-model",
+				ContextLimit: 900,
+				OutputLimit:  100,
+			},
+		},
+	}}
+	thread := store.AgentThread{
+		Title:            "Playback problem",
+		ExternalID:       "thread-1",
+		ParentExternalID: "channel-1",
+		Summary:          "User is debugging a playback issue; older raw transcript was already summarized.",
+		Events: []store.AgentThreadEvent{
+			{Actor: "alice", Message: "old raw detail that should be compacted away because it is verbose and stale", CreatedAt: now},
+			{Actor: "alice", Message: "new raw detail to preserve", CreatedAt: now.Add(time.Minute)},
+		},
+	}
+
+	prompt := bot.discordPrompt(thread, "latest question")
+	if strings.Contains(prompt, "old raw detail") {
+		t.Fatalf("prompt contains compacted old raw message:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "new raw detail to preserve") {
+		t.Fatalf("prompt missing latest preserved raw message:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "Compacted transcript: 1 older message") {
+		t.Fatalf("prompt missing compaction note:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, thread.Summary) {
+		t.Fatalf("prompt missing rolling summary:\n%s", prompt)
 	}
 }
 
@@ -828,7 +937,7 @@ func TestRecordDiscordInteractionThreadCanContinueFromBotReply(t *testing.T) {
 		MessageID:      "user-message-1",
 		EventType:      "triage_direct_reply",
 		Content:        "wie gehts dir?",
-		ToolGroups:     []string{"jellyseerr", "jellyfin"},
+		ToolGroups:     []string{"seerr", "jellyfin"},
 		BotMessageID:   "bot-message-1",
 		BotMessageText: "Mir geht's gut.",
 		Attribution:    "discord:triage",
@@ -847,7 +956,7 @@ func TestRecordDiscordInteractionThreadCanContinueFromBotReply(t *testing.T) {
 	if len(loaded.Events) != 1 || loaded.Events[0].EventType != "triage_direct_reply" || loaded.Events[0].ActorID != "user-1" {
 		t.Fatalf("events = %#v", loaded.Events)
 	}
-	if got := threadToolGroups(loaded); !stringSliceContains(got, "jellyseerr") || !stringSliceContains(got, "jellyfin") {
+	if got := threadToolGroups(loaded); !stringSliceContains(got, "seerr") || !stringSliceContains(got, "jellyfin") {
 		t.Fatalf("threadToolGroups() = %#v", got)
 	}
 }

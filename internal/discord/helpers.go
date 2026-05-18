@@ -269,6 +269,74 @@ func recentTranscript(events []store.AgentThreadEvent, limit int) string {
 	return strings.Join(lines, "\n")
 }
 
+func recentTranscriptWithinBudget(events []store.AgentThreadEvent, limit, minTailMessages, tokenBudget int) (string, int) {
+	if limit < 1 {
+		limit = 12
+	}
+	if minTailMessages > limit {
+		limit = minTailMessages
+	}
+	start := len(events) - limit
+	if start < 0 {
+		start = 0
+	}
+	candidates := make([]string, 0, len(events)-start)
+	for _, event := range events[start:] {
+		line := transcriptLine(event)
+		if line == "" {
+			continue
+		}
+		candidates = append(candidates, line)
+	}
+	if len(candidates) == 0 {
+		return "(no prior messages)", 0
+	}
+	if tokenBudget <= 0 {
+		return "(recent transcript compacted into rolling summary)", len(candidates)
+	}
+	var selected []string
+	used := 0
+	for i := len(candidates) - 1; i >= 0; i-- {
+		line := candidates[i]
+		cost := estimatePromptTokens(line)
+		if len(selected) > 0 {
+			cost += 1
+		}
+		if used+cost > tokenBudget {
+			break
+		}
+		used += cost
+		selected = append(selected, line)
+	}
+	if len(selected) == 0 {
+		return "(recent transcript compacted into rolling summary)", len(candidates)
+	}
+	for left, right := 0, len(selected)-1; left < right; left, right = left+1, right-1 {
+		selected[left], selected[right] = selected[right], selected[left]
+	}
+	return strings.Join(selected, "\n"), len(candidates) - len(selected)
+}
+
+func transcriptLine(event store.AgentThreadEvent) string {
+	message := strings.TrimSpace(event.Message)
+	if message == "" {
+		return ""
+	}
+	actor := strings.TrimSpace(event.Actor)
+	if actor == "" {
+		actor = "unknown"
+	}
+	return fmt.Sprintf("- %s at %s: %s", actor, event.CreatedAt.Format(time.RFC3339), message)
+}
+
+func estimatePromptTokens(text string) int {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return 0
+	}
+	return (len(text) + 3) / 4
+}
+
 func recentRuns(runs []store.AgentRun, limit int) string {
 	if limit < 1 {
 		limit = 5

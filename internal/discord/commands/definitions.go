@@ -3,23 +3,19 @@ package commands
 import "github.com/bwmarrin/discordgo"
 
 const (
-	AutomationCommand       = "automatisierung"
-	LegacyAutomationCommand = "automation"
-	ReleasesCommand         = "release"
-	LegacyReleasesCommand   = "releases"
+	AutomationCommand = "automatisierung"
+	ReleasesCommand   = "release"
 
 	AutomationNameOption = "name"
 	QuestionOption       = "frage"
-	LegacyPromptOption   = "prompt"
 	SpanOption           = "zeitraum"
-	LegacySpanOption     = "span"
 )
 
 var SkillCommandGroups = map[string][]string{
 	"jellyfin":   {"jellyfin"},
-	"jellyseerr": {"jellyseerr"},
-	"sonarr":     {"jellyseerr", "sonarr"},
-	"radarr":     {"jellyseerr", "radarr"},
+	"seerr":      {"seerr"},
+	"sonarr":     {"seerr", "sonarr"},
+	"radarr":     {"seerr", "radarr"},
 	"sabnzbd":    {"sabnzbd"},
 	"filesystem": {"filesystem"},
 }
@@ -47,7 +43,7 @@ func RuntimeCommands() []*discordgo.ApplicationCommand {
 func ApplicationCommands() []*discordgo.ApplicationCommand {
 	commands := RuntimeCommands()
 	commands = append(commands, releasesCommand())
-	for _, name := range []string{"jellyfin", "jellyseerr", "sonarr", "radarr", "sabnzbd", "filesystem"} {
+	for _, name := range []string{"jellyfin", "seerr", "sonarr", "radarr", "sabnzbd", "filesystem"} {
 		commands = append(commands, skillCommand(name))
 	}
 	return commands

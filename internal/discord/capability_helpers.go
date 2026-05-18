@@ -22,8 +22,8 @@ func discordToolGroupsForContent(content string) []string {
 		}
 		groups = append(groups, group)
 	}
-	if containsCapability(text, "jellyseerr", "overseerr", "seerr", "request", "issue") {
-		add("jellyseerr")
+	if containsCapability(text, "seerr", "request", "issue") {
+		add("seerr")
 	}
 	if containsCapability(text, "jellyfin", "library", "libraries", "playback", "watched", "played", "user", "users", "view", "views", "subtitle", "subtitles", "untertitel", "audio", "tonspur", "verfuegbar", "available") {
 		add("jellyfin")
@@ -41,7 +41,7 @@ func discordToolGroupsForContent(content string) []string {
 		add("filesystem")
 	}
 	if len(groups) == 0 {
-		return []string{"jellyseerr", "jellyfin"}
+		return []string{"seerr", "jellyfin"}
 	}
 	return groups
 }

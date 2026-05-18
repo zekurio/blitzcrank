@@ -7,23 +7,11 @@ import (
 )
 
 func SlashPrompt(data discordgo.ApplicationCommandInteractionData) string {
-	if value := StringOption(data, QuestionOption); value != "" {
-		return value
-	}
-	if value := StringOption(data, LegacyPromptOption); value != "" {
-		return value
-	}
-	return ""
+	return StringOption(data, QuestionOption)
 }
 
 func ReleaseSpan(data discordgo.ApplicationCommandInteractionData) string {
-	if value := StringOption(data, SpanOption); value != "" {
-		return value
-	}
-	if value := StringOption(data, LegacySpanOption); value != "" {
-		return value
-	}
-	return ""
+	return StringOption(data, SpanOption)
 }
 
 func AutomationName(data discordgo.ApplicationCommandInteractionData) string {

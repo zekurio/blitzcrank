@@ -25,6 +25,9 @@ type Bot struct {
 	locks     sync.Map
 	approvals sync.Map
 	botID     string
+
+	approvalThreadMu sync.Mutex
+	approvalThreadID string
 }
 
 type discordSessionAPI interface {
@@ -166,7 +169,7 @@ func (b *Bot) registerRuntimeCommands() error {
 }
 
 func retiredApplicationCommands() []string {
-	return []string{"config", commands.LegacyReleasesCommand}
+	return []string{"automation", "config", "releases", "jellyseerr"}
 }
 
 func applicationCommandMatches(existing, desired *discordgo.ApplicationCommand) bool {
