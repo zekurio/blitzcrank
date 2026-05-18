@@ -11,14 +11,14 @@ func (a *Agent) toolPolicy(req Request) tools.ToolPolicy {
 	source := strings.ToLower(strings.TrimSpace(req.Source))
 	groups := a.toolGroupsForRequest(req)
 	switch {
-	case strings.HasPrefix(source, "jellyseerr_issue_"):
-		return tools.ToolPolicy{Groups: groups}
+	case strings.HasPrefix(source, "seerr_issue_"):
+		return tools.ToolPolicy{Groups: groups, SandboxServices: true}
 	case source == "automation_cron" && isStaleImportHandler(req.Content):
-		return tools.ToolPolicy{Groups: groups}
+		return tools.ToolPolicy{Groups: groups, SandboxServices: true}
 	case strings.HasPrefix(source, "discord"):
-		return tools.ToolPolicy{Groups: groups}
+		return tools.ToolPolicy{Groups: groups, SandboxServices: true}
 	default:
-		return tools.ToolPolicy{ReadOnly: true, Groups: groups}
+		return tools.ToolPolicy{ReadOnly: true, Groups: groups, SandboxServices: true}
 	}
 }
 
@@ -37,7 +37,7 @@ func (a *Agent) skillsForRequest(req Request) []Skill {
 
 func skillsForRequest(req Request, skills []Skill, groups []string) []Skill {
 	selected := skillNamesForGroups(groups)
-	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(req.Source)), "jellyseerr_issue_") {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(req.Source)), "seerr_issue_") {
 		selected = append([]string{"seerr-issue-solver"}, selected...)
 	}
 	selectedSet := make(map[string]bool, len(selected))
@@ -57,7 +57,7 @@ func skillNamesForGroups(groups []string) []string {
 	names := make([]string, 0, len(groups))
 	for _, group := range groups {
 		switch group {
-		case "jellyseerr", "jellyfin", "sonarr", "radarr", "sabnzbd", "filesystem":
+		case "seerr", "jellyfin", "sonarr", "radarr", "sabnzbd", "filesystem":
 			names = append(names, group)
 		}
 	}
@@ -66,14 +66,14 @@ func skillNamesForGroups(groups []string) []string {
 
 func (a *Agent) toolGroupsForRequest(req Request) []string {
 	if len(req.ToolGroups) > 0 {
-		return uniqueStrings(append(req.ToolGroups, "web"))
+		return uniqueStrings(append(req.ToolGroups, "memory", "sandbox", "web"))
 	}
 	source := strings.ToLower(strings.TrimSpace(req.Source))
-	if strings.HasPrefix(source, "jellyseerr_issue_") {
-		return []string{"jellyseerr", "jellyfin", "sonarr", "radarr", "sabnzbd", "filesystem", "web"}
+	if strings.HasPrefix(source, "seerr_issue_") {
+		return []string{"memory", "sandbox", "seerr", "jellyfin", "sonarr", "radarr", "sabnzbd", "filesystem", "web"}
 	}
 	if source == "automation_cron" {
-		return []string{"jellyseerr", "jellyfin", "sonarr", "radarr", "sabnzbd", "filesystem", "web"}
+		return []string{"memory", "sandbox", "seerr", "jellyfin", "sonarr", "radarr", "sabnzbd", "filesystem", "web"}
 	}
 
 	text := normalizedCapabilityText(req.Content)
@@ -81,8 +81,8 @@ func (a *Agent) toolGroupsForRequest(req Request) []string {
 	addGroup := func(name string) {
 		groups = append(groups, name)
 	}
-	if containsAny(text, "jellyseerr", "overseerr", "seerr", "request", "issue") {
-		addGroup("jellyseerr")
+	if containsAny(text, "seerr", "request", "issue") {
+		addGroup("seerr")
 	}
 	if containsAny(text, "jellyfin", "library", "libraries", "playback", "watched", "played", "user", "users", "view", "views", "subtitle", "subtitles", "untertitel", "audio", "tonspur", "verfuegbar", "available") {
 		addGroup("jellyfin")
@@ -103,9 +103,9 @@ func (a *Agent) toolGroupsForRequest(req Request) []string {
 		addGroup("web")
 	}
 	if len(groups) == 0 && strings.HasPrefix(source, "discord") {
-		return []string{"jellyseerr", "jellyfin", "web"}
+		return []string{"memory", "sandbox", "seerr", "jellyfin", "web"}
 	}
-	return uniqueStrings(append(groups, "web"))
+	return uniqueStrings(append(groups, "memory", "sandbox", "web"))
 }
 
 func normalizedCapabilityText(content string) string {
@@ -144,14 +144,14 @@ func (a *Agent) workflowPrompt(req Request, policy tools.ToolPolicy) string {
 		mutation = "This run is read-only: use lookup/search tools only, do not attempt repairs, refreshes, retries, searches that alter queues, deletes, or issue resolution."
 	}
 	switch {
-	case strings.HasPrefix(source, "jellyseerr_issue_"):
-		return "Active workflow: Jellyseerr issue. Follow the Jellyseerr issue workflow and final-comment rules. " + mutation
+	case strings.HasPrefix(source, "seerr_issue_"):
+		return "Active workflow: Seerr issue. Follow the Seerr issue workflow and final-comment rules. " + mutation
 	case source == "automation_cron":
-		return "Active workflow: scheduled automation. Follow the automation prompt for output shape. Ignore Jellyseerr issue final-comment rules unless the automation explicitly concerns a Jellyseerr issue. " + mutation
+		return "Active workflow: scheduled automation. Follow the automation prompt for output shape. Ignore Seerr issue final-comment rules unless the automation explicitly concerns a Seerr issue. " + mutation
 	case strings.HasPrefix(source, "discord"):
-		return "Active workflow: Discord support. Reply as a Discord message. Ignore Jellyseerr issue final-comment rules unless the user explicitly asks about a Jellyseerr issue. For new acquisition requests such as asking to add, request, get, track, or monitor a movie or show for a user, prefer Jellyseerr request tools first so permissions and quotas are checked before downstream services are mutated. Use direct Sonarr/Radarr maintenance tools for operational repair of content that already exists downstream. Non-delete write tools may be used directly only when evidence clearly supports the action; validate with follow-up reads after any mutation. If you are not confident a non-delete write is safe, do not mutate yet and instead ask the owner/admin for approval with a compact description of the intended tool call. Delete tools require owner/admin approval before execution; when you call one, the runtime will post an approval request and wait for a thumbs-up or thumbs-down reaction. " + mutation
+		return "Active workflow: Discord support. Reply as a Discord message. Ignore Seerr issue final-comment rules unless the user explicitly asks about a Seerr issue. For new acquisition requests such as asking to add, request, get, track, or monitor a movie or show for a user, prefer Seerr request tools first so permissions and quotas are checked before downstream services are mutated. Use direct Sonarr/Radarr maintenance tools for operational repair of content that already exists downstream. Non-delete write tools may be used directly only when evidence clearly supports the action; validate with follow-up reads after any mutation. If you are not confident a non-delete write is safe, do not mutate yet and instead ask the owner/admin for approval with a compact description of the intended tool call. Delete tools require owner/admin approval before execution; when you call one, the runtime will post an approval request and wait for a thumbs-up or thumbs-down reaction. " + mutation
 	default:
-		return "Active workflow: general media-server support. Ignore Jellyseerr issue final-comment rules unless the request explicitly concerns a Jellyseerr issue. " + mutation
+		return "Active workflow: general media-server support. Ignore Seerr issue final-comment rules unless the request explicitly concerns a Seerr issue. " + mutation
 	}
 }
 
@@ -172,9 +172,12 @@ func (a *Agent) toolContextPrompt(policy tools.ToolPolicy) string {
 			lines = append(lines, "Web search is part of the default capability set, but no callable web_search tool is configured in this run; do not claim web verification.")
 		}
 	}
+	if policy.SandboxServices && containsString(names, "sandbox_run_typescript") {
+		lines = append(lines, "Service APIs are inspected through sandbox_run_typescript instead of one-off service tools. Write short Deno TypeScript diagnostics with a clear purpose; the runtime reviews the script and grants only the needed service permissions before execution.")
+	}
 	if policy.ReadOnly {
-		lines = append(lines, "This selected set is read-only; mutating tools are omitted from the tool API.")
-	} else if policyIncludesGroup(policy, "jellyseerr") || policyIncludesGroup(policy, "jellyfin") || policyIncludesGroup(policy, "sonarr") || policyIncludesGroup(policy, "radarr") {
+		lines = append(lines, "This selected set is read-only for media-server operations; repair and queue mutation tools are omitted, but memory tools may still update durable notes.")
+	} else if policyIncludesGroup(policy, "seerr") || policyIncludesGroup(policy, "jellyfin") || policyIncludesGroup(policy, "sonarr") || policyIncludesGroup(policy, "radarr") || policyIncludesGroup(policy, "memory") {
 		lines = append(lines, "Mutating tools are present in this selected set. For Discord workflows, use non-delete writes only when evidence is strong, and expect delete tools to pause for owner/admin approval.")
 	}
 	return strings.Join(lines, " ")
@@ -200,7 +203,7 @@ func formatToolCapabilities(names []string) string {
 func toolCapabilityGroup(name string) string {
 	switch {
 	case strings.HasPrefix(name, "seerr_"):
-		return "jellyseerr"
+		return "seerr"
 	case strings.HasPrefix(name, "jellyfin_"):
 		return "jellyfin"
 	case strings.HasPrefix(name, "sonarr_"):
@@ -211,6 +214,10 @@ func toolCapabilityGroup(name string) string {
 		return "sabnzbd"
 	case strings.HasPrefix(name, "fs_"):
 		return "filesystem"
+	case strings.HasPrefix(name, "memory_"):
+		return "memory"
+	case strings.HasPrefix(name, "sandbox_"):
+		return "sandbox"
 	case name == "web_search":
 		return "web"
 	default:

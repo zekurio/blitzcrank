@@ -8,8 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"log"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -164,7 +162,6 @@ func TestNewDoesNotCreateLLMClientDuringStartup(t *testing.T) {
 		CodexAuthStore:    filepath.Join(t.TempDir(), "missing-auth.json"),
 		CodexAuthProfile:  "test",
 		CodexBaseURL:      "https://example.test",
-		CodexServiceTier:  "standard",
 		RuntimeProfiles: map[string]config.RuntimeProfile{
 			"discord_triage": {Model: "gpt-test"},
 		},
@@ -245,19 +242,19 @@ func TestExecuteToolLogsFailureDetail(t *testing.T) {
 
 	agent := &Agent{registry: tools.NewRegistry(config.Config{})}
 	var call llm.ToolCall
-	call.Function.Name = "fs_stat_path"
-	call.Function.Arguments = `{"path":"/tmp"}`
+	call.Function.Name = "memory_get"
+	call.Function.Arguments = `{"scope":"","key":"missing"}`
 
 	_, err := agent.executeTool(context.Background(), Request{}, call, tools.ToolPolicy{})
-	if err == nil {
-		t.Fatal("executeTool() error = nil, want filesystem configuration error")
+	if err == nil || !strings.Contains(err.Error(), "scope is required") {
+		t.Fatalf("executeTool() error = %v, want scope error", err)
 	}
 
 	output := logs.String()
 	for _, want := range []string{
-		`agent tool call start: name=fs_stat_path args={"path":"/tmp"}`,
-		`agent tool call failed: name=fs_stat_path`,
-		`filesystem tools are not configured`,
+		`agent tool call start: name=memory_get args={"key":"missing","scope":""}`,
+		`agent tool call failed: name=memory_get`,
+		`scope is required`,
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("tool logs missing %q:\n%s", want, output)
@@ -266,16 +263,12 @@ func TestExecuteToolLogsFailureDetail(t *testing.T) {
 }
 
 func TestExecuteToolEmitsAuditRecord(t *testing.T) {
-	root := t.TempDir()
-	path := filepath.Join(root, "file.txt")
-	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	agent := &Agent{registry: tools.NewRegistry(config.Config{FSAllowedRoots: []string{root}})}
+	dir := t.TempDir()
+	agent := &Agent{registry: tools.NewRegistry(config.Config{MemoriesDirectory: dir})}
 	var records []ToolAuditRecord
 	var call llm.ToolCall
-	call.Function.Name = "fs_stat_path"
-	call.Function.Arguments = toolArgsJSON(t, map[string]any{"path": path})
+	call.Function.Name = "memory_upsert"
+	call.Function.Arguments = toolArgsJSON(t, map[string]any{"scope": "general", "key": "audit", "content": "hello"})
 
 	_, err := agent.executeTool(context.Background(), Request{ToolAudit: func(record ToolAuditRecord) {
 		records = append(records, record)
@@ -286,7 +279,7 @@ func TestExecuteToolEmitsAuditRecord(t *testing.T) {
 	if len(records) != 1 {
 		t.Fatalf("audit records = %d, want 1", len(records))
 	}
-	if records[0].Name != "fs_stat_path" || records[0].ArgumentsSummary == "" || records[0].ResultSummary == "" || records[0].CompletedAt.Before(records[0].StartedAt) {
+	if records[0].Name != "memory_upsert" || records[0].ArgumentsSummary == "" || records[0].ResultSummary == "" || records[0].CompletedAt.Before(records[0].StartedAt) {
 		t.Fatalf("audit record = %#v", records[0])
 	}
 }
@@ -307,29 +300,49 @@ func TestToolResultMessagePayloadCompactsLargeResults(t *testing.T) {
 	}
 }
 
-func TestReadOnlyPolicyBlocksMutatingTools(t *testing.T) {
+func TestRemovedServiceToolIsUnavailable(t *testing.T) {
 	agent := &Agent{registry: tools.NewRegistry(config.Config{})}
 	var call llm.ToolCall
-	call.Function.Name = "sonarr_search_episode"
-	call.Function.Arguments = `{"episode_id":"42"}`
+	call.Function.Name = "seerr_resolve_issue"
+	call.Function.Arguments = `{"issue_id":"42"}`
 
 	_, err := agent.executeTool(context.Background(), Request{}, call, tools.ToolPolicy{ReadOnly: true})
-	if err == nil || !strings.Contains(err.Error(), "not permitted") {
-		t.Fatalf("executeTool() error = %v, want read-only policy error", err)
+	if err == nil || !strings.Contains(err.Error(), "not available") {
+		t.Fatalf("executeTool() error = %v, want unavailable tool error", err)
 	}
 }
 
-func TestExecuteToolRequestsApprovalForDestructiveTools(t *testing.T) {
-	agent := &Agent{registry: tools.NewRegistry(config.Config{})}
+func TestReadOnlyPolicyAllowsMemoryWrites(t *testing.T) {
+	dir := t.TempDir()
+	agent := &Agent{registry: tools.NewRegistry(config.Config{MemoriesDirectory: dir})}
 	var call llm.ToolCall
-	call.Function.Name = "sonarr_delete_blocklist_item"
-	call.Function.Arguments = `{"blocklist_id":"42"}`
+	call.Function.Name = "memory_upsert"
+	call.Function.Arguments = `{"scope":"general","key":"test","content":"durable note"}`
+
+	if _, err := agent.executeTool(context.Background(), Request{}, call, tools.ToolPolicy{ReadOnly: true, Groups: []string{"memory"}}); err != nil {
+		t.Fatalf("executeTool() error = %v", err)
+	}
+}
+
+func TestSandboxReviewRequestsApprovalForRiskyScripts(t *testing.T) {
+	reviewer := &recordingClient{responses: []llm.ChatResponse{responseWithMessage(llm.Message{
+		Role:    "assistant",
+		Content: `{"decision":"ask","reason":"mutates Sonarr queue","mutating":true,"permissions":{"allow_net":["sonarr.local:8989"],"allow_env":["SONARR_API_KEY"]}}`,
+	})}}
+	agent := &Agent{
+		cfg:      config.Config{Model: "gpt-test"},
+		clients:  map[string]llm.Client{"sandbox_review": reviewer},
+		registry: tools.NewRegistry(config.Config{SonarrBaseURL: "http://sonarr.local:8989", SonarrAPIKey: "secret"}),
+	}
+	var call llm.ToolCall
+	call.Function.Name = "sandbox_run_typescript"
+	call.Function.Arguments = `{"purpose":"delete queue item","script":"await fetch('http://sonarr.local:8989/api/v3/queue/1',{method:'DELETE'})"}`
 
 	called := false
 	_, err := agent.executeTool(context.Background(), Request{
 		ToolApproval: func(_ context.Context, request ToolApprovalRequest) (ToolApprovalDecision, error) {
 			called = true
-			if request.Name != "sonarr_delete_blocklist_item" || !request.Destructive || !request.Mutating {
+			if request.Name != "sandbox_run_typescript" || !request.Destructive || !request.Mutating {
 				t.Fatalf("approval request = %#v", request)
 			}
 			return ToolApprovalDecision{Approved: false, Actor: "owner", Reason: "tool call denied"}, nil
@@ -343,11 +356,19 @@ func TestExecuteToolRequestsApprovalForDestructiveTools(t *testing.T) {
 	}
 }
 
-func TestExecuteToolRejectsApprovalToolWithoutCallback(t *testing.T) {
-	agent := &Agent{registry: tools.NewRegistry(config.Config{})}
+func TestSandboxReviewRejectsApprovalWithoutCallback(t *testing.T) {
+	reviewer := &recordingClient{responses: []llm.ChatResponse{responseWithMessage(llm.Message{
+		Role:    "assistant",
+		Content: `{"decision":"ask","reason":"mutates Sonarr queue","mutating":true,"permissions":{"allow_net":["sonarr.local:8989"],"allow_env":["SONARR_API_KEY"]}}`,
+	})}}
+	agent := &Agent{
+		cfg:      config.Config{Model: "gpt-test"},
+		clients:  map[string]llm.Client{"sandbox_review": reviewer},
+		registry: tools.NewRegistry(config.Config{SonarrBaseURL: "http://sonarr.local:8989", SonarrAPIKey: "secret"}),
+	}
 	var call llm.ToolCall
-	call.Function.Name = "sonarr_delete_blocklist_item"
-	call.Function.Arguments = `{"blocklist_id":"42"}`
+	call.Function.Name = "sandbox_run_typescript"
+	call.Function.Arguments = `{"purpose":"delete queue item","script":"await fetch('http://sonarr.local:8989/api/v3/queue/1',{method:'DELETE'})"}`
 
 	_, err := agent.executeTool(context.Background(), Request{}, call, tools.ToolPolicy{})
 	if err == nil || !strings.Contains(err.Error(), "requires approval") {
@@ -355,28 +376,7 @@ func TestExecuteToolRejectsApprovalToolWithoutCallback(t *testing.T) {
 	}
 }
 
-func TestExecuteToolAppliesSeerrRequesterDefault(t *testing.T) {
-	var call llm.ToolCall
-	call.Function.Name = "seerr_get_user_quota"
-	call.Function.Arguments = `{}`
-
-	root := t.TempDir()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/user/42/quota" {
-			t.Fatalf("request path = %s", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"movie":{"remaining":1},"tv":{"remaining":2}}`))
-	}))
-	defer server.Close()
-
-	agent := &Agent{registry: tools.NewRegistry(config.Config{SeerrBaseURL: server.URL, SeerrAPIKey: "secret", FSAllowedRoots: []string{root}})}
-	if _, err := agent.executeTool(context.Background(), Request{SeerrUserID: "42"}, call, tools.ToolPolicy{}); err != nil {
-		t.Fatalf("executeTool() error = %v", err)
-	}
-}
-
-func TestToolPolicyIsReadOnlyOutsideJellyseerrIssues(t *testing.T) {
+func TestToolPolicyIsReadOnlyOutsideSeerrIssues(t *testing.T) {
 	agent := &Agent{}
 	if policy := agent.toolPolicy(Request{Source: "discord_thread"}); policy.ReadOnly {
 		t.Fatal("discord thread policy is read-only")
@@ -387,8 +387,8 @@ func TestToolPolicyIsReadOnlyOutsideJellyseerrIssues(t *testing.T) {
 	if policy := agent.toolPolicy(Request{Source: "automation_cron", Content: "Run the hourly stale import handler."}); policy.ReadOnly {
 		t.Fatal("stale import handler policy is read-only")
 	}
-	if policy := agent.toolPolicy(Request{Source: "jellyseerr_issue_created"}); policy.ReadOnly {
-		t.Fatal("jellyseerr issue policy is read-only")
+	if policy := agent.toolPolicy(Request{Source: "seerr_issue_created"}); policy.ReadOnly {
+		t.Fatal("seerr issue policy is read-only")
 	}
 }
 
@@ -398,11 +398,26 @@ func TestToolPolicySelectsRelevantDiscordGroups(t *testing.T) {
 	if policy.ReadOnly {
 		t.Fatal("discord policy is read-only")
 	}
-	if !stringSliceContains(policy.Groups, "jellyfin") || !stringSliceContains(policy.Groups, "web") {
-		t.Fatalf("groups = %#v, want jellyfin and web", policy.Groups)
+	if !stringSliceContains(policy.Groups, "memory") || !stringSliceContains(policy.Groups, "jellyfin") || !stringSliceContains(policy.Groups, "web") {
+		t.Fatalf("groups = %#v, want memory, jellyfin, and web", policy.Groups)
 	}
 	if stringSliceContains(policy.Groups, "sonarr") || stringSliceContains(policy.Groups, "filesystem") {
 		t.Fatalf("groups = %#v, want no unrelated tool packs", policy.Groups)
+	}
+}
+
+func TestToolPolicyKeepsMemoryCapabilityInAgentWorkflows(t *testing.T) {
+	agent := &Agent{}
+	for _, req := range []Request{
+		{Source: "discord_thread"},
+		{Source: "automation_cron"},
+		{Source: "seerr_issue_created"},
+		{Source: "discord_slash_jellyfin", ToolGroups: []string{"jellyfin"}},
+	} {
+		policy := agent.toolPolicy(req)
+		if !stringSliceContains(policy.Groups, "memory") {
+			t.Fatalf("groups for %s = %#v, want memory", req.Source, policy.Groups)
+		}
 	}
 }
 
@@ -412,8 +427,8 @@ func TestToolPolicyHonorsExplicitSlashCommandGroups(t *testing.T) {
 	if policy.ReadOnly {
 		t.Fatal("discord slash policy is read-only")
 	}
-	if !stringSliceContains(policy.Groups, "jellyfin") || !stringSliceContains(policy.Groups, "web") {
-		t.Fatalf("groups = %#v, want jellyfin and web", policy.Groups)
+	if !stringSliceContains(policy.Groups, "memory") || !stringSliceContains(policy.Groups, "jellyfin") || !stringSliceContains(policy.Groups, "web") {
+		t.Fatalf("groups = %#v, want memory, jellyfin, and web", policy.Groups)
 	}
 	if stringSliceContains(policy.Groups, "sonarr") || stringSliceContains(policy.Groups, "filesystem") {
 		t.Fatalf("groups = %#v, want explicit groups only", policy.Groups)
@@ -431,8 +446,8 @@ func TestSkillsForRequestHonorsExplicitSlashCommandGroups(t *testing.T) {
 func TestToolPolicyKeepsWebCapabilityInContext(t *testing.T) {
 	agent := &Agent{}
 	policy := agent.toolPolicy(Request{Source: "discord_thread", Content: "download queue is stuck"})
-	if !stringSliceContains(policy.Groups, "sabnzbd") {
-		t.Fatalf("groups = %#v, want sabnzbd", policy.Groups)
+	if !stringSliceContains(policy.Groups, "memory") || !stringSliceContains(policy.Groups, "sabnzbd") {
+		t.Fatalf("groups = %#v, want memory and sabnzbd", policy.Groups)
 	}
 	if !stringSliceContains(policy.Groups, "web") {
 		t.Fatalf("groups = %#v, want web always selected", policy.Groups)
@@ -453,9 +468,9 @@ func TestToolPolicySplitsSabnzbdAndFilesystemGroups(t *testing.T) {
 
 func TestToolContextPromptBalancesAwarenessAndUse(t *testing.T) {
 	agent := &Agent{registry: tools.NewRegistry(config.Config{ExaAPIKey: "secret"})}
-	prompt := agent.toolContextPrompt(tools.ToolPolicy{ReadOnly: true, Groups: []string{"jellyfin", "web"}})
+	prompt := agent.toolContextPrompt(tools.ToolPolicy{ReadOnly: true, SandboxServices: true, Groups: []string{"sandbox", "web"}})
 	for _, want := range []string{
-		"Selected tools by capability: jellyfin (",
+		"Selected tools by capability: sandbox (",
 		"web (web_search)",
 		"not a checklist",
 		"read-only",
@@ -499,16 +514,99 @@ func TestRespondPropagatesSelectedToolsAcrossIterations(t *testing.T) {
 	}
 	for i, request := range client.requests {
 		names := toolNamesFromRaw(request.Tools)
-		if !stringSliceContains(names, "fs_stat_path") || !stringSliceContains(names, "web_search") {
-			t.Fatalf("request %d tools = %#v, want filesystem and web tools", i, names)
+		if !stringSliceContains(names, "sandbox_run_typescript") || !stringSliceContains(names, "web_search") || stringSliceContains(names, "fs_stat_path") {
+			t.Fatalf("request %d tools = %#v, want sandbox and web tools without direct filesystem tools", i, names)
 		}
 	}
 	if len(client.requests[1].Messages) == 0 || client.requests[1].Messages[len(client.requests[1].Messages)-1].Role != "tool" {
 		t.Fatalf("second request did not propagate tool result messages: %#v", client.requests[1].Messages)
 	}
 	runtimeMessage := client.requests[0].Messages[3].Content
-	if !strings.Contains(runtimeMessage, "callable=") || !strings.Contains(runtimeMessage, "fs_stat_path") || !strings.Contains(runtimeMessage, "read_only=false") {
+	if !strings.Contains(runtimeMessage, "callable=") || !strings.Contains(runtimeMessage, "sandbox_run_typescript") || !strings.Contains(runtimeMessage, "read_only=false") {
 		t.Fatalf("runtime metadata missing selected tool inventory: %q", runtimeMessage)
+	}
+}
+
+func TestRespondEmitsProgressForModelAndToolWork(t *testing.T) {
+	root := t.TempDir()
+	toolCall := llm.ToolCall{ID: "call_1", Type: "function"}
+	toolCall.Function.Name = "memory_upsert"
+	toolCall.Function.Arguments = toolArgsJSON(t, map[string]any{"scope": "general", "key": "progress", "content": "ok"})
+	client := &recordingClient{responses: []llm.ChatResponse{
+		responseWithMessage(llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{toolCall}}),
+		responseWithMessage(llm.Message{Role: "assistant", Content: "done"}),
+	}}
+	agent := &Agent{
+		cfg:           config.Config{Model: "gpt-test", MaxToolIterations: 2},
+		client:        client,
+		registry:      tools.NewRegistry(config.Config{MemoriesDirectory: root}),
+		system:        "system",
+		runtimePrompt: "model={{model}}; reasoning_effort={{reasoning_effort}}; callable={{callable_tools}}; read_only={{read_only}}",
+	}
+	var phases []string
+	var toolNames []string
+	_, err := agent.Respond(context.Background(), Request{
+		Source:  "discord_thread",
+		Content: "check file permissions",
+		Progress: func(event ProgressEvent) {
+			phases = append(phases, event.Phase)
+			if event.ToolName != "" {
+				toolNames = append(toolNames, event.ToolName)
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Respond() error = %v", err)
+	}
+	for _, want := range []string{"start", "model_start", "tools_selected", "tool_start", "tool_done", "finalizing"} {
+		if !stringSliceContains(phases, want) {
+			t.Fatalf("progress phases missing %q: %#v", want, phases)
+		}
+	}
+	if !stringSliceContains(toolNames, "memory_upsert") {
+		t.Fatalf("progress tool names = %#v, want memory_upsert", toolNames)
+	}
+}
+
+func TestRespondCompactsOversizedRequestForRuntimeBudget(t *testing.T) {
+	client := &recordingClient{responses: []llm.ChatResponse{
+		responseWithMessage(llm.Message{Role: "assistant", Content: "ok"}),
+	}}
+	agent := &Agent{
+		cfg: config.Config{
+			Model:                       "tiny-model",
+			MaxToolIterations:           1,
+			ContextAutoCompact:          true,
+			ContextReservedTokens:       0,
+			ContextPreserveRecentTokens: 120,
+			RuntimeProfiles: map[string]config.RuntimeProfile{
+				"default": {Model: "tiny-model", ContextLimit: 2200, OutputLimit: 200},
+			},
+		},
+		client:        client,
+		registry:      tools.NewRegistry(config.Config{}),
+		system:        "system",
+		runtimePrompt: "runtime",
+	}
+	content := strings.Repeat("old request detail ", 2000) + "TAIL_MARKER"
+
+	reply, err := agent.Respond(context.Background(), Request{Source: "manual", Author: "tester", Content: content})
+	if err != nil {
+		t.Fatalf("Respond() error = %v", err)
+	}
+	if reply != "ok" {
+		t.Fatalf("reply = %q, want ok", reply)
+	}
+	if len(client.requests) != 1 {
+		t.Fatalf("chat requests = %d, want 1", len(client.requests))
+	}
+	budget := agent.cfg.RuntimeContextBudget("default")
+	if got := estimateMessagesTokens(client.requests[0].Messages); got > budget.UsableTokens {
+		t.Fatalf("request estimated tokens = %d, want <= %d", got, budget.UsableTokens)
+	}
+	user := client.requests[0].Messages[len(client.requests[0].Messages)-1].Content
+	if !strings.Contains(user, compactedMessageNoticeText) || !strings.Contains(user, "TAIL_MARKER") {
+		t.Fatalf("compacted user message missing notice or tail marker:\n%s", user)
 	}
 }
 

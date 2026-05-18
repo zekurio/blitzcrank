@@ -13,16 +13,25 @@ type Registry struct {
 }
 
 type toolDef struct {
-	Name        string
-	Description string
-	Parameters  map[string]any
-	Mutating    bool
-	Destructive bool
+	Name            string
+	Description     string
+	Parameters      map[string]any
+	Mutating        bool
+	Destructive     bool
+	ReadOnlyAllowed bool
+}
+
+type SandboxPermissions struct {
+	AllowNet   []string `json:"allow_net,omitempty"`
+	AllowEnv   []string `json:"allow_env,omitempty"`
+	AllowRead  []string `json:"allow_read,omitempty"`
+	AllowWrite []string `json:"allow_write,omitempty"`
 }
 
 type ToolPolicy struct {
-	ReadOnly bool
-	Groups   []string
+	ReadOnly        bool
+	Groups          []string
+	SandboxServices bool
 }
 
 func NewRegistry(cfg config.Config) *Registry {

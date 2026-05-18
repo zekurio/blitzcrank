@@ -119,6 +119,49 @@ func TestHandleWebhookReportedPostsOneFinalComment(t *testing.T) {
 	}
 }
 
+func TestHandleWebhookResolveDirectivePostsCommentAndResolvesIssue(t *testing.T) {
+	var posted []string
+	var resolved bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/issue/42/comment":
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			posted = append(posted, body["message"])
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/issue/42/resolved":
+			resolved = true
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	cfg := testConfig(server.URL, t.TempDir())
+	runner := &fakeRunner{reply: "RESOLVE_ISSUE: yes\n\nDas Problem wurde behoben und erfolgreich geprüft."}
+	manager := NewManager(cfg, runner, tools.NewRegistry(cfg), nil)
+
+	result, err := manager.HandleWebhook(context.Background(), issuePayload("Problem gemeldet", "alice", "file is fixed"))
+	if err != nil {
+		t.Fatalf("HandleWebhook() error = %v", err)
+	}
+	if result.Ignored {
+		t.Fatalf("HandleWebhook() ignored = true: %s", result.Reason)
+	}
+	if len(posted) != 1 {
+		t.Fatalf("posted comments = %d, want 1", len(posted))
+	}
+	if strings.Contains(posted[0], "RESOLVE_ISSUE") {
+		t.Fatalf("posted comment leaked resolve directive: %q", posted[0])
+	}
+	if !resolved {
+		t.Fatal("issue was not resolved")
+	}
+}
+
 func TestHandleWebhookIgnoresBotAuthoredComment(t *testing.T) {
 	cfg := testConfig("http://127.0.0.1.invalid", t.TempDir())
 	runner := &fakeRunner{reply: "should not run"}
@@ -227,12 +270,12 @@ func TestHandleWebhookUpdatesIssueSummary(t *testing.T) {
 	}
 }
 
-func TestCommentHeaderIncludesFastServiceTier(t *testing.T) {
+func TestCommentHeaderIgnoresDeprecatedFastMode(t *testing.T) {
 	cfg := testConfig("http://127.0.0.1.invalid", t.TempDir())
-	cfg.CodexServiceTier = "fast"
+	cfg.CodexFast = true
 	manager := NewManager(cfg, &fakeRunner{}, tools.NewRegistry(cfg), nil)
 
-	if got := manager.commentHeader(); got != "[blitzcrank w/ gpt-5.5 fast]" {
+	if got := manager.commentHeader(); got != "[blitzcrank w/ gpt-5.5]" {
 		t.Fatalf("commentHeader() = %q", got)
 	}
 }

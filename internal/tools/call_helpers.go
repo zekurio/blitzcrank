@@ -35,6 +35,29 @@ func blocklistPath(args map[string]any) (string, error) {
 	return fmt.Sprintf("/api/v3/blocklist?page=1&pageSize=%d&sortKey=date&sortDirection=descending", pageSize), nil
 }
 
+func arrRemoveQueueItemPath(args map[string]any) (string, error) {
+	values := url.Values{}
+	removeFromClient := true
+	if _, ok := args["remove_from_client"]; ok {
+		value, err := boolArg(args, "remove_from_client")
+		if err != nil {
+			return "", err
+		}
+		removeFromClient = value
+	}
+	blocklist := true
+	if _, ok := args["blocklist"]; ok {
+		value, err := boolArg(args, "blocklist")
+		if err != nil {
+			return "", err
+		}
+		blocklist = value
+	}
+	values.Set("removeFromClient", strconv.FormatBool(removeFromClient))
+	values.Set("blocklist", strconv.FormatBool(blocklist))
+	return "/api/v3/queue/" + pathID(args, "queue_id") + "?" + values.Encode(), nil
+}
+
 func arrLookupPath(base string, args map[string]any) string {
 	values := url.Values{"term": []string{stringArg(args, "term")}}
 	return base + "?" + values.Encode()
