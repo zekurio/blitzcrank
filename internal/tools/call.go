@@ -130,6 +130,8 @@ func (r *Registry) callSonarrTool(ctx context.Context, name string, args map[str
 		return handled(r.arr(ctx, "sonarr", http.MethodGet, "/api/v3/system/status", nil))
 	case "sonarr_list_quality_profiles":
 		return handled(r.arr(ctx, "sonarr", http.MethodGet, "/api/v3/qualityprofile", nil))
+	case "sonarr_list_delay_profiles":
+		return handled(r.arr(ctx, "sonarr", http.MethodGet, "/api/v3/delayprofile", nil))
 	case "sonarr_get_queue":
 		return handled(r.arr(ctx, "sonarr", http.MethodGet, "/api/v3/queue?page=1&pageSize=20", nil))
 	case "sonarr_get_blocklist":
@@ -229,6 +231,8 @@ func (r *Registry) callRadarrTool(ctx context.Context, name string, args map[str
 		return handled(r.arr(ctx, "radarr", http.MethodGet, "/api/v3/system/status", nil))
 	case "radarr_list_quality_profiles":
 		return handled(r.arr(ctx, "radarr", http.MethodGet, "/api/v3/qualityprofile", nil))
+	case "radarr_list_delay_profiles":
+		return handled(r.arr(ctx, "radarr", http.MethodGet, "/api/v3/delayprofile", nil))
 	case "radarr_get_movie_by_id", "radarr_search_movie", "radarr_refresh_movie":
 		return r.callRadarrMovieTool(ctx, name, args)
 	case "radarr_get_movie_file":

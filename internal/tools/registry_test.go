@@ -773,6 +773,7 @@ func TestSonarrReadToolRequestShapes(t *testing.T) {
 		{"sonarr_get_calendar", map[string]any{"start": "2026-05-17", "end": "2026-05-24", "unmonitored": true}},
 		{"sonarr_get_system_status", map[string]any{}},
 		{"sonarr_list_quality_profiles", map[string]any{}},
+		{"sonarr_list_delay_profiles", map[string]any{}},
 	}
 	for _, call := range calls {
 		if _, err := registry.Call(context.Background(), call.name, call.args); err != nil {
@@ -788,6 +789,7 @@ func TestSonarrReadToolRequestShapes(t *testing.T) {
 	assertRequest(t, requests[3], "/api/v3/calendar", "start=2026-05-17", "end=2026-05-24", "unmonitored=true", "includeSeries=true")
 	assertRequest(t, requests[4], "/api/v3/system/status")
 	assertRequest(t, requests[5], "/api/v3/qualityprofile")
+	assertRequest(t, requests[6], "/api/v3/delayprofile")
 }
 
 func TestNumericArgAcceptsDirectNumericIDs(t *testing.T) {
@@ -1039,6 +1041,7 @@ func TestRadarrReadToolRequestShapes(t *testing.T) {
 		{"radarr_get_calendar", map[string]any{"start": "2026-05-17", "end": "2026-05-24", "unmonitored": true}},
 		{"radarr_get_system_status", map[string]any{}},
 		{"radarr_list_quality_profiles", map[string]any{}},
+		{"radarr_list_delay_profiles", map[string]any{}},
 	}
 	for _, call := range calls {
 		if _, err := registry.Call(context.Background(), call.name, call.args); err != nil {
@@ -1054,6 +1057,7 @@ func TestRadarrReadToolRequestShapes(t *testing.T) {
 	assertRequest(t, requests[3], "/api/v3/calendar", "start=2026-05-17", "end=2026-05-24", "unmonitored=true", "includeMovie=true")
 	assertRequest(t, requests[4], "/api/v3/system/status")
 	assertRequest(t, requests[5], "/api/v3/qualityprofile")
+	assertRequest(t, requests[6], "/api/v3/delayprofile")
 }
 
 func TestRadarrManualImportRequestShapes(t *testing.T) {

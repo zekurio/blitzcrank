@@ -195,6 +195,11 @@ var baseToolDefs = []toolDef{
 		Parameters:  objectSchema(map[string]any{}, nil),
 	},
 	{
+		Name:        "sonarr_list_delay_profiles",
+		Description: "List Sonarr delay profiles, including Usenet delay settings.",
+		Parameters:  objectSchema(map[string]any{}, nil),
+	},
+	{
 		Name:        "sonarr_get_queue",
 		Description: "Read the current Sonarr queue.",
 		Parameters:  objectSchema(map[string]any{}, nil),
@@ -332,6 +337,11 @@ var baseToolDefs = []toolDef{
 	{
 		Name:        "radarr_list_quality_profiles",
 		Description: "List Radarr quality profiles for interpreting monitored settings and future add workflows.",
+		Parameters:  objectSchema(map[string]any{}, nil),
+	},
+	{
+		Name:        "radarr_list_delay_profiles",
+		Description: "List Radarr delay profiles, including Usenet delay settings.",
 		Parameters:  objectSchema(map[string]any{}, nil),
 	},
 	{
