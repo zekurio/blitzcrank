@@ -42,7 +42,7 @@ func actor(payload map[string]any) string {
 			return value
 		}
 	}
-	return "Jellyseerr"
+	return "Seerr"
 }
 
 func section(payload map[string]any, name string) map[string]any {

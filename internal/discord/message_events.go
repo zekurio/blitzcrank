@@ -57,15 +57,30 @@ func (b *Bot) handleParentChannelMessage(session *discordgo.Session, event *disc
 		b.handleUnactionableParentTriage(event, content, mentioned, triage)
 		return
 	}
-	if mentioned {
+	switch parentSupportSurface(content, mentioned, triage) {
+	case discordSurfaceInline:
 		b.runDirectAgent(context.Background(), session, event, content)
 		return
+	case discordSurfacePublicThread:
+		b.openParentSupportThread(session, event, content, triage)
 	}
-	if isOneOffDiscordQuestion(content, triage) {
-		b.runDirectAgent(context.Background(), session, event, content)
-		return
-	}
+}
 
+type discordSupportSurface string
+
+const (
+	discordSurfaceInline       discordSupportSurface = "inline"
+	discordSurfacePublicThread discordSupportSurface = "public_thread"
+)
+
+func parentSupportSurface(content string, mentioned bool, triage agent.DiscordTriageResult) discordSupportSurface {
+	if mentioned || isOneOffDiscordQuestion(content, triage) {
+		return discordSurfaceInline
+	}
+	return discordSurfacePublicThread
+}
+
+func (b *Bot) openParentSupportThread(session *discordgo.Session, event *discordgo.MessageCreate, content string, triage agent.DiscordTriageResult) {
 	title := strings.TrimSpace(triage.ThreadTitle)
 	if title == "" {
 		title = titleFromContent(content)
@@ -241,6 +256,8 @@ func (b *Bot) runDirectAgent(ctx context.Context, session *discordgo.Session, ev
 	if err := session.ChannelTyping(event.ChannelID); err != nil {
 		log.Printf("send typing indicator: %v", err)
 	}
+	progress := b.newDiscordProgressReporter(session, event.ChannelID, event.ID)
+	request.Progress = progress.callback(runCtx)
 
 	reply, err := b.agent.Respond(runCtx, request)
 	errText := ""
@@ -253,7 +270,7 @@ func (b *Bot) runDirectAgent(ctx context.Context, session *discordgo.Session, ev
 		errText = err.Error()
 		reply = safeDiscordFailureReply(content)
 	}
-	message, sendErr := b.sendMessageReference(runCtx, event.ChannelID, event.ID, reply)
+	message, sendErr := progress.finish(runCtx, reply)
 	if sendErr != nil {
 		log.Printf("send discord mention response failed: %v", sendErr)
 		if errText != "" {

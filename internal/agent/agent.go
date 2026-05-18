@@ -29,7 +29,8 @@ func (a *Agent) SetAutomationMetadataProvider(provider AutomationMetadataProvide
 }
 
 func (a *Agent) Respond(ctx context.Context, req Request) (string, error) {
-	cfg, client, model, reasoningEffort, err := a.runtimeForRequest(req)
+	profileName := a.profileNameForRequest(req)
+	cfg, client, model, reasoningEffort, err := a.runtimeForProfile(profileName)
 	if err != nil {
 		return "", err
 	}
@@ -50,7 +51,10 @@ func (a *Agent) Respond(ctx context.Context, req Request) (string, error) {
 		llm.Message{Role: "user", Content: requestMessage(req)},
 	)
 
-	for range cfg.MaxToolIterations {
+	emitProgress(req, ProgressEvent{Phase: "start", Message: "Reading the request and preparing the tool set."})
+	for iteration := range cfg.MaxToolIterations {
+		messages = compactMessagesForBudget(cfg.RuntimeContextBudget(profileName), messages)
+		emitProgress(req, ProgressEvent{Phase: "model_start", Iteration: iteration + 1, Message: "Asking the model for the next step."})
 		response, err := client.Chat(ctx, llm.ChatRequest{
 			Model:           model,
 			ReasoningEffort: reasoningEffort,
@@ -58,14 +62,17 @@ func (a *Agent) Respond(ctx context.Context, req Request) (string, error) {
 			Tools:           availableTools,
 		})
 		if err != nil {
+			emitProgress(req, ProgressEvent{Phase: "model_error", Iteration: iteration + 1, Error: err.Error(), Message: "The model request failed."})
 			return "", err
 		}
 
 		choice := response.FirstChoice()
 		if len(choice.Message.ToolCalls) == 0 {
+			emitProgress(req, ProgressEvent{Phase: "finalizing", Iteration: iteration + 1, Message: "Composing the final reply."})
 			return strings.TrimSpace(choice.Message.Content), nil
 		}
 
+		emitProgress(req, ProgressEvent{Phase: "tools_selected", Count: len(choice.Message.ToolCalls), Iteration: iteration + 1, Message: fmt.Sprintf("model selected %d tool calls", len(choice.Message.ToolCalls))})
 		messages = append(messages, choice.Message)
 		for _, call := range choice.Message.ToolCalls {
 			result, err := a.executeTool(ctx, req, call, toolPolicy)
@@ -81,6 +88,12 @@ func (a *Agent) Respond(ctx context.Context, req Request) (string, error) {
 	}
 
 	return "", fmt.Errorf("agent exceeded tool iteration limit")
+}
+
+func emitProgress(req Request, event ProgressEvent) {
+	if req.Progress != nil {
+		req.Progress(event)
+	}
 }
 
 func (a *Agent) ReloadSkills() error {

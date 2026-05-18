@@ -63,7 +63,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}()
 
 	go func() {
-		log.Printf("listening for Jellyseerr webhooks on http://%s%s", s.cfg.SeerrWebhookListenAddr, s.cfg.SeerrWebhookPath)
+		log.Printf("listening for Seerr webhooks on http://%s%s", s.cfg.SeerrWebhookListenAddr, s.cfg.SeerrWebhookPath)
 		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Printf("webhook server failed: %v", err)
 		}
@@ -105,33 +105,33 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 func (s *Server) handleSeerr(w http.ResponseWriter, r *http.Request) {
-	log.Printf("jellyseerr webhook request: method=%s path=%s remote=%s content_length=%d user_agent=%q", r.Method, r.URL.Path, r.RemoteAddr, r.ContentLength, r.UserAgent())
+	log.Printf("seerr webhook request: method=%s path=%s remote=%s content_length=%d user_agent=%q", r.Method, r.URL.Path, r.RemoteAddr, r.ContentLength, r.UserAgent())
 	if r.Method != http.MethodPost {
-		log.Printf("jellyseerr webhook rejected: method=%s remote=%s reason=method_not_allowed", r.Method, r.RemoteAddr)
+		log.Printf("seerr webhook rejected: method=%s remote=%s reason=method_not_allowed", r.Method, r.RemoteAddr)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	if !s.authorized(r) {
-		log.Printf("jellyseerr webhook rejected: remote=%s reason=unauthorized auth_header=%t secret_header=%t", r.RemoteAddr, r.Header.Get("Authorization") != "", r.Header.Get("X-Blitzcrank-Webhook-Secret") != "")
+		log.Printf("seerr webhook rejected: remote=%s reason=unauthorized auth_header=%t secret_header=%t", r.RemoteAddr, r.Header.Get("Authorization") != "", r.Header.Get("X-Blitzcrank-Webhook-Secret") != "")
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	data, err := io.ReadAll(io.LimitReader(r.Body, 2<<20))
 	if err != nil {
-		log.Printf("jellyseerr webhook rejected: remote=%s reason=read_error error=%v", r.RemoteAddr, err)
+		log.Printf("seerr webhook rejected: remote=%s reason=read_error error=%v", r.RemoteAddr, err)
 		http.Error(w, "read request", http.StatusBadRequest)
 		return
 	}
 
 	var payload map[string]any
 	if err := json.Unmarshal(data, &payload); err != nil {
-		log.Printf("jellyseerr webhook rejected: remote=%s reason=invalid_json bytes=%d error=%v", r.RemoteAddr, len(data), err)
+		log.Printf("seerr webhook rejected: remote=%s reason=invalid_json bytes=%d error=%v", r.RemoteAddr, len(data), err)
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
 
-	log.Printf("jellyseerr webhook accepted: remote=%s bytes=%d notification=%q event=%q subject=%q issue_id=%q actor=%q", r.RemoteAddr, len(data), stringValue(payload, "notification_type"), stringValue(payload, "event"), stringValue(payload, "subject"), issueID(payload), actor(payload))
+	log.Printf("seerr webhook accepted: remote=%s bytes=%d notification=%q event=%q subject=%q issue_id=%q actor=%q", r.RemoteAddr, len(data), stringValue(payload, "notification_type"), stringValue(payload, "event"), stringValue(payload, "subject"), issueID(payload), actor(payload))
 	processCtx := s.processCtx
 	if processCtx == nil {
 		processCtx = context.Background()
@@ -167,14 +167,14 @@ func constantTimeSecretEqual(candidate, secret string) bool {
 func (s *Server) process(ctx context.Context, payload map[string]any) {
 	result, err := s.harness.HandleWebhook(ctx, payload)
 	if err != nil {
-		log.Printf("jellyseerr issue workflow failed: issue=%s event=%s error=%v", result.IssueID, result.Event, err)
+		log.Printf("seerr issue workflow failed: issue=%s event=%s error=%v", result.IssueID, result.Event, err)
 		return
 	}
 	if result.Ignored {
-		log.Printf("jellyseerr webhook ignored: issue=%s event=%s reason=%s", result.IssueID, result.Event, result.Reason)
+		log.Printf("seerr webhook ignored: issue=%s event=%s reason=%s", result.IssueID, result.Event, result.Reason)
 		return
 	}
-	log.Printf("jellyseerr webhook processed: issue=%s event=%s", result.IssueID, result.Event)
+	log.Printf("seerr webhook processed: issue=%s event=%s", result.IssueID, result.Event)
 }
 
 func section(payload map[string]any, name string) map[string]any {

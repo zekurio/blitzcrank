@@ -32,9 +32,9 @@ func (b *Bot) onInteractionCreate(session *discordgo.Session, event *discordgo.I
 	}
 	data := event.ApplicationCommandData()
 	switch data.Name {
-	case commands.AutomationCommand, commands.LegacyAutomationCommand:
+	case commands.AutomationCommand:
 		b.handleLeanAutomationSlashCommand(session, event, data)
-	case commands.ReleasesCommand, commands.LegacyReleasesCommand:
+	case commands.ReleasesCommand:
 		b.handleReleasesSlashCommand(session, event, data)
 	default:
 		if groups, ok := commands.SkillCommandGroups[data.Name]; ok {
@@ -59,7 +59,7 @@ func (b *Bot) handleAutocomplete(session *discordgo.Session, event *discordgo.In
 
 func (b *Bot) autocompleteChoices(data discordgo.ApplicationCommandInteractionData) ([]*discordgo.ApplicationCommandOptionChoice, bool) {
 	switch data.Name {
-	case commands.AutomationCommand, commands.LegacyAutomationCommand:
+	case commands.AutomationCommand:
 		return b.automationChoices(commands.AutomationName(data)), true
 	default:
 		return nil, false
@@ -187,34 +187,10 @@ func (b *Bot) handleSkillSlashCommand(session *discordgo.Session, event *discord
 	if message == nil {
 		return
 	}
-	thread, err := session.MessageThreadStart(message.ChannelID, message.ID, threadTitle(prompt), b.cfg.DiscordThreadArchiveMinutes)
-	if err != nil {
-		log.Printf("create slash command thread failed: skill=%s message=%s error=%v", skill, message.ID, err)
-		fallback := "Thread-Erstellung fehlgeschlagen. Bitte prüfe die Bot-Berechtigungen für Threads."
-		if _, editErr := session.InteractionResponseEdit(event.Interaction, &discordgo.WebhookEdit{
-			Content:         &fallback,
-			AllowedMentions: &discordgo.MessageAllowedMentions{},
-		}); editErr != nil {
-			log.Printf("edit slash command failure response failed: skill=%s error=%v", skill, editErr)
-		}
-		return
-	}
 
 	rootEvent := slashInteractionMessage(event, message)
 	content := discordSkillPrompt(skill, prompt)
-	if err := b.recordDiscordThread(context.Background(), recordDiscordThreadRequest{
-		ThreadID:      thread.ID,
-		ParentID:      message.ChannelID,
-		RootMessageID: message.ID,
-		Title:         thread.Name,
-		Event:         rootEvent,
-		EventType:     "slash_" + skill,
-		Content:       content,
-		ToolGroups:    groups,
-	}); err != nil {
-		log.Printf("record discord slash thread failed: thread=%s error=%v", thread.ID, err)
-	}
-	go b.runThreadAgent(context.Background(), session, thread.ID, rootEvent, content, "slash_"+skill)
+	go b.runSlashAgentInline(context.Background(), session, event, message, rootEvent, skill, prompt, content, groups)
 }
 
 func (b *Bot) respondEphemeral(session *discordgo.Session, event *discordgo.InteractionCreate, content string) {
@@ -237,6 +213,9 @@ func (b *Bot) isAdminInteraction(event *discordgo.InteractionCreate) bool {
 		userID = event.User.ID
 	}
 	if owner := strings.TrimSpace(b.cfg.InstanceOwnerID); owner != "" && userID == owner {
+		return true
+	}
+	if b.memberHasAdminRole(event.Member) {
 		return true
 	}
 	return event.Member != nil && event.Member.Permissions&discordgo.PermissionAdministrator != 0

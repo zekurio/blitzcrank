@@ -29,6 +29,9 @@ type interactionThreadRecord struct {
 	BotMessageID   string
 	BotMessageText string
 	Attribution    string
+	Error          string
+	Completion     string
+	Posted         bool
 }
 
 func (b *Bot) runThreadAgent(ctx context.Context, session *discordgo.Session, discordThreadID string, event *discordgo.MessageCreate, content, eventType string) {
@@ -42,6 +45,7 @@ func (b *Bot) runThreadAgent(ctx context.Context, session *discordgo.Session, di
 	if err := session.ChannelTyping(discordThreadID); err != nil {
 		log.Printf("send typing indicator: %v", err)
 	}
+	progress := b.newDiscordProgressReporter(session, discordThreadID, "")
 
 	thread, ok := b.threadContext(runCtx, discordThreadID)
 	if !ok {
@@ -57,6 +61,7 @@ func (b *Bot) runThreadAgent(ctx context.Context, session *discordgo.Session, di
 		Content:      b.discordPrompt(thread, content),
 		Context:      requestContext,
 		ToolGroups:   groups,
+		Progress:     progress.callback(runCtx),
 		ToolApproval: b.discordToolApproval(runCtx, event),
 		SeerrUserID:  seerrUserID,
 	}
@@ -66,7 +71,7 @@ func (b *Bot) runThreadAgent(ctx context.Context, session *discordgo.Session, di
 		log.Printf("agent discord response failed: thread=%s error=%v", discordThreadID, err)
 		fallback := "I could not process that request. Check the bot logs for details."
 		record.FinalResponse = fallback
-		if sendErr := b.sendMessage(context.Background(), discordThreadID, fallback); sendErr != nil {
+		if _, sendErr := progress.finish(context.Background(), fallback); sendErr != nil {
 			err = fmt.Errorf("%w; fallback send: %w", err, sendErr)
 		} else {
 			record.Posted = true
@@ -80,7 +85,7 @@ func (b *Bot) runThreadAgent(ctx context.Context, session *discordgo.Session, di
 		log.Printf("agent discord response invalid: thread=%s error=%v", discordThreadID, err)
 		fallback := safeDiscordFailureReply(content)
 		record.FinalResponse = fallback
-		if sendErr := b.sendMessage(context.Background(), discordThreadID, fallback); sendErr != nil {
+		if _, sendErr := progress.finish(context.Background(), fallback); sendErr != nil {
 			err = fmt.Errorf("%w; fallback send: %w", err, sendErr)
 		} else {
 			record.Posted = true
@@ -90,7 +95,7 @@ func (b *Bot) runThreadAgent(ctx context.Context, session *discordgo.Session, di
 	}
 
 	record.FinalResponse = reply
-	message, err := b.sendMessageReference(runCtx, discordThreadID, "", reply)
+	message, err := progress.finish(runCtx, reply)
 	if err != nil {
 		b.recordFailedDiscordRun(record, "discord response failed", err)
 		log.Printf("send discord response failed: thread=%s error=%v", discordThreadID, err)
@@ -168,6 +173,7 @@ func (b *Bot) runInteractionAgent(ctx context.Context, session *discordgo.Sessio
 	if err := session.ChannelTyping(event.ChannelID); err != nil {
 		log.Printf("send typing indicator: %v", err)
 	}
+	progress := b.newDiscordProgressReporter(session, event.ChannelID, event.ID)
 
 	groups := threadToolGroups(thread)
 	seerrUserID, requestContext := b.seerrRequestContext(content, discordUserID(event.Author))
@@ -177,6 +183,7 @@ func (b *Bot) runInteractionAgent(ctx context.Context, session *discordgo.Sessio
 		Content:      b.discordPrompt(thread, content),
 		Context:      requestContext,
 		ToolGroups:   groups,
+		Progress:     progress.callback(runCtx),
 		ToolApproval: b.discordToolApproval(runCtx, event),
 		SeerrUserID:  seerrUserID,
 	}
@@ -197,7 +204,7 @@ func (b *Bot) runInteractionAgent(ctx context.Context, session *discordgo.Sessio
 		record.CompletionReason = "discord response posted"
 	}
 
-	message, sendErr := b.sendMessageReference(runCtx, event.ChannelID, event.ID, reply)
+	message, sendErr := progress.finish(runCtx, reply)
 	if sendErr != nil {
 		record.Error = strings.TrimSpace(record.Error + "; send: " + sendErr.Error())
 		record.CompletionReason = "discord response failed"
@@ -211,6 +218,85 @@ func (b *Bot) runInteractionAgent(ctx context.Context, session *discordgo.Sessio
 	if message != nil {
 		b.updateInteractionThreadBotMessage(context.Background(), thread, message.ID, reply, groups)
 	}
+}
+
+func (b *Bot) runSlashAgentInline(ctx context.Context, session *discordgo.Session, interaction *discordgo.InteractionCreate, response *discordgo.Message, event *discordgo.MessageCreate, skill, prompt, content string, groups []string) {
+	if interaction == nil || interaction.Interaction == nil || response == nil || event == nil {
+		return
+	}
+	threadID := discordThreadID(response.ID)
+	lock := b.threadLock(threadID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	runCtx, cancel := context.WithTimeout(ctx, b.cfg.RunTimeout)
+	defer cancel()
+
+	if err := session.ChannelTyping(response.ChannelID); err != nil {
+		log.Printf("send typing indicator: %v", err)
+	}
+	progress := b.newInteractionProgressReporter(session, interaction.Interaction, response.ChannelID)
+
+	seerrUserID, requestContext := b.seerrRequestContext(content, discordUserID(event.Author))
+	request := agent.Request{
+		Source:       "discord_slash_" + strings.TrimSpace(skill),
+		Author:       discordAuthor(event.Author),
+		Content:      content,
+		Context:      requestContext,
+		ToolGroups:   groups,
+		Progress:     progress.callback(runCtx),
+		ToolApproval: b.discordToolApproval(runCtx, event),
+		SeerrUserID:  seerrUserID,
+	}
+
+	startedAt := time.Now().UTC()
+	reply, err := b.agent.Respond(runCtx, request)
+	errText := ""
+	completionReason := "discord response posted"
+	if err != nil {
+		log.Printf("agent discord slash response failed: skill=%s response=%s error=%v", skill, response.ID, err)
+		errText = err.Error()
+		completionReason = "agent run failed"
+		reply = "I could not process that request. Check the bot logs for details."
+	} else if reply, err = validateDiscordReply(reply); err != nil {
+		log.Printf("agent discord slash response invalid: skill=%s response=%s error=%v", skill, response.ID, err)
+		errText = err.Error()
+		completionReason = "agent response failed validation"
+		reply = safeDiscordFailureReply(content)
+	}
+
+	edited, sendErr := progress.finish(runCtx, reply)
+	if sendErr != nil {
+		log.Printf("edit discord slash response failed: skill=%s response=%s error=%v", skill, response.ID, sendErr)
+		if errText != "" {
+			errText += "; send: "
+		}
+		errText += sendErr.Error()
+		completionReason = "discord response failed"
+	} else if edited != nil {
+		response = edited
+	}
+
+	b.recordDiscordInteractionThread(context.Background(), interactionThreadRecord{
+		ThreadID:       threadID,
+		ExternalID:     response.ID,
+		ParentID:       response.ChannelID,
+		RootID:         response.ID,
+		Title:          threadTitle(prompt),
+		Actor:          discordAuthor(event.Author),
+		ActorID:        discordUserID(event.Author),
+		MessageID:      response.ID,
+		EventType:      "slash_" + strings.TrimSpace(skill),
+		Content:        content,
+		BotMessageID:   response.ID,
+		BotMessageText: reply,
+		ToolGroups:     groups,
+		Attribution:    b.discordAttribution(request),
+		Error:          errText,
+		Completion:     completionReason,
+		Posted:         sendErr == nil,
+	})
+	b.appendDiscordInteractionTrace(discordInteractionTraceRequest{Event: event, InteractionType: "slash_agent_inline", Content: content, Reply: reply, ErrorText: errText, StartedAt: startedAt, CompletedAt: time.Now().UTC(), Extra: map[string]any{"attribution": b.discordAttribution(request), "skill": skill}})
 }
 
 func (b *Bot) recordDiscordInteractionThread(ctx context.Context, request interactionThreadRecord) {
@@ -256,15 +342,21 @@ func (b *Bot) recordDiscordInteractionThread(ctx context.Context, request intera
 		log.Printf("record discord interaction event failed: thread=%s error=%v", request.ThreadID, err)
 	}
 	completedAt := now
+	completion := strings.TrimSpace(request.Completion)
+	if completion == "" {
+		completion = "discord response posted"
+	}
+	posted := request.Posted || strings.TrimSpace(request.Error) == ""
 	if err := b.store.InsertAgentRun(ctx, store.AgentRun{
 		ThreadID:         request.ThreadID,
 		SourceEventType:  request.EventType,
 		StartedAt:        now,
 		CompletedAt:      &completedAt,
 		FinalResponse:    request.BotMessageText,
-		Posted:           true,
+		Posted:           posted,
 		Attribution:      request.Attribution,
-		CompletionReason: "discord response posted",
+		Error:            request.Error,
+		CompletionReason: completion,
 	}); err != nil {
 		log.Printf("record discord interaction run failed: thread=%s error=%v", request.ThreadID, err)
 	}

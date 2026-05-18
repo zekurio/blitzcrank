@@ -127,7 +127,7 @@ func hasReleaseSignal(text string) bool {
 
 func hasServiceStatusSignal(text string) bool {
 	hasService := false
-	for _, service := range []string{"jellyfin", "jellyseerr", "sonarr", "radarr", "sabnzbd", "sab"} {
+	for _, service := range []string{"jellyfin", "seerr", "sonarr", "radarr", "sabnzbd", "sab"} {
 		if strings.Contains(text, service) {
 			hasService = true
 			break
