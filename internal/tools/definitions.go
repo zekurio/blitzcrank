@@ -78,8 +78,16 @@ func (r *Registry) RequiresApproval(name string) bool {
 	return r.IsDestructiveTool(name)
 }
 
+func (r *Registry) AllowedInReadOnly(name string) bool {
+	def, ok := r.toolDef(name)
+	return ok && def.ReadOnlyAllowed
+}
+
 func (r *Registry) toolAllowed(def toolDef, policy ToolPolicy) bool {
-	if policy.ReadOnly && def.Mutating {
+	if policy.ReadOnly && def.Mutating && !def.ReadOnlyAllowed {
+		return false
+	}
+	if policy.SandboxServices && isServiceToolGroup(toolGroup(def.Name)) && !sandboxServicesExplicitTool(def.Name) {
 		return false
 	}
 	if len(policy.Groups) == 0 {
@@ -103,7 +111,7 @@ func (r *Registry) toolDef(name string) (toolDef, bool) {
 func toolGroup(name string) string {
 	switch {
 	case strings.HasPrefix(name, "seerr_"):
-		return "jellyseerr"
+		return "seerr"
 	case strings.HasPrefix(name, "jellyfin_"):
 		return "jellyfin"
 	case strings.HasPrefix(name, "sonarr_"):
@@ -114,6 +122,10 @@ func toolGroup(name string) string {
 		return "sabnzbd"
 	case strings.HasPrefix(name, "fs_"):
 		return "filesystem"
+	case strings.HasPrefix(name, "memory_"):
+		return "memory"
+	case strings.HasPrefix(name, "sandbox_"):
+		return "sandbox"
 	case name == "web_search":
 		return "web"
 	default:
@@ -128,4 +140,20 @@ func groupAllowed(group string, allowed []string) bool {
 		}
 	}
 	return false
+}
+
+func isServiceToolGroup(group string) bool {
+	switch group {
+	case "seerr", "jellyfin", "sonarr", "radarr", "sabnzbd", "filesystem":
+		return true
+	default:
+		return false
+	}
+}
+
+func sandboxServicesExplicitTool(name string) bool {
+	switch name {
+	default:
+		return false
+	}
 }

@@ -62,6 +62,7 @@ type RunRecord struct {
 	CompletedAt      time.Time `json:"completed_at"`
 	FinalComment     string    `json:"final_comment,omitempty"`
 	Posted           bool      `json:"posted"`
+	Resolved         bool      `json:"resolved,omitempty"`
 	Attribution      string    `json:"attribution"`
 	Error            string    `json:"error,omitempty"`
 	CompletionReason string    `json:"completion_reason,omitempty"`
@@ -87,7 +88,7 @@ func NewManager(cfg config.Config, runner Runner, registry *tools.Registry, stat
 func (m *Manager) HandleWebhook(ctx context.Context, payload map[string]any) (Result, error) {
 	event := classify(payload)
 	issueID := issueID(payload)
-	log.Printf("jellyseerr webhook classified: issue=%s event=%s notification=%q actor=%q", issueID, event, stringValue(payload, "notification_type"), actor(payload))
+	log.Printf("seerr webhook classified: issue=%s event=%s notification=%q actor=%q", issueID, event, stringValue(payload, "notification_type"), actor(payload))
 	if issueID == "" {
 		return Result{Ignored: true, Reason: "payload has no issue_id", Event: event}, nil
 	}
@@ -111,7 +112,7 @@ func (m *Manager) HandleWebhook(ctx context.Context, payload map[string]any) (Re
 	switch event {
 	case "resolved":
 		thread := m.appendEvent(ctx, issueID, event, key, payload)
-		m.complete(ctx, thread, "jellyseerr issue resolved")
+		m.complete(ctx, thread, "seerr issue resolved")
 		return Result{IssueID: issueID, Event: event}, nil
 	case "comment", "reported", "reopened":
 		thread := m.threadForIssue(ctx, issueID, payload)
@@ -241,7 +242,7 @@ func (m *Manager) appendEventRecord(ctx context.Context, thread *IssueThread, ev
 		"payload": payload,
 		"at":      eventRecord.At.Format(time.RFC3339Nano),
 	})
-	log.Printf("jellyseerr thread event recorded: issue=%s event=%s actor=%q events=%d", thread.IssueID, eventRecord.Type, eventRecord.Actor, len(thread.Events))
+	log.Printf("seerr thread event recorded: issue=%s event=%s actor=%q events=%d", thread.IssueID, eventRecord.Type, eventRecord.Actor, len(thread.Events))
 }
 
 func cloneIssueThread(thread *IssueThread) *IssueThread {
@@ -263,34 +264,36 @@ func (m *Manager) run(ctx context.Context, thread *IssueThread, payload map[stri
 	record := RunRecord{StartedAt: start}
 	prompt := m.issuePrompt(thread, payload, event)
 	request := agent.Request{
-		Source:  "jellyseerr_issue_" + event,
+		Source:  "seerr_issue_" + event,
 		Author:  actor(payload),
 		Content: prompt,
 		ToolAudit: func(toolRecord agent.ToolAuditRecord) {
 			m.recordToolCall(thread.IssueID, event, start, toolRecord)
 		},
 	}
-	log.Printf("jellyseerr issue run started: issue=%s event=%s actor=%q prior_events=%d prior_runs=%d", thread.IssueID, event, request.Author, len(thread.Events), len(thread.Runs))
+	log.Printf("seerr issue run started: issue=%s event=%s actor=%q prior_events=%d prior_runs=%d", thread.IssueID, event, request.Author, len(thread.Events), len(thread.Runs))
 
 	comment, err := m.runner.Respond(runCtx, request)
 	record.CompletedAt = time.Now().UTC()
 	if err != nil {
 		record.Error = err.Error()
 		record.CompletionReason = "agent run failed"
-		log.Printf("jellyseerr issue run failed: issue=%s event=%s duration=%s error=%v", thread.IssueID, event, record.CompletedAt.Sub(record.StartedAt).Round(time.Millisecond), err)
+		log.Printf("seerr issue run failed: issue=%s event=%s duration=%s error=%v", thread.IssueID, event, record.CompletedAt.Sub(record.StartedAt).Round(time.Millisecond), err)
 		return record, err
 	}
+	resolveIssue := false
+	comment, resolveIssue = parseIssueResolutionDirective(comment)
 	if strings.TrimSpace(comment) == "" {
 		err := fmt.Errorf("agent returned empty final comment")
 		record.Error = err.Error()
 		record.CompletionReason = "agent run returned empty comment"
-		log.Printf("jellyseerr issue run failed: issue=%s event=%s duration=%s error=%v", thread.IssueID, event, record.CompletedAt.Sub(record.StartedAt).Round(time.Millisecond), err)
+		log.Printf("seerr issue run failed: issue=%s event=%s duration=%s error=%v", thread.IssueID, event, record.CompletedAt.Sub(record.StartedAt).Round(time.Millisecond), err)
 		return record, err
 	}
 	if err := m.validateFinalIssueComment(comment); err != nil {
 		record.Error = err.Error()
 		record.CompletionReason = "agent final comment failed validation"
-		log.Printf("jellyseerr issue run failed validation: issue=%s event=%s duration=%s error=%v", thread.IssueID, event, record.CompletedAt.Sub(record.StartedAt).Round(time.Millisecond), err)
+		log.Printf("seerr issue run failed validation: issue=%s event=%s duration=%s error=%v", thread.IssueID, event, record.CompletedAt.Sub(record.StartedAt).Round(time.Millisecond), err)
 		return record, err
 	}
 
@@ -298,21 +301,32 @@ func (m *Manager) run(ctx context.Context, thread *IssueThread, payload map[stri
 	if err := m.validateSignedFinalIssueComment(comment); err != nil {
 		record.Error = err.Error()
 		record.CompletionReason = "agent final comment failed validation"
-		log.Printf("jellyseerr issue run failed validation: issue=%s event=%s duration=%s error=%v", thread.IssueID, event, record.CompletedAt.Sub(record.StartedAt).Round(time.Millisecond), err)
+		log.Printf("seerr issue run failed validation: issue=%s event=%s duration=%s error=%v", thread.IssueID, event, record.CompletedAt.Sub(record.StartedAt).Round(time.Millisecond), err)
 		return record, err
 	}
 	record.FinalComment = comment
 	record.Attribution = m.commentAttribution()
-	log.Printf("jellyseerr issue run completed: issue=%s event=%s duration=%s comment_bytes=%d", thread.IssueID, event, record.CompletedAt.Sub(record.StartedAt).Round(time.Millisecond), len(comment))
+	log.Printf("seerr issue run completed: issue=%s event=%s duration=%s comment_bytes=%d", thread.IssueID, event, record.CompletedAt.Sub(record.StartedAt).Round(time.Millisecond), len(comment))
 	if _, err := m.tools.CommentIssue(runCtx, thread.IssueID, comment); err != nil {
 		record.Error = err.Error()
 		record.CompletionReason = "final comment failed"
-		log.Printf("jellyseerr final comment failed: issue=%s event=%s error=%v", thread.IssueID, event, err)
+		log.Printf("seerr final comment failed: issue=%s event=%s error=%v", thread.IssueID, event, err)
 		return record, fmt.Errorf("post final issue comment: %w", err)
 	}
 	record.Posted = true
 	record.CompletionReason = "final comment posted"
-	log.Printf("jellyseerr final comment posted: issue=%s event=%s attribution=%s", thread.IssueID, event, record.Attribution)
+	log.Printf("seerr final comment posted: issue=%s event=%s attribution=%s", thread.IssueID, event, record.Attribution)
+	if resolveIssue {
+		if _, err := m.tools.ResolveIssue(runCtx, thread.IssueID); err != nil {
+			record.Error = err.Error()
+			record.CompletionReason = "issue resolve failed"
+			log.Printf("seerr issue resolve failed: issue=%s event=%s error=%v", thread.IssueID, event, err)
+			return record, fmt.Errorf("resolve issue: %w", err)
+		}
+		record.Resolved = true
+		record.CompletionReason = "final comment posted and issue resolved"
+		log.Printf("seerr issue resolved by harness: issue=%s event=%s", thread.IssueID, event)
+	}
 	return record, nil
 }
 
@@ -370,5 +384,5 @@ func (m *Manager) complete(ctx context.Context, thread *IssueThread, reason stri
 		"completion_reason": reason,
 		"at":                now.Format(time.RFC3339Nano),
 	})
-	log.Printf("jellyseerr issue completed: issue=%s reason=%q", thread.IssueID, reason)
+	log.Printf("seerr issue completed: issue=%s reason=%q", thread.IssueID, reason)
 }

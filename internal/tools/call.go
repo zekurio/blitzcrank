@@ -14,6 +14,8 @@ func (r *Registry) Call(ctx context.Context, name string, args map[string]any) (
 		r.callJellyfinTool,
 		r.callSonarrTool,
 		r.callRadarrTool,
+		r.callMemoryTool,
+		r.callSandboxTool,
 		r.callUtilityTool,
 	} {
 		value, handled, err := dispatch(ctx, name, args)
@@ -48,8 +50,6 @@ func (r *Registry) callSeerrTool(ctx context.Context, name string, args map[stri
 		return handled(r.SeerrRequestMedia(ctx, args))
 	case "seerr_comment_issue":
 		return handled(r.CommentIssue(ctx, stringArg(args, "issue_id"), stringArg(args, "message")))
-	case "seerr_resolve_issue":
-		return handled(r.ResolveIssue(ctx, stringArg(args, "issue_id")))
 	default:
 		return nil, false, nil
 	}
@@ -180,6 +180,12 @@ func (r *Registry) callSonarrTool(ctx context.Context, name string, args map[str
 		return handled(r.arr(ctx, "sonarr", http.MethodPost, "/api/v3/command", body))
 	case "sonarr_retry_queue_item":
 		return handled(r.arr(ctx, "sonarr", http.MethodPost, "/api/v3/queue/grab/"+pathID(args, "queue_id"), nil))
+	case "sonarr_remove_queue_item":
+		path, err := arrRemoveQueueItemPath(args)
+		if err != nil {
+			return nil, true, err
+		}
+		return handled(r.arr(ctx, "sonarr", http.MethodDelete, path, nil))
 	case "sonarr_list_manual_import":
 		path, err := sonarrManualImportPath(args)
 		if err != nil {
@@ -253,6 +259,12 @@ func (r *Registry) callRadarrTool(ctx context.Context, name string, args map[str
 		return handled(r.arr(ctx, "radarr", http.MethodDelete, "/api/v3/blocklist/"+pathID(args, "blocklist_id"), nil))
 	case "radarr_retry_queue_item":
 		return handled(r.arr(ctx, "radarr", http.MethodPost, "/api/v3/queue/grab/"+pathID(args, "queue_id"), nil))
+	case "radarr_remove_queue_item":
+		path, err := arrRemoveQueueItemPath(args)
+		if err != nil {
+			return nil, true, err
+		}
+		return handled(r.arr(ctx, "radarr", http.MethodDelete, path, nil))
 	case "radarr_list_manual_import":
 		path, err := radarrManualImportPath(args)
 		if err != nil {

@@ -5,7 +5,7 @@ description: Use when diagnosing disk space, file presence, permissions, timesta
 
 # Filesystem Skill
 
-- Use filesystem tools only for diagnosis and only inside allowed roots.
+- Use `sandbox_run_typescript` for filesystem-adjacent diagnosis only when the sandbox reviewer grants the needed read-only access.
 - Check disk usage before assuming an application bug.
 - Check whether completed files exist where Sonarr/Radarr expects them.
 - Check file modes, ownership implications, and timestamps when files exist but imports fail.

@@ -24,7 +24,7 @@ func (m *Manager) issuePrompt(thread *IssueThread, payload map[string]any, event
 	if reportedMessage == "" {
 		reportedMessage = stringValue(section(payload, "comment"), "comment_message")
 	}
-	return fmt.Sprintf(`Jellyseerr issue workflow event: %s
+	return fmt.Sprintf(`Seerr issue workflow event: %s
 Issue id: %s
 Prior thread events: %d
 Prior solver runs: %d
@@ -41,10 +41,12 @@ Recent thread events:
 Recent solver outcomes:
 %s
 
-Use the tools to investigate the issue, apply safe fixes when appropriate, validate the result, and return exactly one final Jellyseerr issue comment body.
+Use the tools to investigate the issue, apply safe fixes when appropriate, validate the result, and return exactly one final Seerr issue comment body.
 If the reported user message is an explicit diagnostic or test instruction, perform a safe read-only tool call when possible and summarize the result.
 
 Required final comment:
+- First line must be exactly "RESOLVE_ISSUE: yes" when validation proves the issue should be marked resolved, otherwise exactly "RESOLVE_ISSUE: no". This line is internal and will be stripped before posting.
+- Leave one blank line after the RESOLVE_ISSUE line, then write the public Seerr issue comment.
 - Use the system language rules: default to German, but if the reporting user clearly wrote the actual issue in another language, write the final comment in that language.
 - Return a final, closed-form comment: either the issue was fixed with a short cause/result explanation, or it could not be fixed with a short blocker explanation.
 - Use at most two short sentences.
@@ -58,10 +60,30 @@ Required final comment:
 - Mention verification only when a fix or diagnostic action was actually checked, and write it as a normal sentence.
 - Do not use labeled sections such as "Validierung:", "Ursache:", "Fix:", or "Nächste Schritte:".
 - Do not include a signature/header; the harness adds a bracket header with the bot name and model.
-- Keep it concise and readable as a Jellyseerr issue comment.
+- Keep it concise and readable as a Seerr issue comment.
 
 Webhook payload:
 %s`, event, thread.IssueID, len(thread.Events), len(thread.Runs), emptyIssueSummary(thread.Summary), reportedMessage, formatIssueEvents(thread.Events, issueRecentEventLimit), formatIssueRuns(thread.Runs, issueRecentRunLimit), payloadText)
+}
+
+func parseIssueResolutionDirective(response string) (string, bool) {
+	response = strings.TrimSpace(response)
+	first, rest, ok := strings.Cut(response, "\n")
+	if !ok {
+		return response, false
+	}
+	key, value, ok := strings.Cut(strings.TrimSpace(first), ":")
+	if !ok || !strings.EqualFold(strings.TrimSpace(key), "RESOLVE_ISSUE") {
+		return response, false
+	}
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "yes", "true":
+		return strings.TrimSpace(rest), true
+	case "no", "false":
+		return strings.TrimSpace(rest), false
+	default:
+		return response, false
+	}
 }
 
 func emptyIssueSummary(summary string) string {
@@ -265,9 +287,6 @@ func (m *Manager) commentHeader(request ...agent.Request) string {
 	}
 	if model == "" {
 		model = "unknown-model"
-	}
-	if strings.EqualFold(strings.TrimSpace(m.cfg.CodexServiceTier), "fast") {
-		model += " fast"
 	}
 	return "[" + name + " w/ " + model + "]"
 }
