@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-Blitzcrank is a Go Discord bot and support agent for Jellyseerr/Jellyfin operations. The executable entrypoint lives in `cmd/blitzcrank/`. Application code is organized by responsibility under `internal/`: `agent` builds prompts and runs tool calls, `automation` schedules Markdown tasks, `config` reads environment configuration, `discord` handles gateway traffic, `harness` coordinates issue workflows, `llm` wraps model providers, `store` persists SQLite state, `tools` exposes media-server tools, and `webhook` serves Jellyseerr callbacks. Agent behavior lives in `skills/<name>/SKILL.md`; scheduled jobs live in `automations/*.md`. Nix packaging and the development shell are defined in `flake.nix`.
+Blitzcrank is a Go Discord bot and support agent for Seerr/Jellyfin operations. The executable entrypoint lives in `cmd/blitzcrank/`. Application code is organized by responsibility under `internal/`: `agent` builds prompts and runs tool calls, `automation` schedules Markdown tasks, `config` reads environment configuration, `discord` handles gateway traffic, `harness` coordinates issue workflows, `llm` wraps model providers, `store` persists SQLite state, `tools` exposes media-server tools, and `webhook` serves Seerr callbacks. Agent behavior lives in `skills/<name>/SKILL.md`; scheduled jobs live in `automations/*.md`. Nix packaging and the development shell are defined in `flake.nix`.
 
 ## Build, Test, and Development Commands
 
