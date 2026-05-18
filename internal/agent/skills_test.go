@@ -128,6 +128,25 @@ func TestLoadPromptTemplateReadsEmbeddedPrompt(t *testing.T) {
 	}
 }
 
+func TestDiscordPromptsAvoidToolInventoryForCasualReplies(t *testing.T) {
+	systemPrompt, err := LoadPromptTemplate(systemPromptPath)
+	if err != nil {
+		t.Fatalf("LoadPromptTemplate(system) error = %v", err)
+	}
+	triagePrompt, err := LoadPromptTemplate(discordTriagePromptPath)
+	if err != nil {
+		t.Fatalf("LoadPromptTemplate(discord triage) error = %v", err)
+	}
+	for name, prompt := range map[string]string{
+		"system":         systemPrompt,
+		"discord triage": triagePrompt,
+	} {
+		if !strings.Contains(prompt, "Do not list") && !strings.Contains(prompt, "do not recite a long inventory") {
+			t.Fatalf("%s prompt missing casual capability inventory guardrail:\n%s", name, prompt)
+		}
+	}
+}
+
 func TestNewDoesNotCreateLLMClientDuringStartup(t *testing.T) {
 	skills := filepath.Join(t.TempDir(), "skills")
 	writeSkill(t, skills, "jellyfin", "jellyfin")
@@ -149,6 +168,9 @@ func TestNewDoesNotCreateLLMClientDuringStartup(t *testing.T) {
 	}
 	if agent.client != nil || len(agent.clients) != 0 {
 		t.Fatalf("agent clients initialized during startup: client=%T clients=%d", agent.client, len(agent.clients))
+	}
+	if !strings.Contains(agent.discordTriagePrompt, "The bot's public name is TestBot") || strings.Contains(agent.discordTriagePrompt, "{{bot_name}}") {
+		t.Fatalf("discord triage prompt did not render configured bot name:\n%s", agent.discordTriagePrompt)
 	}
 }
 
