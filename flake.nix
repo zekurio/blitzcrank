@@ -24,15 +24,24 @@
         let
           cfg = config.services.blitzcrank;
           tomlFormat = pkgs.formats.toml { };
+          writeDirs = lib.unique (
+            map toString [
+              cfg.dataDir
+              cfg.memoriesDir
+              cfg.threadsDir
+              (builtins.dirOf cfg.databasePath)
+            ]
+          );
           defaultSettings = {
             bot.public_name = cfg.publicName;
-            storage.database_path = "${cfg.dataDir}/blitzcrank.sqlite";
+            storage.database_path = toString cfg.databasePath;
             runtime = {
               skills_dir = cfg.skillsDir;
               automations_dir = cfg.automationsDir;
+              memories_dir = toString cfg.memoriesDir;
               automations_enabled = cfg.automations.enable;
               automations_extra_dirs = cfg.extraAutomationDirs;
-              threads_dir = "${cfg.dataDir}/threads";
+              threads_dir = toString cfg.threadsDir;
               timezone = cfg.timezone;
               profiles = {
                 default = runtimeProfileJSON cfg.runtime.default;
@@ -40,17 +49,14 @@
                 discord = runtimeProfileJSON cfg.runtime.discord;
                 automation = runtimeProfileJSON cfg.runtime.automation;
                 discord_triage = runtimeProfileJSON cfg.runtime.discordTriage;
+                sandbox_review = runtimeProfileJSON cfg.runtime.sandboxReview;
               };
             };
           };
           serviceConfigFile = tomlFormat.generate "blitzcrank.toml" (
             lib.recursiveUpdate defaultSettings cfg.settings
           );
-          serviceConfigPath =
-            if cfg.configFile != null then
-              cfg.configFile
-            else
-              serviceConfigFile;
+          serviceConfigPath = if cfg.configFile != null then cfg.configFile else serviceConfigFile;
           runtimeProfileJSON = profile: {
             provider = profile.provider;
             model = profile.model;
@@ -109,14 +115,30 @@
               type = lib.types.path;
               default = "/var/lib/blitzcrank";
             };
+            databasePath = lib.mkOption {
+              type = lib.types.path;
+              default = "${cfg.dataDir}/blitzcrank.sqlite";
+              description = "Default SQLite database path rendered into generated TOML.";
+            };
+            memoriesDir = lib.mkOption {
+              type = lib.types.path;
+              default = "${cfg.dataDir}/memories";
+              description = "Default durable memory directory rendered into generated TOML.";
+            };
+            threadsDir = lib.mkOption {
+              type = lib.types.path;
+              default = "${cfg.dataDir}/threads";
+              description = "Default JSONL thread trace directory rendered into generated TOML.";
+            };
             environmentFile = lib.mkOption {
               type = lib.types.nullOr lib.types.path;
               default = null;
+              description = "Optional systemd EnvironmentFile for secret or local overrides.";
             };
             configFile = lib.mkOption {
               type = lib.types.nullOr lib.types.path;
               default = null;
-              description = "Path to a TOML config file. When unset, the module generates one from services.blitzcrank.settings and convenience options.";
+              description = "Path to a TOML config file, including one produced by a secret manager. When unset, the module generates one from services.blitzcrank.settings and convenience options.";
             };
             settings = lib.mkOption {
               type = tomlFormat.type;
@@ -124,7 +146,7 @@
               example = {
                 discord.channel_id = "123456789012345678";
                 seerr = {
-                  base_url = "https://jellyseerr.example";
+                  base_url = "https://seerr.example";
                   webhook_listen_addr = "127.0.0.1:8080";
                 };
                 runtime.profiles.default = {
@@ -132,7 +154,7 @@
                   model = "openai/gpt-5.5";
                 };
               };
-              description = "Blitzcrank TOML settings. Secrets should usually stay in environmentFile.";
+              description = "Blitzcrank TOML settings merged into the generated config file.";
             };
             publicName = lib.mkOption {
               type = lib.types.str;
@@ -187,6 +209,13 @@
                 });
                 default = { };
               };
+              sandboxReview = lib.mkOption {
+                type = lib.types.submodule (runtimeProfileOptions {
+                  defaultModel = "gpt-5.4-mini";
+                  defaultReasoningEffort = "none";
+                });
+                default = { };
+              };
             };
           };
 
@@ -197,6 +226,7 @@
               group = cfg.group;
               home = cfg.dataDir;
             };
+            systemd.tmpfiles.rules = map (dir: "d ${dir} 0750 ${cfg.user} ${cfg.group} - -") writeDirs;
 
             systemd.services.blitzcrank = {
               description = "Blitzcrank Jellyfin Discord bot";
@@ -213,7 +243,7 @@
                 NoNewPrivileges = true;
                 PrivateTmp = true;
                 ProtectSystem = "strict";
-                ReadWritePaths = [ cfg.dataDir ];
+                ReadWritePaths = writeDirs;
               }
               // lib.optionalAttrs (cfg.environmentFile != null) {
                 EnvironmentFile = cfg.environmentFile;
@@ -252,12 +282,13 @@
           postInstall = ''
             mkdir -p $out/share/blitzcrank
             cp -R skills automations $out/share/blitzcrank/
-            cat > $out/share/blitzcrank/config.toml <<EOF
-[runtime]
-skills_dir = "$out/share/blitzcrank/skills"
-automations_dir = "$out/share/blitzcrank/automations"
-EOF
+            printf '%s\n' \
+              '[runtime]' \
+              "skills_dir = \"$out/share/blitzcrank/skills\"" \
+              "automations_dir = \"$out/share/blitzcrank/automations\"" \
+              > $out/share/blitzcrank/config.toml
             wrapProgram $out/bin/blitzcrank \
+              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.deno ]} \
               --set-default BLITZCRANK_CONFIG $out/share/blitzcrank/config.toml
           '';
         };
@@ -272,6 +303,7 @@ EOF
             go
             gopls
             go-tools
+            deno
             nixfmt
             sqlite
           ];

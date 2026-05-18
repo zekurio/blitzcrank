@@ -32,8 +32,20 @@ type Request struct {
 	Context      string
 	ToolGroups   []string
 	ToolAudit    func(ToolAuditRecord)
+	Progress     func(ProgressEvent)
 	ToolApproval func(context.Context, ToolApprovalRequest) (ToolApprovalDecision, error)
 	SeerrUserID  string
+}
+
+type ProgressEvent struct {
+	Phase     string
+	Message   string
+	ToolName  string
+	Count     int
+	Iteration int
+	StartedAt time.Time
+	Duration  time.Duration
+	Error     string
 }
 
 type ToolAuditRecord struct {

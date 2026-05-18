@@ -2,9 +2,12 @@
 public_name = "Blitzcrank"
 
 [discord]
-# Set token in .env or the service environment.
+token = ""
+# You can also provide DISCORD_TOKEN through env when you prefer overrides.
 guild_id = ""
 owner_id = ""
+# Optional role to ping for tool approvals. Members of this role may approve.
+admin_role_id = ""
 channel_id = ""
 triage_threshold = 0.75
 thread_archive_minutes = 1440
@@ -14,34 +17,43 @@ seerr_user_map = {}
 
 [seerr]
 base_url = ""
+api_key = ""
 webhook_listen_addr = ""
 webhook_path = "/webhooks/seerr"
+webhook_secret = ""
 bot_user_id = ""
 bot_display_name = "Blitzcrank"
 
 [jellyfin]
 base_url = ""
+api_key = ""
 
 [sonarr]
 base_url = ""
+api_key = ""
 
 [radarr]
 base_url = ""
+api_key = ""
 
 [sabnzbd]
 base_url = ""
+api_key = ""
 
 [filesystem]
 allowed_roots = []
 
 [exa]
 base_url = "https://api.exa.ai"
+api_key = ""
 
 [llm.openai]
 base_url = "https://api.openai.com/v1"
+api_key = ""
 
 [llm.openrouter]
 base_url = "https://openrouter.ai/api/v1"
+api_key = ""
 http_referer = ""
 title = "Blitzcrank"
 
@@ -49,42 +61,77 @@ title = "Blitzcrank"
 auth_profile = "default"
 auth_store = ""
 base_url = "https://chatgpt.com/backend-api/codex"
-service_tier = "standard"
+# Deprecated no-op retained for existing configs.
+fast = false
 
 [runtime]
 skills_dir = "skills"
 automations_dir = "automations"
 automations_extra_dirs = []
+memories_dir = "memories"
 threads_dir = "threads"
 automations_enabled = false
 max_tool_iterations = 15
 run_timeout = "5m"
 timezone = "Europe/Vienna"
 
+[runtime.context]
+auto_compact = true
+reserved_tokens = 2000
+tail_turns = 2
+preserve_recent_tokens = 0
+
+[sandbox]
+deno_path = "deno"
+timeout = "20s"
+
 [runtime.profiles.default]
 provider = "openai-compatible"
 model = "gpt-5.5"
-reasoning_effort = ""
+reasoning_effort = "low"
+context_limit = 400000
+input_limit = 272000
+output_limit = 128000
 
 [runtime.profiles.seerr]
 provider = ""
-model = ""
-reasoning_effort = ""
+model = "gpt-5.5"
+reasoning_effort = "high"
+context_limit = 400000
+input_limit = 272000
+output_limit = 128000
 
 [runtime.profiles.discord]
 provider = ""
-model = ""
-reasoning_effort = ""
+model = "gpt-5.5"
+reasoning_effort = "medium"
+context_limit = 400000
+input_limit = 272000
+output_limit = 128000
 
 [runtime.profiles.automation]
 provider = ""
-model = ""
-reasoning_effort = ""
+model = "gpt-5.5"
+reasoning_effort = "high"
+context_limit = 400000
+input_limit = 272000
+output_limit = 128000
 
 [runtime.profiles.discord_triage]
 provider = ""
-model = ""
-reasoning_effort = ""
+model = "gpt-5.4-mini"
+reasoning_effort = "none"
+context_limit = 400000
+input_limit = 272000
+output_limit = 128000
+
+[runtime.profiles.sandbox_review]
+provider = ""
+model = "gpt-5.4-mini"
+reasoning_effort = "low"
+context_limit = 400000
+input_limit = 272000
+output_limit = 128000
 
 [storage]
 database_path = "./blitzcrank.sqlite"

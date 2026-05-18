@@ -24,6 +24,45 @@ func writeConfig(t *testing.T, body string) string {
 	return path
 }
 
+func TestDotenvProvidesConfigPathAndOverridesTOML(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "blitzcrank.toml")
+	dotenvPath := filepath.Join(dir, ".env")
+	if err := os.WriteFile(configPath, []byte(`
+[bot]
+public_name = "from-toml"
+
+[llm.openai]
+api_key = "key-from-toml"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dotenvPath, []byte(`
+BLITZCRANK_CONFIG=`+configPath+`
+BOT_PUBLIC_NAME=from-dotenv
+OPENAI_API_KEY=key-from-dotenv
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BLITZCRANK_CONFIG", "")
+	t.Setenv("BOT_PUBLIC_NAME", "")
+	t.Setenv("OPENAI_API_KEY", "")
+
+	cfg, err := Load(dotenvPath)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.ConfigPath != configPath {
+		t.Fatalf("ConfigPath = %q, want %q", cfg.ConfigPath, configPath)
+	}
+	if cfg.BotPublicName != "from-dotenv" {
+		t.Fatalf("BotPublicName = %q", cfg.BotPublicName)
+	}
+	if cfg.OpenAIAPIKey != "key-from-dotenv" {
+		t.Fatalf("OpenAIAPIKey = %q", cfg.OpenAIAPIKey)
+	}
+}
+
 func TestTOMLConfigLoadsReadableSections(t *testing.T) {
 	path := writeConfig(t, `
 [discord]
@@ -41,19 +80,29 @@ webhook_listen_addr = "127.0.0.1:8080"
 [runtime]
 skills_dir = "/srv/blitzcrank/skills"
 automations_dir = "/srv/blitzcrank/automations"
+memories_dir = "/srv/blitzcrank/memories"
 automations_enabled = true
 automations_extra_dirs = ["/srv/blitzcrank/extra-automations"]
 timezone = "Europe/Vienna"
 run_timeout = "2m"
 
+[runtime.context]
+reserved_tokens = 1234
+tail_turns = 3
+preserve_recent_tokens = 4567
+
 [runtime.profiles.default]
 provider = "openrouter"
 model = "openai/gpt-5.4"
 reasoning_effort = "low"
+context_limit = 64000
+output_limit = 4096
 
 [runtime.profiles.automation]
 model = "anthropic/claude-sonnet-4.6"
 reasoning_effort = "medium"
+context_limit = 200000
+output_limit = 32000
 
 [llm.openrouter]
 api_key = "router-key"
@@ -70,12 +119,19 @@ api_key = "router-key"
 	if cfg.DiscordSeerrUserMap["discord-user-1"] != "42" {
 		t.Fatalf("DiscordSeerrUserMap = %#v", cfg.DiscordSeerrUserMap)
 	}
-	if cfg.SkillsDirectory != "/srv/blitzcrank/skills" || cfg.Timezone != "Europe/Vienna" {
-		t.Fatalf("runtime globals = skills=%q timezone=%q", cfg.SkillsDirectory, cfg.Timezone)
+	if cfg.SkillsDirectory != "/srv/blitzcrank/skills" || cfg.MemoriesDirectory != "/srv/blitzcrank/memories" || cfg.Timezone != "Europe/Vienna" {
+		t.Fatalf("runtime globals = skills=%q memories=%q timezone=%q", cfg.SkillsDirectory, cfg.MemoriesDirectory, cfg.Timezone)
+	}
+	if cfg.ContextReservedTokens != 1234 || cfg.ContextTailTurns != 3 || cfg.ContextPreserveRecentTokens != 4567 {
+		t.Fatalf("context globals = reserved=%d tail=%d preserve=%d", cfg.ContextReservedTokens, cfg.ContextTailTurns, cfg.ContextPreserveRecentTokens)
 	}
 	automation := cfg.RuntimeProfile("automation")
-	if automation.Provider != "openrouter" || automation.Model != "anthropic/claude-sonnet-4.6" || automation.ReasoningEffort != "medium" {
+	if automation.Provider != "openrouter" || automation.Model != "anthropic/claude-sonnet-4.6" || automation.ReasoningEffort != "medium" || automation.ContextLimit != 200000 || automation.OutputLimit != 32000 {
 		t.Fatalf("automation runtime = %#v", automation)
+	}
+	defaultBudget := cfg.RuntimeContextBudget("default")
+	if defaultBudget.ContextLimit != 64000 || defaultBudget.OutputLimit != 4096 || defaultBudget.UsableTokens != 59904 {
+		t.Fatalf("default context budget = %#v", defaultBudget)
 	}
 }
 
@@ -144,6 +200,59 @@ api_key = "router-key"
 	}
 }
 
+func TestCodexFastTOMLConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want bool
+	}{
+		{
+			name: "fast",
+			body: `
+[llm.codex]
+fast = true
+`,
+			want: true,
+		},
+		{
+			name: "standard",
+			body: `
+[llm.codex]
+fast = false
+`,
+			want: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeConfig(t, tc.body)
+			t.Setenv("BLITZCRANK_CONFIG", path)
+			t.Setenv("OPENAI_API_KEY", "key")
+
+			cfg, err := Load("")
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if cfg.CodexFast != tc.want {
+				t.Fatalf("CodexFast = %t, want %t", cfg.CodexFast, tc.want)
+			}
+		})
+	}
+}
+
+func TestCodexFastEnvOverride(t *testing.T) {
+	t.Setenv("BLITZCRANK_CONFIG", filepath.Join(t.TempDir(), "missing.toml"))
+	t.Setenv("OPENAI_API_KEY", "key")
+	t.Setenv("CODEX_FAST_MODE", "true")
+
+	cfg, err := LoadRelaxed("")
+	if err != nil {
+		t.Fatalf("LoadRelaxed() error = %v", err)
+	}
+	if !cfg.CodexFast {
+		t.Fatal("CodexFast = false")
+	}
+}
+
 func TestRuntimeProfilesUseWorkflowOverrides(t *testing.T) {
 	t.Setenv("BLITZCRANK_CONFIG", filepath.Join(t.TempDir(), "missing.toml"))
 	t.Setenv("OPENAI_API_KEY", "default-key")
@@ -172,11 +281,40 @@ func TestRuntimeProfilesUseWorkflowOverrides(t *testing.T) {
 	if triage.Model != "gpt-5.4-mini" || triage.ReasoningEffort != "none" {
 		t.Fatalf("discord triage runtime = %#v", triage)
 	}
+	sandboxReview := cfg.RuntimeProfile("sandbox_review")
+	if sandboxReview.Model != "gpt-5.4-mini" || sandboxReview.ReasoningEffort != "none" {
+		t.Fatalf("sandbox review runtime = %#v", sandboxReview)
+	}
+}
+
+func TestCodexModelContextLimits(t *testing.T) {
+	tests := []struct {
+		model   string
+		context int
+		input   int
+		output  int
+	}{
+		{model: "gpt-5.5", context: 400000, input: 272000, output: 128000},
+		{model: "gpt-5.4", context: 1050000, input: 922000, output: 128000},
+		{model: "gpt-5.4-mini", context: 400000, input: 272000, output: 128000},
+		{model: "gpt-5.3-codex", context: 400000, input: 272000, output: 128000},
+		{model: "gpt-5.3-codex-spark", context: 128000, input: 100000, output: 32000},
+		{model: "gpt-5.2", context: 400000, input: 272000, output: 128000},
+	}
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			context, input, output := modelContextLimits(tt.model)
+			if context != tt.context || input != tt.input || output != tt.output {
+				t.Fatalf("modelContextLimits(%q) = (%d, %d, %d), want (%d, %d, %d)", tt.model, context, input, output, tt.context, tt.input, tt.output)
+			}
+		})
+	}
 }
 
 func TestDiscordSeerrUserMapParsesJSONEnv(t *testing.T) {
 	t.Setenv("BLITZCRANK_CONFIG", filepath.Join(t.TempDir(), "missing.toml"))
 	t.Setenv("OPENAI_API_KEY", "default-key")
+	t.Setenv("DISCORD_ADMIN_ROLE_ID", "role-admin")
 	t.Setenv("DISCORD_SEERR_USER_MAP", `{"discord-user-1": 42, "discord-user-2": "84"}`)
 
 	cfg, err := LoadRelaxed("")
@@ -185,6 +323,9 @@ func TestDiscordSeerrUserMapParsesJSONEnv(t *testing.T) {
 	}
 	if cfg.DiscordSeerrUserMap["discord-user-1"] != "42" || cfg.DiscordSeerrUserMap["discord-user-2"] != "84" {
 		t.Fatalf("DiscordSeerrUserMap = %#v", cfg.DiscordSeerrUserMap)
+	}
+	if cfg.DiscordAdminRoleID != "role-admin" {
+		t.Fatalf("DiscordAdminRoleID = %q, want role-admin", cfg.DiscordAdminRoleID)
 	}
 }
 
@@ -236,11 +377,10 @@ func TestLoadAcceptsWebhookEnabledWithSeerrCredentials(t *testing.T) {
 	}
 }
 
-func TestLegacyEnvStillWorks(t *testing.T) {
+func TestLegacyCronEnvStillWorks(t *testing.T) {
 	t.Setenv("BLITZCRANK_CONFIG", filepath.Join(t.TempDir(), "missing.toml"))
 	t.Setenv("OPENAI_API_KEY", "key")
 	t.Setenv("CRON_ENABLED", "true")
-	t.Setenv("CODEX_FAST_MODE", "true")
 
 	cfg, err := LoadRelaxed("")
 	if err != nil {
@@ -248,8 +388,5 @@ func TestLegacyEnvStillWorks(t *testing.T) {
 	}
 	if !cfg.AutomationsEnabled {
 		t.Fatal("AutomationsEnabled = false")
-	}
-	if cfg.CodexServiceTier != "fast" {
-		t.Fatalf("CodexServiceTier = %q", cfg.CodexServiceTier)
 	}
 }

@@ -44,7 +44,7 @@ func TestToResponsesRequestConvertsToolOutput(t *testing.T) {
 			{Role: "assistant", ToolCalls: []api.ToolCall{toolCall}},
 			{Role: "tool", ToolCallID: "call_1", Content: `{"ok":true}`},
 		},
-	}, "standard")
+	})
 	if request["instructions"] != "system prompt" {
 		t.Fatalf("instructions = %v, want system prompt", request["instructions"])
 	}
@@ -126,13 +126,13 @@ func TestFromResponsesStreamFallsBackToTextDeltas(t *testing.T) {
 	}
 }
 
-func TestToResponsesRequestAddsFastServiceTier(t *testing.T) {
+func TestToResponsesRequestOmitsUnsupportedFastServiceTier(t *testing.T) {
 	request := toResponsesRequest(api.ChatRequest{
 		Model:    "gpt-test",
 		Messages: []api.Message{{Role: "user", Content: "hi"}},
-	}, "fast")
-	if request["service_tier"] != "fast" {
-		t.Fatalf("service_tier = %v, want fast", request["service_tier"])
+	})
+	if _, ok := request["service_tier"]; ok {
+		t.Fatalf("request unexpectedly included service_tier: %#v", request)
 	}
 }
 
@@ -141,25 +141,32 @@ func TestToResponsesRequestAddsReasoningEffort(t *testing.T) {
 		Model:           "gpt-test",
 		ReasoningEffort: "high",
 		Messages:        []api.Message{{Role: "user", Content: "hi"}},
-	}, "standard")
+	})
 	reasoning := request["reasoning"].(map[string]any)
 	if reasoning["effort"] != "high" {
 		t.Fatalf("reasoning effort = %v, want high", reasoning["effort"])
 	}
 }
 
-func TestToResponsesRequestSkipsNoneReasoningEffort(t *testing.T) {
-	for _, effort := range []string{"", "none", "unspecified"} {
-		t.Run(effort, func(t *testing.T) {
-			request := toResponsesRequest(api.ChatRequest{
-				Model:           "gpt-test",
-				ReasoningEffort: effort,
-				Messages:        []api.Message{{Role: "user", Content: "hi"}},
-			}, "standard")
-			if _, ok := request["reasoning"]; ok {
-				t.Fatalf("request unexpectedly included reasoning for effort %q: %#v", effort, request)
-			}
-		})
+func TestToResponsesRequestOmitsEmptyReasoningEffort(t *testing.T) {
+	request := toResponsesRequest(api.ChatRequest{
+		Model:    "gpt-test",
+		Messages: []api.Message{{Role: "user", Content: "hi"}},
+	})
+	if _, ok := request["reasoning"]; ok {
+		t.Fatalf("request unexpectedly included reasoning: %#v", request)
+	}
+}
+
+func TestToResponsesRequestPassesNoneReasoningEffort(t *testing.T) {
+	request := toResponsesRequest(api.ChatRequest{
+		Model:           "gpt-test",
+		ReasoningEffort: "none",
+		Messages:        []api.Message{{Role: "user", Content: "hi"}},
+	})
+	reasoning := request["reasoning"].(map[string]any)
+	if reasoning["effort"] != "none" {
+		t.Fatalf("reasoning effort = %v, want none", reasoning["effort"])
 	}
 }
 

@@ -62,21 +62,6 @@ func boolEnv(key string, fallback bool) bool {
 	}
 }
 
-func codexServiceTierFromFastEnv(key, fallback string) string {
-	value := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
-	if value == "" {
-		return fallback
-	}
-	switch value {
-	case "1", "true", "yes", "on":
-		return "fast"
-	case "0", "false", "no", "off":
-		return "standard"
-	default:
-		return fallback
-	}
-}
-
 func applyDefaults(cfg *Config) error {
 	return walkConfigFields(cfg, func(field reflect.Value, structField reflect.StructField) error {
 		value := strings.TrimSpace(structField.Tag.Get("default"))
@@ -88,10 +73,25 @@ func applyDefaults(cfg *Config) error {
 }
 
 func applyEnv(cfg *Config) error {
+	return applyEnvFields(cfg, nil)
+}
+
+func applyBootstrapEnv(cfg *Config) error {
+	return applyEnvFields(cfg, map[string]struct{}{
+		"BLITZCRANK_CONFIG": {},
+	})
+}
+
+func applyEnvFields(cfg *Config, allowed map[string]struct{}) error {
 	return walkConfigFields(cfg, func(field reflect.Value, structField reflect.StructField) error {
 		key := strings.TrimSpace(structField.Tag.Get("env"))
 		if key == "" {
 			return nil
+		}
+		if allowed != nil {
+			if _, ok := allowed[key]; !ok {
+				return nil
+			}
 		}
 		value, ok := os.LookupEnv(key)
 		if !ok || strings.TrimSpace(value) == "" {
@@ -104,9 +104,6 @@ func applyEnv(cfg *Config) error {
 func applyLegacyEnv(cfg *Config) {
 	if strings.TrimSpace(os.Getenv("AUTOMATIONS_ENABLED")) == "" {
 		cfg.AutomationsEnabled = boolEnv("CRON_ENABLED", cfg.AutomationsEnabled)
-	}
-	if strings.TrimSpace(os.Getenv("CODEX_SERVICE_TIER")) == "" {
-		cfg.CodexServiceTier = codexServiceTierFromFastEnv("CODEX_FAST_MODE", cfg.CodexServiceTier)
 	}
 }
 
