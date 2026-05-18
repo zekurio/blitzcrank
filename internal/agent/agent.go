@@ -37,7 +37,7 @@ func (a *Agent) Respond(ctx context.Context, req Request) (string, error) {
 	toolPolicy := a.toolPolicy(req)
 	availableTools := a.registry.OpenAIToolsForPolicy(toolPolicy)
 	systemPrompt := a.systemPrompt(req)
-	runtimePrompt := a.runtimeMetadata(model, reasoningEffort, toolPolicy)
+	runtimePrompt := a.runtimeMetadata(req, model, reasoningEffort, toolPolicy)
 	messageCap := 5
 	if cfg.MaxToolIterations > 0 {
 		messageCap += cfg.MaxToolIterations * (1 + len(availableTools))

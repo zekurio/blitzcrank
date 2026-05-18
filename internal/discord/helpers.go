@@ -105,6 +105,30 @@ func discordUserID(user *discordgo.User) string {
 	return strings.TrimSpace(user.ID)
 }
 
+func (b *Bot) discordRequestSecurity(event *discordgo.MessageCreate) (string, bool, string) {
+	if event == nil {
+		return "", false, "non_admin"
+	}
+	authorID := discordUserID(event.Author)
+	isAdmin := b.isAdminUser(event.GuildID, event.ChannelID, authorID, event.Member)
+	if isAdmin {
+		return authorID, true, "admin"
+	}
+	return authorID, false, "non_admin"
+}
+
+func (b *Bot) interactionRequestSecurity(event *discordgo.InteractionCreate) (string, bool, string) {
+	if event == nil {
+		return "", false, "non_admin"
+	}
+	authorID := interactionUserID(event)
+	isAdmin := b.isAdminInteraction(event)
+	if isAdmin {
+		return authorID, true, "admin"
+	}
+	return authorID, false, "non_admin"
+}
+
 func interactionAuthor(event *discordgo.InteractionCreate) string {
 	if event == nil {
 		return "unknown Discord user"

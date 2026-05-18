@@ -28,6 +28,9 @@ type Agent struct {
 type Request struct {
 	Source       string
 	Author       string
+	AuthorID     string
+	IsAdmin      bool
+	Audience     string
 	Content      string
 	Context      string
 	ToolGroups   []string

@@ -324,6 +324,63 @@ func TestReadOnlyPolicyAllowsMemoryWrites(t *testing.T) {
 	}
 }
 
+func TestNonAdminDiscordMemoryAccessIsScopedToRequester(t *testing.T) {
+	dir := t.TempDir()
+	agent := &Agent{registry: tools.NewRegistry(config.Config{MemoriesDirectory: dir})}
+	for _, key := range []string{"user-1/preferences", "user-2/preferences"} {
+		var seed llm.ToolCall
+		seed.Function.Name = "memory_upsert"
+		seed.Function.Arguments = toolArgsJSON(t, map[string]any{"scope": "discord_user", "key": key, "content": "note for " + key})
+		if _, err := agent.executeTool(context.Background(), Request{}, seed, tools.ToolPolicy{Groups: []string{"memory"}}); err != nil {
+			t.Fatalf("seed memory %s: %v", key, err)
+		}
+	}
+
+	var list llm.ToolCall
+	list.Function.Name = "memory_list"
+	list.Function.Arguments = toolArgsJSON(t, map[string]any{"scope": "discord_user"})
+	raw, err := agent.executeTool(context.Background(), Request{
+		Source:   "discord_mention",
+		AuthorID: "user-1",
+		Audience: "non_admin",
+	}, list, tools.ToolPolicy{Groups: []string{"memory"}})
+	if err != nil {
+		t.Fatalf("memory_list error = %v", err)
+	}
+	text := compactLogValue(raw, 2000)
+	if !strings.Contains(text, "user-1/preferences") || strings.Contains(text, "user-2/preferences") {
+		t.Fatalf("memory_list leaked or omitted scoped memory: %s", text)
+	}
+
+	var search llm.ToolCall
+	search.Function.Name = "memory_search"
+	search.Function.Arguments = toolArgsJSON(t, map[string]any{"scope": "discord_user", "query": "note"})
+	raw, err = agent.executeTool(context.Background(), Request{
+		Source:   "discord_mention",
+		AuthorID: "user-1",
+		Audience: "non_admin",
+	}, search, tools.ToolPolicy{Groups: []string{"memory"}})
+	if err != nil {
+		t.Fatalf("memory_search error = %v", err)
+	}
+	text = compactLogValue(raw, 2000)
+	if !strings.Contains(text, "user-1/preferences") || strings.Contains(text, "user-2/preferences") {
+		t.Fatalf("memory_search leaked or omitted scoped memory: %s", text)
+	}
+
+	var getOther llm.ToolCall
+	getOther.Function.Name = "memory_get"
+	getOther.Function.Arguments = toolArgsJSON(t, map[string]any{"scope": "discord_user", "key": "user-2/preferences"})
+	_, err = agent.executeTool(context.Background(), Request{
+		Source:   "discord_mention",
+		AuthorID: "user-1",
+		Audience: "non_admin",
+	}, getOther, tools.ToolPolicy{Groups: []string{"memory"}})
+	if err == nil || !strings.Contains(err.Error(), "limited to key prefix") {
+		t.Fatalf("memory_get error = %v, want scoped denial", err)
+	}
+}
+
 func TestSandboxReviewRequestsApprovalForRiskyScripts(t *testing.T) {
 	reviewer := &recordingClient{responses: []llm.ChatResponse{responseWithMessage(llm.Message{
 		Role:    "assistant",
@@ -546,8 +603,10 @@ func TestRespondEmitsProgressForModelAndToolWork(t *testing.T) {
 	var phases []string
 	var toolNames []string
 	_, err := agent.Respond(context.Background(), Request{
-		Source:  "discord_thread",
-		Content: "check file permissions",
+		Source:   "discord_thread",
+		Audience: "admin",
+		IsAdmin:  true,
+		Content:  "check file permissions",
 		Progress: func(event ProgressEvent) {
 			phases = append(phases, event.Phase)
 			if event.ToolName != "" {
@@ -649,11 +708,11 @@ func TestRuntimeMetadataIncludesAutomationSchedule(t *testing.T) {
 	agent := &Agent{
 		cfg:                config.Config{Model: "gpt-test"},
 		registry:           tools.NewRegistry(config.Config{}),
-		runtimePrompt:      "automations={{automations}}",
+		runtimePrompt:      "audience={{audience}} requester_admin={{requester_admin}} requester_id={{requester_id}} seerr_user_id={{seerr_user_id}} automations={{automations}}",
 		automationMetadata: fakeAutomationMetadata{},
 	}
-	metadata := agent.runtimeMetadata("gpt-test", "low", tools.ToolPolicy{ReadOnly: true})
-	for _, want := range []string{"hourly-stale-import-handler", "cron: 0 * * * *", "2026-05-16T09:00:00Z"} {
+	metadata := agent.runtimeMetadata(Request{Source: "automation_cron", Audience: "automation", IsAdmin: true}, "gpt-test", "low", tools.ToolPolicy{ReadOnly: true})
+	for _, want := range []string{"audience=automation", "requester_admin=true", "hourly-stale-import-handler", "cron: 0 * * * *", "2026-05-16T09:00:00Z"} {
 		if !strings.Contains(metadata, want) {
 			t.Fatalf("runtime metadata missing %q: %q", want, metadata)
 		}

@@ -53,11 +53,15 @@ func (b *Bot) runThreadAgent(ctx context.Context, session *discordgo.Session, di
 	}
 	groups := threadToolGroups(thread)
 	seerrUserID, requestContext := b.seerrRequestContext(content, discordUserID(event.Author))
+	authorID, isAdmin, audience := b.discordRequestSecurity(event)
 
 	start := time.Now().UTC()
 	request := agent.Request{
 		Source:       "discord_thread",
 		Author:       discordAuthor(event.Author),
+		AuthorID:     authorID,
+		IsAdmin:      isAdmin,
+		Audience:     audience,
 		Content:      b.discordPrompt(thread, content),
 		Context:      requestContext,
 		ToolGroups:   groups,
@@ -177,9 +181,13 @@ func (b *Bot) runInteractionAgent(ctx context.Context, session *discordgo.Sessio
 
 	groups := threadToolGroups(thread)
 	seerrUserID, requestContext := b.seerrRequestContext(content, discordUserID(event.Author))
+	authorID, isAdmin, audience := b.discordRequestSecurity(event)
 	request := agent.Request{
 		Source:       "discord_reply",
 		Author:       discordAuthor(event.Author),
+		AuthorID:     authorID,
+		IsAdmin:      isAdmin,
+		Audience:     audience,
 		Content:      b.discordPrompt(thread, content),
 		Context:      requestContext,
 		ToolGroups:   groups,
@@ -238,9 +246,13 @@ func (b *Bot) runSlashAgentInline(ctx context.Context, session *discordgo.Sessio
 	progress := b.newInteractionProgressReporter(session, interaction.Interaction, response.ChannelID)
 
 	seerrUserID, requestContext := b.seerrRequestContext(content, discordUserID(event.Author))
+	authorID, isAdmin, audience := b.interactionRequestSecurity(interaction)
 	request := agent.Request{
 		Source:       "discord_slash_" + strings.TrimSpace(skill),
 		Author:       discordAuthor(event.Author),
+		AuthorID:     authorID,
+		IsAdmin:      isAdmin,
+		Audience:     audience,
 		Content:      content,
 		Context:      requestContext,
 		ToolGroups:   groups,

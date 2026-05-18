@@ -25,7 +25,7 @@ func (a *Agent) reviewSandboxTool(ctx context.Context, req Request, args map[str
 	if script == "" || purpose == "" {
 		return nil
 	}
-	if err := validateSandboxScriptPreflight(script); err != nil {
+	if err := validateSandboxScriptPreflight(req, script); err != nil {
 		return err
 	}
 	review, err := a.sandboxReview(ctx, req, purpose, script)
@@ -94,6 +94,9 @@ Rules:
 - do not ask merely because a script reads allowed configured base URLs/API keys or contacts allowed configured service hosts.
 - ask for approval only if the script may mutate service state, delete data, write outside temporary diagnostics, or otherwise has operational risk.
 - deny scripts that enumerate environment variables, print/hash/encode credentials, access arbitrary hosts, use broad filesystem access, persist data, run subprocesses, or perform unrelated activity.
+- deny or ask for admin approval when the requester is non-admin and the script reads or prints other users' private data, including user lists, sessions, watch history, request history, issue history, quotas, emails, usernames, Discord IDs, Jellyfin IDs, Seerr IDs, or preferences.
+- for non-admin requesters, allow only narrow lookups for the requester's own mapped Seerr user id or for the specific media/server item being discussed; do not allow broad user, session, issue, request, or history enumeration.
+- require scripts to print minimized summaries only. Do not allow raw API responses, raw logs, internal service URLs, filesystem paths, queue/download/request ids, credentials, headers, or unrelated fields in output.
 - grant only permissions needed by this exact script.
 - allowed service network hosts: %v
 - allowed environment variables: %v
@@ -102,10 +105,14 @@ Rules:
 
 Request source: %s
 Request author: %s
+Requester id: %s
+Requester admin: %t
+Audience: %s
+Mapped Seerr user id: %s
 Purpose: %s
 
 Script:
-%s`, servicePermissions.AllowNet, servicePermissions.AllowEnv, servicePermissions.AllowRead, req.Source, req.Author, purpose, script)
+%s`, servicePermissions.AllowNet, servicePermissions.AllowEnv, servicePermissions.AllowRead, req.Source, req.Author, nonEmptyMetadata(req.AuthorID), req.IsAdmin, requestAudience(req), nonEmptyMetadata(req.SeerrUserID), purpose, script)
 	response, err := client.Chat(ctx, llm.ChatRequest{
 		Model:           model,
 		ReasoningEffort: effort,
@@ -134,7 +141,7 @@ func restrictSandboxPermissions(requested, allowed tools.SandboxPermissions) too
 	}
 }
 
-func validateSandboxScriptPreflight(script string) error {
+func validateSandboxScriptPreflight(req Request, script string) error {
 	compact := strings.ToLower(strings.Join(strings.Fields(script), " "))
 	blocked := []string{
 		"deno.env.toobject",
@@ -150,7 +157,45 @@ func validateSandboxScriptPreflight(script string) error {
 			return fmt.Errorf("sandbox script may not enumerate or print environment variables; use documented configured env names")
 		}
 	}
+	if requestAudienceIsRestricted(req) && sandboxScriptHasPrivateEnumeration(compact, req) {
+		return fmt.Errorf("sandbox script may not enumerate users, sessions, history, or broad private records for non-admin requesters")
+	}
 	return nil
+}
+
+func requestAudienceIsRestricted(req Request) bool {
+	switch requestAudience(req) {
+	case "non_admin", "seerr_issue":
+		return !req.IsAdmin
+	default:
+		return false
+	}
+}
+
+func sandboxScriptHasPrivateEnumeration(compact string, req Request) bool {
+	patterns := []string{
+		"/users",
+		"/sessions",
+		"/playingitems",
+		"/playeditems",
+		"/activitylog",
+		"/api/v1/user?",
+		"/api/v1/user`",
+		"'/api/v1/user'",
+		"\"/api/v1/user\"",
+		"/api/v1/issue?",
+		"/api/v1/request?",
+	}
+	for _, pattern := range patterns {
+		if strings.Contains(compact, pattern) {
+			return true
+		}
+	}
+	seerrUserID := strings.TrimSpace(req.SeerrUserID)
+	if seerrUserID != "" && strings.Contains(compact, "/api/v1/user/") && !strings.Contains(compact, seerrUserID) {
+		return true
+	}
+	return false
 }
 
 func addReferencedAllowedEnv(permissions, allowed tools.SandboxPermissions, script string) tools.SandboxPermissions {
@@ -160,13 +205,36 @@ func addReferencedAllowedEnv(permissions, allowed tools.SandboxPermissions, scri
 	}
 	for _, env := range allowed.AllowEnv {
 		env = strings.TrimSpace(env)
-		if env == "" || seen[env] || !strings.Contains(script, env) {
+		if env == "" || seen[env] || !scriptReferencesEnvName(script, env) {
 			continue
 		}
 		permissions.AllowEnv = append(permissions.AllowEnv, env)
 		seen[env] = true
 	}
 	return permissions
+}
+
+func scriptReferencesEnvName(script, env string) bool {
+	for offset := 0; ; {
+		index := strings.Index(script[offset:], env)
+		if index < 0 {
+			return false
+		}
+		start := offset + index
+		end := start + len(env)
+		if isEnvNameBoundary(script, start-1) && isEnvNameBoundary(script, end) {
+			return true
+		}
+		offset = end
+	}
+}
+
+func isEnvNameBoundary(value string, index int) bool {
+	if index < 0 || index >= len(value) {
+		return true
+	}
+	ch := value[index]
+	return !(ch == '_' || ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z' || ch >= '0' && ch <= '9')
 }
 
 func addReferencedAllowedNet(permissions, referenced tools.SandboxPermissions) tools.SandboxPermissions {

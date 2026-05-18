@@ -110,10 +110,14 @@ func (b *Bot) replyToParentModelRuntimeQuestion(session *discordgo.Session, even
 		return false
 	}
 	startedAt := time.Now().UTC()
+	authorID, isAdmin, audience := b.discordRequestSecurity(event)
 	request := agent.Request{
-		Source:  "discord_mention",
-		Author:  discordAuthor(event.Author),
-		Content: content,
+		Source:   "discord_mention",
+		Author:   discordAuthor(event.Author),
+		AuthorID: authorID,
+		IsAdmin:  isAdmin,
+		Audience: audience,
+		Content:  content,
 	}
 	reply := b.modelRuntimeReply(content, request)
 	errText := ""
@@ -232,10 +236,14 @@ func (b *Bot) runDirectAgent(ctx context.Context, session *discordgo.Session, ev
 	startedAt := time.Now().UTC()
 	seerrUserID, requestContext := b.seerrRequestContext(content, discordUserID(event.Author))
 	groups := discordToolGroupsForContent(content)
+	authorID, isAdmin, audience := b.discordRequestSecurity(event)
 
 	request := agent.Request{
 		Source:       b.directAgentSource(session, event),
 		Author:       discordAuthor(event.Author),
+		AuthorID:     authorID,
+		IsAdmin:      isAdmin,
+		Audience:     audience,
 		Content:      content,
 		Context:      requestContext,
 		ToolGroups:   groups,
