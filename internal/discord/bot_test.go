@@ -664,7 +664,7 @@ func TestParentSupportSurface(t *testing.T) {
 	}{
 		{name: "mention is inline", content: "<@bot> why are downloads stuck?", mentioned: true, want: discordSurfaceInline},
 		{name: "one-off availability is inline", content: "ist Project Hail Mary auf Jellyfin verfügbar?", want: discordSurfaceInline},
-		{name: "ambient support opens public thread", content: "download stuck for Ghost in the Shell", want: discordSurfacePublicThread},
+		{name: "ambient support stays inline", content: "download stuck for Ghost in the Shell", want: discordSurfaceInline},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

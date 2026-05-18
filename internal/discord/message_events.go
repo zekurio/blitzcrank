@@ -57,52 +57,17 @@ func (b *Bot) handleParentChannelMessage(session *discordgo.Session, event *disc
 		b.handleUnactionableParentTriage(event, content, mentioned, triage)
 		return
 	}
-	switch parentSupportSurface(content, mentioned, triage) {
-	case discordSurfaceInline:
-		b.runDirectAgent(context.Background(), session, event, content)
-		return
-	case discordSurfacePublicThread:
-		b.openParentSupportThread(session, event, content, triage)
-	}
+	b.runDirectAgent(context.Background(), session, event, content)
 }
 
 type discordSupportSurface string
 
 const (
-	discordSurfaceInline       discordSupportSurface = "inline"
-	discordSurfacePublicThread discordSupportSurface = "public_thread"
+	discordSurfaceInline discordSupportSurface = "inline"
 )
 
 func parentSupportSurface(content string, mentioned bool, triage agent.DiscordTriageResult) discordSupportSurface {
-	if mentioned || isOneOffDiscordQuestion(content, triage) {
-		return discordSurfaceInline
-	}
-	return discordSurfacePublicThread
-}
-
-func (b *Bot) openParentSupportThread(session *discordgo.Session, event *discordgo.MessageCreate, content string, triage agent.DiscordTriageResult) {
-	title := strings.TrimSpace(triage.ThreadTitle)
-	if title == "" {
-		title = titleFromContent(content)
-	}
-	thread, err := session.MessageThreadStart(event.ChannelID, event.ID, threadTitle(title), b.cfg.DiscordThreadArchiveMinutes)
-	if err != nil {
-		log.Printf("create discord thread failed: channel=%s message=%s error=%v", event.ChannelID, event.ID, err)
-		return
-	}
-
-	if err := b.recordDiscordThread(context.Background(), recordDiscordThreadRequest{
-		ThreadID:      thread.ID,
-		ParentID:      event.ChannelID,
-		RootMessageID: event.ID,
-		Title:         thread.Name,
-		Event:         event,
-		EventType:     "root_message",
-		Content:       content,
-	}); err != nil {
-		log.Printf("record discord root thread failed: thread=%s error=%v", thread.ID, err)
-	}
-	b.runThreadAgent(context.Background(), session, thread.ID, event, content, "root_message")
+	return discordSurfaceInline
 }
 
 func (b *Bot) replyToParentModelRuntimeQuestion(session *discordgo.Session, event *discordgo.MessageCreate, content string) bool {
@@ -201,31 +166,10 @@ func (b *Bot) replyToParentTriage(event *discordgo.MessageCreate, content, actio
 		reply = fallbackIntakeReply(content, action)
 	}
 	errText := ""
-	message, err := b.sendMessageReference(context.Background(), event.ChannelID, event.ID, reply)
+	_, err := b.sendMessageReference(context.Background(), event.ChannelID, event.ID, reply)
 	if err != nil {
 		log.Printf("send discord intake response failed: %v", err)
 		errText = err.Error()
-	} else if message != nil {
-		action = strings.TrimSpace(action)
-		if action == "" {
-			action = "direct_reply"
-		}
-		b.recordDiscordInteractionThread(context.Background(), interactionThreadRecord{
-			ThreadID:       discordThreadID(message.ID),
-			ExternalID:     message.ID,
-			ParentID:       event.ChannelID,
-			RootID:         event.ID,
-			Title:          threadTitle(content),
-			Actor:          discordAuthor(event.Author),
-			ActorID:        discordUserID(event.Author),
-			MessageID:      event.ID,
-			EventType:      "triage_" + action,
-			Content:        content,
-			BotMessageID:   message.ID,
-			BotMessageText: reply,
-			ToolGroups:     discordToolGroupsForContent(content),
-			Attribution:    "discord:triage",
-		})
 	}
 	b.appendDiscordInteractionTrace(discordInteractionTraceRequest{Event: event, InteractionType: "triage_" + strings.TrimSpace(action), Content: content, Reply: reply, ErrorText: errText, StartedAt: startedAt, CompletedAt: time.Now().UTC(), Extra: map[string]any{"triage_action": action}})
 }
@@ -278,30 +222,13 @@ func (b *Bot) runDirectAgent(ctx context.Context, session *discordgo.Session, ev
 		errText = err.Error()
 		reply = safeDiscordFailureReply(content)
 	}
-	message, sendErr := progress.finish(runCtx, reply)
+	_, sendErr := progress.finish(runCtx, reply)
 	if sendErr != nil {
 		log.Printf("send discord mention response failed: %v", sendErr)
 		if errText != "" {
 			errText += "; send: "
 		}
 		errText += sendErr.Error()
-	} else if message != nil {
-		b.recordDiscordInteractionThread(context.Background(), interactionThreadRecord{
-			ThreadID:       discordThreadID(message.ID),
-			ExternalID:     message.ID,
-			ParentID:       event.ChannelID,
-			RootID:         event.ID,
-			Title:          threadTitle(content),
-			Actor:          discordAuthor(event.Author),
-			ActorID:        event.Author.ID,
-			MessageID:      event.ID,
-			EventType:      "direct_agent",
-			Content:        content,
-			BotMessageID:   message.ID,
-			BotMessageText: reply,
-			ToolGroups:     groups,
-			Attribution:    b.discordAttribution(request),
-		})
 	}
 	b.appendDiscordInteractionTrace(discordInteractionTraceRequest{Event: event, InteractionType: "direct_agent_reply", Content: content, Reply: reply, ErrorText: errText, StartedAt: startedAt, CompletedAt: time.Now().UTC(), Extra: map[string]any{"attribution": b.discordAttribution(request)}})
 }
