@@ -120,23 +120,19 @@ func (b *Bot) fetchReleaseCalendarItems(ctx context.Context, start, end time.Tim
 	if sonarrErr != nil {
 		warnings = append(warnings, "Sonarr: "+sonarrErr.Error())
 	} else {
-		items = append(items, sonarrCalendarItems(sonarrResult)...)
-		if delayWarning, ok := releaseCalendarDelayWarning("Sonarr", func() (any, error) {
+		delay := releaseCalendarUsenetDelay(func() (any, error) {
 			return registry.Call(ctx, "sonarr_list_delay_profiles", map[string]any{})
-		}); ok {
-			warnings = append(warnings, delayWarning)
-		}
+		})
+		items = append(items, delayReleaseCalendarItems(sonarrCalendarItems(sonarrResult), delay)...)
 	}
 	radarrResult, radarrErr := registry.Call(ctx, "radarr_get_calendar", args)
 	if radarrErr != nil {
 		warnings = append(warnings, "Radarr: "+radarrErr.Error())
 	} else {
-		items = append(items, radarrCalendarItems(radarrResult)...)
-		if delayWarning, ok := releaseCalendarDelayWarning("Radarr", func() (any, error) {
+		delay := releaseCalendarUsenetDelay(func() (any, error) {
 			return registry.Call(ctx, "radarr_list_delay_profiles", map[string]any{})
-		}); ok {
-			warnings = append(warnings, delayWarning)
-		}
+		})
+		items = append(items, delayReleaseCalendarItems(radarrCalendarItems(radarrResult), delay)...)
 	}
 	if sonarrErr != nil && radarrErr != nil {
 		return nil, warnings, fmt.Errorf("Sonarr und Radarr konnten nicht gelesen werden")
@@ -210,44 +206,36 @@ func radarrCalendarItems(value any) []releaseCalendarItem {
 	return items
 }
 
-func releaseCalendarDelayWarning(service string, load func() (any, error)) (string, bool) {
+func releaseCalendarUsenetDelay(load func() (any, error)) time.Duration {
 	value, err := load()
 	if err != nil {
-		return service + " Delay Profiles: " + err.Error(), true
+		return 0
 	}
 	profiles, _ := value.([]any)
-	var delays []string
+	maxDelay := 0
 	for _, profile := range profiles {
 		object, ok := profile.(map[string]any)
 		if !ok {
 			continue
 		}
 		delay := intFromInterface(object["usenetDelay"])
-		if delay <= 0 {
-			continue
+		if delay > maxDelay {
+			maxDelay = delay
 		}
-		label := strings.TrimSpace(stringFromMap(object, "name"))
-		if label == "" {
-			label = "Profil"
-		}
-		delays = append(delays, label+" "+formatReleaseCalendarDelay(delay))
 	}
-	if len(delays) == 0 {
-		return "", false
-	}
-	return service + " Usenet-Verzoegerung: " + strings.Join(delays, ", "), true
+	return time.Duration(maxDelay) * time.Minute
 }
 
-func formatReleaseCalendarDelay(minutes int) string {
-	if minutes < 60 {
-		return fmt.Sprintf("%d min", minutes)
+func delayReleaseCalendarItems(items []releaseCalendarItem, delay time.Duration) []releaseCalendarItem {
+	if delay <= 0 {
+		return items
 	}
-	hours := minutes / 60
-	remainingMinutes := minutes % 60
-	if remainingMinutes == 0 {
-		return fmt.Sprintf("%d h", hours)
+	delayed := make([]releaseCalendarItem, len(items))
+	for i, item := range items {
+		item.Date = item.Date.Add(delay)
+		delayed[i] = item
 	}
-	return fmt.Sprintf("%d h %d min", hours, remainingMinutes)
+	return delayed
 }
 
 type radarrReleaseDate struct {
@@ -257,19 +245,25 @@ type radarrReleaseDate struct {
 
 func radarrReleaseDates(object, movie map[string]any) []radarrReleaseDate {
 	candidates := []struct {
-		kind   string
-		values []any
+		kind    string
+		generic bool
+		values  []any
 	}{
 		{kind: "Digital", values: []any{object["digitalRelease"], movie["digitalRelease"]}},
 		{kind: "Physical", values: []any{object["physicalRelease"], movie["physicalRelease"]}},
 		{kind: "Cinemas", values: []any{object["inCinemas"], movie["inCinemas"]}},
-		{kind: "Release", values: []any{object["releaseDate"], movie["releaseDate"]}},
+		{kind: "Release", generic: true, values: []any{object["releaseDate"], movie["releaseDate"]}},
 	}
 	var releases []radarrReleaseDate
 	seen := map[string]bool{}
+	seenSpecificDate := map[string]bool{}
 	for _, candidate := range candidates {
 		date, ok := parseReleaseTime(candidate.values...)
 		if !ok {
+			continue
+		}
+		dateKey := date.Format("2006-01-02")
+		if candidate.generic && seenSpecificDate[dateKey] {
 			continue
 		}
 		key := candidate.kind + ":" + date.Format("2006-01-02")
@@ -277,6 +271,9 @@ func radarrReleaseDates(object, movie map[string]any) []radarrReleaseDate {
 			continue
 		}
 		seen[key] = true
+		if !candidate.generic {
+			seenSpecificDate[dateKey] = true
+		}
 		releases = append(releases, radarrReleaseDate{Date: date, Kind: candidate.kind})
 	}
 	return releases
@@ -320,9 +317,9 @@ func parseReleaseTime(values ...any) (time.Time, bool) {
 }
 
 func renderReleaseCalendarPNG(start, end time.Time, label string, items []releaseCalendarItem, warnings []string) ([]byte, error) {
-	const width = 1400
+	const fullWidth = 1400
+	const dayWidth = 760
 	const margin = 36
-	const headerHeight = 118
 	const weekdayHeight = 30
 	const dayHeaderHeight = 24
 	const rowGap = 12
@@ -332,7 +329,15 @@ func renderReleaseCalendarPNG(start, end time.Time, label string, items []releas
 	const itemGap = 4
 	const chipRadius = 5
 	const cellRadius = 5
-	const dayViewWidth = 360
+	const dayViewWidth = 560
+
+	isDayView := dayStart(end).Sub(dayStart(start)) <= 24*time.Hour
+	width := fullWidth
+	headerHeight := 118
+	if isDayView {
+		width = dayWidth
+		headerHeight = 118
+	}
 
 	face, err := releaseCalendarFontFace()
 	if err != nil {
@@ -357,7 +362,7 @@ func renderReleaseCalendarPNG(start, end time.Time, label string, items []releas
 
 	gridStart := calendarGridStart(start)
 	gridEnd := calendarGridEnd(end)
-	if dayStart(end).Sub(dayStart(start)) <= 24*time.Hour {
+	if isDayView {
 		gridStart = dayStart(start)
 		gridEnd = dayStart(end)
 	}
@@ -386,6 +391,10 @@ func renderReleaseCalendarPNG(start, end time.Time, label string, items []releas
 	gridWidth := width - margin*2
 	if columns == 1 && gridWidth > dayViewWidth {
 		gridWidth = dayViewWidth
+	}
+	gridX := margin
+	if columns == 1 {
+		gridX = (width - gridWidth) / 2
 	}
 	cellWidth := gridWidth / columns
 	chipTextWidth := cellWidth - cellPadding*2 - 14 - chipPadding*2
@@ -436,22 +445,19 @@ func renderReleaseCalendarPNG(start, end time.Time, label string, items []releas
 
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
 	draw.Draw(img, img.Bounds(), &image.Uniform{C: releaseCalendarBackgroundColor}, image.Point{}, draw.Src)
-	drawText(img, boldFace, margin, 50, "Release-Kalender", color.RGBA{R: 241, G: 245, B: 249, A: 255})
-	drawText(img, face, margin, 76, label, color.RGBA{R: 148, G: 163, B: 184, A: 255})
-	drawLegend(img, face, width-margin-420, 42, "Sonarr (Serien)", sonarrReleaseColor)
-	drawLegend(img, face, width-margin-210, 42, "Radarr (Filme)", radarrReleaseColor)
+	drawReleaseCalendarHeader(img, face, boldFace, width, margin, label)
 
 	y := margin + headerHeight
 	for i := 0; i < columns; i++ {
 		weekday := shortWeekday(gridStart.AddDate(0, 0, i))
-		drawText(img, face, margin+i*cellWidth+cellPadding, y+18, weekday, color.RGBA{R: 203, G: 213, B: 225, A: 255})
+		drawText(img, face, gridX+i*cellWidth+cellPadding, y+18, weekday, color.RGBA{R: 203, G: 213, B: 225, A: 255})
 	}
 	y += weekdayHeight
 	for row := 0; row < rows; row++ {
 		rowHeight := rowHeights[row]
 		for col := 0; col < columns; col++ {
 			index := row*columns + col
-			x := margin + col*cellWidth
+			x := gridX + col*cellWidth
 			rect := image.Rect(x, y, x+cellWidth-6, y+rowHeight)
 			fill := releaseCalendarCellColor
 			border := releaseCalendarBorderColor
@@ -584,6 +590,33 @@ func chipHeight(lineCount, padding, ascent, descent, lineHeight int) int {
 		textHeight += (lineCount - 1) * lineHeight
 	}
 	return padding*2 + textHeight
+}
+
+func drawReleaseCalendarHeader(img *image.RGBA, face, boldFace font.Face, width, margin int, label string) {
+	const title = "Release-Kalender"
+	const titleY = 50
+	const subtitleY = 76
+	const legendY = 36
+	const legendGap = 40
+
+	drawText(img, boldFace, margin, titleY, title, color.RGBA{R: 241, G: 245, B: 249, A: 255})
+	drawText(img, face, margin, subtitleY, label, color.RGBA{R: 148, G: 163, B: 184, A: 255})
+
+	sonarrWidth := releaseCalendarLegendWidth(face, "Sonarr (Serien)")
+	radarrWidth := releaseCalendarLegendWidth(face, "Radarr (Filme)")
+	legendX := width - margin - sonarrWidth - legendGap - radarrWidth
+	minLegendX := margin + measureStringWidth(boldFace, title) + 48
+	if legendX < minLegendX {
+		legendX = minLegendX
+	}
+	drawLegend(img, face, legendX, legendY, "Sonarr (Serien)", sonarrReleaseColor)
+	drawLegend(img, face, legendX+sonarrWidth+legendGap, legendY, "Radarr (Filme)", radarrReleaseColor)
+}
+
+func releaseCalendarLegendWidth(face font.Face, label string) int {
+	const swatchSize = 18
+	const labelGap = 8
+	return swatchSize + labelGap + measureStringWidth(face, label)
 }
 
 func drawLegend(img *image.RGBA, face font.Face, x, y int, label string, c color.RGBA) {

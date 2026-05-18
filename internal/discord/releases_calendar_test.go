@@ -171,6 +171,26 @@ func TestRadarrCalendarItemsEmitsSeparateReleaseKinds(t *testing.T) {
 	}
 }
 
+func TestRadarrCalendarItemsSkipsGenericReleaseWhenSpecificReleaseExists(t *testing.T) {
+	items := radarrCalendarItems([]any{map[string]any{
+		"title":          "Project Hail Mary",
+		"year":           2026,
+		"digitalRelease": "2026-05-12",
+		"releaseDate":    "2026-05-12",
+	}})
+
+	var releases []string
+	for _, item := range items {
+		releases = append(releases, item.Date.Format("2006-01-02")+" "+item.Title)
+	}
+	if !slices.Contains(releases, "2026-05-12 Project Hail Mary (2026) - Digital") {
+		t.Fatalf("releases = %#v, missing digital release", releases)
+	}
+	if slices.Contains(releases, "2026-05-12 Project Hail Mary (2026) - Release") {
+		t.Fatalf("releases = %#v, generic release duplicated digital date", releases)
+	}
+}
+
 func writeJSON(t *testing.T, w http.ResponseWriter, value any) {
 	t.Helper()
 	w.Header().Set("Content-Type", "application/json")

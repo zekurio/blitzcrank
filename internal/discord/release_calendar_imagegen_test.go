@@ -34,6 +34,14 @@ func TestGenerateReleaseCalendarMockImages(t *testing.T) {
 		{Service: "Sonarr", Date: time.Date(2026, 6, 27, 20, 30, 0, 0, location), Title: "Doctor Who S16E08 - A Map of Storms", Color: sonarrReleaseColor},
 		{Service: "Radarr", Date: time.Date(2026, 6, 30, 0, 0, 0, 0, location), Title: "Last Train North (2026) - Digital", Color: radarrReleaseColor},
 	}
+	for i, item := range items {
+		switch item.Service {
+		case "Sonarr":
+			items[i].Date = item.Date.Add(45 * time.Minute)
+		case "Radarr":
+			items[i].Date = item.Date.Add(2 * time.Hour)
+		}
+	}
 
 	cases := []struct {
 		filename string
@@ -62,7 +70,7 @@ func TestGenerateReleaseCalendarMockImages(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		data, err := renderReleaseCalendarPNG(tc.start, tc.end, tc.label, items, []string{"Mockdaten: Sonarr und Radarr wurden nicht kontaktiert."})
+		data, err := renderReleaseCalendarPNG(tc.start, tc.end, tc.label, items, nil)
 		if err != nil {
 			t.Fatalf("renderReleaseCalendarPNG(%s) error = %v", tc.filename, err)
 		}
