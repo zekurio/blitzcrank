@@ -102,12 +102,16 @@ func (r *Registry) memorySearch(args map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	keyPrefix := strings.Trim(strings.TrimSpace(stringArg(args, "key_prefix")), "/")
 	records, err := r.readMemories(stringArg(args, "scope"))
 	if err != nil {
 		return nil, err
 	}
 	matches := make([]memoryRecord, 0)
 	for _, record := range records {
+		if keyPrefix != "" && record.Key != keyPrefix && !strings.HasPrefix(record.Key, keyPrefix+"/") {
+			continue
+		}
 		haystack, err := memorySearchText(record)
 		if err != nil {
 			return nil, err

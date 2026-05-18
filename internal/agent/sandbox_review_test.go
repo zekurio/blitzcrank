@@ -215,6 +215,152 @@ func TestSandboxReviewAddsReferencedAllowedEnvNames(t *testing.T) {
 	}
 }
 
+func TestSandboxReviewPromptIncludesAudienceContext(t *testing.T) {
+	reviewer := &recordingClient{responses: []llm.ChatResponse{responseWithMessage(llm.Message{
+		Role:    "assistant",
+		Content: `{"decision":"deny","reason":"broad user enumeration","mutating":false,"permissions":{"allow_env":["JELLYFIN_API_KEY"]}}`,
+	})}}
+	agent := &Agent{
+		cfg:      config.Config{Model: "gpt-test"},
+		clients:  map[string]llm.Client{"sandbox_review": reviewer},
+		registry: tools.NewRegistry(config.Config{JellyfinBaseURL: "http://jellyfin.local:8096", JellyfinAPIKey: "secret"}),
+	}
+	call := llm.ToolCall{ID: "call_1", Type: "function"}
+	call.Function.Name = "sandbox_run_typescript"
+	call.Function.Arguments = toolArgsJSON(t, map[string]any{
+		"purpose": "check a media item without exposing other users",
+		"script":  "await fetch(Deno.env.get('JELLYFIN_URL') + '/Items')",
+	})
+	_, err := agent.executeTool(context.Background(), Request{
+		Source:      "discord_mention",
+		Author:      "Alice (discord-1)",
+		AuthorID:    "discord-1",
+		Audience:    "non_admin",
+		SeerrUserID: "42",
+	}, call, tools.ToolPolicy{Groups: []string{"sandbox"}})
+	if err == nil || !strings.Contains(err.Error(), "denied by review") {
+		t.Fatalf("executeTool error = %v, want review denial", err)
+	}
+	if len(reviewer.requests) != 1 {
+		t.Fatalf("reviewer requests = %d, want 1", len(reviewer.requests))
+	}
+	prompt := reviewer.requests[0].Messages[len(reviewer.requests[0].Messages)-1].Content
+	for _, want := range []string{
+		"Requester id: discord-1",
+		"Requester admin: false",
+		"Audience: non_admin",
+		"Mapped Seerr user id: 42",
+		"deny or ask for admin approval when the requester is non-admin",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("review prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestSandboxPreflightRejectsPrivateEnumerationForNonAdmin(t *testing.T) {
+	reviewer := &recordingClient{}
+	agent := &Agent{
+		cfg:      config.Config{Model: "gpt-test"},
+		clients:  map[string]llm.Client{"sandbox_review": reviewer},
+		registry: tools.NewRegistry(config.Config{JellyfinBaseURL: "http://jellyfin.local:8096", JellyfinAPIKey: "secret"}),
+	}
+	call := llm.ToolCall{ID: "call_1", Type: "function"}
+	call.Function.Name = "sandbox_run_typescript"
+	call.Function.Arguments = toolArgsJSON(t, map[string]any{
+		"purpose": "list Jellyfin users",
+		"script":  "await fetch(Deno.env.get('JELLYFIN_URL') + '/Users')",
+	})
+	_, err := agent.executeTool(context.Background(), Request{Source: "discord_mention", AuthorID: "discord-1", Audience: "non_admin"}, call, tools.ToolPolicy{Groups: []string{"sandbox"}})
+	if err == nil || !strings.Contains(err.Error(), "may not enumerate users") {
+		t.Fatalf("executeTool error = %v, want non-admin private enumeration denial", err)
+	}
+	if len(reviewer.requests) != 0 {
+		t.Fatalf("reviewer called despite preflight denial: %d requests", len(reviewer.requests))
+	}
+}
+
+func TestSandboxReviewAddsExactlyReferencedServiceEnvName(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake deno shell script is unix-only")
+	}
+	dir := t.TempDir()
+	argsPath := filepath.Join(dir, "args.txt")
+	denoPath := filepath.Join(dir, "deno")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + shellQuote(argsPath) + "\nprintf 'ok\\n'\n"
+	if err := os.WriteFile(denoPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	reviewer := &recordingClient{responses: []llm.ChatResponse{responseWithMessage(llm.Message{
+		Role:    "assistant",
+		Content: `{"decision":"allow","reason":"read-only Sonarr queue fetch","mutating":false,"permissions":{"allow_net":["127.0.0.1:8989"],"allow_env":["SONARR_API_KEY"]}}`,
+	})}}
+	agent := &Agent{
+		cfg:      config.Config{Model: "gpt-test"},
+		clients:  map[string]llm.Client{"sandbox_review": reviewer},
+		registry: tools.NewRegistry(config.Config{SonarrBaseURL: "http://127.0.0.1:8989", SonarrAPIKey: "secret", SandboxDenoPath: denoPath, SandboxTimeout: 5 * time.Second}),
+	}
+	call := llm.ToolCall{ID: "call_1", Type: "function"}
+	call.Function.Name = "sandbox_run_typescript"
+	call.Function.Arguments = toolArgsJSON(t, map[string]any{
+		"purpose": "check Sonarr queue",
+		"script":  "const baseURL = Deno.env.get('SONARR_BASE_URL'); await fetch(baseURL + '/api/v3/queue')",
+	})
+	if _, err := agent.executeTool(context.Background(), Request{Source: "automation_report"}, call, tools.ToolPolicy{Groups: []string{"sandbox"}}); err != nil {
+		t.Fatalf("executeTool error = %v", err)
+	}
+	data, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := string(data)
+	if !strings.Contains(args, "SONARR_BASE_URL") {
+		t.Fatalf("deno args did not include referenced Sonarr base URL env:\n%s", args)
+	}
+	if strings.Contains(args, "SONARR_URL") || strings.Contains(args, "RADARR_URL") || strings.Contains(args, "JELLYFIN_URL") {
+		t.Fatalf("deno args included unreferenced service aliases:\n%s", args)
+	}
+}
+
+func TestSandboxReviewDoesNotAddEnvForPartialNameMatch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake deno shell script is unix-only")
+	}
+	dir := t.TempDir()
+	argsPath := filepath.Join(dir, "args.txt")
+	denoPath := filepath.Join(dir, "deno")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + shellQuote(argsPath) + "\nprintf 'ok\\n'\n"
+	if err := os.WriteFile(denoPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	reviewer := &recordingClient{responses: []llm.ChatResponse{responseWithMessage(llm.Message{
+		Role:    "assistant",
+		Content: `{"decision":"allow","reason":"read-only custom diagnostic","mutating":false,"permissions":{"allow_env":["SONARR_API_KEY"]}}`,
+	})}}
+	agent := &Agent{
+		cfg:      config.Config{Model: "gpt-test"},
+		clients:  map[string]llm.Client{"sandbox_review": reviewer},
+		registry: tools.NewRegistry(config.Config{SonarrBaseURL: "http://127.0.0.1:8989", SonarrAPIKey: "secret", SandboxDenoPath: denoPath, SandboxTimeout: 5 * time.Second}),
+	}
+	call := llm.ToolCall{ID: "call_1", Type: "function"}
+	call.Function.Name = "sandbox_run_typescript"
+	call.Function.Arguments = toolArgsJSON(t, map[string]any{
+		"purpose": "check custom variable name handling",
+		"script":  "const value = Deno.env.get('MY_SONARR_URL_BACKUP'); console.log(value)",
+	})
+	if _, err := agent.executeTool(context.Background(), Request{Source: "automation_report"}, call, tools.ToolPolicy{Groups: []string{"sandbox"}}); err != nil {
+		t.Fatalf("executeTool error = %v", err)
+	}
+	data, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := string(data)
+	if strings.Contains(args, "SONARR_URL") {
+		t.Fatalf("deno args included service env for partial name match:\n%s", args)
+	}
+}
+
 func TestSandboxPreflightRejectsEnvironmentEnumerationBeforeReview(t *testing.T) {
 	reviewer := &recordingClient{}
 	agent := &Agent{

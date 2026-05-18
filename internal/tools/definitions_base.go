@@ -15,9 +15,10 @@ var baseToolDefs = []toolDef{
 		Name:        "memory_search",
 		Description: "Search persisted agent memories by plain text query over scope, key, title, content, tags, and JSON metadata.",
 		Parameters: objectSchema(map[string]any{
-			"query": stringSchema("Search text"),
-			"scope": stringSchema("Optional top-level memory scope to narrow the search"),
-			"limit": numberSchema("Maximum memories to return, from 1 to 100"),
+			"query":      stringSchema("Search text"),
+			"scope":      stringSchema("Optional top-level memory scope to narrow the search"),
+			"key_prefix": stringSchema("Optional slash-separated key prefix within the scope"),
+			"limit":      numberSchema("Maximum memories to return, from 1 to 100"),
 		}, []string{"query"}),
 	},
 	{

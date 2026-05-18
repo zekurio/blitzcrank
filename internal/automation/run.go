@@ -32,9 +32,11 @@ func (s *Scheduler) executeAutomationTask(ctx context.Context, task Task) automa
 	startedAt := time.Now().UTC()
 	runCtx, cancel := context.WithTimeout(ctx, cfg.RunTimeout)
 	result, err := s.runner.Respond(runCtx, agent.Request{
-		Source:  "automation_cron",
-		Author:  "Blitzcrank Scheduler",
-		Content: s.promptWithHistory(task, cfg),
+		Source:   "automation_cron",
+		Author:   "Blitzcrank Scheduler",
+		IsAdmin:  true,
+		Audience: "automation",
+		Content:  s.promptWithHistory(task, cfg),
 	})
 	cancel()
 

@@ -52,7 +52,7 @@ func (a *Agent) loadPromptsAndSkills() error {
 	return nil
 }
 
-func (a *Agent) runtimeMetadata(model, reasoningEffort string, policy tools.ToolPolicy) string {
+func (a *Agent) runtimeMetadata(req Request, model, reasoningEffort string, policy tools.ToolPolicy) string {
 	if strings.TrimSpace(reasoningEffort) == "" {
 		reasoningEffort = "unspecified"
 	}
@@ -67,6 +67,10 @@ func (a *Agent) runtimeMetadata(model, reasoningEffort string, policy tools.Tool
 		"mutating_tools":   metadataList(a.MutatingToolNames()),
 		"read_only":        fmt.Sprintf("%t", policy.ReadOnly),
 		"automations":      a.automationRuntimeMetadata(),
+		"audience":         requestAudience(req),
+		"requester_admin":  fmt.Sprintf("%t", req.IsAdmin),
+		"requester_id":     nonEmptyMetadata(req.AuthorID),
+		"seerr_user_id":    nonEmptyMetadata(req.SeerrUserID),
 	})
 }
 
@@ -115,6 +119,36 @@ func metadataList(values []string) string {
 		return "none"
 	}
 	return strings.Join(cleaned, ", ")
+}
+
+func requestAudience(req Request) string {
+	audience := strings.ToLower(strings.TrimSpace(req.Audience))
+	audience = strings.ReplaceAll(audience, "-", "_")
+	switch audience {
+	case "admin", "operator", "automation", "non_admin", "seerr_issue":
+		return audience
+	}
+	source := strings.ToLower(strings.TrimSpace(req.Source))
+	switch {
+	case req.IsAdmin:
+		return "admin"
+	case source == "automation_cron":
+		return "automation"
+	case strings.HasPrefix(source, "seerr_issue_"):
+		return "seerr_issue"
+	case strings.HasPrefix(source, "discord"):
+		return "non_admin"
+	default:
+		return "operator"
+	}
+}
+
+func nonEmptyMetadata(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "unknown"
+	}
+	return value
 }
 
 func (a *Agent) systemPrompt(req Request) string {
