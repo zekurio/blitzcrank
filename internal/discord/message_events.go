@@ -166,10 +166,31 @@ func (b *Bot) replyToParentTriage(event *discordgo.MessageCreate, content, actio
 		reply = fallbackIntakeReply(content, action)
 	}
 	errText := ""
-	_, err := b.sendMessageReference(context.Background(), event.ChannelID, event.ID, reply)
+	message, err := b.sendMessageReference(context.Background(), event.ChannelID, event.ID, reply)
 	if err != nil {
 		log.Printf("send discord intake response failed: %v", err)
 		errText = err.Error()
+	} else if message != nil {
+		action = strings.TrimSpace(action)
+		if action == "" {
+			action = "direct_reply"
+		}
+		b.recordDiscordInteractionThread(context.Background(), interactionThreadRecord{
+			ThreadID:       discordThreadID(message.ID),
+			ExternalID:     message.ID,
+			ParentID:       event.ChannelID,
+			RootID:         event.ID,
+			Title:          threadTitle(content),
+			Actor:          discordAuthor(event.Author),
+			ActorID:        discordUserID(event.Author),
+			MessageID:      event.ID,
+			EventType:      "triage_" + action,
+			Content:        content,
+			BotMessageID:   message.ID,
+			BotMessageText: reply,
+			ToolGroups:     discordToolGroupsForContent(content),
+			Attribution:    "discord:triage",
+		})
 	}
 	b.appendDiscordInteractionTrace(discordInteractionTraceRequest{Event: event, InteractionType: "triage_" + strings.TrimSpace(action), Content: content, Reply: reply, ErrorText: errText, StartedAt: startedAt, CompletedAt: time.Now().UTC(), Extra: map[string]any{"triage_action": action}})
 }
@@ -222,13 +243,30 @@ func (b *Bot) runDirectAgent(ctx context.Context, session *discordgo.Session, ev
 		errText = err.Error()
 		reply = safeDiscordFailureReply(content)
 	}
-	_, sendErr := progress.finish(runCtx, reply)
+	message, sendErr := progress.finish(runCtx, reply)
 	if sendErr != nil {
 		log.Printf("send discord mention response failed: %v", sendErr)
 		if errText != "" {
 			errText += "; send: "
 		}
 		errText += sendErr.Error()
+	} else if message != nil {
+		b.recordDiscordInteractionThread(context.Background(), interactionThreadRecord{
+			ThreadID:       discordThreadID(message.ID),
+			ExternalID:     message.ID,
+			ParentID:       event.ChannelID,
+			RootID:         event.ID,
+			Title:          threadTitle(content),
+			Actor:          discordAuthor(event.Author),
+			ActorID:        event.Author.ID,
+			MessageID:      event.ID,
+			EventType:      "direct_agent",
+			Content:        content,
+			BotMessageID:   message.ID,
+			BotMessageText: reply,
+			ToolGroups:     groups,
+			Attribution:    b.discordAttribution(request),
+		})
 	}
 	b.appendDiscordInteractionTrace(discordInteractionTraceRequest{Event: event, InteractionType: "direct_agent_reply", Content: content, Reply: reply, ErrorText: errText, StartedAt: startedAt, CompletedAt: time.Now().UTC(), Extra: map[string]any{"attribution": b.discordAttribution(request)}})
 }
