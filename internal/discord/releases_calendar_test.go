@@ -71,29 +71,37 @@ func TestReleaseCalendarGridKeepsMondayToSundayWeek(t *testing.T) {
 func TestReleaseCalendarFetchesSonarrAndRadarr(t *testing.T) {
 	var sonarrQueries, radarrQueries []url.Values
 	sonarr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v3/calendar" {
+		switch r.URL.Path {
+		case "/api/v3/calendar":
+			sonarrQueries = append(sonarrQueries, r.URL.Query())
+			writeJSON(t, w, []map[string]any{{
+				"title":         "Episode title",
+				"airDateUtc":    "2026-05-12T20:00:00Z",
+				"seasonNumber":  1,
+				"episodeNumber": 2,
+				"series":        map[string]any{"title": "Series title"},
+			}})
+		case "/api/v3/delayprofile":
+			writeJSON(t, w, []map[string]any{})
+		default:
 			t.Fatalf("sonarr path = %s", r.URL.Path)
 		}
-		sonarrQueries = append(sonarrQueries, r.URL.Query())
-		writeJSON(t, w, []map[string]any{{
-			"title":         "Episode title",
-			"airDateUtc":    "2026-05-12T20:00:00Z",
-			"seasonNumber":  1,
-			"episodeNumber": 2,
-			"series":        map[string]any{"title": "Series title"},
-		}})
 	}))
 	defer sonarr.Close()
 	radarr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v3/calendar" {
+		switch r.URL.Path {
+		case "/api/v3/calendar":
+			radarrQueries = append(radarrQueries, r.URL.Query())
+			writeJSON(t, w, []map[string]any{{
+				"digitalRelease": "2026-05-12",
+				"inCinemas":      "2026-05-13",
+				"movie":          map[string]any{"title": "Movie title", "year": 2026},
+			}})
+		case "/api/v3/delayprofile":
+			writeJSON(t, w, []map[string]any{})
+		default:
 			t.Fatalf("radarr path = %s", r.URL.Path)
 		}
-		radarrQueries = append(radarrQueries, r.URL.Query())
-		writeJSON(t, w, []map[string]any{{
-			"digitalRelease": "2026-05-12",
-			"inCinemas":      "2026-05-13",
-			"movie":          map[string]any{"title": "Movie title", "year": 2026},
-		}})
 	}))
 	defer radarr.Close()
 

@@ -121,12 +121,22 @@ func (b *Bot) fetchReleaseCalendarItems(ctx context.Context, start, end time.Tim
 		warnings = append(warnings, "Sonarr: "+sonarrErr.Error())
 	} else {
 		items = append(items, sonarrCalendarItems(sonarrResult)...)
+		if delayWarning, ok := releaseCalendarDelayWarning("Sonarr", func() (any, error) {
+			return registry.Call(ctx, "sonarr_list_delay_profiles", map[string]any{})
+		}); ok {
+			warnings = append(warnings, delayWarning)
+		}
 	}
 	radarrResult, radarrErr := registry.Call(ctx, "radarr_get_calendar", args)
 	if radarrErr != nil {
 		warnings = append(warnings, "Radarr: "+radarrErr.Error())
 	} else {
 		items = append(items, radarrCalendarItems(radarrResult)...)
+		if delayWarning, ok := releaseCalendarDelayWarning("Radarr", func() (any, error) {
+			return registry.Call(ctx, "radarr_list_delay_profiles", map[string]any{})
+		}); ok {
+			warnings = append(warnings, delayWarning)
+		}
 	}
 	if sonarrErr != nil && radarrErr != nil {
 		return nil, warnings, fmt.Errorf("Sonarr und Radarr konnten nicht gelesen werden")
@@ -200,6 +210,46 @@ func radarrCalendarItems(value any) []releaseCalendarItem {
 	return items
 }
 
+func releaseCalendarDelayWarning(service string, load func() (any, error)) (string, bool) {
+	value, err := load()
+	if err != nil {
+		return service + " Delay Profiles: " + err.Error(), true
+	}
+	profiles, _ := value.([]any)
+	var delays []string
+	for _, profile := range profiles {
+		object, ok := profile.(map[string]any)
+		if !ok {
+			continue
+		}
+		delay := intFromInterface(object["usenetDelay"])
+		if delay <= 0 {
+			continue
+		}
+		label := strings.TrimSpace(stringFromMap(object, "name"))
+		if label == "" {
+			label = "Profil"
+		}
+		delays = append(delays, label+" "+formatReleaseCalendarDelay(delay))
+	}
+	if len(delays) == 0 {
+		return "", false
+	}
+	return service + " Usenet-Verzoegerung: " + strings.Join(delays, ", "), true
+}
+
+func formatReleaseCalendarDelay(minutes int) string {
+	if minutes < 60 {
+		return fmt.Sprintf("%d min", minutes)
+	}
+	hours := minutes / 60
+	remainingMinutes := minutes % 60
+	if remainingMinutes == 0 {
+		return fmt.Sprintf("%d h", hours)
+	}
+	return fmt.Sprintf("%d h %d min", hours, remainingMinutes)
+}
+
 type radarrReleaseDate struct {
 	Date time.Time
 	Kind string
@@ -230,6 +280,13 @@ func radarrReleaseDates(object, movie map[string]any) []radarrReleaseDate {
 		releases = append(releases, radarrReleaseDate{Date: date, Kind: candidate.kind})
 	}
 	return releases
+}
+
+func releaseCalendarItemLabel(item releaseCalendarItem) string {
+	if item.Date.Hour() == 0 && item.Date.Minute() == 0 && item.Date.Second() == 0 && item.Date.Nanosecond() == 0 {
+		return item.Title
+	}
+	return item.Date.Format("15:04") + " " + item.Title
 }
 
 func sonarrEpisodeLabel(object map[string]any, episodeTitle string) string {
@@ -275,6 +332,7 @@ func renderReleaseCalendarPNG(start, end time.Time, label string, items []releas
 	const itemGap = 4
 	const chipRadius = 5
 	const cellRadius = 5
+	const dayViewWidth = 360
 
 	face, err := releaseCalendarFontFace()
 	if err != nil {
@@ -299,11 +357,19 @@ func renderReleaseCalendarPNG(start, end time.Time, label string, items []releas
 
 	gridStart := calendarGridStart(start)
 	gridEnd := calendarGridEnd(end)
+	if dayStart(end).Sub(dayStart(start)) <= 24*time.Hour {
+		gridStart = dayStart(start)
+		gridEnd = dayStart(end)
+	}
 	days := int(gridEnd.Sub(gridStart).Hours() / 24)
 	if days < 1 {
 		days = 1
 	}
-	rows := (days + 6) / 7
+	columns := 7
+	if days == 1 {
+		columns = 1
+	}
+	rows := (days + columns - 1) / columns
 	byDay := map[int][]releaseCalendarItem{}
 	for _, item := range items {
 		itemDay := dayStart(item.Date)
@@ -317,7 +383,11 @@ func renderReleaseCalendarPNG(start, end time.Time, label string, items []releas
 		byDay[index] = append(byDay[index], item)
 	}
 
-	cellWidth := (width - margin*2) / 7
+	gridWidth := width - margin*2
+	if columns == 1 && gridWidth > dayViewWidth {
+		gridWidth = dayViewWidth
+	}
+	cellWidth := gridWidth / columns
 	chipTextWidth := cellWidth - cellPadding*2 - 14 - chipPadding*2
 
 	dayHeights := make([]int, days)
@@ -327,7 +397,7 @@ func renderReleaseCalendarPNG(start, end time.Time, label string, items []releas
 			h += dateReleaseGap
 		}
 		for idx, item := range byDay[i] {
-			lines := wrapCalendarText(semiBoldFace, item.Title, chipTextWidth)
+			lines := wrapCalendarText(semiBoldFace, releaseCalendarItemLabel(item), chipTextWidth)
 			itemH := chipHeight(len(lines), chipPadding, chipAscent, chipDescent, chipLineHeight)
 			h += itemH
 			if idx < len(byDay[i])-1 {
@@ -342,7 +412,7 @@ func renderReleaseCalendarPNG(start, end time.Time, label string, items []releas
 
 	rowHeights := make([]int, rows)
 	for i, h := range dayHeights {
-		r := i / 7
+		r := i / columns
 		if h > rowHeights[r] {
 			rowHeights[r] = h
 		}
@@ -372,14 +442,15 @@ func renderReleaseCalendarPNG(start, end time.Time, label string, items []releas
 	drawLegend(img, face, width-margin-210, 42, "Radarr (Filme)", radarrReleaseColor)
 
 	y := margin + headerHeight
-	for i, weekday := range []string{"Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"} {
+	for i := 0; i < columns; i++ {
+		weekday := shortWeekday(gridStart.AddDate(0, 0, i))
 		drawText(img, face, margin+i*cellWidth+cellPadding, y+18, weekday, color.RGBA{R: 203, G: 213, B: 225, A: 255})
 	}
 	y += weekdayHeight
 	for row := 0; row < rows; row++ {
 		rowHeight := rowHeights[row]
-		for col := 0; col < 7; col++ {
-			index := row*7 + col
+		for col := 0; col < columns; col++ {
+			index := row*columns + col
 			x := margin + col*cellWidth
 			rect := image.Rect(x, y, x+cellWidth-6, y+rowHeight)
 			fill := releaseCalendarCellColor
@@ -399,7 +470,7 @@ func renderReleaseCalendarPNG(start, end time.Time, label string, items []releas
 				drawText(img, face, x+cellPadding, y+cellPadding+dateAscent, day.Format("02.01."), dayColor)
 				itemY := y + dayHeaderHeight + cellPadding + dateReleaseGap
 				for idx, item := range byDay[index] {
-					lines := wrapCalendarText(semiBoldFace, item.Title, chipTextWidth)
+					lines := wrapCalendarText(semiBoldFace, releaseCalendarItemLabel(item), chipTextWidth)
 					itemH := chipHeight(len(lines), chipPadding, chipAscent, chipDescent, chipLineHeight)
 					chip := image.Rect(x+cellPadding, itemY, x+cellWidth-14, itemY+itemH)
 					fillRoundedRect(img, chip, chipRadius, item.Color)
@@ -447,6 +518,25 @@ func calendarGridEnd(end time.Time) time.Time {
 func dayStart(value time.Time) time.Time {
 	value = value.Local()
 	return time.Date(value.Year(), value.Month(), value.Day(), 0, 0, 0, 0, value.Location())
+}
+
+func shortWeekday(value time.Time) string {
+	switch value.Weekday() {
+	case time.Monday:
+		return "Mo"
+	case time.Tuesday:
+		return "Di"
+	case time.Wednesday:
+		return "Mi"
+	case time.Thursday:
+		return "Do"
+	case time.Friday:
+		return "Fr"
+	case time.Saturday:
+		return "Sa"
+	default:
+		return "So"
+	}
 }
 
 func releaseCalendarFontFace() (font.Face, error) {
