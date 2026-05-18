@@ -306,7 +306,11 @@ func renderReleaseCalendarPNG(start, end time.Time, label string, items []releas
 	rows := (days + 6) / 7
 	byDay := map[int][]releaseCalendarItem{}
 	for _, item := range items {
-		index := int(dayStart(item.Date).Sub(gridStart).Hours() / 24)
+		itemDay := dayStart(item.Date)
+		if itemDay.Before(start) || !itemDay.Before(end) {
+			continue
+		}
+		index := int(itemDay.Sub(gridStart).Hours() / 24)
 		if index < 0 || index >= days {
 			continue
 		}
