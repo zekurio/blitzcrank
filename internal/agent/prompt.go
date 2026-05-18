@@ -35,6 +35,9 @@ func (a *Agent) loadPromptsAndSkills() error {
 	if err != nil {
 		return err
 	}
+	discordTriagePrompt = renderPrompt(discordTriagePrompt, map[string]string{
+		"bot_name": a.cfg.BotPublicName,
+	})
 	discordSummaryPrompt, err := LoadPromptTemplate(discordSummaryPromptPath)
 	if err != nil {
 		return err
