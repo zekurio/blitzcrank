@@ -76,7 +76,7 @@ func (a *Agent) profileNameForRequest(req Request) string {
 		return "automation"
 	case strings.HasPrefix(source, "discord"):
 		return "discord"
-	case strings.HasPrefix(source, "jellyseerr"):
+	case strings.HasPrefix(source, "seerr"):
 		return "seerr"
 	default:
 		return "default"

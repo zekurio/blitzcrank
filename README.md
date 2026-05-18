@@ -1,6 +1,6 @@
 # Blitzcrank
 
-Blitzcrank is a Go Discord bot and support agent for Jellyseerr/Jellyfin operations.
+Blitzcrank is a Go Discord bot and support agent for Seerr/Jellyfin operations.
 
 ## Repository Layout
 
@@ -26,13 +26,14 @@ cp config.example.toml blitzcrank.toml
 cp .env.example .env
 ```
 
-Keep readable settings in `blitzcrank.toml`. Keep secrets in `.env` or the service environment.
+Keep runtime settings in `blitzcrank.toml`. Use `.env` only to point at a config file or make explicit local overrides. Secrets can live in TOML or env, depending on how you manage secret material.
 
 Config load order:
 
 1. built-in defaults
-2. `blitzcrank.toml`, or `BLITZCRANK_CONFIG`
-3. `.env` and process environment variables
+2. `.env` and process environment for bootstrap paths such as `BLITZCRANK_CONFIG`
+3. `blitzcrank.toml`, or `BLITZCRANK_CONFIG`
+4. `.env` and process environment overrides
 
 Run locally:
 
@@ -63,12 +64,15 @@ The CLI does not expose config mutation. Edit TOML or inject env vars from the d
 Runtime profiles live under `[runtime.profiles.*]`:
 
 - `default`: base LLM runtime
-- `seerr`: Jellyseerr issue workflows
+- `seerr`: Seerr issue workflows
 - `discord`: Discord responses
 - `automation`: scheduled automations
 - `discord_triage`: Discord triage and summaries
+- `sandbox_review`: AI review of Deno TypeScript sandbox scripts before execution
 
 Provider values are `openai-compatible`, `openrouter`, or `codex-oauth`.
+
+Service diagnostics are routed through `sandbox_run_typescript`, a Deno sandbox tool. It runs short TypeScript snippets with `--no-prompt` and only the network, environment, and read permissions granted by the `sandbox_review` model. Configure the Deno binary and timeout with `[sandbox] deno_path` and `timeout`, or `SANDBOX_DENO_PATH` and `SANDBOX_TIMEOUT`.
 
 Codex OAuth helper commands are still available:
 
@@ -89,11 +93,13 @@ JSONL traces are written under `runtime.threads_dir`:
 - `discord/interactions/<message-id>.jsonl`
 - `automations/<name>.jsonl`
 
+Durable agent memories are Markdown files with frontmatter under `runtime.memories_dir`, grouped by top-level scope such as `automation/`, `discord_user/`, `seerr_issue/`, `seerr_movie/`, `seerr_show/`, and `general/`.
+
 Prompts are embedded at build time. Skills and automations are runtime inputs and default to `skills/` and `automations/` in source-tree runs.
 
 ## Deployment
 
-Set service credentials via `.env`, a systemd `EnvironmentFile`, SOPS, or the process environment. Do not commit secrets.
+Set service credentials through TOML, `.env`, a systemd `EnvironmentFile`, SOPS, or the process environment. Do not commit secrets.
 
 For webhook deployments, set `seerr.webhook_listen_addr` and provide `seerr.base_url` plus `SEERR_API_KEY`.
 
@@ -109,21 +115,20 @@ nix build
 
 The flake packages the binary plus default `skills/` and `automations/` under `$out/share/blitzcrank`. The wrapped binary points `BLITZCRANK_CONFIG` at a packaged TOML default so packaged runs do not depend on source-tree paths.
 
-The flake exports `nixosModules.default` as `services.blitzcrank`. The module creates a system user, stores mutable state in `/var/lib/blitzcrank`, and accepts an `environmentFile` for secrets.
+The flake exports `nixosModules.default` as `services.blitzcrank`. The module creates a system user, stores mutable state in `/var/lib/blitzcrank` by default, and accepts an `environmentFile` for overrides.
 
-Use `services.blitzcrank.settings` for TOML-backed application settings. Existing convenience options such as `publicName`, `timezone`, `automations.enable`, and `runtime.*` feed generated defaults; `settings` can override or extend them. Set `services.blitzcrank.configFile` only when you want to provide the whole TOML file yourself.
+Use `services.blitzcrank.settings` for TOML-backed application settings. Existing convenience options such as `publicName`, `timezone`, `automations.enable`, `databasePath`, `memoriesDir`, `threadsDir`, and `runtime.*` feed generated defaults; `settings` can override or extend them. Set `services.blitzcrank.configFile` when you want to provide the whole TOML file yourself, including a file produced by SOPS or another secret manager.
 
 Example:
 
 ```nix
 services.blitzcrank = {
   enable = true;
-  environmentFile = config.sops.secrets.blitzcrank_env.path;
 
   settings = {
     discord.channel_id = "123456789012345678";
     seerr = {
-      base_url = "https://jellyseerr.example";
+      base_url = "https://seerr.example";
       webhook_listen_addr = "127.0.0.1:8080";
     };
   };
@@ -141,4 +146,10 @@ services.blitzcrank = {
     reasoningEffort = "high";
   };
 };
+```
+
+For a complete TOML file managed outside the module, set:
+
+```nix
+services.blitzcrank.configFile = config.sops.secrets.blitzcrank_toml.path;
 ```

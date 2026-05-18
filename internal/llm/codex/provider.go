@@ -47,7 +47,7 @@ func (c *CodexOAuth) Chat(ctx context.Context, request api.ChatRequest) (api.Cha
 		}
 	}
 
-	body, err := json.Marshal(toResponsesRequest(request, c.cfg.CodexServiceTier))
+	body, err := json.Marshal(toResponsesRequest(request))
 	if err != nil {
 		return api.ChatResponse{}, err
 	}
@@ -78,7 +78,7 @@ func (c *CodexOAuth) Chat(ctx context.Context, request api.ChatRequest) (api.Cha
 	return fromResponsesStream(io.LimitReader(resp.Body, 32<<20))
 }
 
-func toResponsesRequest(request api.ChatRequest, serviceTier string) map[string]any {
+func toResponsesRequest(request api.ChatRequest) map[string]any {
 	input := make([]any, 0, len(request.Messages))
 	var instructions []string
 	for _, message := range request.Messages {
@@ -151,10 +151,6 @@ func toResponsesRequest(request api.ChatRequest, serviceTier string) map[string]
 	}
 	if effort := chatcompletions.ReasoningEffortForWire(request.ReasoningEffort); effort != "" {
 		payload["reasoning"] = map[string]any{"effort": effort}
-	}
-	serviceTier = strings.TrimSpace(strings.ToLower(serviceTier))
-	if serviceTier == "fast" {
-		payload["service_tier"] = "fast"
 	}
 	return payload
 }

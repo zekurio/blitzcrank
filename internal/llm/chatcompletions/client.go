@@ -127,11 +127,5 @@ func BasePayload(request api.ChatRequest) map[string]any {
 }
 
 func ReasoningEffortForWire(value string) string {
-	value = strings.TrimSpace(value)
-	switch strings.ToLower(value) {
-	case "", "none", "unspecified":
-		return ""
-	default:
-		return value
-	}
+	return strings.TrimSpace(value)
 }

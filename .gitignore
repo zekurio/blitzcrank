@@ -30,6 +30,7 @@ go.work.sum
 .env
 .env.*
 !.env.example
+blitzcrank.toml
 
 # Local database files
 *.sqlite
@@ -38,6 +39,7 @@ go.work.sum
 *.sqlite-wal
 runtime-config.json
 threads/
+memories/
 
 # Editor and OS files
 .idea/

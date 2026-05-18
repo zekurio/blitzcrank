@@ -75,7 +75,7 @@ func TestOpenRouterChatUsesProviderHeadersAndReasoningObject(t *testing.T) {
 	}
 }
 
-func TestOpenRouterChatSkipsNoneReasoning(t *testing.T) {
+func TestOpenRouterChatPassesNoneReasoning(t *testing.T) {
 	var payload map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -93,8 +93,9 @@ func TestOpenRouterChatSkipsNoneReasoning(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}
-	if _, ok := payload["reasoning"]; ok {
-		t.Fatalf("payload unexpectedly included reasoning: %#v", payload)
+	reasoning := payload["reasoning"].(map[string]any)
+	if reasoning["effort"] != "none" {
+		t.Fatalf("reasoning effort = %v, want none", reasoning["effort"])
 	}
 }
 
