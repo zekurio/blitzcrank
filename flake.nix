@@ -98,15 +98,15 @@
                   default = defaultReasoningEffort;
                 };
                 contextLimit = lib.mkOption {
-                  type = lib.types.nullOr lib.types.positiveInt;
+                  type = lib.types.nullOr lib.types.ints.positive;
                   default = null;
                 };
                 inputLimit = lib.mkOption {
-                  type = lib.types.nullOr lib.types.positiveInt;
+                  type = lib.types.nullOr lib.types.ints.positive;
                   default = null;
                 };
                 outputLimit = lib.mkOption {
-                  type = lib.types.nullOr lib.types.positiveInt;
+                  type = lib.types.nullOr lib.types.ints.positive;
                   default = null;
                 };
               };
@@ -280,6 +280,29 @@
       system:
       let
         pkgs = import nixpkgs { inherit system; };
+        moduleRuntimeProfileTest = nixpkgs.lib.nixosSystem {
+          inherit system;
+          modules = [
+            nixosModule
+            (
+              { ... }:
+              {
+                system.stateVersion = "26.05";
+                services.blitzcrank = {
+                  enable = true;
+                  runtime.default = {
+                    provider = "codex-oauth";
+                    model = "gpt-5.4";
+                    reasoningEffort = "medium";
+                    contextLimit = 1050000;
+                    inputLimit = 922000;
+                    outputLimit = 128000;
+                  };
+                };
+              }
+            )
+          ];
+        };
       in
       {
         packages.default = pkgs.buildGoModule {
@@ -320,6 +343,17 @@
           type = "app";
           program = "${self.packages.${system}.default}/bin/blitzcrank";
         };
+
+        checks.nixos-module-runtime-profile = pkgs.runCommand "nixos-module-runtime-profile" { } ''
+          config=${moduleRuntimeProfileTest.config.systemd.services.blitzcrank.environment.BLITZCRANK_CONFIG}
+          grep -q 'provider = "codex-oauth"' "$config"
+          grep -q 'model = "gpt-5.4"' "$config"
+          grep -q 'reasoning_effort = "medium"' "$config"
+          grep -q 'context_limit = 1050000' "$config"
+          grep -q 'input_limit = 922000' "$config"
+          grep -q 'output_limit = 128000' "$config"
+          touch "$out"
+        '';
 
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
