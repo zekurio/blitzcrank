@@ -57,11 +57,22 @@
             lib.recursiveUpdate defaultSettings cfg.settings
           );
           serviceConfigPath = if cfg.configFile != null then cfg.configFile else serviceConfigFile;
-          runtimeProfileJSON = profile: {
-            provider = profile.provider;
-            model = profile.model;
-            reasoning_effort = profile.reasoningEffort;
-          };
+          runtimeProfileJSON =
+            profile:
+            {
+              provider = profile.provider;
+              model = profile.model;
+              reasoning_effort = profile.reasoningEffort;
+            }
+            // lib.optionalAttrs (profile.contextLimit != null) {
+              context_limit = profile.contextLimit;
+            }
+            // lib.optionalAttrs (profile.inputLimit != null) {
+              input_limit = profile.inputLimit;
+            }
+            // lib.optionalAttrs (profile.outputLimit != null) {
+              output_limit = profile.outputLimit;
+            };
           settingsEnv = {
             BLITZCRANK_CONFIG = serviceConfigPath;
           };
@@ -85,6 +96,18 @@
                 reasoningEffort = lib.mkOption {
                   type = lib.types.str;
                   default = defaultReasoningEffort;
+                };
+                contextLimit = lib.mkOption {
+                  type = lib.types.nullOr lib.types.positiveInt;
+                  default = null;
+                };
+                inputLimit = lib.mkOption {
+                  type = lib.types.nullOr lib.types.positiveInt;
+                  default = null;
+                };
+                outputLimit = lib.mkOption {
+                  type = lib.types.nullOr lib.types.positiveInt;
+                  default = null;
                 };
               };
             };
