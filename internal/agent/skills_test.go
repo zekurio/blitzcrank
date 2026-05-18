@@ -141,8 +141,14 @@ func TestDiscordPromptsAvoidToolInventoryForCasualReplies(t *testing.T) {
 		"system":         systemPrompt,
 		"discord triage": triagePrompt,
 	} {
-		if !strings.Contains(prompt, "Do not list") && !strings.Contains(prompt, "do not recite a long inventory") {
+		if !strings.Contains(prompt, "tool stack") && !strings.Contains(prompt, "inventory") {
 			t.Fatalf("%s prompt missing casual capability inventory guardrail:\n%s", name, prompt)
+		}
+		if !strings.Contains(prompt, "introduction") && !strings.Contains(prompt, "introducing yourself") {
+			t.Fatalf("%s prompt missing introduction guidance:\n%s", name, prompt)
+		}
+		if !strings.Contains(prompt, "talk about yourself") {
+			t.Fatalf("%s prompt missing talk-about-yourself guidance:\n%s", name, prompt)
 		}
 	}
 }
