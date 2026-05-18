@@ -138,6 +138,10 @@ services.blitzcrank = {
   runtime.automation = {
     provider = "openrouter";
     model = "anthropic/claude-sonnet-4.6";
+    reasoningEffort = "high";
+    contextLimit = 200000;
+    inputLimit = 168000;
+    outputLimit = 32000;
   };
 
   runtime.seerr = {
