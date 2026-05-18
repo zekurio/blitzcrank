@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"log"
 	"strings"
-	"time"
 
 	"blitzcrank/internal/agent"
-	"blitzcrank/internal/store"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -214,25 +212,6 @@ func (b *Bot) finalizeToolApprovalMessage(ctx context.Context, channelID, messag
 }
 
 func (b *Bot) toolApprovalThreadID(ctx context.Context) (string, error) {
-	b.approvalThreadMu.Lock()
-	defer b.approvalThreadMu.Unlock()
-	if threadID := strings.TrimSpace(b.approvalThreadID); threadID != "" {
-		archived := false
-		_, _ = b.session.ChannelEdit(threadID, &discordgo.ChannelEdit{Archived: &archived})
-		return threadID, nil
-	}
-	if b.store != nil {
-		thread, ok, err := b.store.LoadAgentThreadByExternalID(ctx, toolApprovalThreadSource, toolApprovalThreadExternalID)
-		if err != nil {
-			return "", err
-		}
-		if ok && strings.TrimSpace(thread.RootExternalID) != "" {
-			archived := false
-			_, _ = b.session.ChannelEdit(thread.RootExternalID, &discordgo.ChannelEdit{Archived: &archived})
-			b.approvalThreadID = thread.RootExternalID
-			return thread.RootExternalID, nil
-		}
-	}
 	return b.createToolApprovalThread(ctx)
 }
 
@@ -241,37 +220,7 @@ func (b *Bot) createToolApprovalThread(ctx context.Context) (string, error) {
 	if parentID == "" {
 		return "", fmt.Errorf("discord channel id is not configured")
 	}
-	thread, err := b.session.ThreadStart(parentID, "tool-freigaben", discordgo.ChannelTypeGuildPublicThread, b.cfg.DiscordThreadArchiveMinutes)
-	if err != nil {
-		return "", err
-	}
-	b.approvalThreadID = thread.ID
-	if b.store != nil {
-		now := time.Now().UTC()
-		record := store.AgentThread{
-			ThreadID:         toolApprovalThreadSource + ":" + toolApprovalThreadExternalID,
-			Source:           toolApprovalThreadSource,
-			ExternalID:       toolApprovalThreadExternalID,
-			ParentExternalID: parentID,
-			RootExternalID:   thread.ID,
-			Status:           "active",
-			Title:            "tool-freigaben",
-			CreatedAt:        now,
-			UpdatedAt:        now,
-		}
-		if err := b.store.UpsertAgentThread(ctx, record); err != nil {
-			log.Printf("record tool approval thread failed: thread=%s error=%v", thread.ID, err)
-		}
-		b.appendDiscordTrace(record.ThreadID, map[string]any{
-			"type":              "discord_tool_approval_thread",
-			"thread_id":         record.ThreadID,
-			"discord_thread_id": thread.ID,
-			"parent_channel_id": parentID,
-			"title":             record.Title,
-			"created_at":        now.Format(time.RFC3339Nano),
-		})
-	}
-	return thread.ID, nil
+	return parentID, nil
 }
 
 func (b *Bot) toolApprovalTargetMention() string {

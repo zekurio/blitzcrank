@@ -27,6 +27,7 @@ type discordProgressReporter struct {
 	mu         sync.Mutex
 
 	interaction *discordgo.Interaction
+	ephemeral   bool
 }
 
 func (b *Bot) newDiscordProgressReporter(session *discordgo.Session, channelID, replyToID string) *discordProgressReporter {
@@ -34,7 +35,7 @@ func (b *Bot) newDiscordProgressReporter(session *discordgo.Session, channelID, 
 }
 
 func (b *Bot) newInteractionProgressReporter(session *discordgo.Session, interaction *discordgo.Interaction, channelID string) *discordProgressReporter {
-	return &discordProgressReporter{bot: b, session: session, interaction: interaction, channelID: strings.TrimSpace(channelID), created: true}
+	return &discordProgressReporter{bot: b, session: session, interaction: interaction, channelID: strings.TrimSpace(channelID), created: true, ephemeral: true}
 }
 
 func (r *discordProgressReporter) callback(ctx context.Context) func(agent.ProgressEvent) {
@@ -82,7 +83,7 @@ func (r *discordProgressReporter) finish(ctx context.Context, content string) (*
 		return first, err
 	}
 	for _, chunk := range chunks[1:] {
-		message, sendErr := r.bot.sendMessageReference(ctx, r.channelID, "", chunk)
+		message, sendErr := r.followup(ctx, chunk)
 		if first == nil {
 			first = message
 		}
@@ -91,6 +92,22 @@ func (r *discordProgressReporter) finish(ctx context.Context, content string) (*
 		}
 	}
 	return first, nil
+}
+
+func (r *discordProgressReporter) followup(ctx context.Context, content string) (*discordgo.Message, error) {
+	if r.interaction == nil || !r.ephemeral {
+		return r.bot.sendMessageReference(ctx, r.channelID, "", content)
+	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	return r.session.FollowupMessageCreate(r.interaction, true, &discordgo.WebhookParams{
+		Content:         content,
+		Flags:           discordgo.MessageFlagsEphemeral,
+		AllowedMentions: &discordgo.MessageAllowedMentions{},
+	})
 }
 
 func (r *discordProgressReporter) postLocked(ctx context.Context, content string) (*discordgo.Message, error) {

@@ -289,26 +289,7 @@ func (b *Bot) runSlashAgentInline(ctx context.Context, session *discordgo.Sessio
 		response = edited
 	}
 
-	b.recordDiscordInteractionThread(context.Background(), interactionThreadRecord{
-		ThreadID:       threadID,
-		ExternalID:     response.ID,
-		ParentID:       response.ChannelID,
-		RootID:         response.ID,
-		Title:          threadTitle(prompt),
-		Actor:          discordAuthor(event.Author),
-		ActorID:        discordUserID(event.Author),
-		MessageID:      response.ID,
-		EventType:      "slash_" + strings.TrimSpace(skill),
-		Content:        content,
-		BotMessageID:   response.ID,
-		BotMessageText: reply,
-		ToolGroups:     groups,
-		Attribution:    b.discordAttribution(request),
-		Error:          errText,
-		Completion:     completionReason,
-		Posted:         sendErr == nil,
-	})
-	b.appendDiscordInteractionTrace(discordInteractionTraceRequest{Event: event, InteractionType: "slash_agent_inline", Content: content, Reply: reply, ErrorText: errText, StartedAt: startedAt, CompletedAt: time.Now().UTC(), Extra: map[string]any{"attribution": b.discordAttribution(request), "skill": skill}})
+	b.appendDiscordInteractionTrace(discordInteractionTraceRequest{Event: event, InteractionType: "slash_agent_inline", Content: content, Reply: reply, ErrorText: errText, StartedAt: startedAt, CompletedAt: time.Now().UTC(), Extra: map[string]any{"attribution": b.discordAttribution(request), "skill": skill, "completion_reason": completionReason}})
 }
 
 func (b *Bot) recordDiscordInteractionThread(ctx context.Context, request interactionThreadRecord) {

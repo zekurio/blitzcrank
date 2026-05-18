@@ -103,6 +103,7 @@ func (b *Bot) handleReleasesSlashCommand(session *discordgo.Session, event *disc
 	if err := session.InteractionRespond(event.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
+			Flags:           discordgo.MessageFlagsEphemeral,
 			AllowedMentions: &discordgo.MessageAllowedMentions{},
 		},
 	}); err != nil {
@@ -168,6 +169,7 @@ func (b *Bot) handleSkillSlashCommand(session *discordgo.Session, event *discord
 	if err := session.InteractionRespond(event.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
+			Flags:           discordgo.MessageFlagsEphemeral,
 			AllowedMentions: &discordgo.MessageAllowedMentions{},
 		},
 	}); err != nil {
