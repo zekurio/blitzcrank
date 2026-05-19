@@ -56,13 +56,15 @@ func (b *Bot) runThreadAgent(ctx context.Context, session *discordgo.Session, di
 	authorID, isAdmin, audience := b.discordRequestSecurity(event)
 
 	start := time.Now().UTC()
+	prompt := b.discordPromptContext(thread, content)
+	b.recordDiscordPromptCompactions(thread.ThreadID, prompt.Compactions)
 	request := agent.Request{
 		Source:       "discord_thread",
 		Author:       discordAuthor(event.Author),
 		AuthorID:     authorID,
 		IsAdmin:      isAdmin,
 		Audience:     audience,
-		Content:      b.discordPrompt(thread, content),
+		Content:      prompt.Content,
 		Context:      requestContext,
 		ToolGroups:   groups,
 		Progress:     progress.callback(runCtx),
@@ -182,13 +184,15 @@ func (b *Bot) runInteractionAgent(ctx context.Context, session *discordgo.Sessio
 	groups := threadToolGroups(thread)
 	seerrUserID, requestContext := b.seerrRequestContext(content, discordUserID(event.Author))
 	authorID, isAdmin, audience := b.discordRequestSecurity(event)
+	prompt := b.discordPromptContext(thread, content)
+	b.recordDiscordPromptCompactions(thread.ThreadID, prompt.Compactions)
 	request := agent.Request{
 		Source:       "discord_reply",
 		Author:       discordAuthor(event.Author),
 		AuthorID:     authorID,
 		IsAdmin:      isAdmin,
 		Audience:     audience,
-		Content:      b.discordPrompt(thread, content),
+		Content:      prompt.Content,
 		Context:      requestContext,
 		ToolGroups:   groups,
 		Progress:     progress.callback(runCtx),
@@ -228,164 +232,6 @@ func (b *Bot) runInteractionAgent(ctx context.Context, session *discordgo.Sessio
 	}
 }
 
-func (b *Bot) runSlashAgentInline(ctx context.Context, session *discordgo.Session, interaction *discordgo.InteractionCreate, response *discordgo.Message, event *discordgo.MessageCreate, skill, prompt, content string, groups []string) {
-	if interaction == nil || interaction.Interaction == nil || response == nil || event == nil {
-		return
-	}
-	threadID := discordThreadID(response.ID)
-	lock := b.threadLock(threadID)
-	lock.Lock()
-	defer lock.Unlock()
-
-	runCtx, cancel := context.WithTimeout(ctx, b.cfg.RunTimeout)
-	defer cancel()
-
-	if err := session.ChannelTyping(response.ChannelID); err != nil {
-		log.Printf("send typing indicator: %v", err)
-	}
-	progress := b.newInteractionProgressReporter(session, interaction.Interaction, response.ChannelID)
-
-	seerrUserID, requestContext := b.seerrRequestContext(content, discordUserID(event.Author))
-	authorID, isAdmin, audience := b.interactionRequestSecurity(interaction)
-	request := agent.Request{
-		Source:       "discord_slash_" + strings.TrimSpace(skill),
-		Author:       discordAuthor(event.Author),
-		AuthorID:     authorID,
-		IsAdmin:      isAdmin,
-		Audience:     audience,
-		Content:      content,
-		Context:      requestContext,
-		ToolGroups:   groups,
-		Progress:     progress.callback(runCtx),
-		ToolApproval: b.discordToolApproval(runCtx, event),
-		SeerrUserID:  seerrUserID,
-	}
-
-	startedAt := time.Now().UTC()
-	reply, err := b.agent.Respond(runCtx, request)
-	errText := ""
-	completionReason := "discord response posted"
-	if err != nil {
-		log.Printf("agent discord slash response failed: skill=%s response=%s error=%v", skill, response.ID, err)
-		errText = err.Error()
-		completionReason = "agent run failed"
-		reply = "I could not process that request. Check the bot logs for details."
-	} else if reply, err = validateDiscordReply(reply); err != nil {
-		log.Printf("agent discord slash response invalid: skill=%s response=%s error=%v", skill, response.ID, err)
-		errText = err.Error()
-		completionReason = "agent response failed validation"
-		reply = safeDiscordFailureReply(content)
-	}
-
-	edited, sendErr := progress.finish(runCtx, reply)
-	if sendErr != nil {
-		log.Printf("edit discord slash response failed: skill=%s response=%s error=%v", skill, response.ID, sendErr)
-		if errText != "" {
-			errText += "; send: "
-		}
-		errText += sendErr.Error()
-		completionReason = "discord response failed"
-	} else if edited != nil {
-		response = edited
-	}
-
-	b.recordDiscordInteractionThread(context.Background(), interactionThreadRecord{
-		ThreadID:       threadID,
-		ExternalID:     response.ID,
-		ParentID:       response.ChannelID,
-		RootID:         response.ID,
-		Title:          threadTitle(prompt),
-		Actor:          discordAuthor(event.Author),
-		ActorID:        discordUserID(event.Author),
-		MessageID:      response.ID,
-		EventType:      "slash_" + strings.TrimSpace(skill),
-		Content:        content,
-		BotMessageID:   response.ID,
-		BotMessageText: reply,
-		ToolGroups:     groups,
-		Attribution:    b.discordAttribution(request),
-		Error:          errText,
-		Completion:     completionReason,
-		Posted:         sendErr == nil,
-	})
-	b.appendDiscordInteractionTrace(discordInteractionTraceRequest{Event: event, InteractionType: "slash_agent_inline", Content: content, Reply: reply, ErrorText: errText, StartedAt: startedAt, CompletedAt: time.Now().UTC(), Extra: map[string]any{"attribution": b.discordAttribution(request), "skill": skill, "completion_reason": completionReason}})
-}
-
-func (b *Bot) recordDiscordInteractionThread(ctx context.Context, request interactionThreadRecord) {
-	if b.store == nil || strings.TrimSpace(request.ThreadID) == "" {
-		return
-	}
-	now := time.Now().UTC()
-	payload := interactionThreadPayload(request.ToolGroups, request.BotMessageID, request.BotMessageText)
-	payloadJSON, _ := json.Marshal(payload)
-	thread := store.AgentThread{
-		ThreadID:         request.ThreadID,
-		Source:           "discord",
-		ExternalID:       request.ExternalID,
-		ParentExternalID: request.ParentID,
-		RootExternalID:   request.RootID,
-		Status:           "active",
-		Title:            request.Title,
-		CreatedAt:        now,
-		UpdatedAt:        now,
-		LastPayloadJSON:  string(payloadJSON),
-	}
-	if err := b.store.UpsertAgentThread(ctx, thread); err != nil {
-		log.Printf("record discord interaction thread failed: thread=%s error=%v", request.ThreadID, err)
-		return
-	}
-	eventPayload, _ := json.Marshal(map[string]any{
-		"channel_id":     request.ParentID,
-		"message_id":     request.MessageID,
-		"root_id":        request.RootID,
-		"bot_message_id": request.BotMessageID,
-		"tool_groups":    request.ToolGroups,
-	})
-	if err := b.store.InsertAgentThreadEvent(ctx, store.AgentThreadEvent{
-		ThreadID:          request.ThreadID,
-		EventType:         request.EventType,
-		Actor:             request.Actor,
-		ActorID:           request.ActorID,
-		Message:           request.Content,
-		ExternalMessageID: request.MessageID,
-		PayloadJSON:       string(eventPayload),
-		CreatedAt:         now,
-	}); err != nil {
-		log.Printf("record discord interaction event failed: thread=%s error=%v", request.ThreadID, err)
-	}
-	completedAt := now
-	completion := strings.TrimSpace(request.Completion)
-	if completion == "" {
-		completion = "discord response posted"
-	}
-	posted := request.Posted || strings.TrimSpace(request.Error) == ""
-	if err := b.store.InsertAgentRun(ctx, store.AgentRun{
-		ThreadID:         request.ThreadID,
-		SourceEventType:  request.EventType,
-		StartedAt:        now,
-		CompletedAt:      &completedAt,
-		FinalResponse:    request.BotMessageText,
-		Posted:           posted,
-		Attribution:      request.Attribution,
-		Error:            request.Error,
-		CompletionReason: completion,
-	}); err != nil {
-		log.Printf("record discord interaction run failed: thread=%s error=%v", request.ThreadID, err)
-	}
-	b.appendDiscordTrace(request.ThreadID, map[string]any{
-		"type":              "discord_interaction_thread",
-		"thread_id":         request.ThreadID,
-		"external_id":       request.ExternalID,
-		"parent_channel_id": request.ParentID,
-		"root_id":           request.RootID,
-		"title":             request.Title,
-		"event_type":        request.EventType,
-		"tool_groups":       request.ToolGroups,
-		"bot_message_id":    request.BotMessageID,
-		"created_at":        now.Format(time.RFC3339Nano),
-	})
-}
-
 func (b *Bot) updateInteractionThreadBotMessage(ctx context.Context, thread store.AgentThread, botMessageID, reply string, groups []string) {
 	if b.store == nil || strings.TrimSpace(botMessageID) == "" {
 		return
@@ -401,9 +247,7 @@ func (b *Bot) updateInteractionThreadBotMessage(ctx context.Context, thread stor
 	}
 	payload["tool_groups"] = groups
 	payload["bot_message_id"] = botMessageID
-	payload["bot_reply"] = reply
 	payload["latest_bot_message_id"] = botMessageID
-	payload["latest_bot_reply"] = reply
 	payload["bot_message_ids"] = appendUniqueStringPayload(payload["bot_message_ids"], botMessageID)
 	payloadJSON, _ := json.Marshal(payload)
 	thread.ExternalID = botMessageID

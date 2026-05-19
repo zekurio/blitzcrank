@@ -4,5 +4,5 @@ import (
 	"embed"
 )
 
-//go:embed prompts/*.md
+//go:embed automations/*.md prompts/*.md skills/*/SKILL.md
 var FS embed.FS

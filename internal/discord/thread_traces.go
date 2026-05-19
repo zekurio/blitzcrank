@@ -7,6 +7,7 @@ import (
 	"time"
 
 	discordevents "blitzcrank/internal/discord/events"
+	"blitzcrank/internal/runtimectx"
 	"blitzcrank/internal/store"
 
 	"github.com/bwmarrin/discordgo"
@@ -29,6 +30,29 @@ func (b *Bot) appendDiscordTrace(threadID string, value any) {
 	}
 	if err := store.AppendJSONL(filepath.Join(b.cfg.ThreadsDirectory, "discord", discordTraceID(threadID)+".jsonl"), value); err != nil {
 		log.Printf("append discord trace %s: %v", threadID, err)
+	}
+}
+
+func (b *Bot) recordDiscordPromptCompactions(threadID string, entries []runtimectx.CompactionEntry) {
+	if strings.TrimSpace(b.cfg.ThreadsDirectory) == "" || len(entries) == 0 {
+		return
+	}
+	ledgerPath := filepath.Join(b.cfg.ThreadsDirectory, "discord", discordTraceID(threadID)+".compactions.jsonl")
+	if err := runtimectx.AppendCompactionEntries(ledgerPath, entries); err != nil {
+		log.Printf("append discord compaction ledger %s: %v", threadID, err)
+		return
+	}
+	for _, entry := range entries {
+		b.appendDiscordTrace(threadID, map[string]any{
+			"type":                 "context_compaction",
+			"thread_id":            threadID,
+			"entry_id":             entry.ID,
+			"summary":              entry.Summary,
+			"first_kept_entry_id":  entry.FirstKeptEntryID,
+			"tokens_before":        entry.TokensBefore,
+			"compaction_timestamp": entry.Timestamp,
+			"details":              entry.Details,
+		})
 	}
 }
 

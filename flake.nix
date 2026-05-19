@@ -29,12 +29,15 @@
               cfg.dataDir
               cfg.memoriesDir
               cfg.threadsDir
+              "${cfg.dataDir}/cache"
               (builtins.dirOf cfg.databasePath)
             ]
           );
           defaultSettings = {
             bot.public_name = cfg.publicName;
             storage.database_path = toString cfg.databasePath;
+            storage.cache_dir = "${cfg.dataDir}/cache";
+            llm.openai.auth = cfg.openAIAuth;
             llm.models_dev.path = "${cfg.package}/share/blitzcrank/models.dev.json";
             runtime = {
               skills_dir = cfg.skillsDir;
@@ -184,6 +187,11 @@
               type = lib.types.str;
               default = "Blitzcrank";
             };
+            openAIAuth = lib.mkOption {
+              type = lib.types.str;
+              default = "";
+              description = "Optional OpenAI auth surface. Set to \"codex-oauth\" to route OpenAI profiles through Codex OAuth while preserving OpenAI model slugs.";
+            };
             timezone = lib.mkOption {
               type = lib.types.str;
               default = "UTC";
@@ -291,13 +299,11 @@
                 system.stateVersion = "26.05";
                 services.blitzcrank = {
                   enable = true;
+                  openAIAuth = "codex-oauth";
                   runtime.default = {
-                    provider = "codex-oauth";
+                    provider = "openai";
                     model = "gpt-5.4";
                     reasoningEffort = "medium";
-                    contextLimit = 1050000;
-                    inputLimit = 922000;
-                    outputLimit = 128000;
                   };
                 };
               }
@@ -350,12 +356,10 @@
 
         checks.nixos-module-runtime-profile = pkgs.runCommand "nixos-module-runtime-profile" { } ''
           config=${moduleRuntimeProfileTest.config.systemd.services.blitzcrank.environment.BLITZCRANK_CONFIG}
-          grep -q 'provider = "codex-oauth"' "$config"
+          grep -q 'auth = "codex-oauth"' "$config"
+          grep -q 'provider = "openai"' "$config"
           grep -q 'model = "gpt-5.4"' "$config"
           grep -q 'reasoning_effort = "medium"' "$config"
-          grep -q 'context_limit = 1050000' "$config"
-          grep -q 'input_limit = 922000' "$config"
-          grep -q 'output_limit = 128000' "$config"
           touch "$out"
         '';
 

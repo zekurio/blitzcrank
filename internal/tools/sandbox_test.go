@@ -133,10 +133,8 @@ func TestSandboxServicePermissionsExposeOnlyConfiguredValues(t *testing.T) {
 	}
 	for _, want := range []string{
 		"SEERR_BASE_URL",
-		"SEERR_URL",
 		"SEERR_API_KEY",
 		"SONARR_BASE_URL",
-		"SONARR_URL",
 		"SONARR_API_KEY",
 	} {
 		if !stringSliceContains(permissions.AllowEnv, want) {
@@ -148,6 +146,21 @@ func TestSandboxServicePermissionsExposeOnlyConfiguredValues(t *testing.T) {
 	}
 	if len(permissions.AllowRead) != 1 || permissions.AllowRead[0] != root {
 		t.Fatalf("AllowRead = %#v, want only %q", permissions.AllowRead, root)
+	}
+}
+
+func TestSandboxEnvOnlyPassesConfiguredServiceSecrets(t *testing.T) {
+	env := sandboxEnv(
+		[]string{"PATH=/bin", "HOME=/tmp/home", "AWS_SECRET_ACCESS_KEY=leak", "SONARR_API_KEY=process-secret"},
+		map[string]string{"SONARR_API_KEY": "configured-secret"},
+		[]string{"AWS_SECRET_ACCESS_KEY", "SONARR_API_KEY"},
+	)
+	joined := strings.Join(env, "\n")
+	if strings.Contains(joined, "AWS_SECRET_ACCESS_KEY") || strings.Contains(joined, "process-secret") {
+		t.Fatalf("sandbox env leaked process secrets:\n%s", joined)
+	}
+	if !strings.Contains(joined, "SONARR_API_KEY=configured-secret") {
+		t.Fatalf("sandbox env missing configured service secret:\n%s", joined)
 	}
 }
 

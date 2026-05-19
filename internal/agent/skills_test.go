@@ -85,24 +85,30 @@ func TestLoadEmbeddedSkills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadEmbeddedSkills() error = %v", err)
 	}
-	if !skillSliceContains(skills, "jellyfin") || !skillSliceContains(skills, "seerr-issue-solver") {
+	if !skillSliceContains(skills, "jellyfin") || !skillSliceContains(skills, "memory") || !skillSliceContains(skills, "seerr-issue-solver") {
 		t.Fatalf("embedded skills missing expected entries: %#v", skills)
 	}
 }
 
-func TestLoadRuntimeSkillsErrorsForExplicitEmptyDirectory(t *testing.T) {
+func TestLoadRuntimeSkillsUsesEmbeddedWhenExtraDirectoryIsEmpty(t *testing.T) {
 	root := t.TempDir()
-	_, err := LoadRuntimeSkills(config.Config{SkillsDirectory: root})
-	if err == nil || !strings.Contains(err.Error(), "no skills found") {
-		t.Fatalf("LoadRuntimeSkills() error = %v, want no skills found", err)
+	skills, err := LoadRuntimeSkills(config.Config{SkillsDirectory: root})
+	if err != nil {
+		t.Fatalf("LoadRuntimeSkills() error = %v", err)
+	}
+	if !skillSliceContains(skills, "jellyfin") || !skillSliceContains(skills, "memory") {
+		t.Fatalf("skills = %#v, want embedded baseline", skills)
 	}
 }
 
-func TestLoadRuntimeSkillsErrorsForExplicitMissingDirectory(t *testing.T) {
+func TestLoadRuntimeSkillsUsesEmbeddedWhenExtraDirectoryIsMissing(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "missing")
-	_, err := LoadRuntimeSkills(config.Config{SkillsDirectory: root})
-	if err == nil {
-		t.Fatal("LoadRuntimeSkills() error = nil, want missing directory error")
+	skills, err := LoadRuntimeSkills(config.Config{SkillsDirectory: root})
+	if err != nil {
+		t.Fatalf("LoadRuntimeSkills() error = %v", err)
+	}
+	if !skillSliceContains(skills, "jellyfin") || !skillSliceContains(skills, "memory") {
+		t.Fatalf("skills = %#v, want embedded baseline", skills)
 	}
 }
 
@@ -175,6 +181,9 @@ func TestNewDoesNotCreateLLMClientDuringStartup(t *testing.T) {
 	if !strings.Contains(agent.discordTriagePrompt, "The bot's public name is TestBot") || strings.Contains(agent.discordTriagePrompt, "{{bot_name}}") {
 		t.Fatalf("discord triage prompt did not render configured bot name:\n%s", agent.discordTriagePrompt)
 	}
+	if !strings.Contains(agent.discordTriagePrompt, "- jellyfin: Test skill") || strings.Contains(agent.discordTriagePrompt, "{{skill_catalog}}") {
+		t.Fatalf("discord triage prompt did not render skill catalog:\n%s", agent.discordTriagePrompt)
+	}
 }
 
 func TestLoadSystemPromptDoesNotInlineAllSkills(t *testing.T) {
@@ -200,8 +209,15 @@ func TestReloadSkillsUsesRuntimeSkillDir(t *testing.T) {
 	if err := agent.ReloadSkills(); err != nil {
 		t.Fatalf("ReloadSkills() error = %v", err)
 	}
-	if len(agent.skills) != 1 || agent.skills[0].Name != "jellyfin" {
-		t.Fatalf("skills = %#v", agent.skills)
+	if !skillSliceContains(agent.skills, "memory") || !skillSliceContains(agent.skills, "jellyfin") {
+		t.Fatalf("skills = %#v, want embedded plus runtime skills", agent.skills)
+	}
+	if !strings.Contains(agent.discordTriagePrompt, "- jellyfin: Test skill") || strings.Contains(agent.discordTriagePrompt, "{{skill_catalog}}") {
+		t.Fatalf("discord triage prompt did not refresh skill catalog:\n%s", agent.discordTriagePrompt)
+	}
+	jellyfin := findSkill(agent.skills, "jellyfin")
+	if jellyfin.Path != filepath.Join(skills, "jellyfin", "SKILL.md") {
+		t.Fatalf("jellyfin skill path = %q, want runtime override", jellyfin.Path)
 	}
 }
 
@@ -478,6 +494,14 @@ func TestToolPolicyKeepsMemoryCapabilityInAgentWorkflows(t *testing.T) {
 	}
 }
 
+func TestSkillsForRequestIncludesMemorySkill(t *testing.T) {
+	agent := &Agent{skills: []Skill{{Name: "memory"}, {Name: "jellyfin"}, {Name: "sonarr"}}}
+	skills := agent.skillsForRequest(Request{Source: "discord_thread", Content: "Ist Project Hail Mary auf Jellyfin verfuegbar?"})
+	if !skillSliceContains(skills, "memory") || !skillSliceContains(skills, "jellyfin") {
+		t.Fatalf("skills = %#v, want memory and jellyfin", skills)
+	}
+}
+
 func TestToolPolicyHonorsExplicitSlashCommandGroups(t *testing.T) {
 	agent := &Agent{}
 	policy := agent.toolPolicy(Request{Source: "discord_slash_jellyfin", Content: "anything", ToolGroups: []string{"jellyfin"}})
@@ -525,9 +549,12 @@ func TestToolPolicySplitsSabnzbdAndFilesystemGroups(t *testing.T) {
 
 func TestToolContextPromptBalancesAwarenessAndUse(t *testing.T) {
 	agent := &Agent{registry: tools.NewRegistry(config.Config{ExaAPIKey: "secret"})}
-	prompt := agent.toolContextPrompt(tools.ToolPolicy{ReadOnly: true, SandboxServices: true, Groups: []string{"sandbox", "web"}})
+	prompt := agent.toolContextPrompt(tools.ToolPolicy{ReadOnly: true, SandboxServices: true, Groups: []string{"memory", "sandbox", "web"}})
 	for _, want := range []string{
-		"Selected tools by capability: sandbox (",
+		"memory (",
+		"Memory tools are available",
+		"survive this run",
+		"sandbox (",
 		"web (web_search)",
 		"not a checklist",
 		"read-only",
@@ -685,6 +712,37 @@ func TestSkillsForRequestLoadsOnlySelectedSkillPacks(t *testing.T) {
 	}
 }
 
+func TestSkillsForRequestMatchesRuntimeSkillCatalog(t *testing.T) {
+	agent := &Agent{skills: []Skill{
+		{Name: "memory"},
+		{Name: "jellyfin"},
+		{Name: "immich", Description: "Photo library support for Immich albums, assets, people, and uploads."},
+	}}
+	skills := agent.skillsForRequest(Request{
+		Source:     "discord_mention",
+		Content:    "Kannst du in Immich nachsehen, warum mein Album fehlt?",
+		ToolGroups: []string{"seerr", "jellyfin"},
+	})
+	if !skillSliceContains(skills, "immich") {
+		t.Fatalf("skills = %#v, want immich from skill catalog match", skills)
+	}
+}
+
+func TestSkillsForRequestKeepsSlashCommandSelectionStrict(t *testing.T) {
+	agent := &Agent{skills: []Skill{
+		{Name: "jellyfin"},
+		{Name: "immich", Description: "Photo library support for Immich albums."},
+	}}
+	skills := agent.skillsForRequest(Request{
+		Source:     "discord_slash_jellyfin",
+		Content:    "Immich album fehlt",
+		ToolGroups: []string{"jellyfin"},
+	})
+	if len(skills) != 1 || skills[0].Name != "jellyfin" {
+		t.Fatalf("skills = %#v, want only explicit jellyfin skill", skills)
+	}
+}
+
 func TestDiscordTriageConfigValuesAreUsedVerbatim(t *testing.T) {
 	agent := &Agent{cfg: config.Config{
 		RuntimeProfiles: map[string]config.RuntimeProfile{
@@ -804,4 +862,13 @@ func skillSliceContains(values []Skill, want string) bool {
 		}
 	}
 	return false
+}
+
+func findSkill(values []Skill, want string) Skill {
+	for _, value := range values {
+		if value.Name == want {
+			return value
+		}
+	}
+	return Skill{}
 }

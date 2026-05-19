@@ -167,9 +167,18 @@ func (a *Agent) ReloadSkills() error {
 	if err != nil {
 		return err
 	}
+	discordTriagePrompt, err := LoadPromptTemplate(discordTriagePromptPath)
+	if err != nil {
+		return err
+	}
+	discordTriagePrompt = renderPrompt(discordTriagePrompt, map[string]string{
+		"bot_name":      cfg.BotPublicName,
+		"skill_catalog": triageSkillCatalog(skills),
+	})
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.skills = skills
+	a.discordTriagePrompt = discordTriagePrompt
 	return nil
 }
 

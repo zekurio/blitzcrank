@@ -72,6 +72,9 @@ thread_archive_minutes = 60
 context_recent_messages = 5
 seerr_user_map = { "discord-user-1" = "42" }
 
+[web]
+listen_addr = "127.0.0.1:9090"
+
 [seerr]
 base_url = "http://seerr.local"
 api_key = "seerr-key"
@@ -90,6 +93,9 @@ run_timeout = "2m"
 reserved_tokens = 1234
 tail_turns = 3
 preserve_recent_tokens = 4567
+
+[storage]
+cache_dir = "/srv/blitzcrank/cache"
 
 [runtime.profiles.default]
 provider = "openrouter"
@@ -116,6 +122,9 @@ api_key = "router-key"
 	if cfg.AgentDiscordChannelID != "channel-1" || cfg.DiscordTriageThreshold != 0.6 {
 		t.Fatalf("discord config = %#v", cfg)
 	}
+	if cfg.HTTPListenAddr != "127.0.0.1:9090" {
+		t.Fatalf("HTTPListenAddr = %q", cfg.HTTPListenAddr)
+	}
 	if cfg.DiscordSeerrUserMap["discord-user-1"] != "42" {
 		t.Fatalf("DiscordSeerrUserMap = %#v", cfg.DiscordSeerrUserMap)
 	}
@@ -124,6 +133,9 @@ api_key = "router-key"
 	}
 	if cfg.ContextReservedTokens != 1234 || cfg.ContextTailTurns != 3 || cfg.ContextPreserveRecentTokens != 4567 {
 		t.Fatalf("context globals = reserved=%d tail=%d preserve=%d", cfg.ContextReservedTokens, cfg.ContextTailTurns, cfg.ContextPreserveRecentTokens)
+	}
+	if cfg.CacheDirectory != "/srv/blitzcrank/cache" {
+		t.Fatalf("cache config = %q", cfg.CacheDirectory)
 	}
 	automation := cfg.RuntimeProfile("automation")
 	if automation.Provider != "openrouter" || automation.Model != "anthropic/claude-sonnet-4.6" || automation.ReasoningEffort != "medium" || automation.ContextLimit != 200000 || automation.OutputLimit != 32000 {
@@ -197,6 +209,29 @@ api_key = "router-key"
 	}
 	if cfg.RuntimeProfile("default").Model != "openai/gpt-5.4" {
 		t.Fatalf("default runtime = %#v", cfg.RuntimeProfile("default"))
+	}
+}
+
+func TestHTTPListenAddrDoesNotRequireSeerrCredentials(t *testing.T) {
+	path := writeConfig(t, `
+[web]
+listen_addr = "127.0.0.1:8080"
+
+[runtime.profiles.default]
+provider = "openai-compatible"
+model = "gpt-test"
+
+[llm.openai]
+api_key = "openai-key"
+`)
+	t.Setenv("BLITZCRANK_CONFIG", path)
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.HTTPListenAddr != "127.0.0.1:8080" {
+		t.Fatalf("HTTPListenAddr = %q", cfg.HTTPListenAddr)
 	}
 }
 
@@ -289,24 +324,26 @@ func TestRuntimeProfilesUseWorkflowOverrides(t *testing.T) {
 
 func TestCodexModelContextLimits(t *testing.T) {
 	tests := []struct {
-		model   string
-		context int
-		input   int
-		output  int
+		provider string
+		model    string
+		context  int
+		input    int
+		output   int
 	}{
-		{model: "gpt-5.5", context: 1050000, input: 922000, output: 128000},
-		{model: "gpt-5.4", context: 1050000, input: 922000, output: 128000},
-		{model: "gpt-5.4-mini", context: 400000, input: 272000, output: 128000},
-		{model: "gpt-5.3-codex", context: 400000, input: 272000, output: 128000},
-		{model: "gpt-5.3-codex-spark", context: 128000, input: 100000, output: 32000},
-		{model: "gpt-5.2", context: 400000, input: 272000, output: 128000},
+		{provider: "openai", model: "gpt-5.5", context: 1050000, input: 922000, output: 128000},
+		{provider: "codex-oauth", model: "gpt-5.5", context: 400000, input: 272000, output: 128000},
+		{provider: "openai", model: "gpt-5.4", context: 1050000, input: 922000, output: 128000},
+		{provider: "openai", model: "gpt-5.4-mini", context: 400000, input: 272000, output: 128000},
+		{provider: "openai", model: "gpt-5.3-codex", context: 400000, input: 272000, output: 128000},
+		{provider: "openai", model: "gpt-5.3-codex-spark", context: 128000, input: 100000, output: 32000},
+		{provider: "openai", model: "gpt-5.2", context: 400000, input: 272000, output: 128000},
 	}
 	for _, tt := range tests {
-		t.Run(tt.model, func(t *testing.T) {
+		t.Run(tt.provider+"/"+tt.model, func(t *testing.T) {
 			cfg := Config{ModelsDevPath: filepath.Join("..", "llm", "models", "models.dev.json")}
-			context, input, output := cfg.modelContextLimits("openai", tt.model)
+			context, input, output := cfg.modelContextLimits(tt.provider, tt.model)
 			if context != tt.context || input != tt.input || output != tt.output {
-				t.Fatalf("modelContextLimits(%q) = (%d, %d, %d), want (%d, %d, %d)", tt.model, context, input, output, tt.context, tt.input, tt.output)
+				t.Fatalf("modelContextLimits(%q, %q) = (%d, %d, %d), want (%d, %d, %d)", tt.provider, tt.model, context, input, output, tt.context, tt.input, tt.output)
 			}
 		})
 	}
@@ -333,6 +370,21 @@ func TestRuntimeContextBudgetUsesModelsDevPath(t *testing.T) {
 	}
 	budget := cfg.RuntimeContextBudget("default")
 	if budget.ContextLimit != 5000 || budget.InputLimit != 4000 || budget.OutputLimit != 500 || budget.UsableTokens != 3900 {
+		t.Fatalf("budget = %#v", budget)
+	}
+}
+
+func TestOpenAIAuthCodexOAuthUsesCodexModelLimits(t *testing.T) {
+	cfg := Config{
+		Provider:              "openai",
+		OpenAIAuth:            "codex-oauth",
+		Model:                 "gpt-5.5",
+		ModelsDevPath:         filepath.Join("..", "llm", "models", "models.dev.json"),
+		ContextReservedTokens: 100,
+		ContextTailTurns:      2,
+	}
+	budget := cfg.RuntimeContextBudget("default")
+	if budget.ContextLimit != 400000 || budget.InputLimit != 272000 || budget.OutputLimit != 128000 || budget.UsableTokens != 271900 {
 		t.Fatalf("budget = %#v", budget)
 	}
 }

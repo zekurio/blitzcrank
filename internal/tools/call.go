@@ -120,12 +120,6 @@ func (r *Registry) callSonarrTool(ctx context.Context, name string, args map[str
 			return nil, true, err
 		}
 		return handled(r.arr(ctx, "sonarr", http.MethodGet, path, nil))
-	case "sonarr_get_calendar":
-		path, err := arrCalendarPath(args, "includeSeries")
-		if err != nil {
-			return nil, true, err
-		}
-		return handled(r.arr(ctx, "sonarr", http.MethodGet, path, nil))
 	case "sonarr_get_system_status":
 		return handled(r.arr(ctx, "sonarr", http.MethodGet, "/api/v3/system/status", nil))
 	case "sonarr_list_quality_profiles":
@@ -134,6 +128,23 @@ func (r *Registry) callSonarrTool(ctx context.Context, name string, args map[str
 		return handled(r.arr(ctx, "sonarr", http.MethodGet, "/api/v3/delayprofile", nil))
 	case "sonarr_get_queue":
 		return handled(r.arr(ctx, "sonarr", http.MethodGet, "/api/v3/queue?page=1&pageSize=20", nil))
+	case "sonarr_get_blocklist", "sonarr_delete_blocklist_item":
+		return r.callSonarrBlocklistTool(ctx, name, args)
+	case "sonarr_get_episodes_by_series_id", "sonarr_get_episode_file", "sonarr_get_episode_files_by_series_id":
+		return r.callSonarrEpisodeTool(ctx, name, args)
+	case "sonarr_search_episode", "sonarr_search_season", "sonarr_search_series", "sonarr_refresh_series":
+		return r.callSonarrSearchTool(ctx, name, args)
+	case "sonarr_retry_queue_item", "sonarr_remove_queue_item":
+		return r.callSonarrQueueTool(ctx, name, args)
+	case "sonarr_list_manual_import", "sonarr_import_manual_candidate":
+		return r.callSonarrManualImportTool(ctx, name, args)
+	default:
+		return nil, false, nil
+	}
+}
+
+func (r *Registry) callSonarrBlocklistTool(ctx context.Context, name string, args map[string]any) (any, bool, error) {
+	switch name {
 	case "sonarr_get_blocklist":
 		path, err := blocklistPath(args)
 		if err != nil {
@@ -142,6 +153,13 @@ func (r *Registry) callSonarrTool(ctx context.Context, name string, args map[str
 		return handled(r.arr(ctx, "sonarr", http.MethodGet, path, nil))
 	case "sonarr_delete_blocklist_item":
 		return handled(r.arr(ctx, "sonarr", http.MethodDelete, "/api/v3/blocklist/"+pathID(args, "blocklist_id"), nil))
+	default:
+		return nil, false, nil
+	}
+}
+
+func (r *Registry) callSonarrEpisodeTool(ctx context.Context, name string, args map[string]any) (any, bool, error) {
+	switch name {
 	case "sonarr_get_episodes_by_series_id":
 		id, err := numericArg(args, "series_id")
 		if err != nil {
@@ -160,6 +178,13 @@ func (r *Registry) callSonarrTool(ctx context.Context, name string, args map[str
 			return nil, true, err
 		}
 		return handled(r.arr(ctx, "sonarr", http.MethodGet, path, nil))
+	default:
+		return nil, false, nil
+	}
+}
+
+func (r *Registry) callSonarrSearchTool(ctx context.Context, name string, args map[string]any) (any, bool, error) {
+	switch name {
 	case "sonarr_search_episode":
 		id, err := numericArg(args, "episode_id")
 		if err != nil {
@@ -178,6 +203,13 @@ func (r *Registry) callSonarrTool(ctx context.Context, name string, args map[str
 			return nil, true, err
 		}
 		return handled(r.arr(ctx, "sonarr", http.MethodPost, "/api/v3/command", body))
+	default:
+		return nil, false, nil
+	}
+}
+
+func (r *Registry) callSonarrQueueTool(ctx context.Context, name string, args map[string]any) (any, bool, error) {
+	switch name {
 	case "sonarr_retry_queue_item":
 		return handled(r.arr(ctx, "sonarr", http.MethodPost, "/api/v3/queue/grab/"+pathID(args, "queue_id"), nil))
 	case "sonarr_remove_queue_item":
@@ -186,6 +218,13 @@ func (r *Registry) callSonarrTool(ctx context.Context, name string, args map[str
 			return nil, true, err
 		}
 		return handled(r.arr(ctx, "sonarr", http.MethodDelete, path, nil))
+	default:
+		return nil, false, nil
+	}
+}
+
+func (r *Registry) callSonarrManualImportTool(ctx context.Context, name string, args map[string]any) (any, bool, error) {
+	switch name {
 	case "sonarr_list_manual_import":
 		path, err := sonarrManualImportPath(args)
 		if err != nil {
@@ -223,12 +262,6 @@ func (r *Registry) callRadarrTool(ctx context.Context, name string, args map[str
 		return handled(r.arr(ctx, "radarr", http.MethodGet, path, nil))
 	case "radarr_get_history":
 		path, err := arrHistoryPath(args, "movie_id", "movieId")
-		if err != nil {
-			return nil, true, err
-		}
-		return handled(r.arr(ctx, "radarr", http.MethodGet, path, nil))
-	case "radarr_get_calendar":
-		path, err := arrCalendarPath(args, "includeMovie")
 		if err != nil {
 			return nil, true, err
 		}

@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	assets "blitzcrank"
 	"github.com/robfig/cron/v3"
 )
 
@@ -23,24 +24,31 @@ func LoadTasks(root string) ([]Task, error) {
 	return tasks, nil
 }
 
-func LoadTaskDirs(runtimeRoot string, extraRoots []string) ([]Task, error) {
-	all := make([]Task, 0, len(extraRoots)+1)
-	if strings.TrimSpace(runtimeRoot) != "" {
-		if !filepath.IsAbs(runtimeRoot) {
-			runtimeRoot = localMarkdownDir(runtimeRoot)
-		}
-		tasks, err := LoadTasks(runtimeRoot)
-		if err != nil {
-			return nil, err
-		}
-		all = append(all, tasks...)
+func LoadEmbeddedTasks() ([]Task, error) {
+	tasks, err := loadTasksFromFS(assets.FS, "automations", "automations")
+	if err != nil {
+		return nil, fmt.Errorf("load embedded automations: %w", err)
 	}
-	if len(all) == 0 {
-		tasks, err := LoadTasks(localMarkdownDir("automations"))
+	return tasks, nil
+}
+
+func LoadTaskDirs(runtimeRoot string, extraRoots []string) ([]Task, error) {
+	all, err := LoadEmbeddedTasks()
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(runtimeRoot) != "" {
+		resolvedRoot, ok, err := resolveOptionalMarkdownDir(runtimeRoot)
 		if err != nil {
 			return nil, err
 		}
-		all = append(all, tasks...)
+		if ok {
+			tasks, err := LoadTasks(resolvedRoot)
+			if err != nil {
+				return nil, err
+			}
+			all = mergeTasks(all, tasks)
+		}
 	}
 	for _, extraRoot := range extraRoots {
 		extraRoot = strings.TrimSpace(extraRoot)
@@ -51,10 +59,7 @@ func LoadTaskDirs(runtimeRoot string, extraRoots []string) ([]Task, error) {
 		if err != nil {
 			return nil, err
 		}
-		all = append(all, tasks...)
-	}
-	if err := rejectDuplicateTasks(all); err != nil {
-		return nil, err
+		all = mergeTasks(all, tasks)
 	}
 	sort.SliceStable(all, func(i, j int) bool {
 		if all[i].Name == all[j].Name {
@@ -63,6 +68,27 @@ func LoadTaskDirs(runtimeRoot string, extraRoots []string) ([]Task, error) {
 		return all[i].Name < all[j].Name
 	})
 	return all, nil
+}
+
+func resolveOptionalMarkdownDir(root string) (string, bool, error) {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return "", false, nil
+	}
+	if !filepath.IsAbs(root) {
+		root = localMarkdownDir(root)
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	if !info.IsDir() {
+		return "", false, fmt.Errorf("%s is not a directory", root)
+	}
+	return root, true, nil
 }
 
 func localMarkdownDir(name string) string {
@@ -83,16 +109,24 @@ func localMarkdownDir(name string) string {
 	}
 }
 
-func rejectDuplicateTasks(tasks []Task) error {
-	seen := make(map[string]string, len(tasks))
-	for _, task := range tasks {
-		name := strings.TrimSpace(task.Name)
-		if previous, ok := seen[name]; ok {
-			return fmt.Errorf("duplicate automation %q in %s and %s", name, previous, task.Path)
-		}
-		seen[name] = task.Path
+func mergeTasks(base, extra []Task) []Task {
+	byName := make(map[string]Task, len(base)+len(extra))
+	for _, task := range base {
+		byName[task.Name] = task
 	}
-	return nil
+	for _, task := range extra {
+		byName[task.Name] = task
+	}
+	names := make([]string, 0, len(byName))
+	for name := range byName {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	merged := make([]Task, 0, len(names))
+	for _, name := range names {
+		merged = append(merged, byName[name])
+	}
+	return merged
 }
 
 func sameTaskSet(a, b []Task) bool {

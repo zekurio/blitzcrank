@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"blitzcrank/internal/agent"
+	"blitzcrank/internal/runtimectx"
 )
 
 const (
@@ -17,14 +18,26 @@ const (
 	finalIssueCommentMaxBytes = 1600
 )
 
+type issuePromptResult struct {
+	Content     string
+	Compactions []runtimectx.CompactionEntry
+}
+
 func (m *Manager) issuePrompt(thread *IssueThread, payload map[string]any, event string) string {
+	return m.issuePromptContext(thread, payload, event).Content
+}
+
+func (m *Manager) issuePromptContext(thread *IssueThread, payload map[string]any, event string) issuePromptResult {
 	data, _ := json.MarshalIndent(payload, "", "  ")
-	payloadText := truncatePromptText(string(data), issuePromptPayloadLimit)
+	payloadRaw := string(data)
+	payloadText := truncatePromptText(payloadRaw, issuePromptPayloadLimit)
 	reportedMessage := stringValue(payload, "message")
 	if reportedMessage == "" {
 		reportedMessage = stringValue(section(payload, "comment"), "comment_message")
 	}
-	return fmt.Sprintf(`Seerr issue workflow event: %s
+	eventsText := formatIssueEvents(thread.Events, issueRecentEventLimit)
+	runsText := formatIssueRuns(thread.Runs, issueRecentRunLimit)
+	content := fmt.Sprintf(`Seerr issue workflow event: %s
 Issue id: %s
 Prior thread events: %d
 Prior solver runs: %d
@@ -63,7 +76,12 @@ Required final comment:
 - Keep it concise and readable as a Seerr issue comment.
 
 Webhook payload:
-%s`, event, thread.IssueID, len(thread.Events), len(thread.Runs), emptyIssueSummary(thread.Summary), reportedMessage, formatIssueEvents(thread.Events, issueRecentEventLimit), formatIssueRuns(thread.Runs, issueRecentRunLimit), payloadText)
+%s`, event, thread.IssueID, len(thread.Events), len(thread.Runs), emptyIssueSummary(thread.Summary), reportedMessage, eventsText, runsText, payloadText)
+
+	return issuePromptResult{
+		Content:     content,
+		Compactions: issuePromptCompactions(thread, payloadRaw, payloadText),
+	}
 }
 
 func parseIssueResolutionDirective(response string) (string, bool) {

@@ -392,14 +392,23 @@ func TestLoadTaskDirsAddsExtraAutomations(t *testing.T) {
 	}
 }
 
-func TestLoadTaskDirsRejectsDuplicateNames(t *testing.T) {
+func TestLoadTaskDirsLetsExtraAutomationsOverrideEmbedded(t *testing.T) {
 	root := t.TempDir()
-	writeTask(t, root, "duplicate.md", "hourly-stale-import-handler", "Duplicate")
+	writeTask(t, root, "override.md", "hourly-stale-import-handler", "Override")
 
-	_, err := LoadTaskDirs("automations", []string{root})
-	if err == nil || !strings.Contains(err.Error(), "duplicate automation") {
-		t.Fatalf("LoadTaskDirs() error = %v, want duplicate automation error", err)
+	tasks, err := LoadTaskDirs("automations", []string{root})
+	if err != nil {
+		t.Fatalf("LoadTaskDirs() error = %v", err)
 	}
+	for _, task := range tasks {
+		if task.Name == "hourly-stale-import-handler" {
+			if task.Prompt != "Override" || task.Path != filepath.Join(root, "override.md") {
+				t.Fatalf("task = %#v, want extra override", task)
+			}
+			return
+		}
+	}
+	t.Fatalf("tasks = %#v, want hourly-stale-import-handler", tasks)
 }
 
 func TestLoadTasksParsesCronSchedule(t *testing.T) {

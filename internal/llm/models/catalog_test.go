@@ -61,3 +61,22 @@ func TestModelsDevSnapshotUsesCatalogLimits(t *testing.T) {
 		t.Fatalf("gpt-5.2 limits = %#v", info.Limits)
 	}
 }
+
+func TestLookupEffectiveAppliesCodexOAuthLimits(t *testing.T) {
+	source := Source{Path: "models.dev.json"}
+	apiInfo, ok := LookupEffective(source, "openai", "gpt-5.5")
+	if !ok {
+		t.Fatal("models.dev snapshot missing openai/gpt-5.5")
+	}
+	if apiInfo.Limits.Context != 1050000 || apiInfo.Limits.Input != 922000 || apiInfo.Limits.Output != 128000 {
+		t.Fatalf("openai gpt-5.5 limits = %#v", apiInfo.Limits)
+	}
+
+	codexInfo, ok := LookupEffective(source, "codex-oauth", "gpt-5.5")
+	if !ok {
+		t.Fatal("models.dev snapshot missing codex-oauth/gpt-5.5")
+	}
+	if codexInfo.Limits.Context != 400000 || codexInfo.Limits.Input != 272000 || codexInfo.Limits.Output != 128000 {
+		t.Fatalf("codex-oauth gpt-5.5 limits = %#v", codexInfo.Limits)
+	}
+}

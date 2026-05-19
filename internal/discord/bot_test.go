@@ -6,7 +6,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +14,7 @@ import (
 	"blitzcrank/internal/agent"
 	"blitzcrank/internal/config"
 	"blitzcrank/internal/discord/commands"
+	"blitzcrank/internal/runtimectx"
 	"blitzcrank/internal/store"
 
 	"github.com/bwmarrin/discordgo"
@@ -189,6 +189,7 @@ func TestRegisterRuntimeCommandsEditsExistingAndCreatesMissing(t *testing.T) {
 		{ID: "existing-legacy-automation", Name: "automation"},
 		{ID: "existing-config", Name: "config"},
 		{ID: "existing-releases", Name: "releases"},
+		{ID: "existing-jellyfin", Name: "jellyfin"},
 	}}
 	bot := &Bot{
 		cfg:   config.Config{DiscordGuildID: "guild-1"},
@@ -206,14 +207,14 @@ func TestRegisterRuntimeCommandsEditsExistingAndCreatesMissing(t *testing.T) {
 	if len(api.created) != wantCreates {
 		t.Fatalf("created commands = %d, want %d", len(api.created), wantCreates)
 	}
-	if !fakeCreatedCommand(api.created, "jellyfin") {
-		t.Fatalf("created commands = %#v, want jellyfin", api.created)
+	if fakeCreatedCommand(api.created, "jellyfin") {
+		t.Fatalf("created commands = %#v, want no skill prompt commands", api.created)
 	}
-	if len(api.deleted) != 3 {
-		t.Fatalf("deleted commands = %#v, want retired legacy automation, config and releases deletes", api.deleted)
+	if len(api.deleted) != 4 {
+		t.Fatalf("deleted commands = %#v, want retired legacy and skill deletes", api.deleted)
 	}
-	if !fakeDeletedCommand(api.deleted, "existing-legacy-automation") || !fakeDeletedCommand(api.deleted, "existing-config") || !fakeDeletedCommand(api.deleted, "existing-releases") {
-		t.Fatalf("deleted commands = %#v, want retired legacy automation, config and releases deletes", api.deleted)
+	if !fakeDeletedCommand(api.deleted, "existing-legacy-automation") || !fakeDeletedCommand(api.deleted, "existing-config") || !fakeDeletedCommand(api.deleted, "existing-releases") || !fakeDeletedCommand(api.deleted, "existing-jellyfin") {
+		t.Fatalf("deleted commands = %#v, want retired legacy and skill deletes", api.deleted)
 	}
 }
 
@@ -260,51 +261,22 @@ func TestApplicationCommandMatchesDetectsBehaviorChanges(t *testing.T) {
 	}
 }
 
-func TestDiscordApplicationCommandsIncludeSkillCommands(t *testing.T) {
+func TestDiscordApplicationCommandsExcludeSkillPromptCommands(t *testing.T) {
 	appCommands := commands.ApplicationCommands()
-	var jellyfin *discordgo.ApplicationCommand
-	for _, command := range appCommands {
-		if command.Name == "jellyfin" {
-			jellyfin = command
+	for _, removed := range []string{"jellyfin", "seerr", "sonarr", "radarr", "sabnzbd", "filesystem"} {
+		if commandNamed(appCommands, removed) != nil {
+			t.Fatalf("%s slash command registered, want removed", removed)
 		}
-	}
-	if jellyfin == nil {
-		t.Fatal("jellyfin slash command missing")
-	}
-	if jellyfin.DefaultMemberPermissions != nil {
-		t.Fatalf("jellyfin command has admin permissions: %#v", jellyfin.DefaultMemberPermissions)
-	}
-	if jellyfin.DMPermission == nil || *jellyfin.DMPermission {
-		t.Fatalf("jellyfin command DMPermission = %#v, want false", jellyfin.DMPermission)
-	}
-	if len(jellyfin.Options) != 1 || jellyfin.Options[0].Name != commands.QuestionOption || !jellyfin.Options[0].Required {
-		t.Fatalf("jellyfin options = %#v, want required question option", jellyfin.Options)
 	}
 }
 
-func TestDiscordReleaseCommandIsGerman(t *testing.T) {
-	appCommands := commands.ApplicationCommands()
-	var release *discordgo.ApplicationCommand
-	for _, command := range appCommands {
-		if command.Name == commands.ReleasesCommand {
-			release = command
+func commandNamed(commands []*discordgo.ApplicationCommand, name string) *discordgo.ApplicationCommand {
+	for _, command := range commands {
+		if command != nil && command.Name == name {
+			return command
 		}
 	}
-	if release == nil {
-		t.Fatal("release slash command missing")
-	}
-	if len(release.Options) != 1 || release.Options[0].Name != commands.SpanOption {
-		t.Fatalf("release options = %#v, want localized span option", release.Options)
-	}
-	var values []string
-	for _, choice := range release.Options[0].Choices {
-		values = append(values, choice.Value.(string))
-	}
-	for _, want := range []string{"heute", "woche", "monat"} {
-		if !slices.Contains(values, want) {
-			t.Fatalf("release choices = %#v, missing %q", values, want)
-		}
-	}
+	return nil
 }
 
 func TestSplitDiscordMessagePreservesLongUnicode(t *testing.T) {
@@ -498,7 +470,7 @@ func TestFeedbackReactionRecordsKnownBotMessageInThread(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadAgentThreadEvents() error = %v", err)
 	}
-	if len(events) != 1 || events[0].EventType != "feedback" || events[0].ExternalMessageID != "bot-message-1" || !strings.Contains(events[0].Message, "negative") {
+	if len(events) != 1 || events[0].EventType != "feedback" || events[0].ExternalMessageID != "bot-message-1" || events[0].Message != "" {
 		t.Fatalf("feedback events = %#v", events)
 	}
 }
@@ -675,6 +647,33 @@ func TestParentSupportSurface(t *testing.T) {
 	}
 }
 
+func TestOffTrackMentionReplyPointsToTrackChannel(t *testing.T) {
+	bot := &Bot{cfg: config.Config{AgentDiscordChannelID: "track-channel"}}
+	reply := bot.offTrackMentionReply()
+	if !strings.Contains(reply, "<#track-channel>") {
+		t.Fatalf("offTrackMentionReply() = %q, want track channel mention", reply)
+	}
+
+	bot.cfg.AgentDiscordChannelID = ""
+	reply = bot.offTrackMentionReply()
+	if strings.Contains(reply, "<#") || strings.TrimSpace(reply) == "" {
+		t.Fatalf("offTrackMentionReply(empty channel) = %q, want generic reply without channel mention", reply)
+	}
+}
+
+func TestBlitzcrankThreadTitle(t *testing.T) {
+	if got := blitzcrankThreadTitle("Ja - ich bin hier"); got != "blitzcrank: Ja - ich bin hier" {
+		t.Fatalf("blitzcrankThreadTitle() = %q", got)
+	}
+	if got := blitzcrankThreadTitle("blitzcrank: existing"); got != "blitzcrank: existing" {
+		t.Fatalf("blitzcrankThreadTitle(existing) = %q", got)
+	}
+	long := blitzcrankThreadTitle(strings.Repeat("ä", 120))
+	if utf8.RuneCountInString(long) > 100 {
+		t.Fatalf("blitzcrankThreadTitle(long) length = %d, want <= 100", utf8.RuneCountInString(long))
+	}
+}
+
 func TestMessageReplyHelpers(t *testing.T) {
 	bot := &Bot{botID: "bot-1"}
 	message := &discordgo.Message{
@@ -775,6 +774,70 @@ func TestDiscordPromptCompactsTranscriptWhenContextBudgetIsSmall(t *testing.T) {
 	}
 }
 
+func TestDiscordPromptContextReturnsCompactionEntry(t *testing.T) {
+	now := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)
+	bot := &Bot{cfg: config.Config{
+		Model:                        "tiny-model",
+		ContextAutoCompact:           true,
+		ContextReservedTokens:        0,
+		ContextPreserveRecentTokens:  30,
+		ContextTailTurns:             2,
+		DiscordContextRecentMessages: 12,
+		RuntimeProfiles: map[string]config.RuntimeProfile{
+			"discord": {Model: "tiny-model", ContextLimit: 900, OutputLimit: 100},
+		},
+	}}
+	thread := store.AgentThread{
+		ThreadID:   "discord:thread-1",
+		Title:      "Playback problem",
+		ExternalID: "thread-1",
+		Summary:    "Older context summarized.",
+		Events: []store.AgentThreadEvent{
+			{Actor: "alice", Message: "old raw detail that should be compacted away because it is verbose and stale", CreatedAt: now, ExternalMessageID: "msg-old"},
+			{Actor: "alice", Message: "new raw detail to preserve", CreatedAt: now.Add(time.Minute), ExternalMessageID: "msg-new"},
+		},
+	}
+
+	result := bot.discordPromptContext(thread, "latest question")
+	if len(result.Compactions) != 1 {
+		t.Fatalf("Compactions len = %d, want 1", len(result.Compactions))
+	}
+	entry := result.Compactions[0]
+	if entry.Type != "compaction" || entry.FirstKeptEntryID != "discord_message:msg-new" || entry.Details["component"] != "discord_recent_transcript" {
+		t.Fatalf("compaction entry = %#v", entry)
+	}
+	if !strings.Contains(result.Content, "Compacted transcript: 1 older message") {
+		t.Fatalf("prompt missing compaction note:\n%s", result.Content)
+	}
+}
+
+func TestRecordDiscordPromptCompactionsWritesLedgerAndTrace(t *testing.T) {
+	dir := t.TempDir()
+	bot := &Bot{cfg: config.Config{ThreadsDirectory: dir}}
+	entry := runtimectx.NewCompactionEntry(runtimectx.NewCompactionEntryOptions{
+		Summary:          "Discord transcript context compacted.",
+		FirstKeptEntryID: "discord_message:msg-2",
+		TokensBefore:     100,
+		Details:          map[string]any{"component": "discord_recent_transcript"},
+	})
+
+	bot.recordDiscordPromptCompactions("discord:thread-1", []runtimectx.CompactionEntry{entry})
+	ledger, err := runtimectx.ReadCompactionEntries(filepath.Join(dir, "discord", "thread-1.compactions.jsonl"), 10)
+	if err != nil {
+		t.Fatalf("ReadCompactionEntries() error = %v", err)
+	}
+	if len(ledger) != 1 || ledger[0].ID != entry.ID {
+		t.Fatalf("ledger = %#v", ledger)
+	}
+	trace, err := store.ReadJSONL(filepath.Join(dir, "discord", "thread-1.jsonl"))
+	if err != nil {
+		t.Fatalf("ReadJSONL() error = %v", err)
+	}
+	if len(trace) != 1 || trace[0]["type"] != "context_compaction" || trace[0]["entry_id"] != entry.ID {
+		t.Fatalf("trace = %#v", trace)
+	}
+}
+
 func TestRecentRunsIncludesOutcomeWithoutRawEmptyRows(t *testing.T) {
 	now := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)
 	runs := []store.AgentRun{
@@ -869,7 +932,7 @@ func TestDiscordThreadWritesJSONLTrace(t *testing.T) {
 	if loaded.Summary != "Episode fixed." {
 		t.Fatalf("thread summary = %q", loaded.Summary)
 	}
-	if len(loaded.Runs) != 1 || loaded.Runs[0].FinalResponse != records[2]["final_response"] {
+	if len(loaded.Runs) != 1 || loaded.Runs[0].FinalResponse != "" {
 		t.Fatalf("run DB/JSONL mismatch: loaded=%#v trace=%#v", loaded.Runs, records[2])
 	}
 }
@@ -1022,14 +1085,14 @@ func TestDiscordFeedbackPersistsToAgentThreadAndTrace(t *testing.T) {
 	if event.EventType != "feedback" || event.ActorID != "user-1" || event.ExternalMessageID != "bot-message-1" {
 		t.Fatalf("feedback event = %#v", event)
 	}
-	if !strings.Contains(event.Message, "negative") || !strings.Contains(event.Message, "claimed the wrong season") {
-		t.Fatalf("feedback event message = %q", event.Message)
+	if event.Message != "" {
+		t.Fatalf("feedback event message = %q, want empty SQLite content", event.Message)
 	}
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(event.PayloadJSON), &payload); err != nil {
 		t.Fatalf("Unmarshal(payload) error = %v", err)
 	}
-	if payload["type"] != "discord_feedback" || payload["source"] != "reaction" || payload["rating"] != "negative" || payload["text"] != "claimed the wrong season" {
+	if payload["type"] != "discord_feedback" || payload["source"] != "reaction" || payload["rating"] != "negative" || payload["text"] != nil {
 		t.Fatalf("feedback payload = %#v", payload)
 	}
 
@@ -1088,7 +1151,7 @@ func TestDiscordFeedbackCanResolveDirectReplyMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadAgentThreadEvents() error = %v", err)
 	}
-	if len(events) != 1 || events[0].EventType != "feedback" || !strings.Contains(events[0].Message, "positive") {
+	if len(events) != 1 || events[0].EventType != "feedback" || events[0].Message != "" {
 		t.Fatalf("feedback events = %#v", events)
 	}
 }

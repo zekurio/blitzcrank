@@ -163,23 +163,17 @@ func sandboxDenoArgs(scriptPath string, permissions SandboxPermissions) []string
 
 func (r *Registry) serviceSandboxEnv() map[string]string {
 	values := map[string]string{
-		"SEERR_BASE_URL":      r.cfg.SeerrBaseURL,
-		"SEERR_URL":           r.cfg.SeerrBaseURL,
-		"SEERR_API_KEY":       r.cfg.SeerrAPIKey,
-		"JELLYFIN_BASE_URL":   r.cfg.JellyfinBaseURL,
-		"JELLYFIN_URL":        r.cfg.JellyfinBaseURL,
-		"JELLYFIN_SERVER_URL": r.cfg.JellyfinBaseURL,
-		"JELLYFIN_API_KEY":    r.cfg.JellyfinAPIKey,
-		"SONARR_BASE_URL":     r.cfg.SonarrBaseURL,
-		"SONARR_URL":          r.cfg.SonarrBaseURL,
-		"SONARR_API_KEY":      r.cfg.SonarrAPIKey,
-		"RADARR_BASE_URL":     r.cfg.RadarrBaseURL,
-		"RADARR_URL":          r.cfg.RadarrBaseURL,
-		"RADARR_API_KEY":      r.cfg.RadarrAPIKey,
-		"SABNZBD_BASE_URL":    r.cfg.SabnzbdBaseURL,
-		"SABNZBD_URL":         r.cfg.SabnzbdBaseURL,
-		"SABNZBD_API_KEY":     r.cfg.SabnzbdAPIKey,
-		"BOT_TIMEZONE":        r.cfg.Timezone,
+		"SEERR_BASE_URL":    r.cfg.SeerrBaseURL,
+		"SEERR_API_KEY":     r.cfg.SeerrAPIKey,
+		"JELLYFIN_BASE_URL": r.cfg.JellyfinBaseURL,
+		"JELLYFIN_API_KEY":  r.cfg.JellyfinAPIKey,
+		"SONARR_BASE_URL":   r.cfg.SonarrBaseURL,
+		"SONARR_API_KEY":    r.cfg.SonarrAPIKey,
+		"RADARR_BASE_URL":   r.cfg.RadarrBaseURL,
+		"RADARR_API_KEY":    r.cfg.RadarrAPIKey,
+		"SABNZBD_BASE_URL":  r.cfg.SabnzbdBaseURL,
+		"SABNZBD_API_KEY":   r.cfg.SabnzbdAPIKey,
+		"BOT_TIMEZONE":      r.cfg.Timezone,
 	}
 	for key, value := range values {
 		if strings.TrimSpace(value) == "" {
@@ -190,23 +184,27 @@ func (r *Registry) serviceSandboxEnv() map[string]string {
 }
 
 func sandboxEnv(base []string, service map[string]string, allowed []string) []string {
-	allowedSet := map[string]bool{
+	baseAllowed := map[string]bool{
 		"HOME":   true,
 		"PATH":   true,
 		"TMPDIR": true,
 	}
+	serviceAllowed := make(map[string]bool, len(allowed))
 	for _, key := range allowed {
-		allowedSet[strings.TrimSpace(key)] = true
+		key = strings.TrimSpace(key)
+		if key != "" {
+			serviceAllowed[key] = true
+		}
 	}
-	out := make([]string, 0, len(allowedSet)+len(service))
+	out := make([]string, 0, len(baseAllowed)+len(serviceAllowed))
 	for _, entry := range base {
 		key, _, ok := strings.Cut(entry, "=")
-		if ok && allowedSet[key] {
+		if ok && baseAllowed[key] {
 			out = append(out, entry)
 		}
 	}
 	for key, value := range service {
-		if allowedSet[key] {
+		if serviceAllowed[key] {
 			out = append(out, key+"="+value)
 		}
 	}

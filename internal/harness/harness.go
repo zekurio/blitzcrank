@@ -262,12 +262,13 @@ func (m *Manager) run(ctx context.Context, thread *IssueThread, payload map[stri
 
 	start := time.Now().UTC()
 	record := RunRecord{StartedAt: start}
-	prompt := m.issuePrompt(thread, payload, event)
+	prompt := m.issuePromptContext(thread, payload, event)
+	m.recordIssuePromptCompactions(thread.IssueID, prompt.Compactions)
 	request := agent.Request{
 		Source:   "seerr_issue_" + event,
 		Author:   actor(payload),
 		Audience: "seerr_issue",
-		Content:  prompt,
+		Content:  prompt.Content,
 		ToolAudit: func(toolRecord agent.ToolAuditRecord) {
 			m.recordToolCall(thread.IssueID, event, start, toolRecord)
 		},

@@ -6,14 +6,6 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-func SlashPrompt(data discordgo.ApplicationCommandInteractionData) string {
-	return StringOption(data, QuestionOption)
-}
-
-func ReleaseSpan(data discordgo.ApplicationCommandInteractionData) string {
-	return StringOption(data, SpanOption)
-}
-
 func AutomationName(data discordgo.ApplicationCommandInteractionData) string {
 	return StringOption(data, AutomationNameOption)
 }
