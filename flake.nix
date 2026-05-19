@@ -269,7 +269,12 @@
                 ExecStart = "${cfg.package}/bin/blitzcrank";
                 User = cfg.user;
                 Group = cfg.group;
-                StateDirectory = "blitzcrank";
+                StateDirectory = [
+                  "blitzcrank"
+                  "blitzcrank/memories"
+                  "blitzcrank/threads"
+                  "blitzcrank/cache"
+                ];
                 WorkingDirectory = cfg.dataDir;
                 Restart = "on-failure";
                 NoNewPrivileges = true;
