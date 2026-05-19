@@ -44,7 +44,7 @@ func TestToResponsesRequestConvertsToolOutput(t *testing.T) {
 			{Role: "assistant", ToolCalls: []api.ToolCall{toolCall}},
 			{Role: "tool", ToolCallID: "call_1", Content: `{"ok":true}`},
 		},
-	})
+	}, false)
 	if request["instructions"] != "system prompt" {
 		t.Fatalf("instructions = %v, want system prompt", request["instructions"])
 	}
@@ -126,13 +126,24 @@ func TestFromResponsesStreamFallsBackToTextDeltas(t *testing.T) {
 	}
 }
 
-func TestToResponsesRequestOmitsUnsupportedFastServiceTier(t *testing.T) {
+func TestToResponsesRequestAddsFastServiceTier(t *testing.T) {
 	request := toResponsesRequest(api.ChatRequest{
 		Model:    "gpt-test",
 		Messages: []api.Message{{Role: "user", Content: "hi"}},
-	})
-	if _, ok := request["service_tier"]; ok {
-		t.Fatalf("request unexpectedly included service_tier: %#v", request)
+	}, true)
+	if request["service_tier"] != "priority" {
+		t.Fatalf("service_tier = %v, want priority", request["service_tier"])
+	}
+}
+
+func TestToResponsesRequestAddsParallelToolCalls(t *testing.T) {
+	request := toResponsesRequest(api.ChatRequest{
+		Model:             "gpt-test",
+		Messages:          []api.Message{{Role: "user", Content: "hi"}},
+		ParallelToolCalls: true,
+	}, false)
+	if request["parallel_tool_calls"] != true {
+		t.Fatalf("parallel_tool_calls = %v, want true", request["parallel_tool_calls"])
 	}
 }
 
@@ -141,7 +152,7 @@ func TestToResponsesRequestAddsReasoningEffort(t *testing.T) {
 		Model:           "gpt-test",
 		ReasoningEffort: "high",
 		Messages:        []api.Message{{Role: "user", Content: "hi"}},
-	})
+	}, false)
 	reasoning := request["reasoning"].(map[string]any)
 	if reasoning["effort"] != "high" {
 		t.Fatalf("reasoning effort = %v, want high", reasoning["effort"])
@@ -152,7 +163,7 @@ func TestToResponsesRequestOmitsEmptyReasoningEffort(t *testing.T) {
 	request := toResponsesRequest(api.ChatRequest{
 		Model:    "gpt-test",
 		Messages: []api.Message{{Role: "user", Content: "hi"}},
-	})
+	}, false)
 	if _, ok := request["reasoning"]; ok {
 		t.Fatalf("request unexpectedly included reasoning: %#v", request)
 	}
@@ -163,7 +174,7 @@ func TestToResponsesRequestPassesNoneReasoningEffort(t *testing.T) {
 		Model:           "gpt-test",
 		ReasoningEffort: "none",
 		Messages:        []api.Message{{Role: "user", Content: "hi"}},
-	})
+	}, false)
 	reasoning := request["reasoning"].(map[string]any)
 	if reasoning["effort"] != "none" {
 		t.Fatalf("reasoning effort = %v, want none", reasoning["effort"])

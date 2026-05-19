@@ -123,6 +123,9 @@ func BasePayload(request api.ChatRequest) map[string]any {
 	if len(request.Tools) > 0 {
 		payload["tools"] = request.Tools
 	}
+	if request.ParallelToolCalls {
+		payload["parallel_tool_calls"] = true
+	}
 	return payload
 }
 
