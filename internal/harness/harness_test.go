@@ -47,12 +47,25 @@ type retryRunner struct {
 	calls int
 }
 
+type progressRunner struct {
+	calls int
+}
+
 func (r *retryRunner) Respond(_ context.Context, req agent.Request) (string, error) {
 	r.calls++
 	if r.calls == 1 {
 		return "", errors.New("temporary agent failure")
 	}
 	return "Erledigt.", nil
+}
+
+func (r *progressRunner) Respond(_ context.Context, req agent.Request) (string, error) {
+	r.calls++
+	if req.Progress != nil {
+		req.Progress(agent.ProgressEvent{Phase: "start"})
+		req.Progress(agent.ProgressEvent{Phase: "tool_start", ToolName: "sandbox_run_typescript"})
+	}
+	return "RESOLVE_ISSUE: no\n\nIch konnte den Status prüfen; ein sicherer Fix ist mit den verfügbaren Informationen nicht möglich.", nil
 }
 
 func (r *observedRunner) Respond(ctx context.Context, req agent.Request) (string, error) {
@@ -159,6 +172,47 @@ func TestHandleWebhookResolveDirectivePostsCommentAndResolvesIssue(t *testing.T)
 	}
 	if !resolved {
 		t.Fatal("issue was not resolved")
+	}
+}
+
+func TestHandleWebhookPostsSingleProgressComment(t *testing.T) {
+	var posted []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/issue/42/comment" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		posted = append(posted, body["message"])
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	cfg := testConfig(server.URL, t.TempDir())
+	runner := &progressRunner{}
+	manager := NewManager(cfg, runner, tools.NewRegistry(cfg), nil)
+
+	result, err := manager.HandleWebhook(context.Background(), issuePayload("Problem gemeldet", "alice", "file is stuck"))
+	if err != nil {
+		t.Fatalf("HandleWebhook() error = %v", err)
+	}
+	if result.Ignored {
+		t.Fatalf("HandleWebhook() ignored = true: %s", result.Reason)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("runner calls = %d, want 1", runner.calls)
+	}
+	if len(posted) != 2 {
+		t.Fatalf("posted comments = %d, want progress and final: %#v", len(posted), posted)
+	}
+	if !strings.Contains(posted[0], "Ich prüfe das gerade") {
+		t.Fatalf("first comment is not progress: %q", posted[0])
+	}
+	if strings.Contains(posted[1], "RESOLVE_ISSUE") || !strings.Contains(posted[1], "sicherer Fix") {
+		t.Fatalf("second comment is not final: %q", posted[1])
 	}
 }
 

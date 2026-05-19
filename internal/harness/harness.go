@@ -272,6 +272,7 @@ func (m *Manager) run(ctx context.Context, thread *IssueThread, payload map[stri
 			m.recordToolCall(thread.IssueID, event, start, toolRecord)
 		},
 	}
+	request.Progress = m.newSeerrProgressReporter(thread.IssueID, request).callback(runCtx)
 	log.Printf("seerr issue run started: issue=%s event=%s actor=%q prior_events=%d prior_runs=%d", thread.IssueID, event, request.Author, len(thread.Events), len(thread.Runs))
 
 	comment, err := m.runner.Respond(runCtx, request)
