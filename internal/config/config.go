@@ -46,6 +46,10 @@ type Config struct {
 	OpenRouterBaseURL           string `env:"OPENROUTER_BASE_URL" toml:"llm.openrouter.base_url" default:"https://openrouter.ai/api/v1"`
 	OpenRouterReferer           string `env:"OPENROUTER_HTTP_REFERER" toml:"llm.openrouter.http_referer"`
 	OpenRouterTitle             string `env:"OPENROUTER_X_TITLE" toml:"llm.openrouter.title" default:"Blitzcrank"`
+	ModelsDevPath               string `env:"MODELS_DEV_PATH" toml:"llm.models_dev.path"`
+	ModelsDevURL                string `env:"MODELS_DEV_URL" toml:"llm.models_dev.url" default:"https://models.dev"`
+	ModelsDevCachePath          string `env:"MODELS_DEV_CACHE_PATH" toml:"llm.models_dev.cache_path"`
+	ModelsDevDisableFetch       bool   `env:"MODELS_DEV_DISABLE_FETCH" toml:"llm.models_dev.disable_fetch"`
 	Model                       string `env:"AGENT_DEFAULT_MODEL" toml:"runtime.profiles.default.model" default:"gpt-5.5"`
 	ReasoningEffort             string `env:"AGENT_DEFAULT_REASONING_EFFORT" toml:"runtime.profiles.default.reasoning_effort"`
 	RuntimeProfiles             map[string]RuntimeProfile

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"blitzcrank/internal/llm/models"
 )
 
 type RuntimeProfile struct {
@@ -228,7 +230,7 @@ func positiveIntFromConfigValue(value any) int {
 
 func (cfg Config) RuntimeContextBudget(name string) ContextBudget {
 	profile := cfg.RuntimeProfile(name)
-	contextLimit, inputLimit, outputLimit := modelContextLimits(profile.Model)
+	contextLimit, inputLimit, outputLimit := cfg.modelContextLimits(profile.Provider, profile.Model)
 	if profile.ContextLimit > 0 {
 		contextLimit = profile.ContextLimit
 		if profile.InputLimit == 0 {
@@ -285,29 +287,22 @@ func (cfg Config) RuntimeContextBudget(name string) ContextBudget {
 }
 
 func modelContextLimits(model string) (contextLimit, inputLimit, outputLimit int) {
-	normalized := strings.ToLower(strings.TrimSpace(model))
-	switch {
-	case strings.Contains(normalized, "gpt-5.5"):
-		return 400000, 272000, 128000
-	case strings.Contains(normalized, "gpt-5.4-mini"):
-		return 400000, 272000, 128000
-	case strings.Contains(normalized, "gpt-5.4"):
-		return 1050000, 922000, 128000
-	case strings.Contains(normalized, "gpt-5.3-codex-spark"):
-		return 128000, 100000, 32000
-	case strings.Contains(normalized, "gpt-5.3-codex"):
-		return 400000, 272000, 128000
-	case strings.Contains(normalized, "gpt-5.2"):
-		return 400000, 272000, 128000
-	case strings.Contains(normalized, "gpt-5"):
-		return 400000, 0, 128000
-	case strings.Contains(normalized, "claude"):
-		return 200000, 0, 32000
-	case strings.Contains(normalized, "gemini"):
-		return 1000000, 0, 8192
-	case normalized != "":
-		return 128000, 0, 16000
-	default:
+	info, ok := models.Lookup(models.Source{DisableFetch: true}, "openai", model)
+	if !ok {
 		return 0, 0, 0
 	}
+	return info.Limits.Context, info.Limits.Input, info.Limits.Output
+}
+
+func (cfg Config) modelContextLimits(provider, model string) (contextLimit, inputLimit, outputLimit int) {
+	info, ok := models.Lookup(models.Source{
+		Path:         cfg.ModelsDevPath,
+		URL:          cfg.ModelsDevURL,
+		CachePath:    cfg.ModelsDevCachePath,
+		DisableFetch: cfg.ModelsDevDisableFetch,
+	}, provider, model)
+	if !ok {
+		return 0, 0, 0
+	}
+	return info.Limits.Context, info.Limits.Input, info.Limits.Output
 }

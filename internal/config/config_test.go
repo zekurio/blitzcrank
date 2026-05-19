@@ -294,7 +294,7 @@ func TestCodexModelContextLimits(t *testing.T) {
 		input   int
 		output  int
 	}{
-		{model: "gpt-5.5", context: 400000, input: 272000, output: 128000},
+		{model: "gpt-5.5", context: 1050000, input: 922000, output: 128000},
 		{model: "gpt-5.4", context: 1050000, input: 922000, output: 128000},
 		{model: "gpt-5.4-mini", context: 400000, input: 272000, output: 128000},
 		{model: "gpt-5.3-codex", context: 400000, input: 272000, output: 128000},
@@ -303,11 +303,37 @@ func TestCodexModelContextLimits(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.model, func(t *testing.T) {
-			context, input, output := modelContextLimits(tt.model)
+			cfg := Config{ModelsDevPath: filepath.Join("..", "llm", "models", "models.dev.json")}
+			context, input, output := cfg.modelContextLimits("openai", tt.model)
 			if context != tt.context || input != tt.input || output != tt.output {
 				t.Fatalf("modelContextLimits(%q) = (%d, %d, %d), want (%d, %d, %d)", tt.model, context, input, output, tt.context, tt.input, tt.output)
 			}
 		})
+	}
+}
+
+func TestRuntimeContextBudgetUsesModelsDevPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "models.json")
+	if err := os.WriteFile(path, []byte(`{
+		"openai": {
+			"id": "openai",
+			"models": {
+				"gpt-from-file": {"limit": {"context": 5000, "input": 4000, "output": 500}}
+			}
+		}
+	}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{
+		Provider:              "codex-oauth",
+		Model:                 "gpt-from-file",
+		ModelsDevPath:         path,
+		ContextReservedTokens: 100,
+		ContextTailTurns:      2,
+	}
+	budget := cfg.RuntimeContextBudget("default")
+	if budget.ContextLimit != 5000 || budget.InputLimit != 4000 || budget.OutputLimit != 500 || budget.UsableTokens != 3900 {
+		t.Fatalf("budget = %#v", budget)
 	}
 }
 

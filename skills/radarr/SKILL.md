@@ -11,7 +11,7 @@ description: Use when diagnosing or safely fixing Radarr movie queue, refresh, o
 - For questions about a downloaded movie file's metadata, fetch the Radarr movie file when a `movieFileId` is known and inspect quality, languages, and Radarr `mediaInfo`.
 - For playback-track questions such as "why is German audio missing?", prefer Jellyfin media-info sandbox checks to verify actual streams, then use Radarr file metadata to explain how the release was selected or imported.
 - For playback-track diagnostics, do not trigger Radarr movie searches or refreshes unless the user explicitly asks for a replacement/fix. These actions can change queue state.
-- Use `web_search` after local sandbox checks establish that the requested track is absent from the imported file and the answer depends on external release/language availability, for example whether German audio exists for that title or whether only non-German releases are currently available.
+- Before using `web_search` for missing-track diagnostics, inspect local Radarr context first: movie history, queue, blocklist, imported file metadata, quality profile/language/custom-format evidence, and narrow release results when needed. Use web search only if that local context cannot answer whether a better local candidate exists and the answer depends on external release/provider availability.
 - Read the Radarr queue when the issue suggests stuck, failed, missing, or delayed movie downloads/imports.
 - If a fresh release failed because it was corrupt, unpack failed, or download/import failed and Radarr blocklisted it, inspect the Radarr blocklist.
 - Only delete a blocklist item when it clearly matches the affected movie/release and the blocklist reason explains the missing movie.
