@@ -35,6 +35,7 @@
           defaultSettings = {
             bot.public_name = cfg.publicName;
             storage.database_path = toString cfg.databasePath;
+            llm.models_dev.path = "${cfg.package}/share/blitzcrank/models.dev.json";
             runtime = {
               skills_dir = cfg.skillsDir;
               automations_dir = cfg.automationsDir;
@@ -328,7 +329,10 @@
           postInstall = ''
             mkdir -p $out/share/blitzcrank
             cp -R skills automations $out/share/blitzcrank/
+            cp internal/llm/models/models.dev.json $out/share/blitzcrank/models.dev.json
             printf '%s\n' \
+              '[llm.models_dev]' \
+              "path = \"$out/share/blitzcrank/models.dev.json\"" \
               '[runtime]' \
               "skills_dir = \"$out/share/blitzcrank/skills\"" \
               "automations_dir = \"$out/share/blitzcrank/automations\"" \
