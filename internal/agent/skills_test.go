@@ -570,6 +570,9 @@ func TestRespondPropagatesSelectedToolsAcrossIterations(t *testing.T) {
 		t.Fatalf("chat requests = %d, want 2", len(client.requests))
 	}
 	for i, request := range client.requests {
+		if !request.ParallelToolCalls {
+			t.Fatalf("request %d ParallelToolCalls = false", i)
+		}
 		names := toolNamesFromRaw(request.Tools)
 		if !stringSliceContains(names, "sandbox_run_typescript") || !stringSliceContains(names, "web_search") || stringSliceContains(names, "fs_stat_path") {
 			t.Fatalf("request %d tools = %#v, want sandbox and web tools without direct filesystem tools", i, names)

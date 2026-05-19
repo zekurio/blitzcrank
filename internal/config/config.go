@@ -35,11 +35,10 @@ type Config struct {
 	ExaBaseURL      string   `env:"EXA_BASE_URL" toml:"exa.base_url" default:"https://api.exa.ai"`
 	ExaAPIKey       string   `env:"EXA_API_KEY" toml:"exa.api_key"`
 
-	Provider         string `env:"AGENT_DEFAULT_PROVIDER" toml:"runtime.profiles.default.provider" default:"openai-compatible"`
-	CodexAuthProfile string `env:"CODEX_AUTH_PROFILE" toml:"llm.codex.auth_profile" default:"default"`
-	CodexAuthStore   string `env:"CODEX_AUTH_STORE" toml:"llm.codex.auth_store"`
-	CodexBaseURL     string `env:"CODEX_BASE_URL" toml:"llm.codex.base_url" default:"https://chatgpt.com/backend-api/codex"`
-	// Deprecated no-op retained so existing deployments with CODEX_FAST_MODE keep loading.
+	Provider                    string `env:"AGENT_DEFAULT_PROVIDER" toml:"runtime.profiles.default.provider" default:"openai-compatible"`
+	CodexAuthProfile            string `env:"CODEX_AUTH_PROFILE" toml:"llm.codex.auth_profile" default:"default"`
+	CodexAuthStore              string `env:"CODEX_AUTH_STORE" toml:"llm.codex.auth_store"`
+	CodexBaseURL                string `env:"CODEX_BASE_URL" toml:"llm.codex.base_url" default:"https://chatgpt.com/backend-api/codex"`
 	CodexFast                   bool   `env:"CODEX_FAST_MODE" toml:"llm.codex.fast"`
 	OpenAIAPIKey                string `env:"OPENAI_API_KEY" toml:"llm.openai.api_key"`
 	OpenAIBaseURL               string `env:"OPENAI_BASE_URL" toml:"llm.openai.base_url" default:"https://api.openai.com/v1"`

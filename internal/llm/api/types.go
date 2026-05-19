@@ -7,10 +7,11 @@ type Client interface {
 }
 
 type ChatRequest struct {
-	Model           string    `json:"model"`
-	ReasoningEffort string    `json:"reasoning_effort,omitempty"`
-	Messages        []Message `json:"messages"`
-	Tools           []any     `json:"tools,omitempty"`
+	Model             string    `json:"model"`
+	ReasoningEffort   string    `json:"reasoning_effort,omitempty"`
+	Messages          []Message `json:"messages"`
+	Tools             []any     `json:"tools,omitempty"`
+	ParallelToolCalls bool      `json:"parallel_tool_calls,omitempty"`
 }
 
 type Message struct {

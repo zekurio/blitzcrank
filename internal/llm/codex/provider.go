@@ -47,7 +47,7 @@ func (c *CodexOAuth) Chat(ctx context.Context, request api.ChatRequest) (api.Cha
 		}
 	}
 
-	body, err := json.Marshal(toResponsesRequest(request))
+	body, err := json.Marshal(toResponsesRequest(request, c.cfg.CodexFast))
 	if err != nil {
 		return api.ChatResponse{}, err
 	}
@@ -78,7 +78,7 @@ func (c *CodexOAuth) Chat(ctx context.Context, request api.ChatRequest) (api.Cha
 	return fromResponsesStream(io.LimitReader(resp.Body, 32<<20))
 }
 
-func toResponsesRequest(request api.ChatRequest) map[string]any {
+func toResponsesRequest(request api.ChatRequest, fast bool) map[string]any {
 	input := make([]any, 0, len(request.Messages))
 	var instructions []string
 	for _, message := range request.Messages {
@@ -145,6 +145,12 @@ func toResponsesRequest(request api.ChatRequest) map[string]any {
 		"tools":  tools,
 		"store":  false,
 		"stream": true,
+	}
+	if request.ParallelToolCalls {
+		payload["parallel_tool_calls"] = true
+	}
+	if fast {
+		payload["service_tier"] = "priority"
 	}
 	if len(instructions) > 0 {
 		payload["instructions"] = strings.Join(instructions, "\n\n")
