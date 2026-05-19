@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	assets "blitzcrank"
 	"blitzcrank/internal/config"
 )
 
@@ -21,18 +22,35 @@ type Skill struct {
 }
 
 func LoadEmbeddedSkills() ([]Skill, error) {
-	return LoadSkills(localMarkdownDir("skills"))
+	skills, err := loadSkillsFromFS(assets.FS, "skills", "skills")
+	if err != nil {
+		return nil, fmt.Errorf("load embedded skills: %w", err)
+	}
+	return skills, nil
 }
 
 func LoadRuntimeSkills(cfg config.Config) ([]Skill, error) {
-	if root := strings.TrimSpace(cfg.SkillsDirectory); root != "" {
-		skills, err := LoadSkills(root)
-		if err == nil {
-			return skills, nil
-		}
+	skills, err := LoadEmbeddedSkills()
+	if err != nil {
 		return nil, err
 	}
-	return LoadEmbeddedSkills()
+	if root := strings.TrimSpace(cfg.SkillsDirectory); root != "" {
+		runtimeRoot, ok, err := resolveOptionalMarkdownDir(root)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			extra, err := LoadSkills(runtimeRoot)
+			if err != nil {
+				if strings.Contains(err.Error(), "no skills found") {
+					return skills, nil
+				}
+				return nil, err
+			}
+			skills = mergeSkills(skills, extra)
+		}
+	}
+	return skills, nil
 }
 
 func localMarkdownDir(name string) string {
@@ -98,6 +116,47 @@ func loadSkillsFromFS(fsys fs.FS, root, displayRoot string) ([]Skill, error) {
 		return nil, fmt.Errorf("no skills found in %s", root)
 	}
 	return skills, nil
+}
+
+func resolveOptionalMarkdownDir(root string) (string, bool, error) {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return "", false, nil
+	}
+	if !filepath.IsAbs(root) {
+		root = localMarkdownDir(root)
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	if !info.IsDir() {
+		return "", false, fmt.Errorf("%s is not a directory", root)
+	}
+	return root, true, nil
+}
+
+func mergeSkills(base, extra []Skill) []Skill {
+	byName := make(map[string]Skill, len(base)+len(extra))
+	for _, skill := range base {
+		byName[skill.Name] = skill
+	}
+	for _, skill := range extra {
+		byName[skill.Name] = skill
+	}
+	names := make([]string, 0, len(byName))
+	for name := range byName {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	merged := make([]Skill, 0, len(names))
+	for _, name := range names {
+		merged = append(merged, byName[name])
+	}
+	return merged
 }
 
 func fsPath(parts ...string) string {

@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"blitzcrank/internal/runtimectx"
 	"blitzcrank/internal/store"
 
 	"github.com/bwmarrin/discordgo"
@@ -150,40 +151,6 @@ func interactionUserID(event *discordgo.InteractionCreate) string {
 		return event.User.ID
 	}
 	return ""
-}
-
-func slashInteractionMessage(event *discordgo.InteractionCreate, root *discordgo.Message) *discordgo.MessageCreate {
-	if event == nil || root == nil {
-		return nil
-	}
-	user := &discordgo.User{}
-	switch {
-	case event.Member != nil && event.Member.User != nil:
-		*user = *event.Member.User
-	case event.User != nil:
-		*user = *event.User
-	default:
-		user = nil
-	}
-	return &discordgo.MessageCreate{Message: &discordgo.Message{
-		ID:        root.ID,
-		ChannelID: root.ChannelID,
-		GuildID:   root.GuildID,
-		Timestamp: root.Timestamp,
-		Author:    user,
-	}}
-}
-
-func (b *Bot) skillSlashRootMessage(event *discordgo.InteractionCreate, skill, prompt string) string {
-	userID := interactionUserID(event)
-	if userID == "" {
-		return fmt.Sprintf("/%s gestartet: %s", strings.TrimSpace(skill), threadTitle(prompt))
-	}
-	return fmt.Sprintf("<@%s> hat `/%s` gestartet: %s", userID, strings.TrimSpace(skill), threadTitle(prompt))
-}
-
-func discordSkillPrompt(skill, prompt string) string {
-	return fmt.Sprintf("Discord slash command: /%s\nSelected skill: %s\n\nUser prompt:\n%s", strings.TrimSpace(skill), strings.TrimSpace(skill), strings.TrimSpace(prompt))
 }
 
 func messageReplyTargetID(message *discordgo.Message) string {
@@ -354,11 +321,7 @@ func transcriptLine(event store.AgentThreadEvent) string {
 }
 
 func estimatePromptTokens(text string) int {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return 0
-	}
-	return (len(text) + 3) / 4
+	return runtimectx.EstimateTextTokens(text)
 }
 
 func recentRuns(runs []store.AgentRun, limit int) string {

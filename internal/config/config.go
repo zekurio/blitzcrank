@@ -17,6 +17,7 @@ type Config struct {
 	DiscordThreadArchiveMinutes  int               `env:"DISCORD_THREAD_ARCHIVE_MINUTES" toml:"discord.thread_archive_minutes" default:"1440"`
 	DiscordContextRecentMessages int               `env:"DISCORD_CONTEXT_RECENT_MESSAGES" toml:"discord.context_recent_messages" default:"12"`
 
+	HTTPListenAddr         string `env:"BLITZCRANK_HTTP_LISTEN_ADDR" toml:"web.listen_addr"`
 	SeerrWebhookListenAddr string `env:"SEERR_WEBHOOK_LISTEN_ADDR" toml:"seerr.webhook_listen_addr"`
 	SeerrWebhookPath       string `env:"SEERR_WEBHOOK_PATH" toml:"seerr.webhook_path" default:"/webhooks/seerr"`
 	SeerrWebhookSecret     string `env:"SEERR_WEBHOOK_SECRET" toml:"seerr.webhook_secret"`
@@ -40,6 +41,7 @@ type Config struct {
 	CodexAuthStore              string `env:"CODEX_AUTH_STORE" toml:"llm.codex.auth_store"`
 	CodexBaseURL                string `env:"CODEX_BASE_URL" toml:"llm.codex.base_url" default:"https://chatgpt.com/backend-api/codex"`
 	CodexFast                   bool   `env:"CODEX_FAST_MODE" toml:"llm.codex.fast"`
+	OpenAIAuth                  string `env:"OPENAI_AUTH" toml:"llm.openai.auth"`
 	OpenAIAPIKey                string `env:"OPENAI_API_KEY" toml:"llm.openai.api_key"`
 	OpenAIBaseURL               string `env:"OPENAI_BASE_URL" toml:"llm.openai.base_url" default:"https://api.openai.com/v1"`
 	OpenRouterAPIKey            string `env:"OPENROUTER_API_KEY" toml:"llm.openrouter.api_key"`
@@ -65,6 +67,7 @@ type Config struct {
 	AutomationsEnabled          bool          `env:"AUTOMATIONS_ENABLED" toml:"runtime.automations_enabled"`
 	AutomationsExtraDirs        []string      `env:"AUTOMATIONS_EXTRA_DIRS" toml:"runtime.automations_extra_dirs"`
 	DatabasePath                string        `env:"DATABASE_PATH" toml:"storage.database_path" default:"./blitzcrank.sqlite"`
+	CacheDirectory              string        `env:"CACHE_DIR" toml:"storage.cache_dir"`
 	ContextAutoCompact          bool          `env:"AGENT_CONTEXT_AUTO_COMPACT" toml:"runtime.context.auto_compact" default:"true"`
 	ContextReservedTokens       int           `env:"AGENT_CONTEXT_RESERVED_TOKENS" toml:"runtime.context.reserved_tokens" default:"2000"`
 	ContextTailTurns            int           `env:"AGENT_CONTEXT_TAIL_TURNS" toml:"runtime.context.tail_turns" default:"2"`

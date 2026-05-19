@@ -166,7 +166,6 @@ CREATE TABLE IF NOT EXISTS issue_thread_events (
   event_key TEXT,
   event_type TEXT NOT NULL,
   actor TEXT,
-  message TEXT,
   payload_json TEXT NOT NULL,
   created_at TEXT NOT NULL,
   FOREIGN KEY (issue_id) REFERENCES issue_threads(issue_id)
@@ -182,7 +181,6 @@ CREATE TABLE IF NOT EXISTS issue_runs (
   source_event_type TEXT NOT NULL,
   started_at TEXT NOT NULL,
   completed_at TEXT,
-  final_comment TEXT,
   posted INTEGER NOT NULL DEFAULT 0,
   attribution TEXT,
   error TEXT,
@@ -215,7 +213,6 @@ CREATE TABLE IF NOT EXISTS agent_thread_events (
   event_type TEXT NOT NULL,
   actor TEXT,
   actor_id TEXT,
-  message TEXT,
   external_message_id TEXT,
   payload_json TEXT NOT NULL,
   created_at TEXT NOT NULL,
@@ -231,7 +228,6 @@ CREATE TABLE IF NOT EXISTS agent_runs (
   source_event_type TEXT NOT NULL,
   started_at TEXT NOT NULL,
   completed_at TEXT,
-  final_response TEXT,
   posted INTEGER NOT NULL DEFAULT 0,
   attribution TEXT,
   error TEXT,
@@ -242,6 +238,20 @@ CREATE TABLE IF NOT EXISTS agent_runs (
 	`)
 	if err != nil {
 		return fmt.Errorf("run base schema migration: %w", err)
+	}
+	for _, table := range []struct {
+		name       string
+		contentCol string
+		migrate    string
+	}{
+		{name: "issue_thread_events", contentCol: "message", migrate: migrateIssueThreadEventsNoContentSQL},
+		{name: "issue_runs", contentCol: "final_comment", migrate: migrateIssueRunsNoContentSQL},
+		{name: "agent_thread_events", contentCol: "message", migrate: migrateAgentThreadEventsNoContentSQL},
+		{name: "agent_runs", contentCol: "final_response", migrate: migrateAgentRunsNoContentSQL},
+	} {
+		if err := s.dropContentColumn(ctx, table.name, table.contentCol, table.migrate); err != nil {
+			return fmt.Errorf("remove content column %s.%s: %w", table.name, table.contentCol, err)
+		}
 	}
 	for _, column := range []struct {
 		table string
@@ -268,10 +278,38 @@ WHERE event_key IS NOT NULL AND event_key != '';
 	return nil
 }
 
+func (s *Store) dropContentColumn(ctx context.Context, table, column, migration string) error {
+	hasColumn, err := s.hasColumn(ctx, table, column)
+	if err != nil || !hasColumn {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, migration)
+	return err
+}
+
 func (s *Store) ensureColumn(ctx context.Context, table, name, ddl string) error {
-	rows, err := s.db.QueryContext(ctx, "PRAGMA table_info("+sanitizeIdentifier(table)+")")
+	hasColumn, err := s.hasColumn(ctx, table, name)
 	if err != nil {
-		return fmt.Errorf("inspect table %s: %w", table, err)
+		return err
+	}
+	if hasColumn {
+		return nil
+	}
+	_, err = s.db.ExecContext(ctx, ddl)
+	if err != nil {
+		return fmt.Errorf("add column %s.%s: %w", table, name, err)
+	}
+	return nil
+}
+
+func (s *Store) hasColumn(ctx context.Context, table, name string) (bool, error) {
+	tableName, err := sanitizeIdentifier(table)
+	if err != nil {
+		return false, err
+	}
+	rows, err := s.db.QueryContext(ctx, "PRAGMA table_info("+tableName+")")
+	if err != nil {
+		return false, fmt.Errorf("inspect table %s: %w", table, err)
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -281,28 +319,24 @@ func (s *Store) ensureColumn(ctx context.Context, table, name, ddl string) error
 		var defaultValue any
 		var pk int
 		if err := rows.Scan(&cid, &columnName, &columnType, &notNull, &defaultValue, &pk); err != nil {
-			return fmt.Errorf("scan table %s column info: %w", table, err)
+			return false, fmt.Errorf("scan table %s column info: %w", table, err)
 		}
 		if strings.EqualFold(columnName, name) {
-			return rows.Err()
+			return true, rows.Err()
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate table %s column info: %w", table, err)
+		return false, fmt.Errorf("iterate table %s column info: %w", table, err)
 	}
-	_, err = s.db.ExecContext(ctx, ddl)
-	if err != nil {
-		return fmt.Errorf("add column %s.%s: %w", table, name, err)
-	}
-	return nil
+	return false, nil
 }
 
-func sanitizeIdentifier(value string) string {
+func sanitizeIdentifier(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	for _, r := range value {
 		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_' {
-			panic(fmt.Sprintf("unsafe SQL identifier %q", value))
+			return "", fmt.Errorf("unsafe SQL identifier %q", value)
 		}
 	}
-	return value
+	return value, nil
 }

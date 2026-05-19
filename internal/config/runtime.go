@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -295,14 +296,42 @@ func modelContextLimits(model string) (contextLimit, inputLimit, outputLimit int
 }
 
 func (cfg Config) modelContextLimits(provider, model string) (contextLimit, inputLimit, outputLimit int) {
-	info, ok := models.Lookup(models.Source{
+	provider = cfg.effectiveModelProvider(provider)
+	info, ok := models.LookupEffective(models.Source{
 		Path:         cfg.ModelsDevPath,
 		URL:          cfg.ModelsDevURL,
-		CachePath:    cfg.ModelsDevCachePath,
+		CachePath:    cfg.modelsDevCachePath(),
 		DisableFetch: cfg.ModelsDevDisableFetch,
 	}, provider, model)
 	if !ok {
 		return 0, 0, 0
 	}
 	return info.Limits.Context, info.Limits.Input, info.Limits.Output
+}
+
+func (cfg Config) effectiveModelProvider(provider string) string {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	switch provider {
+	case "openai", "openai-compatible", "":
+		switch strings.ToLower(strings.TrimSpace(cfg.OpenAIAuth)) {
+		case "codex-oauth", "oauth":
+			return "codex-oauth"
+		}
+		if provider == "" {
+			return "openai-compatible"
+		}
+		return provider
+	default:
+		return provider
+	}
+}
+
+func (cfg Config) modelsDevCachePath() string {
+	if strings.TrimSpace(cfg.ModelsDevCachePath) != "" {
+		return strings.TrimSpace(cfg.ModelsDevCachePath)
+	}
+	if strings.TrimSpace(cfg.CacheDirectory) != "" {
+		return filepath.Join(strings.TrimSpace(cfg.CacheDirectory), "models.dev.json")
+	}
+	return ""
 }

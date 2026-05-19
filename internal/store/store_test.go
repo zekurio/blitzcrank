@@ -144,6 +144,33 @@ func TestStorePersistsAgentThreadEventAndRun(t *testing.T) {
 	}
 }
 
+func TestStoreSchemaOmitsThreadContentColumns(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+
+	for _, column := range []struct {
+		table string
+		name  string
+	}{
+		{table: "issue_thread_events", name: "message"},
+		{table: "issue_runs", name: "final_comment"},
+		{table: "agent_thread_events", name: "message"},
+		{table: "agent_runs", name: "final_response"},
+	} {
+		hasColumn, err := store.hasColumn(ctx, column.table, column.name)
+		if err != nil {
+			t.Fatalf("hasColumn(%s, %s) error = %v", column.table, column.name, err)
+		}
+		if hasColumn {
+			t.Fatalf("%s.%s exists, want content stored only in JSONL traces", column.table, column.name)
+		}
+	}
+}
+
 func TestLoadAgentThreadByBotMessageIDUsesPayloadAliases(t *testing.T) {
 	ctx := context.Background()
 	store, err := Open(ctx, filepath.Join(t.TempDir(), "state.sqlite"))
@@ -232,7 +259,7 @@ func TestLoadAgentRunsReturnsInvalidCompletedAtError(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpsertAgentThread() error = %v", err)
 	}
-	_, err = store.db.ExecContext(ctx, `INSERT INTO agent_runs(thread_id,source_event_type,started_at,completed_at,final_response,attribution,error,completion_reason,summary) VALUES(?,?,?,?,?,?,?,?,?)`, "thread-1", "message", formatTime(now), "not-a-time", "", "", "", "", "")
+	_, err = store.db.ExecContext(ctx, `INSERT INTO agent_runs(thread_id,source_event_type,started_at,completed_at,attribution,error,completion_reason,summary) VALUES(?,?,?,?,?,?,?,?)`, "thread-1", "message", formatTime(now), "not-a-time", "", "", "", "")
 	if err != nil {
 		t.Fatalf("insert malformed run: %v", err)
 	}

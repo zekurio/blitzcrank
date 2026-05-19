@@ -24,7 +24,6 @@ func (b *Bot) updateDiscordThreadBotMessage(ctx context.Context, thread store.Ag
 		_ = json.Unmarshal([]byte(thread.LastPayloadJSON), &payload)
 	}
 	payload["latest_bot_message_id"] = botMessageID
-	payload["latest_bot_reply"] = reply
 	payload["bot_message_ids"] = appendUniqueStringPayload(payload["bot_message_ids"], botMessageID)
 	payloadJSON, _ := json.Marshal(payload)
 	thread.LastPayloadJSON = string(payloadJSON)
@@ -63,9 +62,7 @@ func interactionThreadPayload(groups []string, botMessageID, reply string) map[s
 	return map[string]any{
 		"tool_groups":           groups,
 		"bot_message_id":        botMessageID,
-		"bot_reply":             reply,
 		"latest_bot_message_id": botMessageID,
-		"latest_bot_reply":      reply,
 		"bot_message_ids":       messageIDs,
 	}
 }

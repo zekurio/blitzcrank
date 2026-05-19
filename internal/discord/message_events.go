@@ -32,7 +32,29 @@ func (b *Bot) onMessageCreate(session *discordgo.Session, event *discordgo.Messa
 		return
 	}
 
-	go b.handleThreadMessage(session, event, content)
+	if b.handleThreadMessage(session, event, content) {
+		return
+	}
+
+	if b.mentionsBot(session, event.Message) {
+		go b.replyToOffTrackMention(event)
+		return
+	}
+}
+
+func (b *Bot) replyToOffTrackMention(event *discordgo.MessageCreate) {
+	reply := b.offTrackMentionReply()
+	if _, err := b.sendMessageReference(context.Background(), event.ChannelID, event.ID, reply); err != nil {
+		log.Printf("send discord off-track mention response failed: %v", err)
+	}
+}
+
+func (b *Bot) offTrackMentionReply() string {
+	channelID := strings.TrimSpace(b.cfg.AgentDiscordChannelID)
+	if channelID == "" {
+		return "Es wurde noch kein Channel für mich eingerichtet."
+	}
+	return fmt.Sprintf("Gespräche mit mir sollten in <#%s> bleiben.", channelID)
 }
 
 func (b *Bot) handleParentChannelMessage(session *discordgo.Session, event *discordgo.MessageCreate, content string) {
@@ -289,35 +311,59 @@ func (b *Bot) modelRuntimeReply(content string, request agent.Request) string {
 	return fmt.Sprintf("I am currently using `%s` with `reasoning_effort=%s`.", model, effort)
 }
 
-func (b *Bot) handleThreadMessage(session *discordgo.Session, event *discordgo.MessageCreate, content string) {
+func (b *Bot) handleThreadMessage(session *discordgo.Session, event *discordgo.MessageCreate, content string) bool {
 	if b.isAutomationThread(context.Background(), event.ChannelID) {
 		log.Printf("ignored user message in automation thread: thread=%s message=%s", event.ChannelID, event.ID)
-		return
+		return true
 	}
 
 	channel, err := b.discordChannel(session, event.ChannelID)
 	if err != nil {
 		log.Printf("load discord channel failed: channel=%s error=%v", event.ChannelID, err)
-		return
+		return false
 	}
-	if channel == nil || !channel.IsThread() || channel.ParentID != b.cfg.AgentDiscordChannelID {
-		return
-	}
-	if !b.messageRepliesToBot(event.Message) {
-		log.Printf("ignored non-reply message in discord agent thread: thread=%s message=%s", event.ChannelID, event.ID)
-		return
+	if channel == nil || !channel.IsThread() {
+		return false
 	}
 
 	mentioned := b.mentionsBot(session, event.Message)
 	loaded, ok, err := b.loadDiscordThread(context.Background(), event.ChannelID)
 	if err != nil {
 		log.Printf("load discord agent thread failed: thread=%s error=%v", event.ChannelID, err)
-		return
-	}
-	if !ok && !mentioned {
-		return
+		return true
 	}
 	if !ok {
+		loaded, ok, err = b.loadDiscordThreadByBotMessageID(context.Background(), event.ChannelID)
+		if err != nil {
+			log.Printf("load discord reply-thread by channel failed: thread=%s error=%v", event.ChannelID, err)
+			return true
+		}
+	}
+	if !ok {
+		loaded, ok, err = b.loadDiscordThreadByReplyTarget(context.Background(), event)
+		if err != nil {
+			log.Printf("load discord reply-thread parent failed: thread=%s error=%v", event.ChannelID, err)
+			return true
+		}
+	}
+	if ok {
+		if !mentioned && !replyContinuationAuthorAllowed(loaded, event) {
+			log.Printf("ignored discord thread continuation from non-original author: thread=%s channel=%s author=%s original_author=%s", loaded.ThreadID, event.ChannelID, discordUserID(event.Author), originalThreadAuthorID(loaded))
+			return true
+		}
+		if loaded.ExternalID != event.ChannelID {
+			b.adoptDiscordReplyThread(context.Background(), session, channel, loaded)
+		}
+		go b.runInteractionAgent(context.Background(), session, loaded, event, content)
+		return true
+	}
+	if !ok && !mentioned {
+		return true
+	}
+	if !ok {
+		if channel.ParentID != b.cfg.AgentDiscordChannelID {
+			return false
+		}
 		now := time.Now().UTC()
 		loaded = store.AgentThread{
 			ThreadID:         discordThreadID(event.ChannelID),
@@ -349,4 +395,5 @@ func (b *Bot) handleThreadMessage(session *discordgo.Session, event *discordgo.M
 		log.Printf("record discord thread event failed: thread=%s error=%v", event.ChannelID, err)
 	}
 	b.runThreadAgent(context.Background(), session, event.ChannelID, event, content, "message")
+	return true
 }

@@ -40,6 +40,9 @@ func skillsForRequest(req Request, skills []Skill, groups []string) []Skill {
 	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(req.Source)), "seerr_issue_") {
 		selected = append([]string{"seerr-issue-solver"}, selected...)
 	}
+	if !requestHasExplicitSkillSelection(req) {
+		selected = append(selected, skillNamesMatchingRequest(req.Content, skills)...)
+	}
 	selectedSet := make(map[string]bool, len(selected))
 	for _, name := range selected {
 		selectedSet[name] = true
@@ -57,11 +60,77 @@ func skillNamesForGroups(groups []string) []string {
 	names := make([]string, 0, len(groups))
 	for _, group := range groups {
 		switch group {
-		case "seerr", "jellyfin", "sonarr", "radarr", "sabnzbd", "filesystem":
+		case "memory", "seerr", "jellyfin", "sonarr", "radarr", "sabnzbd", "filesystem":
 			names = append(names, group)
 		}
 	}
 	return uniqueStrings(names)
+}
+
+func requestHasExplicitSkillSelection(req Request) bool {
+	source := strings.ToLower(strings.TrimSpace(req.Source))
+	return len(req.ToolGroups) > 0 && strings.Contains(source, "slash")
+}
+
+func skillNamesMatchingRequest(content string, skills []Skill) []string {
+	text := normalizedCapabilityText(content)
+	if text == "" {
+		return nil
+	}
+	var names []string
+	for _, skill := range skills {
+		name := strings.TrimSpace(skill.Name)
+		if name == "" || isBuiltInSkillGroup(name) {
+			continue
+		}
+		if skillMatchesText(skill, text) {
+			names = append(names, name)
+		}
+	}
+	return uniqueStrings(names)
+}
+
+func isBuiltInSkillGroup(name string) bool {
+	for _, selected := range skillNamesForGroups([]string{name}) {
+		if selected == name {
+			return true
+		}
+	}
+	return false
+}
+
+func skillMatchesText(skill Skill, text string) bool {
+	name := strings.TrimSpace(skill.Name)
+	if name != "" && phraseInText(normalizedCapabilityText(name), text) {
+		return true
+	}
+	description := normalizedCapabilityText(skill.Description)
+	for _, token := range strings.Fields(description) {
+		if len(token) < 4 || commonSkillCatalogToken(token) {
+			continue
+		}
+		if phraseInText(token, text) {
+			return true
+		}
+	}
+	return false
+}
+
+func phraseInText(phrase, text string) bool {
+	phrase = strings.TrimSpace(phrase)
+	if phrase == "" {
+		return false
+	}
+	return strings.Contains(" "+text+" ", " "+phrase+" ")
+}
+
+func commonSkillCatalogToken(token string) bool {
+	switch token {
+	case "skill", "workflow", "workflows", "support", "agent", "agents", "tool", "tools", "with", "when", "from", "that", "this", "use", "uses", "using", "create", "update", "delete", "search", "list", "durable", "markdown", "operational", "facts":
+		return true
+	default:
+		return false
+	}
 }
 
 func (a *Agent) toolGroupsForRequest(req Request) []string {
@@ -174,6 +243,9 @@ func (a *Agent) toolContextPrompt(policy tools.ToolPolicy) string {
 	}
 	if policy.SandboxServices && containsString(names, "sandbox_run_typescript") {
 		lines = append(lines, "Service APIs are inspected through sandbox_run_typescript instead of one-off service tools. Write short Deno TypeScript diagnostics with a clear purpose; the runtime reviews the script and grants only the needed service permissions before execution.")
+	}
+	if policyIncludesGroup(policy, "memory") && containsString(names, "memory_upsert") {
+		lines = append(lines, "Memory tools are available for durable operational notes. Search or list relevant memories before recurring work, and upsert compact sourced facts when a blocker, preference, or manual-intervention decision should survive this run.")
 	}
 	if policy.ReadOnly {
 		lines = append(lines, "This selected set is read-only for media-server operations; repair and queue mutation tools are omitted, but memory tools may still update durable notes.")

@@ -197,7 +197,7 @@ func TestSandboxReviewAddsReferencedAllowedEnvNames(t *testing.T) {
 	call.Function.Name = "sandbox_run_typescript"
 	call.Function.Arguments = toolArgsJSON(t, map[string]any{
 		"purpose": "check Jellyfin status",
-		"script":  "await fetch(Deno.env.get('JELLYFIN_URL') + '/System/Info', {headers:{'X-Emby-Token': Deno.env.get('JELLYFIN_API_KEY')}})",
+		"script":  "await fetch(Deno.env.get('JELLYFIN_BASE_URL') + '/System/Info', {headers:{'X-Emby-Token': Deno.env.get('JELLYFIN_API_KEY')}})",
 	})
 	if _, err := agent.executeTool(context.Background(), Request{Source: "discord_mention"}, call, tools.ToolPolicy{Groups: []string{"sandbox"}}); err != nil {
 		t.Fatalf("executeTool error = %v", err)
@@ -207,8 +207,8 @@ func TestSandboxReviewAddsReferencedAllowedEnvNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	args := string(data)
-	if !strings.Contains(args, "--allow-env=JELLYFIN_API_KEY,JELLYFIN_URL") && !strings.Contains(args, "--allow-env=JELLYFIN_URL,JELLYFIN_API_KEY") {
-		t.Fatalf("deno args did not include reviewer env plus referenced alias:\n%s", args)
+	if !strings.Contains(args, "--allow-env=JELLYFIN_API_KEY,JELLYFIN_BASE_URL") && !strings.Contains(args, "--allow-env=JELLYFIN_BASE_URL,JELLYFIN_API_KEY") {
+		t.Fatalf("deno args did not include reviewer env plus referenced base URL:\n%s", args)
 	}
 	if !strings.Contains(args, "--allow-net=jellyfin.local:8096") {
 		t.Fatalf("deno args did not include network host for referenced service URL:\n%s", args)
@@ -229,7 +229,7 @@ func TestSandboxReviewPromptIncludesAudienceContext(t *testing.T) {
 	call.Function.Name = "sandbox_run_typescript"
 	call.Function.Arguments = toolArgsJSON(t, map[string]any{
 		"purpose": "check a media item without exposing other users",
-		"script":  "await fetch(Deno.env.get('JELLYFIN_URL') + '/Items')",
+		"script":  "await fetch(Deno.env.get('JELLYFIN_BASE_URL') + '/Items')",
 	})
 	_, err := agent.executeTool(context.Background(), Request{
 		Source:      "discord_mention",
@@ -269,7 +269,7 @@ func TestSandboxPreflightRejectsPrivateEnumerationForNonAdmin(t *testing.T) {
 	call.Function.Name = "sandbox_run_typescript"
 	call.Function.Arguments = toolArgsJSON(t, map[string]any{
 		"purpose": "list Jellyfin users",
-		"script":  "await fetch(Deno.env.get('JELLYFIN_URL') + '/Users')",
+		"script":  "await fetch(Deno.env.get('JELLYFIN_BASE_URL') + '/Users')",
 	})
 	_, err := agent.executeTool(context.Background(), Request{Source: "discord_mention", AuthorID: "discord-1", Audience: "non_admin"}, call, tools.ToolPolicy{Groups: []string{"sandbox"}})
 	if err == nil || !strings.Contains(err.Error(), "may not enumerate users") {

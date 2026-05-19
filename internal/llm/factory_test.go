@@ -71,6 +71,20 @@ func TestFactoryCodexOAuth(t *testing.T) {
 	if _, ok := client.(*codex.CodexOAuth); !ok {
 		t.Fatalf("New(%q) type = %T, want *CodexOAuth", ProviderCodexOAuth, client)
 	}
+
+	client, err = New(config.Config{
+		Provider:         ProviderOpenAI,
+		OpenAIAuth:       ProviderCodexOAuth,
+		CodexAuthProfile: "default",
+		CodexAuthStore:   authPath,
+		CodexBaseURL:     "https://codex.example.test",
+	})
+	if err != nil {
+		t.Fatalf("New(%q with codex auth) error = %v", ProviderOpenAI, err)
+	}
+	if _, ok := client.(*codex.CodexOAuth); !ok {
+		t.Fatalf("New(%q with codex auth) type = %T, want *CodexOAuth", ProviderOpenAI, client)
+	}
 }
 
 func TestFactoryCodexOAuthFailure(t *testing.T) {

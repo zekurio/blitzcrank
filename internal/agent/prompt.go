@@ -36,7 +36,8 @@ func (a *Agent) loadPromptsAndSkills() error {
 		return err
 	}
 	discordTriagePrompt = renderPrompt(discordTriagePrompt, map[string]string{
-		"bot_name": a.cfg.BotPublicName,
+		"bot_name":      a.cfg.BotPublicName,
+		"skill_catalog": triageSkillCatalog(skills),
 	})
 	discordSummaryPrompt, err := LoadPromptTemplate(discordSummaryPromptPath)
 	if err != nil {
@@ -173,6 +174,22 @@ func renderPrompt(template string, values map[string]string) string {
 		out = strings.ReplaceAll(out, "{{"+key+"}}", value)
 	}
 	return out
+}
+
+func triageSkillCatalog(skills []Skill) string {
+	var lines []string
+	for _, skill := range skills {
+		name := strings.TrimSpace(skill.Name)
+		description := strings.TrimSpace(skill.Description)
+		if name == "" || description == "" {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("- %s: %s", name, compactLogString(description, 220)))
+	}
+	if len(lines) == 0 {
+		return "- none"
+	}
+	return strings.Join(lines, "\n")
 }
 
 func LoadSystemPrompt(cfg config.Config) (string, error) {

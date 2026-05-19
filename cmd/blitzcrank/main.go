@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -26,7 +27,12 @@ func main() {
 		runCodexCommand(os.Args[2])
 		return
 	}
+	if err := runBot(); err != nil {
+		log.Fatal(err)
+	}
+}
 
+func runBot() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -35,7 +41,7 @@ func main() {
 	cfg, err := config.Load(".env")
 	finishStep(err)
 	if err != nil {
-		log.Fatalf("load config: %v", err)
+		return fmt.Errorf("load config: %w", err)
 	}
 
 	finishStep = startup.start("create_tool_registry")
@@ -46,7 +52,7 @@ func main() {
 	state, err := store.Open(ctx, cfg.DatabasePath)
 	finishStep(err)
 	if err != nil {
-		log.Fatalf("open store: %v", err)
+		return fmt.Errorf("open store: %w", err)
 	}
 	defer state.Close()
 
@@ -54,26 +60,15 @@ func main() {
 	assistant, err := agent.New(cfg, registry)
 	finishStep(err)
 	if err != nil {
-		log.Fatalf("create agent: %v", err)
+		return fmt.Errorf("create agent: %w", err)
 	}
 
-	var bot *discord.Bot
-	if cfg.DiscordToken != "" && cfg.AgentDiscordChannelID != "" {
-		finishStep = startup.start("create_discord_bot")
-		bot, err = discord.NewBot(cfg, assistant, state)
-		finishStep(err)
-		if err != nil {
-			log.Fatalf("create discord bot: %v", err)
-		}
-		finishStep = startup.start("start_discord_bot")
-		if err := bot.Start(); err != nil {
-			finishStep(err)
-			log.Fatalf("start discord bot: %v", err)
-		}
-		finishStep(nil)
+	bot, err := startDiscordBot(cfg, assistant, state, startup)
+	if err != nil {
+		return err
+	}
+	if bot != nil {
 		defer bot.Close()
-	} else {
-		log.Printf("discord listener disabled: DISCORD_TOKEN and DISCORD_CHANNEL_ID are both required to enable it")
 	}
 
 	finishStep = startup.start("create_harness_manager")
@@ -84,7 +79,7 @@ func main() {
 	webhookServer := webhook.NewServer(cfg, manager)
 	if err := webhookServer.Start(ctx); err != nil {
 		finishStep(err)
-		log.Fatalf("start webhook server: %v", err)
+		return fmt.Errorf("start webhook server: %w", err)
 	}
 	finishStep(nil)
 
@@ -115,6 +110,27 @@ func main() {
 	if err := webhookServer.Shutdown(shutdownCtx); err != nil && !errors.Is(err, context.Canceled) {
 		log.Printf("shutdown webhook server: %v", err)
 	}
+	return nil
+}
+
+func startDiscordBot(cfg config.Config, assistant *agent.Agent, state *store.Store, startup *startupLogger) (*discord.Bot, error) {
+	if cfg.DiscordToken == "" || cfg.AgentDiscordChannelID == "" {
+		log.Printf("discord listener disabled: DISCORD_TOKEN and DISCORD_CHANNEL_ID are both required to enable it")
+		return nil, nil
+	}
+	finishStep := startup.start("create_discord_bot")
+	bot, err := discord.NewBot(cfg, assistant, state)
+	finishStep(err)
+	if err != nil {
+		return nil, fmt.Errorf("create discord bot: %w", err)
+	}
+	finishStep = startup.start("start_discord_bot")
+	if err := bot.Start(); err != nil {
+		finishStep(err)
+		return nil, fmt.Errorf("start discord bot: %w", err)
+	}
+	finishStep(nil)
+	return bot, nil
 }
 
 type runtimeControl struct {

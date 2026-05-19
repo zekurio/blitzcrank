@@ -15,6 +15,9 @@ context_recent_messages = 12
 # Optional override/fallback mapping from Discord user ids to Seerr user ids.
 seerr_user_map = {}
 
+[web]
+listen_addr = ""
+
 [seerr]
 base_url = ""
 api_key = ""
@@ -48,6 +51,9 @@ base_url = "https://api.exa.ai"
 api_key = ""
 
 [llm.openai]
+# Set auth = "codex-oauth" to use OpenAI/Codex OAuth transport while keeping
+# runtime profiles on provider = "openai" or "openai-compatible".
+auth = ""
 base_url = "https://api.openai.com/v1"
 api_key = ""
 
@@ -89,49 +95,32 @@ timeout = "20s"
 provider = "openai-compatible"
 model = "gpt-5.5"
 reasoning_effort = "low"
-context_limit = 400000
-input_limit = 272000
-output_limit = 128000
 
 [runtime.profiles.seerr]
 provider = ""
 model = "gpt-5.5"
 reasoning_effort = "high"
-context_limit = 400000
-input_limit = 272000
-output_limit = 128000
 
 [runtime.profiles.discord]
 provider = ""
 model = "gpt-5.5"
 reasoning_effort = "medium"
-context_limit = 400000
-input_limit = 272000
-output_limit = 128000
 
 [runtime.profiles.automation]
 provider = ""
 model = "gpt-5.5"
 reasoning_effort = "high"
-context_limit = 400000
-input_limit = 272000
-output_limit = 128000
 
 [runtime.profiles.discord_triage]
 provider = ""
 model = "gpt-5.4-mini"
 reasoning_effort = "none"
-context_limit = 400000
-input_limit = 272000
-output_limit = 128000
 
 [runtime.profiles.sandbox_review]
 provider = ""
 model = "gpt-5.4-mini"
 reasoning_effort = "low"
-context_limit = 400000
-input_limit = 272000
-output_limit = 128000
 
 [storage]
 database_path = "./blitzcrank.sqlite"
+cache_dir = ""

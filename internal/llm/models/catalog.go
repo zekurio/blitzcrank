@@ -1,15 +1,16 @@
 package models
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	diskcache "blitzcrank/internal/cache"
 )
 
 const (
@@ -134,6 +135,14 @@ func Lookup(source Source, provider, model string) (Info, bool) {
 	return Info{}, false
 }
 
+func LookupEffective(source Source, provider, model string) (Info, bool) {
+	info, ok := Lookup(source, provider, model)
+	if !ok {
+		return Info{}, false
+	}
+	return ApplyProviderOverrides(provider, info), true
+}
+
 func (c *Catalog) Lookup(provider, model string) (Info, bool) {
 	if c == nil {
 		return Info{}, false
@@ -184,6 +193,13 @@ func modelSupportsFastMode(model modelsDevModel) bool {
 		}
 	}
 	return false
+}
+
+func ApplyProviderOverrides(provider string, info Info) Info {
+	if normalizeProviderID(provider) == "codex-oauth" && strings.Contains(normalizeModel(info.ID), "gpt-5.5") {
+		info.Limits = Limits{Context: 400000, Input: 272000, Output: 128000}
+	}
+	return info
 }
 
 func normalizeProviderID(provider string) string {
@@ -269,19 +285,15 @@ func effectiveCachePath(path string) string {
 	if path != "" {
 		return path
 	}
-	cacheDir, err := os.UserCacheDir()
-	if err != nil || strings.TrimSpace(cacheDir) == "" {
-		return ""
-	}
-	return filepath.Join(cacheDir, "blitzcrank", "models.dev.json")
+	return diskcache.UserPath("models.dev.json")
 }
 
 func loadFreshCache(path string, ttl time.Duration) (*Catalog, bool) {
-	info, err := os.Stat(path)
-	if err != nil || time.Since(info.ModTime()) > ttl {
+	entry, ok := diskcache.File{Path: path, TTL: ttl}.ReadFresh(contextWithoutCancel())
+	if !ok {
 		return nil, false
 	}
-	catalog, err := LoadModelsDevFile(path)
+	catalog, err := NewCatalogFromModelsDevJSON(entry.Data)
 	return catalog, err == nil
 }
 
@@ -291,21 +303,16 @@ func fetchCatalog(source Source) (*Catalog, error) {
 		baseURL = DefaultURL
 	}
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(baseURL + "/api.json")
+	data, err := diskcache.FetchBytes(contextWithoutCancel(), client, http.MethodGet, baseURL+"/api.json", nil, 8<<20)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, fmt.Errorf("fetch models.dev: status %d", resp.StatusCode)
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if err != nil {
-		return nil, err
-	}
-	if cachePath := strings.TrimSpace(source.CachePath); cachePath != "" {
-		_ = os.MkdirAll(filepath.Dir(cachePath), 0o755)
-		_ = os.WriteFile(cachePath, data, 0o600)
+	if cachePath := effectiveCachePath(source.CachePath); cachePath != "" {
+		_ = diskcache.File{Path: cachePath}.Write(contextWithoutCancel(), data)
 	}
 	return NewCatalogFromModelsDevJSON(data)
+}
+
+func contextWithoutCancel() context.Context {
+	return context.Background()
 }

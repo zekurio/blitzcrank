@@ -135,7 +135,7 @@ ON CONFLICT(thread_id) DO UPDATE SET
   completed_at=excluded.completed_at,
   completion_reason=excluded.completion_reason,
   last_payload_json=excluded.last_payload_json
-`, thread.ThreadID, thread.Source, thread.ExternalID, thread.ParentExternalID, thread.RootExternalID, thread.Status, thread.Title, thread.Summary, formatTime(thread.CreatedAt), formatTime(thread.UpdatedAt), formatTimePtr(thread.CompletedAt), thread.CompletionReason, thread.LastPayloadJSON)
+`, thread.ThreadID, thread.Source, thread.ExternalID, thread.ParentExternalID, thread.RootExternalID, thread.Status, thread.Title, thread.Summary, formatTime(thread.CreatedAt), formatTime(thread.UpdatedAt), formatTimePtr(thread.CompletedAt), thread.CompletionReason, metadataJSON(thread.LastPayloadJSON))
 	return err
 }
 
@@ -145,15 +145,15 @@ func (s *Store) UpdateAgentThreadSummary(ctx context.Context, threadID, summary 
 }
 
 func (s *Store) InsertAgentThreadEvent(ctx context.Context, event AgentThreadEvent) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO agent_thread_events(thread_id,event_type,actor,actor_id,message,external_message_id,payload_json,created_at) VALUES(?,?,?,?,?,?,?,?)`,
-		event.ThreadID, event.EventType, event.Actor, event.ActorID, event.Message, event.ExternalMessageID, event.PayloadJSON, formatTime(event.CreatedAt))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO agent_thread_events(thread_id,event_type,actor,actor_id,external_message_id,payload_json,created_at) VALUES(?,?,?,?,?,?,?)`,
+		event.ThreadID, event.EventType, event.Actor, event.ActorID, event.ExternalMessageID, metadataJSON(event.PayloadJSON), formatTime(event.CreatedAt))
 	return err
 }
 
 func (s *Store) LoadLatestAgentThreadFeedbackEvent(ctx context.Context, threadID, messageID, actorID string) (AgentThreadEvent, bool, error) {
 	var event AgentThreadEvent
 	err := s.db.QueryRowContext(ctx, `
-SELECT id,thread_id,event_type,actor,actor_id,message,external_message_id,payload_json,created_at
+SELECT id,thread_id,event_type,actor,actor_id,external_message_id,payload_json,created_at
 FROM agent_thread_events
 WHERE thread_id = ? AND event_type = 'feedback' AND external_message_id = ? AND actor_id = ?
 ORDER BY id DESC
@@ -164,7 +164,6 @@ LIMIT 1
 		&event.EventType,
 		&event.Actor,
 		&event.ActorID,
-		&event.Message,
 		&event.ExternalMessageID,
 		&event.PayloadJSON,
 		scanTime(&event.CreatedAt),
@@ -179,8 +178,8 @@ LIMIT 1
 }
 
 func (s *Store) UpdateAgentThreadEvent(ctx context.Context, event AgentThreadEvent) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE agent_thread_events SET actor = ?, actor_id = ?, message = ?, external_message_id = ?, payload_json = ? WHERE id = ?`,
-		event.Actor, event.ActorID, event.Message, event.ExternalMessageID, event.PayloadJSON, event.ID)
+	_, err := s.db.ExecContext(ctx, `UPDATE agent_thread_events SET actor = ?, actor_id = ?, external_message_id = ?, payload_json = ? WHERE id = ?`,
+		event.Actor, event.ActorID, event.ExternalMessageID, metadataJSON(event.PayloadJSON), event.ID)
 	return err
 }
 
@@ -189,13 +188,13 @@ func (s *Store) InsertAgentRun(ctx context.Context, run AgentRun) error {
 	if run.Posted {
 		posted = 1
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO agent_runs(thread_id,source_event_type,started_at,completed_at,final_response,posted,attribution,error,completion_reason,summary) VALUES(?,?,?,?,?,?,?,?,?,?)`,
-		run.ThreadID, run.SourceEventType, formatTime(run.StartedAt), formatTimePtr(run.CompletedAt), run.FinalResponse, posted, run.Attribution, run.Error, run.CompletionReason, run.Summary)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO agent_runs(thread_id,source_event_type,started_at,completed_at,posted,attribution,error,completion_reason,summary) VALUES(?,?,?,?,?,?,?,?,?)`,
+		run.ThreadID, run.SourceEventType, formatTime(run.StartedAt), formatTimePtr(run.CompletedAt), posted, run.Attribution, run.Error, run.CompletionReason, run.Summary)
 	return err
 }
 
 func (s *Store) LoadIssueEvents(ctx context.Context, issueID string) ([]IssueEvent, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,issue_id,event_key,event_type,actor,message,payload_json,created_at FROM issue_thread_events WHERE issue_id = ? ORDER BY id`, issueID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,issue_id,event_key,event_type,actor,payload_json,created_at FROM issue_thread_events WHERE issue_id = ? ORDER BY id`, issueID)
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +203,7 @@ func (s *Store) LoadIssueEvents(ctx context.Context, issueID string) ([]IssueEve
 	for rows.Next() {
 		var event IssueEvent
 		var eventKey sql.NullString
-		if err := rows.Scan(&event.ID, &event.IssueID, &eventKey, &event.EventType, &event.Actor, &event.Message, &event.PayloadJSON, scanTime(&event.CreatedAt)); err != nil {
+		if err := rows.Scan(&event.ID, &event.IssueID, &eventKey, &event.EventType, &event.Actor, &event.PayloadJSON, scanTime(&event.CreatedAt)); err != nil {
 			return nil, err
 		}
 		event.EventKey = eventKey.String
@@ -214,7 +213,7 @@ func (s *Store) LoadIssueEvents(ctx context.Context, issueID string) ([]IssueEve
 }
 
 func (s *Store) LoadIssueRuns(ctx context.Context, issueID string) ([]IssueRun, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,issue_id,source_event_type,started_at,completed_at,final_comment,posted,attribution,error,completion_reason FROM issue_runs WHERE issue_id = ? ORDER BY id`, issueID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,issue_id,source_event_type,started_at,completed_at,posted,attribution,error,completion_reason FROM issue_runs WHERE issue_id = ? ORDER BY id`, issueID)
 	if err != nil {
 		return nil, err
 	}
@@ -224,7 +223,7 @@ func (s *Store) LoadIssueRuns(ctx context.Context, issueID string) ([]IssueRun, 
 		var run IssueRun
 		var completedAt sql.NullString
 		var posted int
-		if err := rows.Scan(&run.ID, &run.IssueID, &run.SourceEventType, scanTime(&run.StartedAt), &completedAt, &run.FinalComment, &posted, &run.Attribution, &run.Error, &run.CompletionReason); err != nil {
+		if err := rows.Scan(&run.ID, &run.IssueID, &run.SourceEventType, scanTime(&run.StartedAt), &completedAt, &posted, &run.Attribution, &run.Error, &run.CompletionReason); err != nil {
 			return nil, err
 		}
 		run.CompletedAt, err = parseNullTime(completedAt)
@@ -238,7 +237,7 @@ func (s *Store) LoadIssueRuns(ctx context.Context, issueID string) ([]IssueRun, 
 }
 
 func (s *Store) LoadAgentThreadEvents(ctx context.Context, threadID string) ([]AgentThreadEvent, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,thread_id,event_type,actor,actor_id,message,external_message_id,payload_json,created_at FROM agent_thread_events WHERE thread_id = ? ORDER BY id`, threadID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,thread_id,event_type,actor,actor_id,external_message_id,payload_json,created_at FROM agent_thread_events WHERE thread_id = ? ORDER BY id`, threadID)
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +245,7 @@ func (s *Store) LoadAgentThreadEvents(ctx context.Context, threadID string) ([]A
 	var events []AgentThreadEvent
 	for rows.Next() {
 		var event AgentThreadEvent
-		if err := rows.Scan(&event.ID, &event.ThreadID, &event.EventType, &event.Actor, &event.ActorID, &event.Message, &event.ExternalMessageID, &event.PayloadJSON, scanTime(&event.CreatedAt)); err != nil {
+		if err := rows.Scan(&event.ID, &event.ThreadID, &event.EventType, &event.Actor, &event.ActorID, &event.ExternalMessageID, &event.PayloadJSON, scanTime(&event.CreatedAt)); err != nil {
 			return nil, err
 		}
 		events = append(events, event)
@@ -255,7 +254,7 @@ func (s *Store) LoadAgentThreadEvents(ctx context.Context, threadID string) ([]A
 }
 
 func (s *Store) LoadAgentRuns(ctx context.Context, threadID string) ([]AgentRun, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,thread_id,source_event_type,started_at,completed_at,final_response,posted,attribution,error,completion_reason,summary FROM agent_runs WHERE thread_id = ? ORDER BY id`, threadID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,thread_id,source_event_type,started_at,completed_at,posted,attribution,error,completion_reason,summary FROM agent_runs WHERE thread_id = ? ORDER BY id`, threadID)
 	if err != nil {
 		return nil, err
 	}
@@ -265,7 +264,7 @@ func (s *Store) LoadAgentRuns(ctx context.Context, threadID string) ([]AgentRun,
 		var run AgentRun
 		var completedAt sql.NullString
 		var posted int
-		if err := rows.Scan(&run.ID, &run.ThreadID, &run.SourceEventType, scanTime(&run.StartedAt), &completedAt, &run.FinalResponse, &posted, &run.Attribution, &run.Error, &run.CompletionReason, &run.Summary); err != nil {
+		if err := rows.Scan(&run.ID, &run.ThreadID, &run.SourceEventType, scanTime(&run.StartedAt), &completedAt, &posted, &run.Attribution, &run.Error, &run.CompletionReason, &run.Summary); err != nil {
 			return nil, err
 		}
 		run.CompletedAt, err = parseNullTime(completedAt)

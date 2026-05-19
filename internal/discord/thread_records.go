@@ -3,6 +3,8 @@ package discord
 import (
 	"context"
 	"encoding/json"
+	"log"
+	"path/filepath"
 	"time"
 
 	discordevents "blitzcrank/internal/discord/events"
@@ -99,5 +101,60 @@ func (b *Bot) loadDiscordThread(ctx context.Context, externalID string) (store.A
 	if b.store == nil {
 		return store.AgentThread{}, false, nil
 	}
-	return b.store.LoadAgentThreadByExternalID(ctx, "discord", externalID)
+	thread, ok, err := b.store.LoadAgentThreadByExternalID(ctx, "discord", externalID)
+	if err != nil || !ok {
+		return thread, ok, err
+	}
+	b.hydrateDiscordThreadContent(&thread)
+	return thread, true, nil
+}
+
+func (b *Bot) hydrateDiscordThreadContent(thread *store.AgentThread) {
+	if thread == nil {
+		return
+	}
+	records, err := store.ReadJSONL(filepath.Join(b.cfg.ThreadsDirectory, "discord", discordTraceID(thread.ThreadID)+".jsonl"))
+	if err != nil {
+		log.Printf("read discord trace %s: %v", thread.ThreadID, err)
+		return
+	}
+	eventByMessageID := make(map[string]string)
+	var eventMessages []string
+	var runResponses []string
+	for _, record := range records {
+		switch valueString(record["type"]) {
+		case "discord_event":
+			message := valueString(record["message"])
+			if id := valueString(record["external_message_id"]); id != "" && message != "" {
+				eventByMessageID[id] = message
+			}
+			if message != "" {
+				eventMessages = append(eventMessages, message)
+			}
+		case "discord_run":
+			if response := valueString(record["final_response"]); response != "" {
+				runResponses = append(runResponses, response)
+			}
+		}
+	}
+	nextEvent := 0
+	for i := range thread.Events {
+		if thread.Events[i].Message != "" {
+			continue
+		}
+		if message := eventByMessageID[thread.Events[i].ExternalMessageID]; message != "" {
+			thread.Events[i].Message = message
+			continue
+		}
+		if nextEvent < len(eventMessages) {
+			thread.Events[i].Message = eventMessages[nextEvent]
+			nextEvent++
+		}
+	}
+	for i := range thread.Runs {
+		if thread.Runs[i].FinalResponse != "" || i >= len(runResponses) {
+			continue
+		}
+		thread.Runs[i].FinalResponse = runResponses[i]
+	}
 }

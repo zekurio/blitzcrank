@@ -51,13 +51,13 @@ ON CONFLICT(issue_id) DO UPDATE SET
   completed_at=excluded.completed_at,
   completion_reason=excluded.completion_reason,
   last_payload_json=excluded.last_payload_json
-`, thread.IssueID, thread.Status, thread.Summary, formatTime(thread.CreatedAt), formatTime(thread.UpdatedAt), formatTimePtr(thread.CompletedAt), thread.CompletionReason, thread.LastPayloadJSON)
+`, thread.IssueID, thread.Status, thread.Summary, formatTime(thread.CreatedAt), formatTime(thread.UpdatedAt), formatTimePtr(thread.CompletedAt), thread.CompletionReason, metadataJSON(thread.LastPayloadJSON))
 	return err
 }
 
 func (s *Store) InsertIssueEvent(ctx context.Context, event IssueEvent) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO issue_thread_events(issue_id,event_key,event_type,actor,message,payload_json,created_at) VALUES(?,?,?,?,?,?,?)`,
-		event.IssueID, event.EventKey, event.EventType, event.Actor, event.Message, event.PayloadJSON, formatTime(event.CreatedAt))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO issue_thread_events(issue_id,event_key,event_type,actor,payload_json,created_at) VALUES(?,?,?,?,?,?)`,
+		event.IssueID, event.EventKey, event.EventType, event.Actor, metadataJSON(event.PayloadJSON), formatTime(event.CreatedAt))
 	return err
 }
 
@@ -66,8 +66,8 @@ func (s *Store) InsertIssueRun(ctx context.Context, run IssueRun) error {
 	if run.Posted {
 		posted = 1
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO issue_runs(issue_id,source_event_type,started_at,completed_at,final_comment,posted,attribution,error,completion_reason) VALUES(?,?,?,?,?,?,?,?,?)`,
-		run.IssueID, run.SourceEventType, formatTime(run.StartedAt), formatTimePtr(run.CompletedAt), run.FinalComment, posted, run.Attribution, run.Error, run.CompletionReason)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO issue_runs(issue_id,source_event_type,started_at,completed_at,posted,attribution,error,completion_reason) VALUES(?,?,?,?,?,?,?,?)`,
+		run.IssueID, run.SourceEventType, formatTime(run.StartedAt), formatTimePtr(run.CompletedAt), posted, run.Attribution, run.Error, run.CompletionReason)
 	return err
 }
 

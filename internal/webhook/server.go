@@ -34,21 +34,22 @@ func NewServer(cfg config.Config, manager *harness.Manager) *Server {
 }
 
 func (s *Server) Start(ctx context.Context) error {
-	if s.cfg.SeerrWebhookListenAddr == "" {
+	listenAddr := s.listenAddr()
+	if listenAddr == "" {
 		return nil
 	}
 	processCtx, cancel := context.WithCancel(ctx)
 	s.processCtx = processCtx
 	s.cancel = cancel
 
-	mux := http.NewServeMux()
-	mux.HandleFunc(s.cfg.SeerrWebhookPath, s.handleSeerr)
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	})
+	mux := NewRouter()
+	mux.Handle("GET", "/healthz", noContent)
+	if s.seerrWebhookEnabled() {
+		mux.Handle("POST", s.cfg.SeerrWebhookPath, s.handleSeerr)
+	}
 
 	s.server = &http.Server{
-		Addr:              s.cfg.SeerrWebhookListenAddr,
+		Addr:              listenAddr,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
@@ -63,13 +64,24 @@ func (s *Server) Start(ctx context.Context) error {
 	}()
 
 	go func() {
-		log.Printf("listening for Seerr webhooks on http://%s%s", s.cfg.SeerrWebhookListenAddr, s.cfg.SeerrWebhookPath)
+		log.Printf("listening for HTTP requests on http://%s", listenAddr)
 		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Printf("webhook server failed: %v", err)
 		}
 	}()
 
 	return nil
+}
+
+func (s *Server) listenAddr() string {
+	if strings.TrimSpace(s.cfg.HTTPListenAddr) != "" {
+		return strings.TrimSpace(s.cfg.HTTPListenAddr)
+	}
+	return strings.TrimSpace(s.cfg.SeerrWebhookListenAddr)
+}
+
+func (s *Server) seerrWebhookEnabled() bool {
+	return s.harness != nil && strings.TrimSpace(s.cfg.SeerrWebhookPath) != "" && strings.TrimSpace(s.cfg.SeerrBaseURL) != "" && strings.TrimSpace(s.cfg.SeerrAPIKey) != ""
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {

@@ -27,9 +27,13 @@ func validateStrictConfig(cfg Config) error {
 
 func validateRuntimeProfile(cfg Config, profile RuntimeProfile) error {
 	switch strings.TrimSpace(profile.Provider) {
-	case "openai-compatible":
+	case "openai", "openai-compatible":
+		switch strings.ToLower(strings.TrimSpace(cfg.OpenAIAuth)) {
+		case "codex-oauth", "oauth":
+			return nil
+		}
 		if strings.TrimSpace(cfg.OpenAIAPIKey) == "" {
-			return errors.New("OPENAI_API_KEY is required for openai-compatible default runtime provider")
+			return errors.New("OPENAI_API_KEY is required for openai/openai-compatible default runtime provider")
 		}
 	case "openrouter":
 		if strings.TrimSpace(cfg.OpenRouterAPIKey) == "" {

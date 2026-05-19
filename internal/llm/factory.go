@@ -11,6 +11,7 @@ import (
 )
 
 const (
+	ProviderOpenAI           = "openai"
 	ProviderOpenAICompatible = "openai-compatible"
 	ProviderOpenRouter       = "openrouter"
 	ProviderCodexOAuth       = "codex-oauth"
@@ -23,7 +24,11 @@ func New(cfg config.Config) (Client, error) {
 	}
 
 	switch provider {
-	case ProviderOpenAICompatible:
+	case ProviderOpenAI, ProviderOpenAICompatible:
+		switch strings.ToLower(strings.TrimSpace(cfg.OpenAIAuth)) {
+		case "codex-oauth", "oauth":
+			return codex.New(cfg)
+		}
 		return openai.New(cfg), nil
 	case ProviderOpenRouter:
 		return openrouter.New(cfg), nil

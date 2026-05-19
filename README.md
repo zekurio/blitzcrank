@@ -70,7 +70,7 @@ Runtime profiles live under `[runtime.profiles.*]`:
 - `discord_triage`: Discord triage and summaries
 - `sandbox_review`: AI review of Deno TypeScript sandbox scripts before execution
 
-Provider values are `openai-compatible`, `openrouter`, or `codex-oauth`.
+Provider values are `openai`, `openai-compatible`, `openrouter`, or `codex-oauth`. For the OpenCode-style setup, use `provider = "openai"` with `llm.openai.auth = "codex-oauth"`; Blitzcrank will route through Codex OAuth while applying Codex-specific model limits.
 
 Service diagnostics are routed through `sandbox_run_typescript`, a Deno sandbox tool. It runs short TypeScript snippets with `--no-prompt` and only the network, environment, and read permissions granted by the `sandbox_review` model. Configure the Deno binary and timeout with `[sandbox] deno_path` and `timeout`, or `SANDBOX_DENO_PATH` and `SANDBOX_TIMEOUT`.
 
@@ -84,7 +84,7 @@ go run ./cmd/blitzcrank codex logout
 
 ## Runtime State
 
-SQLite state is stored at `storage.database_path`.
+SQLite state is stored at `storage.database_path`. Disk-backed caches use `storage.cache_dir` when set and otherwise fall back to the operating system user cache directory.
 
 JSONL traces are written under `runtime.threads_dir`:
 
@@ -101,7 +101,7 @@ Prompts are embedded at build time. Skills and automations are runtime inputs an
 
 Set service credentials through TOML, `.env`, a systemd `EnvironmentFile`, SOPS, or the process environment. Do not commit secrets.
 
-For webhook deployments, set `seerr.webhook_listen_addr` and provide `seerr.base_url` plus `SEERR_API_KEY`.
+For HTTP deployments, set `web.listen_addr`. Existing Seerr webhook deployments can keep using `seerr.webhook_listen_addr`; when that legacy setting is used, also provide `seerr.base_url` plus `SEERR_API_KEY`.
 
 For Discord deployments, provide `DISCORD_TOKEN` and set `discord.channel_id`. The Discord application needs Message Content intent enabled for normal channel-message triage.
 
@@ -139,13 +139,10 @@ services.blitzcrank = {
     provider = "openrouter";
     model = "anthropic/claude-sonnet-4.6";
     reasoningEffort = "high";
-    contextLimit = 200000;
-    inputLimit = 168000;
-    outputLimit = 32000;
   };
 
   runtime.seerr = {
-    provider = "codex-oauth";
+    provider = "openai";
     model = "gpt-5.5";
     reasoningEffort = "high";
   };

@@ -90,24 +90,6 @@ func arrHistoryPath(args map[string]any, argIDKey string, queryIDKey string) (st
 	return "/api/v3/history?" + values.Encode(), nil
 }
 
-func arrCalendarPath(args map[string]any, includeKey string) (string, error) {
-	values := url.Values{includeKey: []string{"true"}}
-	if start := strings.TrimSpace(stringArg(args, "start")); start != "" {
-		values.Set("start", start)
-	}
-	if end := strings.TrimSpace(stringArg(args, "end")); end != "" {
-		values.Set("end", end)
-	}
-	if _, ok := args["unmonitored"]; ok {
-		unmonitored, err := boolArg(args, "unmonitored")
-		if err != nil {
-			return "", err
-		}
-		values.Set("unmonitored", strconv.FormatBool(unmonitored))
-	}
-	return "/api/v3/calendar?" + values.Encode(), nil
-}
-
 func arrPagedValues(args map[string]any) (url.Values, error) {
 	page, err := intArg(args, "page")
 	if err != nil {
