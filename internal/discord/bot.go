@@ -41,6 +41,7 @@ type discordSessionAPI interface {
 
 type RuntimeManager interface {
 	RunAutomation(context.Context, string) error
+	RunAutomationWithInstruction(context.Context, string, string, string, string) error
 	AutomationNames() []string
 }
 
@@ -260,7 +261,7 @@ func (b *Bot) createAutomationThread(ctx context.Context, automationName string)
 			"parent_channel_id":  b.cfg.AgentDiscordChannelID,
 			"title":              record.Title,
 			"created_at":         now.Format(time.RFC3339Nano),
-			"sqlite_state_usage": "reuses Discord automation report thread and ignores user messages inside it",
+			"sqlite_state_usage": "reuses Discord automation report thread and accepts owner/admin replies as follow-up instructions",
 		})
 	}
 	return thread.ID, nil
@@ -268,7 +269,7 @@ func (b *Bot) createAutomationThread(ctx context.Context, automationName string)
 
 func (b *Bot) lockAutomationThread(threadID string) error {
 	archived := false
-	locked := true
+	locked := false
 	_, err := b.session.ChannelEdit(threadID, &discordgo.ChannelEdit{
 		Archived: &archived,
 		Locked:   &locked,

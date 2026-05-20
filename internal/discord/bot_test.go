@@ -1191,6 +1191,114 @@ func TestDiscordAutomationReportWritesJSONLOnly(t *testing.T) {
 	}
 }
 
+func TestAutomationThreadOwnerReplyRunsInstruction(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	state, err := store.Open(ctx, filepath.Join(dir, "blitzcrank.sqlite"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer state.Close()
+
+	now := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)
+	thread := store.AgentThread{
+		ThreadID:         "discord_automation:hourly-stale-import-handler",
+		Source:           "discord_automation",
+		ExternalID:       "hourly-stale-import-handler",
+		ParentExternalID: "parent-channel-1",
+		RootExternalID:   "thread-1",
+		Status:           "active",
+		Title:            "automation: hourly stale import handler",
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+	if err := state.UpsertAgentThread(ctx, thread); err != nil {
+		t.Fatalf("UpsertAgentThread() error = %v", err)
+	}
+	runtime := &fakeAutomationRuntime{called: make(chan struct{}, 1)}
+	bot := &Bot{
+		cfg:     config.Config{InstanceOwnerID: "owner-1"},
+		store:   state,
+		runtime: runtime,
+	}
+
+	handled := bot.handleAutomationThreadMessage(nil, &discordgo.MessageCreate{Message: &discordgo.Message{
+		ID:        "message-1",
+		ChannelID: "thread-1",
+		Author:    &discordgo.User{ID: "owner-1", Username: "Owner"},
+		Content:   "Please retry the blocked import after my manual fix.",
+	}}, "Please retry the blocked import after my manual fix.")
+	if !handled {
+		t.Fatal("handleAutomationThreadMessage() = false, want true")
+	}
+	select {
+	case <-runtime.called:
+	case <-time.After(time.Second):
+		t.Fatal("automation runtime was not called")
+	}
+	if runtime.name != "hourly-stale-import-handler" || !strings.Contains(runtime.instruction, "manual fix") || runtime.authorID != "owner-1" {
+		t.Fatalf("runtime call = name=%q instruction=%q authorID=%q", runtime.name, runtime.instruction, runtime.authorID)
+	}
+	events, err := state.LoadAgentThreadEvents(ctx, thread.ThreadID)
+	if err != nil {
+		t.Fatalf("LoadAgentThreadEvents() error = %v", err)
+	}
+	if len(events) != 1 || events[0].EventType != "automation_instruction" || events[0].ActorID != "owner-1" || events[0].ExternalMessageID != "message-1" {
+		t.Fatalf("automation instruction events = %#v", events)
+	}
+	if strings.Contains(events[0].PayloadJSON, "manual fix") {
+		t.Fatalf("automation instruction payload kept content text = %s", events[0].PayloadJSON)
+	}
+}
+
+func TestAutomationThreadNonAdminReplyIsIgnored(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	state, err := store.Open(ctx, filepath.Join(dir, "blitzcrank.sqlite"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer state.Close()
+
+	now := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)
+	thread := store.AgentThread{
+		ThreadID:       "discord_automation:hourly-stale-import-handler",
+		Source:         "discord_automation",
+		ExternalID:     "hourly-stale-import-handler",
+		RootExternalID: "thread-1",
+		Status:         "active",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if err := state.UpsertAgentThread(ctx, thread); err != nil {
+		t.Fatalf("UpsertAgentThread() error = %v", err)
+	}
+	runtime := &fakeAutomationRuntime{called: make(chan struct{}, 1)}
+	bot := &Bot{cfg: config.Config{InstanceOwnerID: "owner-1"}, store: state, runtime: runtime}
+
+	handled := bot.handleAutomationThreadMessage(nil, &discordgo.MessageCreate{Message: &discordgo.Message{
+		ID:        "message-1",
+		ChannelID: "thread-1",
+		Author:    &discordgo.User{ID: "user-1", Username: "User"},
+		Content:   "do a thing",
+	}}, "do a thing")
+	if !handled {
+		t.Fatal("handleAutomationThreadMessage() = false, want true")
+	}
+	select {
+	case <-runtime.called:
+		t.Fatal("automation runtime was called for non-admin reply")
+	default:
+	}
+	events, err := state.LoadAgentThreadEvents(ctx, thread.ThreadID)
+	if err != nil {
+		t.Fatalf("LoadAgentThreadEvents() error = %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("automation instruction events = %#v, want none", events)
+	}
+}
+
 type fakeDiscordAPI struct {
 	opened     bool
 	userCalled bool
@@ -1200,6 +1308,35 @@ type fakeDiscordAPI struct {
 	created    []fakeCommandCall
 	edited     []fakeCommandCall
 	deleted    []fakeCommandCall
+}
+
+type fakeAutomationRuntime struct {
+	called      chan struct{}
+	name        string
+	instruction string
+	author      string
+	authorID    string
+	err         error
+}
+
+func (f *fakeAutomationRuntime) RunAutomation(_ context.Context, name string) error {
+	f.name = name
+	return f.err
+}
+
+func (f *fakeAutomationRuntime) RunAutomationWithInstruction(_ context.Context, name, instruction, author, authorID string) error {
+	f.name = name
+	f.instruction = instruction
+	f.author = author
+	f.authorID = authorID
+	if f.called != nil {
+		f.called <- struct{}{}
+	}
+	return f.err
+}
+
+func (f *fakeAutomationRuntime) AutomationNames() []string {
+	return []string{"hourly-stale-import-handler"}
 }
 
 type fakeCommandCall struct {

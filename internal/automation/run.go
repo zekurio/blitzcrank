@@ -20,14 +20,18 @@ type automationRunOutcome struct {
 }
 
 func (s *Scheduler) runTask(ctx context.Context, task Task) {
-	outcome := s.executeAutomationTask(ctx, task)
+	s.runTaskWithInstruction(ctx, task, "")
+}
+
+func (s *Scheduler) runTaskWithInstruction(ctx context.Context, task Task, instruction string) {
+	outcome := s.executeAutomationTask(ctx, task, instruction)
 	if !s.recordAutomationRun(task, outcome) {
 		return
 	}
 	s.deliverAutomationReport(ctx, task, outcome.result)
 }
 
-func (s *Scheduler) executeAutomationTask(ctx context.Context, task Task) automationRunOutcome {
+func (s *Scheduler) executeAutomationTask(ctx context.Context, task Task, instruction string) automationRunOutcome {
 	cfg := s.configSnapshot()
 	startedAt := time.Now().UTC()
 	runCtx, cancel := context.WithTimeout(ctx, cfg.RunTimeout)
@@ -37,7 +41,7 @@ func (s *Scheduler) executeAutomationTask(ctx context.Context, task Task) automa
 		Author:   "Blitzcrank Scheduler",
 		IsAdmin:  true,
 		Audience: "automation",
-		Content:  s.promptWithHistory(task, cfg),
+		Content:  s.promptWithHistory(task, cfg, instruction),
 	})
 	cancel()
 

@@ -312,8 +312,7 @@ func (b *Bot) modelRuntimeReply(content string, request agent.Request) string {
 }
 
 func (b *Bot) handleThreadMessage(session *discordgo.Session, event *discordgo.MessageCreate, content string) bool {
-	if b.isAutomationThread(context.Background(), event.ChannelID) {
-		log.Printf("ignored user message in automation thread: thread=%s message=%s", event.ChannelID, event.ID)
+	if b.handleAutomationThreadMessage(session, event, content) {
 		return true
 	}
 
