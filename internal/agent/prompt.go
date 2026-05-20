@@ -13,6 +13,7 @@ import (
 const (
 	systemPromptPath         = "prompts/system.md"
 	runtimePromptPath        = "prompts/runtime-metadata.md"
+	sandboxReviewPromptPath  = "prompts/sandbox-review.md"
 	discordTriagePromptPath  = "prompts/discord-triage.md"
 	discordSummaryPromptPath = "prompts/discord-thread-summary.md"
 )

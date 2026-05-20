@@ -27,7 +27,6 @@
           writeDirs = lib.unique (
             map toString [
               cfg.dataDir
-              cfg.memoriesDir
               cfg.threadsDir
               "${cfg.dataDir}/cache"
               (builtins.dirOf cfg.databasePath)
@@ -42,7 +41,6 @@
             runtime = {
               skills_dir = cfg.skillsDir;
               automations_dir = cfg.automationsDir;
-              memories_dir = toString cfg.memoriesDir;
               automations_enabled = cfg.automations.enable;
               automations_extra_dirs = cfg.extraAutomationDirs;
               threads_dir = toString cfg.threadsDir;
@@ -146,11 +144,6 @@
               type = lib.types.path;
               default = "${cfg.dataDir}/blitzcrank.sqlite";
               description = "Default SQLite database path rendered into generated TOML.";
-            };
-            memoriesDir = lib.mkOption {
-              type = lib.types.path;
-              default = "${cfg.dataDir}/memories";
-              description = "Default durable memory directory rendered into generated TOML.";
             };
             threadsDir = lib.mkOption {
               type = lib.types.path;
@@ -271,7 +264,6 @@
                 Group = cfg.group;
                 StateDirectory = [
                   "blitzcrank"
-                  "blitzcrank/memories"
                   "blitzcrank/threads"
                   "blitzcrank/cache"
                 ];

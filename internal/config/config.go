@@ -58,7 +58,6 @@ type Config struct {
 	ConfigPath                  string        `env:"BLITZCRANK_CONFIG" default:"./blitzcrank.toml"`
 	SkillsDirectory             string        `env:"SKILLS_DIR" toml:"runtime.skills_dir" default:"skills"`
 	AutomationsDirectory        string        `env:"AUTOMATIONS_DIR" toml:"runtime.automations_dir" default:"automations"`
-	MemoriesDirectory           string        `env:"MEMORIES_DIR" toml:"runtime.memories_dir" default:"memories"`
 	ThreadsDirectory            string        `env:"AGENT_THREADS_DIR" toml:"runtime.threads_dir" default:"threads"`
 	MaxToolIterations           int           `env:"AGENT_MAX_TOOL_ITERATIONS" toml:"runtime.max_tool_iterations" default:"15"`
 	RunTimeout                  time.Duration `env:"AGENT_RUN_TIMEOUT" toml:"runtime.run_timeout" default:"5m"`

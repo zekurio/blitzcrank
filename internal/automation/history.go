@@ -25,7 +25,7 @@ func (s *Scheduler) promptWithHistory(task Task, cfg config.Config) string {
 	return fmt.Sprintf(`Prior automation history for %s from local thread trace %s, newest first:
 %s
 
-Use this history as operational memory. The persistent manual-intervention ledger is preserved across context compaction and long-running automation threads. Do not repeat actions that a prior run already marked as needing manual intervention unless the current live tool evidence clearly shows the blocker was resolved.
+Use this history as the operational record. The persistent manual-intervention ledger is preserved across context compaction and long-running automation threads. Do not repeat actions that a prior run already marked as needing manual intervention unless the current live tool evidence clearly shows the blocker was resolved.
 
 Current automation prompt:
 %s`, task.Name, filepath.Join(cfg.ThreadsDirectory, "automations", task.Name+".jsonl"), history, task.Prompt)

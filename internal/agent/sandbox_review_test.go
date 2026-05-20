@@ -87,6 +87,65 @@ func TestSandboxReviewDeniesMutatingScriptInReadOnlyPolicy(t *testing.T) {
 	}
 }
 
+func TestAutomationMayRunReviewedManualImportSandboxMutation(t *testing.T) {
+	req := Request{
+		Source:   "automation_cron",
+		Audience: "automation",
+		IsAdmin:  true,
+		Content:  "Run the hourly stale import handler.",
+	}
+	script := "await fetch(Deno.env.get('RADARR_BASE_URL') + '/api/v3/command', {method:'POST', body: JSON.stringify({name:'ManualImport'})})"
+	review := sandboxReviewDecision{Mutating: true, Permissions: tools.SandboxPermissions{AllowNet: []string{"radarr.local:7878"}, AllowEnv: []string{"RADARR_BASE_URL", "RADARR_API_KEY"}}}
+	if !automationMayRunReviewedSandboxMutation(req, tools.ToolPolicy{Groups: []string{"sandbox"}}, "Radarr ManualImport for safe candidate", script, review) {
+		t.Fatal("expected stale-import automation to allow reviewed manual import mutation")
+	}
+}
+
+func TestAutomationAskReviewCanProceedForManualImportWithoutApprovalCallback(t *testing.T) {
+	reviewer := &recordingClient{responses: []llm.ChatResponse{responseWithMessage(llm.Message{
+		Role:    "assistant",
+		Content: `{"decision":"ask","reason":"manual import mutates Radarr","mutating":true,"permissions":{"allow_net":["radarr.local:7878"],"allow_env":["RADARR_BASE_URL","RADARR_API_KEY"]}}`,
+	})}}
+	agent := &Agent{
+		cfg:     config.Config{Model: "gpt-test"},
+		clients: map[string]llm.Client{"sandbox_review": reviewer},
+		registry: tools.NewRegistry(config.Config{
+			RadarrBaseURL: "http://radarr.local:7878",
+			RadarrAPIKey:  "secret",
+		}),
+	}
+	args := map[string]any{
+		"purpose": "Radarr ManualImport for safe stale-import candidate",
+		"script":  "await fetch(Deno.env.get('RADARR_BASE_URL') + '/api/v3/command', {method:'POST', body: JSON.stringify({name:'ManualImport'})})",
+	}
+	err := agent.reviewSandboxTool(context.Background(), Request{
+		Source:   "automation_cron",
+		Audience: "automation",
+		IsAdmin:  true,
+		Content:  "Run the hourly stale import handler.",
+	}, args, tools.ToolPolicy{Groups: []string{"sandbox"}})
+	if err != nil {
+		t.Fatalf("reviewSandboxTool error = %v", err)
+	}
+	if _, ok := args["_sandbox_permissions"]; !ok {
+		t.Fatalf("reviewSandboxTool did not attach sandbox permissions: %#v", args)
+	}
+}
+
+func TestAutomationDoesNotBypassApprovalForUnrelatedMutations(t *testing.T) {
+	req := Request{
+		Source:   "automation_cron",
+		Audience: "automation",
+		IsAdmin:  true,
+		Content:  "Run the hourly stale import handler.",
+	}
+	review := sandboxReviewDecision{Mutating: true, Permissions: tools.SandboxPermissions{AllowNet: []string{"sonarr.local:8989"}, AllowEnv: []string{"SONARR_BASE_URL", "SONARR_API_KEY"}}}
+	script := "await fetch(Deno.env.get('SONARR_BASE_URL') + '/api/v3/command', {method:'POST', body: JSON.stringify({name:'SeriesSearch'})})"
+	if automationMayRunReviewedSandboxMutation(req, tools.ToolPolicy{Groups: []string{"sandbox"}}, "search series", script, review) {
+		t.Fatal("unexpected automation approval bypass for unrelated Sonarr mutation")
+	}
+}
+
 func TestSandboxReviewRestrictsGrantedPermissionsToConfiguredServices(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake deno shell script is unix-only")
@@ -228,8 +287,10 @@ func TestSandboxReviewPromptIncludesAudienceContext(t *testing.T) {
 	call := llm.ToolCall{ID: "call_1", Type: "function"}
 	call.Function.Name = "sandbox_run_typescript"
 	call.Function.Arguments = toolArgsJSON(t, map[string]any{
-		"purpose": "check a media item without exposing other users",
-		"script":  "await fetch(Deno.env.get('JELLYFIN_BASE_URL') + '/Items')",
+		"purpose":       "check a media item without exposing other users",
+		"safety_level":  "read_only",
+		"safety_reason": "narrow item lookup only, no mutation",
+		"script":        "await fetch(Deno.env.get('JELLYFIN_BASE_URL') + '/Items')",
 	})
 	_, err := agent.executeTool(context.Background(), Request{
 		Source:      "discord_mention",
@@ -250,7 +311,14 @@ func TestSandboxReviewPromptIncludesAudienceContext(t *testing.T) {
 		"Requester admin: false",
 		"Audience: non_admin",
 		"Mapped Seerr user id: 42",
+		"Agent proposed safety level: read_only",
+		"Agent safety argument: narrow item lookup only, no mutation",
+		"Decision model:",
+		"Do not ask as a substitute for deciding logically.",
+		"Before choosing ask, argue against the agent's safety case",
+		"If you return ask or deny, make the reason a concise counterargument",
 		"deny or ask for admin approval when the requester is non-admin",
+		"consider the agent's proposed safety level",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("review prompt missing %q:\n%s", want, prompt)
@@ -319,6 +387,60 @@ func TestSandboxReviewAddsExactlyReferencedServiceEnvName(t *testing.T) {
 	}
 	if strings.Contains(args, "SONARR_URL") || strings.Contains(args, "RADARR_URL") || strings.Contains(args, "JELLYFIN_URL") {
 		t.Fatalf("deno args included unreferenced service aliases:\n%s", args)
+	}
+}
+
+func TestSandboxReviewAddsDynamicallyBuiltServiceEnvNames(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake deno shell script is unix-only")
+	}
+	dir := t.TempDir()
+	argsPath := filepath.Join(dir, "args.txt")
+	denoPath := filepath.Join(dir, "deno")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + shellQuote(argsPath) + "\nprintf 'ok\\n'\n"
+	if err := os.WriteFile(denoPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	reviewer := &recordingClient{responses: []llm.ChatResponse{responseWithMessage(llm.Message{
+		Role:    "assistant",
+		Content: `{"decision":"allow","reason":"read-only Arr queue fetch","mutating":false,"permissions":{}}`,
+	})}}
+	agent := &Agent{
+		cfg:      config.Config{Model: "gpt-test"},
+		clients:  map[string]llm.Client{"sandbox_review": reviewer},
+		registry: tools.NewRegistry(config.Config{SonarrBaseURL: "http://sonarr.local:8989", SonarrAPIKey: "sonarr-secret", RadarrBaseURL: "http://radarr.local:7878", RadarrAPIKey: "radarr-secret", SandboxDenoPath: denoPath, SandboxTimeout: 5 * time.Second}),
+	}
+	call := llm.ToolCall{ID: "call_1", Type: "function"}
+	call.Function.Name = "sandbox_run_typescript"
+	call.Function.Arguments = toolArgsJSON(t, map[string]any{
+		"purpose": "check Sonarr and Radarr queues",
+		"script": `
+for (const service of ["sonarr", "radarr"]) {
+  const prefix = service.toUpperCase();
+  const baseURL = Deno.env.get(prefix + "_BASE_URL");
+  const apiKey = Deno.env.get(prefix + "_API_KEY");
+  await fetch(baseURL + "/api/v3/queue", { headers: { "X-Api-Key": apiKey } });
+}
+`,
+	})
+	if _, err := agent.executeTool(context.Background(), Request{Source: "automation_cron", Audience: "automation", IsAdmin: true}, call, tools.ToolPolicy{Groups: []string{"sandbox"}}); err != nil {
+		t.Fatalf("executeTool error = %v", err)
+	}
+	data, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := string(data)
+	for _, want := range []string{
+		"SONARR_BASE_URL",
+		"SONARR_API_KEY",
+		"RADARR_BASE_URL",
+		"RADARR_API_KEY",
+		"--allow-net=sonarr.local:8989,radarr.local:7878",
+	} {
+		if !strings.Contains(args, want) {
+			t.Fatalf("deno args missing %q:\n%s", want, args)
+		}
 	}
 }
 

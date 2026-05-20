@@ -8,9 +8,13 @@ Run the hourly stale import handler.
 
 Use `sandbox_run_typescript` to inspect Sonarr and Radarr queues first. The target is queue/activity entries where the download is complete but Sonarr or Radarr did not import automatically, usually because the release filename or folder name confused automatic matching, because an otherwise valid manual import candidate is blocked by the queue import blocker, or because Sonarr/Radarr clearly rejected the candidate and the stale download should be cleaned from both Arr and the download client.
 
-Before acting on any queue item, review durable memory and the prior automation history included above the current prompt. Use `memory_list` or `memory_search` first for scope `automation` and key prefix `hourly-stale-import-handler/`. The injected history is still useful recent context, but durable Markdown memories are the preferred source for long-lived manual-intervention state.
+For every `sandbox_run_typescript` call, use the canonical service environment variables exactly as documented by the tool, and include `safety_level` plus `safety_reason`. Use `safety_level = "read_only"` for queue/candidate inspection. Use `safety_level = "narrow_mutation"` for a manual import or rejection cleanup only after this prompt's evidence requirements are met, and make `safety_reason` argue why the script touches only the selected queue item or selected manual import candidate and why it is safe for this scheduled workflow.
 
-Build a do-not-touch set from open manual-intervention memories and from any prior `MANUAL_INTERVENTION_REQUIRED` history lines that have not yet been migrated into memory. Match by service plus the most specific stable identifiers available: download id, queue id, release/folder/file path, title, season/episode, movie year, and candidate target.
+If the sandbox reviewer challenges a mutating call, treat that as a logic dispute to resolve before involving an admin: gather the missing read-only evidence, narrow the script to one exact queue/import target, or report the item under `Manuell prüfen:` when the risk cannot be reduced. Do not escalate just because the first proposed tool call was too broad.
+
+Before acting on any queue item, review the prior automation history included above the current prompt. Treat prior `MANUAL_INTERVENTION_REQUIRED` lines as the persistent manual-intervention ledger. Match by service plus the most specific stable identifiers available: download id, queue id, release/folder/file path, title, season/episode, movie year, and candidate target.
+
+Build a do-not-touch set from any prior `MANUAL_INTERVENTION_REQUIRED` history lines. Match by service plus the most specific stable identifiers available: download id, queue id, release/folder/file path, title, season/episode, movie year, and candidate target.
 
 Do not import, force import, retry, search, delete, or otherwise mutate an item that prior history already marked `MANUAL_INTERVENTION_REQUIRED`, unless current Sonarr/Radarr evidence clearly shows it is a different download, that the exact blocker was resolved by a human since the prior run, or that the stable identifiers match and the current rejection is clear enough for this automation to cleanly remove the stale download. If the same blocked item is still visible and does not qualify for rejection-based cleanup, leave it untouched silently and do not re-report it in the final response.
 
@@ -18,13 +22,12 @@ If prior history says an import was accepted but validation still showed the sam
 
 Context compaction flow:
 
-1. First read durable automation memories for `hourly-stale-import-handler/`, then read the persistent manual-intervention ledger from injected history for older records.
-2. Reconstruct the active blocked set from memory before inspecting current queue entries.
-3. For each current queue entry, classify it as one of: prior manual item, newly safe import candidate, rejection-cleanup candidate, newly unsafe/manual item, not relevant to stale completed imports, or sandbox/error state.
-4. Prior manual items are memory only. Confirm identity only as much as needed to avoid touching them, then skip them unless current evidence proves they are rejection-cleanup candidates.
-5. Newly unsafe/manual items must be written with `memory_upsert` under scope `automation` with a key like `hourly-stale-import-handler/manual-intervention/<service>-<title-or-download-id>`. Include enough stable identifiers in metadata that future compacted runs can recognize them without the older full transcript.
-6. If a previously blocked item is no longer present or tool evidence shows a human resolved it, update the memory content or delete the obsolete memory.
-7. If memory and history have missing details, prefer conservative matching: never mutate a queue item that plausibly matches a prior manual marker.
+1. First read the persistent manual-intervention ledger from injected history.
+2. Reconstruct the active blocked set before inspecting current queue entries.
+3. For each current queue entry or service check, classify it as one of: prior manual item, newly safe import candidate, rejection-cleanup candidate, newly unsafe/manual item, not relevant to stale completed imports, or sandbox/error state.
+4. Prior manual items should be confirmed only as much as needed to avoid touching them, then skipped unless current evidence proves they are rejection-cleanup candidates.
+5. Newly unsafe/manual items must be reported with enough stable identifiers that future compacted runs can recognize them from history.
+6. If history has missing details, prefer conservative matching: never mutate a queue item that plausibly matches a prior manual marker.
 
 For each stale completed item:
 
@@ -56,7 +59,7 @@ Use SABnzbd queue/history only when a Sonarr/Radarr queue item needs confirmatio
 
 Do not trigger searches, retry unrelated queue items, refresh libraries, delete files directly, clear blocklists, or resolve Seerr issues from this automation. The only cleanup deletion allowed is the rejection-based queue removal described above. Do not import uncertain matches. For Sonarr, be especially strict: if the queued episode and the manual import candidate episodes disagree, do not import it; remove it only when the service evidence clearly shows this is a wrong-episode download tied to the queued completed item, otherwise report it for manual review.
 
-Return a German operations note focused on the actual outcome from this run. It should read like a short handover for an operator, not like a dump of internal fields. Be concise for successful imports. For newly discovered manual-review items, write the human-readable reason in the report and persist stable identifiers with `memory_upsert` instead of putting them in the Discord-visible message.
+Return a German operations note focused on the actual outcome from this run. It should read like a short handover for an operator, not like a dump of internal fields. Be concise for successful imports. For newly discovered manual-review items, include the stable identifiers needed for future runs to recognize the item from history.
 
 Only mention downloads in `Importiert:` that were actually imported and then validated as resolved in this run. Do not list attempted imports, accepted-but-not-validated imports, old successes from prior history, or items merely inspected.
 
@@ -78,7 +81,7 @@ Use exactly one of these message shapes:
    - `Entfernt:` with one bullet per rejected download that was removed from Sonarr/Radarr and the download client. Include service, title, season/episode or movie year when available, release/folder name when useful, and the plain-language rejection reason. Each bullet must include the validation outcome inline.
    - `Manuell prüfen:` only include this section when new stale items from this run were intentionally skipped because the match was unsafe or uncertain. Do not use `Manuell prüfen:` for confirmed rejection-cleanup candidates that were removed successfully.
    - In `Manuell prüfen:`, each item is one human-readable German bullet that starts with the service and title, then explains the practical blocker in plain language. Mention wrong-episode downloads explicitly when Sonarr candidates do not match the queued episode. Do not lead with queue ids, download ids, enum names, or tool rejection names.
-   - Before reporting a new manual-review item, persist it with `memory_upsert`. The memory content should summarize the blocker; metadata should include service, title, season/episode or movie year, queue/download id when available, release or folder name, file path when available, candidate target, exact rejection/blocker, and the reason it is unsafe to automate.
+   - Before reporting a new manual-review item, make sure the report includes service, title, season/episode or movie year, queue/download id when available, release or folder name, candidate target, exact rejection/blocker, and the reason it is unsafe to automate.
    - Do not include old prior-history manual-intervention items in `Manuell prüfen:` when there are new imports or new skipped items to report.
 2. If no new stale imports, rejection-based removals, or newly blocked downloads were found, do not post a message, even if prior manual-intervention items are still present unchanged in the queue.
 3. If no imports were safe but one or more stale items were inspected and require manual review, post only `Manuell prüfen:` with the item shape described above.

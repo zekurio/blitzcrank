@@ -22,10 +22,6 @@ func (a *Agent) executeTool(ctx context.Context, req Request, call llm.ToolCall,
 		return nil, err
 	}
 	a.applyRequestScopedToolDefaults(req, name, args)
-	if err := validateMemoryToolAccess(req, name, args); err != nil {
-		emitProgress(req, ProgressEvent{Phase: "tool_error", ToolName: name, Error: err.Error(), Message: "Memory access is not permitted for this requester."})
-		return nil, err
-	}
 	if name == "sandbox_run_typescript" {
 		if err := a.reviewSandboxTool(ctx, req, args, policy); err != nil {
 			emitProgress(req, ProgressEvent{Phase: "tool_error", ToolName: name, Error: err.Error(), Message: "Sandbox review failed."})
@@ -149,6 +145,16 @@ func requestMessage(req Request) string {
 }
 
 func (a *Agent) applyRequestScopedToolDefaults(req Request, toolName string, args map[string]any) {
+	if toolName == "thread_history_search" {
+		if strings.TrimSpace(toolArgString(args, "source")) == "" {
+			args["source"] = defaultThreadHistorySource(req)
+		}
+		if strings.TrimSpace(toolArgString(args, "exclude_thread_id")) == "" {
+			if threadID := strings.TrimSpace(req.ThreadID); threadID != "" {
+				args["exclude_thread_id"] = threadID
+			}
+		}
+	}
 	if strings.TrimSpace(req.SeerrUserID) == "" {
 		return
 	}
@@ -160,52 +166,18 @@ func (a *Agent) applyRequestScopedToolDefaults(req Request, toolName string, arg
 	}
 }
 
-func validateMemoryToolAccess(req Request, toolName string, args map[string]any) error {
-	if !strings.HasPrefix(toolName, "memory_") || !requestAudienceIsRestricted(req) {
-		return nil
-	}
-	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(req.Source)), "discord") {
-		return fmt.Errorf("memory tools are restricted for this non-admin audience")
-	}
-	authorID := strings.Trim(strings.TrimSpace(req.AuthorID), "/")
-	if authorID == "" {
-		return fmt.Errorf("memory tools require a Discord requester id for non-admin access")
-	}
-	scope := strings.TrimSpace(toolArgString(args, "scope"))
-	if scope == "" {
-		args["scope"] = "discord_user"
-		scope = "discord_user"
-	}
-	if scope != "discord_user" {
-		return fmt.Errorf("non-admin memory access is limited to the requester's own Discord user memory")
-	}
-	keyPrefix := strings.Trim(strings.TrimSpace(toolArgString(args, "key_prefix")), "/")
-	key := strings.Trim(strings.TrimSpace(toolArgString(args, "key")), "/")
-	switch toolName {
-	case "memory_list":
-		if keyPrefix == "" {
-			args["key_prefix"] = authorID
-			return nil
-		}
-		if keyPrefix == authorID || strings.HasPrefix(keyPrefix, authorID+"/") {
-			return nil
-		}
-	case "memory_search":
-		if keyPrefix == "" {
-			args["key_prefix"] = authorID
-			return nil
-		}
-		if keyPrefix == authorID || strings.HasPrefix(keyPrefix, authorID+"/") {
-			return nil
-		}
-	case "memory_get", "memory_upsert", "memory_delete":
-		if key == authorID || strings.HasPrefix(key, authorID+"/") {
-			return nil
-		}
+func defaultThreadHistorySource(req Request) string {
+	source := strings.ToLower(strings.TrimSpace(req.Source))
+	switch {
+	case source == "automation_cron":
+		return "automations"
+	case strings.HasPrefix(source, "seerr_issue_"):
+		return "issues"
+	case strings.HasPrefix(source, "discord"):
+		return "discord"
 	default:
-		return nil
+		return "all"
 	}
-	return fmt.Errorf("non-admin memory access is limited to key prefix %q", authorID)
 }
 
 func toolArgString(args map[string]any, key string) string {

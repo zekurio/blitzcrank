@@ -20,7 +20,7 @@ For non-mention channel messages, use "support_request" only when the message is
 For bot mentions, choose a reply action even for casual/meta/unsupported messages.
 When a bot mention asks which tools are available or asks to list tools, classify it as "direct_reply", not "unsupported".
 When a bot mention asks when a named movie, series, anime, season, or episode releases or becomes available, classify it as "support_request" so the support agent can use web search.
-When a bot mention asks to remember, note, store, or save a durable fact related to a configured skill or media-server operation, classify it as "support_request"; do not treat durable memory as a time-based reminder.
+When a bot mention asks to remember, note, store, or save a durable fact, classify it as "unsupported" unless it is also a concrete media-server support request.
 When a bot mention asks for a time-based reminder, alarm, timer, or scheduled notification, classify it as "unsupported" unless a configured skill explicitly covers that capability.
 
 The reply should be concise and in the user's language. Leave reply empty for "support_request" and "ignore".

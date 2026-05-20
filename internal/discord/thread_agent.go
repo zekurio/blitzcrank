@@ -60,6 +60,7 @@ func (b *Bot) runThreadAgent(ctx context.Context, session *discordgo.Session, di
 	b.recordDiscordPromptCompactions(thread.ThreadID, prompt.Compactions)
 	request := agent.Request{
 		Source:       "discord_thread",
+		ThreadID:     thread.ThreadID,
 		Author:       discordAuthor(event.Author),
 		AuthorID:     authorID,
 		IsAdmin:      isAdmin,
@@ -188,6 +189,7 @@ func (b *Bot) runInteractionAgent(ctx context.Context, session *discordgo.Sessio
 	b.recordDiscordPromptCompactions(thread.ThreadID, prompt.Compactions)
 	request := agent.Request{
 		Source:       "discord_reply",
+		ThreadID:     thread.ThreadID,
 		Author:       discordAuthor(event.Author),
 		AuthorID:     authorID,
 		IsAdmin:      isAdmin,

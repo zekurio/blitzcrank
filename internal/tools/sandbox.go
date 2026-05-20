@@ -260,7 +260,7 @@ func (r *Registry) SandboxReferencedPermissions(script string) SandboxPermission
 	netHosts := make([]string, 0, 5)
 	envKeys := make([]string, 0, len(env))
 	for key, value := range env {
-		if !strings.Contains(script, key) {
+		if !scriptReferencesServiceEnv(script, key) {
 			continue
 		}
 		envKeys = append(envKeys, key)
@@ -269,6 +269,22 @@ func (r *Registry) SandboxReferencedPermissions(script string) SandboxPermission
 		}
 	}
 	return SandboxPermissions{AllowNet: uniqueNonEmpty(netHosts), AllowEnv: uniqueNonEmpty(envKeys)}
+}
+
+func scriptReferencesServiceEnv(script, key string) bool {
+	if strings.Contains(script, key) {
+		return true
+	}
+	if !strings.Contains(script, "Deno.env.get") {
+		return false
+	}
+	service, suffix, ok := strings.Cut(key, "_")
+	if !ok || service == "" || suffix == "" {
+		return false
+	}
+	compact := strings.ToLower(script)
+	return strings.Contains(compact, strings.ToLower(service)) &&
+		strings.Contains(compact, strings.ToLower(suffix))
 }
 
 func sandboxNetHost(raw string) string {
