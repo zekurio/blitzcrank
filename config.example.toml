@@ -74,7 +74,6 @@ fast = false
 skills_dir = "skills"
 automations_dir = "automations"
 automations_extra_dirs = []
-memories_dir = "memories"
 threads_dir = "threads"
 automations_enabled = false
 max_tool_iterations = 15

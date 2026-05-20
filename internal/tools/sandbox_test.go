@@ -147,6 +147,44 @@ func TestSandboxServicePermissionsExposeOnlyConfiguredValues(t *testing.T) {
 	if len(permissions.AllowRead) != 1 || permissions.AllowRead[0] != root {
 		t.Fatalf("AllowRead = %#v, want only %q", permissions.AllowRead, root)
 	}
+	for _, unwanted := range []string{"SEERR_URL", "SONARR_URL", "JELLYFIN_URL", "RADARR_URL", "SABNZBD_URL"} {
+		if stringSliceContains(permissions.AllowEnv, unwanted) {
+			t.Fatalf("AllowEnv included alias %q: %#v", unwanted, permissions.AllowEnv)
+		}
+	}
+}
+
+func TestSandboxReferencedPermissionsInfersDynamicallyBuiltServiceEnvNames(t *testing.T) {
+	registry := NewRegistry(config.Config{
+		SonarrBaseURL: "http://sonarr.local:8989",
+		SonarrAPIKey:  "sonarr-secret",
+		RadarrBaseURL: "http://radarr.local:7878",
+		RadarrAPIKey:  "radarr-secret",
+	})
+	script := `
+for (const service of ["sonarr", "radarr"]) {
+  const prefix = service.toUpperCase();
+  const baseURL = Deno.env.get(prefix + "_BASE_URL");
+  const apiKey = Deno.env.get(prefix + "_API_KEY");
+  await fetch(baseURL + "/api/v3/queue", { headers: { "X-Api-Key": apiKey } });
+}
+`
+	permissions := registry.SandboxReferencedPermissions(script)
+	for _, want := range []string{
+		"SONARR_BASE_URL",
+		"SONARR_API_KEY",
+		"RADARR_BASE_URL",
+		"RADARR_API_KEY",
+	} {
+		if !stringSliceContains(permissions.AllowEnv, want) {
+			t.Fatalf("AllowEnv = %#v, missing %q", permissions.AllowEnv, want)
+		}
+	}
+	for _, want := range []string{"sonarr.local:8989", "radarr.local:7878"} {
+		if !stringSliceContains(permissions.AllowNet, want) {
+			t.Fatalf("AllowNet = %#v, missing %q", permissions.AllowNet, want)
+		}
+	}
 }
 
 func TestSandboxEnvOnlyPassesConfiguredServiceSecrets(t *testing.T) {

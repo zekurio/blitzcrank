@@ -19,30 +19,44 @@ type sandboxReviewDecision struct {
 	Permissions tools.SandboxPermissions `json:"permissions"`
 }
 
+type sandboxSafetyProposal struct {
+	Level  string
+	Reason string
+}
+
 func (a *Agent) reviewSandboxTool(ctx context.Context, req Request, args map[string]any, policy tools.ToolPolicy) error {
 	script := strings.TrimSpace(toolArgString(args, "script"))
 	purpose := strings.TrimSpace(toolArgString(args, "purpose"))
+	proposal := sandboxSafetyProposal{
+		Level:  strings.TrimSpace(toolArgString(args, "safety_level")),
+		Reason: strings.TrimSpace(toolArgString(args, "safety_reason")),
+	}
 	if script == "" || purpose == "" {
 		return nil
 	}
 	if err := validateSandboxScriptPreflight(req, script); err != nil {
 		return err
 	}
-	review, err := a.sandboxReview(ctx, req, purpose, script)
+	review, err := a.sandboxReview(ctx, req, purpose, script, proposal)
 	if err != nil {
 		return err
 	}
 	review.Decision = strings.ToLower(strings.TrimSpace(review.Decision))
 	servicePermissions := a.registry.SandboxServicePermissions()
+	referencedPermissions := a.registry.SandboxReferencedPermissions(script)
 	review.Permissions = restrictSandboxPermissions(review.Permissions, servicePermissions)
 	review.Permissions = addReferencedAllowedEnv(review.Permissions, servicePermissions, script)
-	review.Permissions = addReferencedAllowedNet(review.Permissions, a.registry.SandboxReferencedPermissions(script))
+	review.Permissions = addReferencedAllowedNet(review.Permissions, referencedPermissions)
 	if policy.ReadOnly && review.Mutating {
 		return fmt.Errorf("sandbox script was classified as mutating and is not permitted in read-only source policy: %s", review.Reason)
 	}
 	switch review.Decision {
 	case "allow":
 	case "ask":
+		if automationMayRunReviewedSandboxMutation(req, policy, purpose, script, review) {
+			review.Decision = "allow"
+			break
+		}
 		if req.ToolApproval == nil {
 			return fmt.Errorf("sandbox script requires approval, but no approval callback is available: %s", review.Reason)
 		}
@@ -50,7 +64,7 @@ func (a *Agent) reviewSandboxTool(ctx context.Context, req Request, args map[str
 			Name:             "sandbox_run_typescript",
 			Mutating:         review.Mutating,
 			Destructive:      review.Mutating,
-			ArgumentsSummary: compactLogValue(map[string]any{"purpose": purpose, "review": review}, 2000),
+			ArgumentsSummary: compactLogValue(map[string]any{"purpose": purpose, "safety_level": proposal.Level, "safety_reason": proposal.Reason, "review": review}, 2000),
 		})
 		if err != nil {
 			return err
@@ -70,11 +84,13 @@ func (a *Agent) reviewSandboxTool(ctx context.Context, req Request, args map[str
 	default:
 		return fmt.Errorf("sandbox review returned invalid decision %q", review.Decision)
 	}
+	review.Permissions = addAllowedEnvNames(review.Permissions, referencedPermissions.AllowEnv)
+	review.Permissions = addReferencedAllowedNet(review.Permissions, referencedPermissions)
 	args["_sandbox_permissions"] = review.Permissions
 	return nil
 }
 
-func (a *Agent) sandboxReview(ctx context.Context, req Request, purpose, script string) (sandboxReviewDecision, error) {
+func (a *Agent) sandboxReview(ctx context.Context, req Request, purpose, script string, proposal sandboxSafetyProposal) (sandboxReviewDecision, error) {
 	client, err := a.clientForProfile("sandbox_review")
 	if err != nil {
 		return sandboxReviewDecision{}, err
@@ -84,35 +100,25 @@ func (a *Agent) sandboxReview(ctx context.Context, req Request, purpose, script 
 	model := strings.TrimSpace(profile.Model)
 	effort := ReasoningEffortForRequest(profile.ReasoningEffort, model)
 	servicePermissions := a.registry.SandboxServicePermissions()
-	prompt := fmt.Sprintf(`You review Deno TypeScript scripts before execution inside a media-server support agent.
-
-Return only compact JSON matching:
-{"decision":"allow|ask|deny","reason":"short reason","mutating":false,"permissions":{"allow_net":[],"allow_env":[],"allow_read":[],"allow_write":[]}}
-
-Rules:
-- allow read-only diagnostic scripts that fetch or inspect configured services and print concise evidence.
-- do not ask merely because a script reads allowed configured base URLs/API keys or contacts allowed configured service hosts.
-- ask for approval only if the script may mutate service state, delete data, write outside temporary diagnostics, or otherwise has operational risk.
-- deny scripts that enumerate environment variables, print/hash/encode credentials, access arbitrary hosts, use broad filesystem access, persist data, run subprocesses, or perform unrelated activity.
-- deny or ask for admin approval when the requester is non-admin and the script reads or prints other users' private data, including user lists, sessions, watch history, request history, issue history, quotas, emails, usernames, Discord IDs, Jellyfin IDs, Seerr IDs, or preferences.
-- for non-admin requesters, allow only narrow lookups for the requester's own mapped Seerr user id or for the specific media/server item being discussed; do not allow broad user, session, issue, request, or history enumeration.
-- require scripts to print minimized summaries only. Do not allow raw API responses, raw logs, internal service URLs, filesystem paths, queue/download/request ids, credentials, headers, or unrelated fields in output.
-- grant only permissions needed by this exact script.
-- allowed service network hosts: %v
-- allowed environment variables: %v
-- allowed read-only filesystem roots: %v
-- do not grant read/write permissions unless the script clearly needs them for a harmless diagnostic.
-
-Request source: %s
-Request author: %s
-Requester id: %s
-Requester admin: %t
-Audience: %s
-Mapped Seerr user id: %s
-Purpose: %s
-
-Script:
-%s`, servicePermissions.AllowNet, servicePermissions.AllowEnv, servicePermissions.AllowRead, req.Source, req.Author, nonEmptyMetadata(req.AuthorID), req.IsAdmin, requestAudience(req), nonEmptyMetadata(req.SeerrUserID), purpose, script)
+	template, err := LoadPromptTemplate(sandboxReviewPromptPath)
+	if err != nil {
+		return sandboxReviewDecision{}, err
+	}
+	prompt := strings.NewReplacer(
+		"{{allowed_net}}", fmt.Sprint(servicePermissions.AllowNet),
+		"{{allowed_env}}", fmt.Sprint(servicePermissions.AllowEnv),
+		"{{allowed_read}}", fmt.Sprint(servicePermissions.AllowRead),
+		"{{request_source}}", req.Source,
+		"{{request_author}}", req.Author,
+		"{{requester_id}}", nonEmptyMetadata(req.AuthorID),
+		"{{requester_admin}}", fmt.Sprintf("%t", req.IsAdmin),
+		"{{audience}}", requestAudience(req),
+		"{{seerr_user_id}}", nonEmptyMetadata(req.SeerrUserID),
+		"{{purpose}}", purpose,
+		"{{safety_level}}", nonEmptyMetadata(proposal.Level),
+		"{{safety_reason}}", nonEmptyMetadata(proposal.Reason),
+		"{{script}}", script,
+	).Replace(template)
 	response, err := client.Chat(ctx, llm.ChatRequest{
 		Model:           model,
 		ReasoningEffort: effort,
@@ -172,6 +178,45 @@ func requestAudienceIsRestricted(req Request) bool {
 	}
 }
 
+func automationMayRunReviewedSandboxMutation(req Request, policy tools.ToolPolicy, purpose, script string, review sandboxReviewDecision) bool {
+	if policy.ReadOnly || !review.Mutating {
+		return false
+	}
+	if strings.ToLower(strings.TrimSpace(req.Source)) != "automation_cron" || requestAudience(req) != "automation" {
+		return false
+	}
+	if !isStaleImportHandler(req.Content) {
+		return false
+	}
+	if len(review.Permissions.AllowWrite) > 0 || len(review.Permissions.AllowRead) > 0 {
+		return false
+	}
+	compact := strings.ToLower(strings.Join(strings.Fields(purpose+" "+script), " "))
+	if !strings.Contains(compact, "sonarr") && !strings.Contains(compact, "radarr") {
+		return false
+	}
+	for _, blocked := range []string{
+		"moviessearch",
+		"episodesearch",
+		"seasonsearch",
+		"seriessearch",
+		"refreshmovie",
+		"refreshseries",
+		"/api/v3/blocklist/",
+	} {
+		if strings.Contains(compact, blocked) {
+			return false
+		}
+	}
+	if strings.Contains(compact, "manualimport") {
+		return true
+	}
+	return strings.Contains(compact, "/api/v3/queue/") &&
+		strings.Contains(compact, "delete") &&
+		strings.Contains(compact, "removefromclient=true") &&
+		strings.Contains(compact, "blocklist=true")
+}
+
 func sandboxScriptHasPrivateEnumeration(compact string, req Request) bool {
 	patterns := []string{
 		"/users",
@@ -206,6 +251,22 @@ func addReferencedAllowedEnv(permissions, allowed tools.SandboxPermissions, scri
 	for _, env := range allowed.AllowEnv {
 		env = strings.TrimSpace(env)
 		if env == "" || seen[env] || !scriptReferencesEnvName(script, env) {
+			continue
+		}
+		permissions.AllowEnv = append(permissions.AllowEnv, env)
+		seen[env] = true
+	}
+	return permissions
+}
+
+func addAllowedEnvNames(permissions tools.SandboxPermissions, envNames []string) tools.SandboxPermissions {
+	seen := make(map[string]bool, len(permissions.AllowEnv))
+	for _, value := range permissions.AllowEnv {
+		seen[strings.TrimSpace(value)] = true
+	}
+	for _, env := range envNames {
+		env = strings.TrimSpace(env)
+		if env == "" || seen[env] {
 			continue
 		}
 		permissions.AllowEnv = append(permissions.AllowEnv, env)

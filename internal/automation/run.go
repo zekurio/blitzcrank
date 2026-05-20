@@ -33,6 +33,7 @@ func (s *Scheduler) executeAutomationTask(ctx context.Context, task Task) automa
 	runCtx, cancel := context.WithTimeout(ctx, cfg.RunTimeout)
 	result, err := s.runner.Respond(runCtx, agent.Request{
 		Source:   "automation_cron",
+		ThreadID: "automation:" + task.Name,
 		Author:   "Blitzcrank Scheduler",
 		IsAdmin:  true,
 		Audience: "automation",

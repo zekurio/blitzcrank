@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -29,11 +27,7 @@ func TestOpenAIToolSurfaceIsMinimalAfterSandboxMigration(t *testing.T) {
 	registry := NewRegistry(config.Config{ExaAPIKey: "secret"})
 	names := registry.ToolNamesForPolicy(ToolPolicy{})
 	want := []string{
-		"memory_list",
-		"memory_search",
-		"memory_get",
-		"memory_upsert",
-		"memory_delete",
+		"thread_history_search",
 		"sandbox_run_typescript",
 		"web_search",
 	}
@@ -56,10 +50,10 @@ func TestWebSearchToolOnlyRegisteredWhenConfigured(t *testing.T) {
 	}
 }
 
-func TestReadOnlyPolicyAllowsSandboxAndMemoryButOmitsResolve(t *testing.T) {
+func TestReadOnlyPolicyAllowsSandboxAndWebButOmitsResolve(t *testing.T) {
 	registry := NewRegistry(config.Config{ExaAPIKey: "secret"})
 	policy := ToolPolicy{ReadOnly: true}
-	for _, name := range []string{"sandbox_run_typescript", "memory_get", "memory_upsert", "web_search"} {
+	for _, name := range []string{"thread_history_search", "sandbox_run_typescript", "web_search"} {
 		if !hasToolWithPolicy(registry, name, policy) {
 			t.Fatalf("read-only policy hid %s", name)
 		}
@@ -79,109 +73,6 @@ func TestToolPolicyFiltersByGroup(t *testing.T) {
 	}
 	if !hasToolWithPolicy(registry, "web_search", policy) {
 		t.Fatal("group policy hid web_search")
-	}
-	if hasToolWithPolicy(registry, "memory_get", policy) {
-		t.Fatal("group policy exposed memory_get")
-	}
-}
-
-func TestMemoryToolsCRUDAndCategorizedPath(t *testing.T) {
-	dir := t.TempDir()
-	registry := NewRegistry(config.Config{MemoriesDirectory: dir})
-	args := map[string]any{
-		"scope":    "automation",
-		"key":      "hourly-stale-import-handler/manual-intervention/digimon-beatbreak-s01e31",
-		"title":    "Digimon Beatbreak S01E31 wrong candidate",
-		"content":  "Sonarr suggested S01E21 for a queued S01E31 download.",
-		"tags":     "stale-import, wrong-episode",
-		"metadata": `{"queue_id":"1633352971","download_id":"SABnzbd_nzo_sburz2ff"}`,
-	}
-	if _, err := registry.Call(context.Background(), "memory_upsert", args); err != nil {
-		t.Fatalf("memory_upsert error = %v", err)
-	}
-	path := filepath.Join(dir, "automation", "hourly-stale-import-handler", "manual-intervention", "digimon-beatbreak-s01e31.md")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), "---\n") || !strings.Contains(string(data), "Sonarr suggested S01E21") {
-		t.Fatalf("memory file is not markdown with frontmatter:\n%s", string(data))
-	}
-	raw, err := registry.Call(context.Background(), "memory_get", map[string]any{
-		"scope": "automation",
-		"key":   "hourly-stale-import-handler/manual-intervention/digimon-beatbreak-s01e31",
-	})
-	if err != nil {
-		t.Fatalf("memory_get error = %v", err)
-	}
-	record := raw.(memoryRecord)
-	if record.Metadata["download_id"] != "SABnzbd_nzo_sburz2ff" {
-		t.Fatalf("memory metadata = %#v", record.Metadata)
-	}
-
-	raw, err = registry.Call(context.Background(), "memory_list", map[string]any{
-		"scope":      "automation",
-		"key_prefix": "hourly-stale-import-handler",
-		"tag":        "wrong-episode",
-	})
-	if err != nil {
-		t.Fatalf("memory_list error = %v", err)
-	}
-	list := raw.(map[string]any)["memories"].([]memorySummary)
-	if len(list) != 1 || list[0].Key != "hourly-stale-import-handler/manual-intervention/digimon-beatbreak-s01e31" {
-		t.Fatalf("memory_list = %#v", list)
-	}
-
-	raw, err = registry.Call(context.Background(), "memory_search", map[string]any{"query": "s01e21"})
-	if err != nil {
-		t.Fatalf("memory_search error = %v", err)
-	}
-	search := raw.(map[string]any)["memories"].([]memoryRecord)
-	if len(search) != 1 || search[0].Scope != "automation" {
-		t.Fatalf("memory_search = %#v", search)
-	}
-
-	if _, err := registry.Call(context.Background(), "memory_delete", map[string]any{
-		"scope": "automation",
-		"key":   "hourly-stale-import-handler/manual-intervention/digimon-beatbreak-s01e31",
-	}); err != nil {
-		t.Fatalf("memory_delete error = %v", err)
-	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("memory file still exists, stat err = %v", err)
-	}
-}
-
-func TestMemoryToolsRejectUnsafePathSegments(t *testing.T) {
-	registry := NewRegistry(config.Config{MemoriesDirectory: t.TempDir()})
-	if _, err := registry.Call(context.Background(), "memory_upsert", map[string]any{
-		"scope":   "automation",
-		"key":     "../escape",
-		"content": "bad",
-	}); err == nil {
-		t.Fatal("memory_upsert accepted unsafe key")
-	}
-	if _, err := registry.Call(context.Background(), "memory_get", map[string]any{
-		"scope": "bad/scope",
-		"key":   "x",
-	}); err == nil {
-		t.Fatal("memory_get accepted nested scope")
-	}
-}
-
-func TestMemoryToolPolicy(t *testing.T) {
-	registry := NewRegistry(config.Config{})
-	if !hasToolWithPolicy(registry, "memory_get", ToolPolicy{ReadOnly: true}) {
-		t.Fatal("read-only policy hid memory_get")
-	}
-	if !hasToolWithPolicy(registry, "memory_upsert", ToolPolicy{ReadOnly: true}) {
-		t.Fatal("read-only policy hid memory_upsert")
-	}
-	if !registry.AllowedInReadOnly("memory_upsert") || !registry.AllowedInReadOnly("memory_delete") {
-		t.Fatal("memory writes are not allowed in read-only media workflows")
-	}
-	if registry.RequiresApproval("memory_delete") {
-		t.Fatal("memory_delete unexpectedly requires approval")
 	}
 }
 

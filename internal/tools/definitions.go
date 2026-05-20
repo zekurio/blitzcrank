@@ -122,12 +122,12 @@ func toolGroup(name string) string {
 		return "sabnzbd"
 	case strings.HasPrefix(name, "fs_"):
 		return "filesystem"
-	case strings.HasPrefix(name, "memory_"):
-		return "memory"
 	case strings.HasPrefix(name, "sandbox_"):
 		return "sandbox"
 	case name == "web_search":
 		return "web"
+	case strings.HasPrefix(name, "thread_history_"):
+		return "history"
 	default:
 		return ""
 	}

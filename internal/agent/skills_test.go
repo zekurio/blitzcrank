@@ -8,6 +8,8 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,7 +87,7 @@ func TestLoadEmbeddedSkills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadEmbeddedSkills() error = %v", err)
 	}
-	if !skillSliceContains(skills, "jellyfin") || !skillSliceContains(skills, "memory") || !skillSliceContains(skills, "seerr-issue-solver") {
+	if !skillSliceContains(skills, "jellyfin") || !skillSliceContains(skills, "seerr-issue-solver") {
 		t.Fatalf("embedded skills missing expected entries: %#v", skills)
 	}
 }
@@ -96,7 +98,7 @@ func TestLoadRuntimeSkillsUsesEmbeddedWhenExtraDirectoryIsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadRuntimeSkills() error = %v", err)
 	}
-	if !skillSliceContains(skills, "jellyfin") || !skillSliceContains(skills, "memory") {
+	if !skillSliceContains(skills, "jellyfin") {
 		t.Fatalf("skills = %#v, want embedded baseline", skills)
 	}
 }
@@ -107,7 +109,7 @@ func TestLoadRuntimeSkillsUsesEmbeddedWhenExtraDirectoryIsMissing(t *testing.T) 
 	if err != nil {
 		t.Fatalf("LoadRuntimeSkills() error = %v", err)
 	}
-	if !skillSliceContains(skills, "jellyfin") || !skillSliceContains(skills, "memory") {
+	if !skillSliceContains(skills, "jellyfin") {
 		t.Fatalf("skills = %#v, want embedded baseline", skills)
 	}
 }
@@ -209,7 +211,7 @@ func TestReloadSkillsUsesRuntimeSkillDir(t *testing.T) {
 	if err := agent.ReloadSkills(); err != nil {
 		t.Fatalf("ReloadSkills() error = %v", err)
 	}
-	if !skillSliceContains(agent.skills, "memory") || !skillSliceContains(agent.skills, "jellyfin") {
+	if !skillSliceContains(agent.skills, "jellyfin") {
 		t.Fatalf("skills = %#v, want embedded plus runtime skills", agent.skills)
 	}
 	if !strings.Contains(agent.discordTriagePrompt, "- jellyfin: Test skill") || strings.Contains(agent.discordTriagePrompt, "{{skill_catalog}}") {
@@ -256,21 +258,21 @@ func TestExecuteToolLogsFailureDetail(t *testing.T) {
 		log.SetFlags(previousFlags)
 	}()
 
-	agent := &Agent{registry: tools.NewRegistry(config.Config{})}
+	agent := &Agent{registry: tools.NewRegistry(config.Config{ExaAPIKey: "secret"})}
 	var call llm.ToolCall
-	call.Function.Name = "memory_get"
-	call.Function.Arguments = `{"scope":"","key":"missing"}`
+	call.Function.Name = "web_search"
+	call.Function.Arguments = `{"query":"test","limit":"many"}`
 
 	_, err := agent.executeTool(context.Background(), Request{}, call, tools.ToolPolicy{})
-	if err == nil || !strings.Contains(err.Error(), "scope is required") {
-		t.Fatalf("executeTool() error = %v, want scope error", err)
+	if err == nil || !strings.Contains(err.Error(), "limit must be an integer") {
+		t.Fatalf("executeTool() error = %v, want limit error", err)
 	}
 
 	output := logs.String()
 	for _, want := range []string{
-		`agent tool call start: name=memory_get args={"key":"missing","scope":""}`,
-		`agent tool call failed: name=memory_get`,
-		`scope is required`,
+		`agent tool call start: name=web_search args={"limit":"many","query":"test"}`,
+		`agent tool call failed: name=web_search`,
+		`limit must be an integer`,
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("tool logs missing %q:\n%s", want, output)
@@ -279,12 +281,16 @@ func TestExecuteToolLogsFailureDetail(t *testing.T) {
 }
 
 func TestExecuteToolEmitsAuditRecord(t *testing.T) {
-	dir := t.TempDir()
-	agent := &Agent{registry: tools.NewRegistry(config.Config{MemoriesDirectory: dir})}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[]}`))
+	}))
+	defer server.Close()
+	agent := &Agent{registry: tools.NewRegistry(config.Config{ExaBaseURL: server.URL, ExaAPIKey: "secret"})}
 	var records []ToolAuditRecord
 	var call llm.ToolCall
-	call.Function.Name = "memory_upsert"
-	call.Function.Arguments = toolArgsJSON(t, map[string]any{"scope": "general", "key": "audit", "content": "hello"})
+	call.Function.Name = "web_search"
+	call.Function.Arguments = toolArgsJSON(t, map[string]any{"query": "audit", "limit": 1})
 
 	_, err := agent.executeTool(context.Background(), Request{ToolAudit: func(record ToolAuditRecord) {
 		records = append(records, record)
@@ -295,7 +301,7 @@ func TestExecuteToolEmitsAuditRecord(t *testing.T) {
 	if len(records) != 1 {
 		t.Fatalf("audit records = %d, want 1", len(records))
 	}
-	if records[0].Name != "memory_upsert" || records[0].ArgumentsSummary == "" || records[0].ResultSummary == "" || records[0].CompletedAt.Before(records[0].StartedAt) {
+	if records[0].Name != "web_search" || records[0].ArgumentsSummary == "" || records[0].ResultSummary == "" || records[0].CompletedAt.Before(records[0].StartedAt) {
 		t.Fatalf("audit record = %#v", records[0])
 	}
 }
@@ -325,75 +331,6 @@ func TestRemovedServiceToolIsUnavailable(t *testing.T) {
 	_, err := agent.executeTool(context.Background(), Request{}, call, tools.ToolPolicy{ReadOnly: true})
 	if err == nil || !strings.Contains(err.Error(), "not available") {
 		t.Fatalf("executeTool() error = %v, want unavailable tool error", err)
-	}
-}
-
-func TestReadOnlyPolicyAllowsMemoryWrites(t *testing.T) {
-	dir := t.TempDir()
-	agent := &Agent{registry: tools.NewRegistry(config.Config{MemoriesDirectory: dir})}
-	var call llm.ToolCall
-	call.Function.Name = "memory_upsert"
-	call.Function.Arguments = `{"scope":"general","key":"test","content":"durable note"}`
-
-	if _, err := agent.executeTool(context.Background(), Request{}, call, tools.ToolPolicy{ReadOnly: true, Groups: []string{"memory"}}); err != nil {
-		t.Fatalf("executeTool() error = %v", err)
-	}
-}
-
-func TestNonAdminDiscordMemoryAccessIsScopedToRequester(t *testing.T) {
-	dir := t.TempDir()
-	agent := &Agent{registry: tools.NewRegistry(config.Config{MemoriesDirectory: dir})}
-	for _, key := range []string{"user-1/preferences", "user-2/preferences"} {
-		var seed llm.ToolCall
-		seed.Function.Name = "memory_upsert"
-		seed.Function.Arguments = toolArgsJSON(t, map[string]any{"scope": "discord_user", "key": key, "content": "note for " + key})
-		if _, err := agent.executeTool(context.Background(), Request{}, seed, tools.ToolPolicy{Groups: []string{"memory"}}); err != nil {
-			t.Fatalf("seed memory %s: %v", key, err)
-		}
-	}
-
-	var list llm.ToolCall
-	list.Function.Name = "memory_list"
-	list.Function.Arguments = toolArgsJSON(t, map[string]any{"scope": "discord_user"})
-	raw, err := agent.executeTool(context.Background(), Request{
-		Source:   "discord_mention",
-		AuthorID: "user-1",
-		Audience: "non_admin",
-	}, list, tools.ToolPolicy{Groups: []string{"memory"}})
-	if err != nil {
-		t.Fatalf("memory_list error = %v", err)
-	}
-	text := compactLogValue(raw, 2000)
-	if !strings.Contains(text, "user-1/preferences") || strings.Contains(text, "user-2/preferences") {
-		t.Fatalf("memory_list leaked or omitted scoped memory: %s", text)
-	}
-
-	var search llm.ToolCall
-	search.Function.Name = "memory_search"
-	search.Function.Arguments = toolArgsJSON(t, map[string]any{"scope": "discord_user", "query": "note"})
-	raw, err = agent.executeTool(context.Background(), Request{
-		Source:   "discord_mention",
-		AuthorID: "user-1",
-		Audience: "non_admin",
-	}, search, tools.ToolPolicy{Groups: []string{"memory"}})
-	if err != nil {
-		t.Fatalf("memory_search error = %v", err)
-	}
-	text = compactLogValue(raw, 2000)
-	if !strings.Contains(text, "user-1/preferences") || strings.Contains(text, "user-2/preferences") {
-		t.Fatalf("memory_search leaked or omitted scoped memory: %s", text)
-	}
-
-	var getOther llm.ToolCall
-	getOther.Function.Name = "memory_get"
-	getOther.Function.Arguments = toolArgsJSON(t, map[string]any{"scope": "discord_user", "key": "user-2/preferences"})
-	_, err = agent.executeTool(context.Background(), Request{
-		Source:   "discord_mention",
-		AuthorID: "user-1",
-		Audience: "non_admin",
-	}, getOther, tools.ToolPolicy{Groups: []string{"memory"}})
-	if err == nil || !strings.Contains(err.Error(), "limited to key prefix") {
-		t.Fatalf("memory_get error = %v, want scoped denial", err)
 	}
 }
 
@@ -471,34 +408,11 @@ func TestToolPolicySelectsRelevantDiscordGroups(t *testing.T) {
 	if policy.ReadOnly {
 		t.Fatal("discord policy is read-only")
 	}
-	if !stringSliceContains(policy.Groups, "memory") || !stringSliceContains(policy.Groups, "jellyfin") || !stringSliceContains(policy.Groups, "web") {
-		t.Fatalf("groups = %#v, want memory, jellyfin, and web", policy.Groups)
+	if !stringSliceContains(policy.Groups, "jellyfin") || !stringSliceContains(policy.Groups, "web") || !stringSliceContains(policy.Groups, "history") {
+		t.Fatalf("groups = %#v, want jellyfin, web, and history", policy.Groups)
 	}
 	if stringSliceContains(policy.Groups, "sonarr") || stringSliceContains(policy.Groups, "filesystem") {
 		t.Fatalf("groups = %#v, want no unrelated tool packs", policy.Groups)
-	}
-}
-
-func TestToolPolicyKeepsMemoryCapabilityInAgentWorkflows(t *testing.T) {
-	agent := &Agent{}
-	for _, req := range []Request{
-		{Source: "discord_thread"},
-		{Source: "automation_cron"},
-		{Source: "seerr_issue_created"},
-		{Source: "discord_slash_jellyfin", ToolGroups: []string{"jellyfin"}},
-	} {
-		policy := agent.toolPolicy(req)
-		if !stringSliceContains(policy.Groups, "memory") {
-			t.Fatalf("groups for %s = %#v, want memory", req.Source, policy.Groups)
-		}
-	}
-}
-
-func TestSkillsForRequestIncludesMemorySkill(t *testing.T) {
-	agent := &Agent{skills: []Skill{{Name: "memory"}, {Name: "jellyfin"}, {Name: "sonarr"}}}
-	skills := agent.skillsForRequest(Request{Source: "discord_thread", Content: "Ist Project Hail Mary auf Jellyfin verfuegbar?"})
-	if !skillSliceContains(skills, "memory") || !skillSliceContains(skills, "jellyfin") {
-		t.Fatalf("skills = %#v, want memory and jellyfin", skills)
 	}
 }
 
@@ -508,8 +422,8 @@ func TestToolPolicyHonorsExplicitSlashCommandGroups(t *testing.T) {
 	if policy.ReadOnly {
 		t.Fatal("discord slash policy is read-only")
 	}
-	if !stringSliceContains(policy.Groups, "memory") || !stringSliceContains(policy.Groups, "jellyfin") || !stringSliceContains(policy.Groups, "web") {
-		t.Fatalf("groups = %#v, want memory, jellyfin, and web", policy.Groups)
+	if !stringSliceContains(policy.Groups, "jellyfin") || !stringSliceContains(policy.Groups, "web") || !stringSliceContains(policy.Groups, "history") {
+		t.Fatalf("groups = %#v, want jellyfin, web, and history", policy.Groups)
 	}
 	if stringSliceContains(policy.Groups, "sonarr") || stringSliceContains(policy.Groups, "filesystem") {
 		t.Fatalf("groups = %#v, want explicit groups only", policy.Groups)
@@ -527,41 +441,72 @@ func TestSkillsForRequestHonorsExplicitSlashCommandGroups(t *testing.T) {
 func TestToolPolicyKeepsWebCapabilityInContext(t *testing.T) {
 	agent := &Agent{}
 	policy := agent.toolPolicy(Request{Source: "discord_thread", Content: "download queue is stuck"})
-	if !stringSliceContains(policy.Groups, "memory") || !stringSliceContains(policy.Groups, "sabnzbd") {
-		t.Fatalf("groups = %#v, want memory and sabnzbd", policy.Groups)
+	if !stringSliceContains(policy.Groups, "sabnzbd") {
+		t.Fatalf("groups = %#v, want sabnzbd", policy.Groups)
 	}
-	if !stringSliceContains(policy.Groups, "web") {
-		t.Fatalf("groups = %#v, want web always selected", policy.Groups)
+	if !stringSliceContains(policy.Groups, "web") || !stringSliceContains(policy.Groups, "history") {
+		t.Fatalf("groups = %#v, want web and history always selected", policy.Groups)
 	}
 }
 
 func TestToolPolicySplitsSabnzbdAndFilesystemGroups(t *testing.T) {
 	agent := &Agent{}
 	sab := agent.toolPolicy(Request{Source: "discord_thread", Content: "download queue is stuck"})
-	if !stringSliceContains(sab.Groups, "sabnzbd") || !stringSliceContains(sab.Groups, "web") || stringSliceContains(sab.Groups, "filesystem") {
-		t.Fatalf("download groups = %#v, want sabnzbd and web only", sab.Groups)
+	if !stringSliceContains(sab.Groups, "sabnzbd") || !stringSliceContains(sab.Groups, "web") || !stringSliceContains(sab.Groups, "history") || stringSliceContains(sab.Groups, "filesystem") {
+		t.Fatalf("download groups = %#v, want sabnzbd, web, and history only", sab.Groups)
 	}
 	fs := agent.toolPolicy(Request{Source: "discord_thread", Content: "check disk space and file permissions"})
-	if !stringSliceContains(fs.Groups, "filesystem") || !stringSliceContains(fs.Groups, "web") || stringSliceContains(fs.Groups, "sabnzbd") {
-		t.Fatalf("filesystem groups = %#v, want filesystem and web only", fs.Groups)
+	if !stringSliceContains(fs.Groups, "filesystem") || !stringSliceContains(fs.Groups, "web") || !stringSliceContains(fs.Groups, "history") || stringSliceContains(fs.Groups, "sabnzbd") {
+		t.Fatalf("filesystem groups = %#v, want filesystem, web, and history only", fs.Groups)
 	}
 }
 
 func TestToolContextPromptBalancesAwarenessAndUse(t *testing.T) {
 	agent := &Agent{registry: tools.NewRegistry(config.Config{ExaAPIKey: "secret"})}
-	prompt := agent.toolContextPrompt(tools.ToolPolicy{ReadOnly: true, SandboxServices: true, Groups: []string{"memory", "sandbox", "web"}})
+	prompt := agent.toolContextPrompt(tools.ToolPolicy{ReadOnly: true, SandboxServices: true, Groups: []string{"sandbox", "web", "history"}})
 	for _, want := range []string{
-		"memory (",
-		"Memory tools are available",
-		"survive this run",
+		"history (thread_history_search)",
 		"sandbox (",
 		"web (web_search)",
 		"not a checklist",
 		"read-only",
+		"Use it early for repeated symptoms",
+		"reopened Seerr issues",
+		"technical/media context",
+		"SONARR_BASE_URL/SONARR_API_KEY",
+		"Do not read fallback or alternate names",
+		"safety_level and safety_reason",
+		"read-only alternatives are insufficient",
+		"counterargument",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("toolContextPrompt() missing %q:\n%s", want, prompt)
 		}
+	}
+}
+
+func TestThreadHistoryDefaultsUseRequestScope(t *testing.T) {
+	agent := &Agent{}
+	for _, tc := range []struct {
+		name   string
+		req    Request
+		source string
+	}{
+		{name: "discord", req: Request{Source: "discord_thread", ThreadID: "discord:123"}, source: "discord"},
+		{name: "seerr", req: Request{Source: "seerr_issue_created", ThreadID: "issue:42"}, source: "issues"},
+		{name: "automation", req: Request{Source: "automation_cron", ThreadID: "automation:hourly"}, source: "automations"},
+		{name: "general", req: Request{Source: "manual", ThreadID: "manual:1"}, source: "all"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := map[string]any{"query": "Example Show stale import"}
+			agent.applyRequestScopedToolDefaults(tc.req, "thread_history_search", args)
+			if args["source"] != tc.source {
+				t.Fatalf("source default = %#v, want %q", args["source"], tc.source)
+			}
+			if args["exclude_thread_id"] != tc.req.ThreadID {
+				t.Fatalf("exclude_thread_id = %#v, want %q", args["exclude_thread_id"], tc.req.ThreadID)
+			}
+		})
 	}
 }
 
@@ -601,8 +546,8 @@ func TestRespondPropagatesSelectedToolsAcrossIterations(t *testing.T) {
 			t.Fatalf("request %d ParallelToolCalls = false", i)
 		}
 		names := toolNamesFromRaw(request.Tools)
-		if !stringSliceContains(names, "sandbox_run_typescript") || !stringSliceContains(names, "web_search") || stringSliceContains(names, "fs_stat_path") {
-			t.Fatalf("request %d tools = %#v, want sandbox and web tools without direct filesystem tools", i, names)
+		if !stringSliceContains(names, "thread_history_search") || !stringSliceContains(names, "sandbox_run_typescript") || !stringSliceContains(names, "web_search") || stringSliceContains(names, "fs_stat_path") {
+			t.Fatalf("request %d tools = %#v, want history, sandbox, and web tools without direct filesystem tools", i, names)
 		}
 	}
 	if len(client.requests[1].Messages) == 0 || client.requests[1].Messages[len(client.requests[1].Messages)-1].Role != "tool" {
@@ -615,10 +560,14 @@ func TestRespondPropagatesSelectedToolsAcrossIterations(t *testing.T) {
 }
 
 func TestRespondEmitsProgressForModelAndToolWork(t *testing.T) {
-	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[]}`))
+	}))
+	defer server.Close()
 	toolCall := llm.ToolCall{ID: "call_1", Type: "function"}
-	toolCall.Function.Name = "memory_upsert"
-	toolCall.Function.Arguments = toolArgsJSON(t, map[string]any{"scope": "general", "key": "progress", "content": "ok"})
+	toolCall.Function.Name = "web_search"
+	toolCall.Function.Arguments = toolArgsJSON(t, map[string]any{"query": "test", "limit": 1})
 	client := &recordingClient{responses: []llm.ChatResponse{
 		responseWithMessage(llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{toolCall}}),
 		responseWithMessage(llm.Message{Role: "assistant", Content: "done"}),
@@ -626,7 +575,7 @@ func TestRespondEmitsProgressForModelAndToolWork(t *testing.T) {
 	agent := &Agent{
 		cfg:           config.Config{Model: "gpt-test", MaxToolIterations: 2},
 		client:        client,
-		registry:      tools.NewRegistry(config.Config{MemoriesDirectory: root}),
+		registry:      tools.NewRegistry(config.Config{ExaBaseURL: server.URL, ExaAPIKey: "secret"}),
 		system:        "system",
 		runtimePrompt: "model={{model}}; reasoning_effort={{reasoning_effort}}; callable={{callable_tools}}; read_only={{read_only}}",
 	}
@@ -652,8 +601,8 @@ func TestRespondEmitsProgressForModelAndToolWork(t *testing.T) {
 			t.Fatalf("progress phases missing %q: %#v", want, phases)
 		}
 	}
-	if !stringSliceContains(toolNames, "memory_upsert") {
-		t.Fatalf("progress tool names = %#v, want memory_upsert", toolNames)
+	if !stringSliceContains(toolNames, "web_search") {
+		t.Fatalf("progress tool names = %#v, want web_search", toolNames)
 	}
 }
 
@@ -714,7 +663,6 @@ func TestSkillsForRequestLoadsOnlySelectedSkillPacks(t *testing.T) {
 
 func TestSkillsForRequestMatchesRuntimeSkillCatalog(t *testing.T) {
 	agent := &Agent{skills: []Skill{
-		{Name: "memory"},
 		{Name: "jellyfin"},
 		{Name: "immich", Description: "Photo library support for Immich albums, assets, people, and uploads."},
 	}}

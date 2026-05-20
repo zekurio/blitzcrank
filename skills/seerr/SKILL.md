@@ -7,6 +7,7 @@ description: Use when handling Seerr issue webhooks, reading issue/request state
 
 - Treat issue webhook payloads as the start or continuation of an internal issue-solving thread.
 - Always inspect the Seerr issue through `sandbox_run_typescript` before deciding what happened.
+- If the sandbox reviewer rejects or questions a tool call, use the critique to gather narrower evidence or reduce the action scope before escalating to an admin.
 - Use request/media ids from the webhook or issue record to decide whether Sonarr, Radarr, or Jellyfin service API checks are relevant.
 - For Discord acquisition requests such as "can you request/add/get this for me?", prefer Seerr request APIs over direct Sonarr/Radarr add or monitor actions.
 - Search Seerr first, confirm the correct media id and type, then check quota before creating a request.

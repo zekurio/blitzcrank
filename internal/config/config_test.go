@@ -83,7 +83,6 @@ webhook_listen_addr = "127.0.0.1:8080"
 [runtime]
 skills_dir = "/srv/blitzcrank/skills"
 automations_dir = "/srv/blitzcrank/automations"
-memories_dir = "/srv/blitzcrank/memories"
 automations_enabled = true
 automations_extra_dirs = ["/srv/blitzcrank/extra-automations"]
 timezone = "Europe/Vienna"
@@ -128,8 +127,8 @@ api_key = "router-key"
 	if cfg.DiscordSeerrUserMap["discord-user-1"] != "42" {
 		t.Fatalf("DiscordSeerrUserMap = %#v", cfg.DiscordSeerrUserMap)
 	}
-	if cfg.SkillsDirectory != "/srv/blitzcrank/skills" || cfg.MemoriesDirectory != "/srv/blitzcrank/memories" || cfg.Timezone != "Europe/Vienna" {
-		t.Fatalf("runtime globals = skills=%q memories=%q timezone=%q", cfg.SkillsDirectory, cfg.MemoriesDirectory, cfg.Timezone)
+	if cfg.SkillsDirectory != "/srv/blitzcrank/skills" || cfg.Timezone != "Europe/Vienna" {
+		t.Fatalf("runtime globals = skills=%q timezone=%q", cfg.SkillsDirectory, cfg.Timezone)
 	}
 	if cfg.ContextReservedTokens != 1234 || cfg.ContextTailTurns != 3 || cfg.ContextPreserveRecentTokens != 4567 {
 		t.Fatalf("context globals = reserved=%d tail=%d preserve=%d", cfg.ContextReservedTokens, cfg.ContextTailTurns, cfg.ContextPreserveRecentTokens)

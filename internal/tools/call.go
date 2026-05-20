@@ -14,7 +14,6 @@ func (r *Registry) Call(ctx context.Context, name string, args map[string]any) (
 		r.callJellyfinTool,
 		r.callSonarrTool,
 		r.callRadarrTool,
-		r.callMemoryTool,
 		r.callSandboxTool,
 		r.callUtilityTool,
 	} {
@@ -317,6 +316,8 @@ func (r *Registry) callRadarrTool(ctx context.Context, name string, args map[str
 
 func (r *Registry) callUtilityTool(ctx context.Context, name string, args map[string]any) (any, bool, error) {
 	switch name {
+	case "thread_history_search":
+		return handled(r.threadHistorySearch(args))
 	case "sabnzbd_get_queue":
 		return handled(r.sabnzbd(ctx, "queue", url.Values{}))
 	case "sabnzbd_get_history":

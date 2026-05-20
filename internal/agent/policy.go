@@ -60,7 +60,7 @@ func skillNamesForGroups(groups []string) []string {
 	names := make([]string, 0, len(groups))
 	for _, group := range groups {
 		switch group {
-		case "memory", "seerr", "jellyfin", "sonarr", "radarr", "sabnzbd", "filesystem":
+		case "seerr", "jellyfin", "sonarr", "radarr", "sabnzbd", "filesystem":
 			names = append(names, group)
 		}
 	}
@@ -135,14 +135,14 @@ func commonSkillCatalogToken(token string) bool {
 
 func (a *Agent) toolGroupsForRequest(req Request) []string {
 	if len(req.ToolGroups) > 0 {
-		return uniqueStrings(append(req.ToolGroups, "memory", "sandbox", "web"))
+		return uniqueStrings(append(req.ToolGroups, "sandbox", "web", "history"))
 	}
 	source := strings.ToLower(strings.TrimSpace(req.Source))
 	if strings.HasPrefix(source, "seerr_issue_") {
-		return []string{"memory", "sandbox", "seerr", "jellyfin", "sonarr", "radarr", "sabnzbd", "filesystem", "web"}
+		return []string{"sandbox", "seerr", "jellyfin", "sonarr", "radarr", "sabnzbd", "filesystem", "web", "history"}
 	}
 	if source == "automation_cron" {
-		return []string{"memory", "sandbox", "seerr", "jellyfin", "sonarr", "radarr", "sabnzbd", "filesystem", "web"}
+		return []string{"sandbox", "seerr", "jellyfin", "sonarr", "radarr", "sabnzbd", "filesystem", "web", "history"}
 	}
 
 	text := normalizedCapabilityText(req.Content)
@@ -172,9 +172,9 @@ func (a *Agent) toolGroupsForRequest(req Request) []string {
 		addGroup("web")
 	}
 	if len(groups) == 0 && strings.HasPrefix(source, "discord") {
-		return []string{"memory", "sandbox", "seerr", "jellyfin", "web"}
+		return []string{"sandbox", "seerr", "jellyfin", "web", "history"}
 	}
-	return uniqueStrings(append(groups, "memory", "sandbox", "web"))
+	return uniqueStrings(append(groups, "sandbox", "web", "history"))
 }
 
 func normalizedCapabilityText(content string) string {
@@ -214,11 +214,11 @@ func (a *Agent) workflowPrompt(req Request, policy tools.ToolPolicy) string {
 	}
 	switch {
 	case strings.HasPrefix(source, "seerr_issue_"):
-		return "Active workflow: Seerr issue. Follow the Seerr issue workflow and final-comment rules. " + mutation
+		return "Active workflow: Seerr issue. Follow the Seerr issue workflow and final-comment rules. If a tool review blocks or questions a proposed sandbox call, gather missing read-only evidence or narrow the script before escalating to an admin; escalate only when evidence is complete and the remaining risk needs a human decision. " + mutation
 	case source == "automation_cron":
-		return "Active workflow: scheduled automation. Follow the automation prompt for output shape. Ignore Seerr issue final-comment rules unless the automation explicitly concerns a Seerr issue. " + mutation
+		return "Active workflow: scheduled automation. Follow the automation prompt for output shape. Ignore Seerr issue final-comment rules unless the automation explicitly concerns a Seerr issue. If a mutating tool call is challenged, use reviewer feedback to narrow the target, gather read-only evidence, or report a manual-review item instead of escalating by default. " + mutation
 	case strings.HasPrefix(source, "discord"):
-		return "Active workflow: Discord support. Reply as a Discord message. Ignore Seerr issue final-comment rules unless the user explicitly asks about a Seerr issue. For new acquisition requests such as asking to add, request, get, track, or monitor a movie or show for a user, prefer Seerr request tools first so permissions and quotas are checked before downstream services are mutated. Use direct Sonarr/Radarr maintenance tools for operational repair of content that already exists downstream. Non-delete write tools may be used directly only when evidence clearly supports the action; validate with follow-up reads after any mutation. If you are not confident a non-delete write is safe, do not mutate yet and instead ask the owner/admin for approval with a compact description of the intended tool call. Delete tools require owner/admin approval before execution; when you call one, the runtime will post an approval request and wait for a thumbs-up or thumbs-down reaction. " + mutation
+		return "Active workflow: Discord support. Reply as a Discord message. Ignore Seerr issue final-comment rules unless the user explicitly asks about a Seerr issue. For new acquisition requests such as asking to add, request, get, track, or monitor a movie or show for a user, prefer Seerr request tools first so permissions and quotas are checked before downstream services are mutated. Use direct Sonarr/Radarr maintenance tools for operational repair of content that already exists downstream. Non-delete write tools may be used directly only when evidence clearly supports the action; validate with follow-up reads after any mutation. If you are not confident a non-delete write is safe, gather more read-only evidence or narrow the call before asking the owner/admin for approval with a compact description of the intended tool call. Delete tools require owner/admin approval before execution; when you call one, the runtime will post an approval request and wait for a thumbs-up or thumbs-down reaction. " + mutation
 	default:
 		return "Active workflow: general media-server support. Ignore Seerr issue final-comment rules unless the request explicitly concerns a Seerr issue. " + mutation
 	}
@@ -241,15 +241,17 @@ func (a *Agent) toolContextPrompt(policy tools.ToolPolicy) string {
 			lines = append(lines, "Web search is part of the default capability set, but no callable web_search tool is configured in this run; do not claim web verification.")
 		}
 	}
+	if policyIncludesGroup(policy, "history") && containsString(names, "thread_history_search") {
+		lines = append(lines, "thread_history_search is available for finding compact snippets from prior agent threads. Use it early for repeated symptoms, reopened Seerr issues, stale imports, ambiguous media titles, recurring automation blockers, or when the user says the problem happened again, is still happening, was already checked, or matches a prior case. Choose focused queries with the title plus symptom, for example a show name and 'stale import' or 'missing German audio'. Treat its results as historical hints, not current truth; use live service checks before claiming or changing current server state. For non-admin or Seerr issue audiences, use history only for technical/media context, never to expose other users' identities, private history, request history, watch history, or prior-thread snippets in the final reply.")
+	}
 	if policy.SandboxServices && containsString(names, "sandbox_run_typescript") {
 		lines = append(lines, "Service APIs are inspected through sandbox_run_typescript instead of one-off service tools. Write short Deno TypeScript diagnostics with a clear purpose; the runtime reviews the script and grants only the needed service permissions before execution.")
-	}
-	if policyIncludesGroup(policy, "memory") && containsString(names, "memory_upsert") {
-		lines = append(lines, "Memory tools are available for durable operational notes. Search or list relevant memories before recurring work, and upsert compact sourced facts when a blocker, preference, or manual-intervention decision should survive this run.")
+		lines = append(lines, "Sandbox service environment variables are canonical and exact: SEERR_BASE_URL/SEERR_API_KEY, JELLYFIN_BASE_URL/JELLYFIN_API_KEY, SONARR_BASE_URL/SONARR_API_KEY, RADARR_BASE_URL/RADARR_API_KEY, SABNZBD_BASE_URL/SABNZBD_API_KEY, and BOT_TIMEZONE. Do not read fallback or alternate names such as SONARR_URL, because Deno rejects reads for env names that were not granted.")
+		lines = append(lines, "When calling sandbox_run_typescript, include safety_level and safety_reason whenever the script is mutating or operationally sensitive. Argue the narrowest safety case you believe applies: exact target, evidence already gathered, why the permissions are minimal, why read-only alternatives are insufficient, and whether admin escalation should or should not be needed. The sandbox reviewer will independently challenge it; if challenged, use that counterargument to gather evidence or narrow the call before escalating.")
 	}
 	if policy.ReadOnly {
-		lines = append(lines, "This selected set is read-only for media-server operations; repair and queue mutation tools are omitted, but memory tools may still update durable notes.")
-	} else if policyIncludesGroup(policy, "seerr") || policyIncludesGroup(policy, "jellyfin") || policyIncludesGroup(policy, "sonarr") || policyIncludesGroup(policy, "radarr") || policyIncludesGroup(policy, "memory") {
+		lines = append(lines, "This selected set is read-only for media-server operations; repair and queue mutation tools are omitted.")
+	} else if policyIncludesGroup(policy, "seerr") || policyIncludesGroup(policy, "jellyfin") || policyIncludesGroup(policy, "sonarr") || policyIncludesGroup(policy, "radarr") {
 		lines = append(lines, "Mutating tools are present in this selected set. For Discord workflows, use non-delete writes only when evidence is strong, and expect delete tools to pause for owner/admin approval.")
 	}
 	return strings.Join(lines, " ")
@@ -286,12 +288,12 @@ func toolCapabilityGroup(name string) string {
 		return "sabnzbd"
 	case strings.HasPrefix(name, "fs_"):
 		return "filesystem"
-	case strings.HasPrefix(name, "memory_"):
-		return "memory"
 	case strings.HasPrefix(name, "sandbox_"):
 		return "sandbox"
 	case name == "web_search":
 		return "web"
+	case strings.HasPrefix(name, "thread_history_"):
+		return "history"
 	default:
 		return "other"
 	}

@@ -266,6 +266,7 @@ func (m *Manager) run(ctx context.Context, thread *IssueThread, payload map[stri
 	m.recordIssuePromptCompactions(thread.IssueID, prompt.Compactions)
 	request := agent.Request{
 		Source:   "seerr_issue_" + event,
+		ThreadID: "issue:" + thread.IssueID,
 		Author:   actor(payload),
 		Audience: "seerr_issue",
 		Content:  prompt.Content,

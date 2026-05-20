@@ -27,6 +27,7 @@ type Agent struct {
 
 type Request struct {
 	Source       string
+	ThreadID     string
 	Author       string
 	AuthorID     string
 	IsAdmin      bool
