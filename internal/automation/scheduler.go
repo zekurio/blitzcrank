@@ -176,6 +176,19 @@ func (s *Scheduler) RunAutomation(ctx context.Context, name string) error {
 	return fmt.Errorf("automation %q not found", name)
 }
 
+func (s *Scheduler) RunAutomationWithInstruction(ctx context.Context, name, instruction, author, authorID string) error {
+	name = strings.TrimSpace(name)
+	instruction = strings.TrimSpace(instruction)
+	for _, task := range s.taskSnapshot() {
+		if task.Name == name {
+			s.recordAutomationInstruction(task, instruction, author, authorID)
+			s.runTaskWithInstruction(ctx, task, instruction)
+			return nil
+		}
+	}
+	return fmt.Errorf("automation %q not found", name)
+}
+
 func (s *Scheduler) AutomationNames() []string {
 	tasks := s.taskSnapshot()
 	names := make([]string, 0, len(tasks))
@@ -184,6 +197,20 @@ func (s *Scheduler) AutomationNames() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+func (s *Scheduler) recordAutomationInstruction(task Task, instruction, author, authorID string) {
+	if strings.TrimSpace(instruction) == "" {
+		return
+	}
+	s.appendTrace(automationTracePath(task), map[string]any{
+		"type":       "discord_automation_instruction",
+		"automation": task.Name,
+		"actor":      strings.TrimSpace(author),
+		"actor_id":   strings.TrimSpace(authorID),
+		"message":    instruction,
+		"at":         time.Now().UTC().Format(time.RFC3339Nano),
+	})
 }
 
 func (s *Scheduler) AutomationStatus(now time.Time) string {

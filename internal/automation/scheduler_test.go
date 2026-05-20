@@ -296,6 +296,52 @@ func TestRunTaskIncludesPriorAutomationHistory(t *testing.T) {
 	}
 }
 
+func TestRunAutomationWithInstructionRecordsAndPrompts(t *testing.T) {
+	dir := t.TempDir()
+	var requests []agent.Request
+	scheduler := NewScheduler(config.Config{
+		ThreadsDirectory: dir,
+		RunTimeout:       time.Minute,
+		Timezone:         "UTC",
+	}, fakeRunner{reply: "done", requests: &requests}, nil, nil)
+	scheduler.tasks = []Task{{
+		Name:   "hourly-stale-import-handler",
+		Prompt: "Run the hourly stale import handler.",
+	}}
+
+	err := scheduler.RunAutomationWithInstruction(context.Background(), "hourly-stale-import-handler", "Retry the Jellyfin validation after cleanup.", "Owner (owner-1)", "owner-1")
+	if err != nil {
+		t.Fatalf("RunAutomationWithInstruction() error = %v", err)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("requests len = %d, want 1", len(requests))
+	}
+	content := requests[0].Content
+	if !strings.Contains(content, "Current owner/admin instruction from the Discord automation thread:") ||
+		!strings.Contains(content, "Retry the Jellyfin validation after cleanup.") {
+		t.Fatalf("request content missing current instruction:\n%s", content)
+	}
+	if !strings.Contains(content, "Owner/admin instruction from Discord automation thread by Owner (owner-1):") {
+		t.Fatalf("request content missing instruction history:\n%s", content)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "automations", "hourly-stale-import-handler.jsonl"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("trace line count = %d, want instruction and run\n%s", len(lines), string(data))
+	}
+	var instruction map[string]any
+	if err := json.Unmarshal([]byte(lines[0]), &instruction); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if instruction["type"] != "discord_automation_instruction" || instruction["actor_id"] != "owner-1" {
+		t.Fatalf("instruction trace = %#v", instruction)
+	}
+}
+
 func TestRunTaskKeepsOldManualMarkersAfterRecentHistoryLimit(t *testing.T) {
 	dir := t.TempDir()
 	traceDir := filepath.Join(dir, "automations")

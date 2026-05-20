@@ -136,6 +136,7 @@ func startDiscordBot(cfg config.Config, assistant *agent.Agent, state *store.Sto
 type runtimeControl struct {
 	automations interface {
 		RunAutomation(context.Context, string) error
+		RunAutomationWithInstruction(context.Context, string, string, string, string) error
 		AutomationNames() []string
 	}
 }
@@ -176,6 +177,10 @@ func startupDuration(duration time.Duration) time.Duration {
 
 func (r *runtimeControl) RunAutomation(ctx context.Context, name string) error {
 	return r.automations.RunAutomation(ctx, name)
+}
+
+func (r *runtimeControl) RunAutomationWithInstruction(ctx context.Context, name, instruction, author, authorID string) error {
+	return r.automations.RunAutomationWithInstruction(ctx, name, instruction, author, authorID)
 }
 
 func (r *runtimeControl) AutomationNames() []string {

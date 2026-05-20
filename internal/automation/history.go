@@ -17,10 +17,21 @@ const (
 	automationHistoryMaxEntryBytes = 6000
 )
 
-func (s *Scheduler) promptWithHistory(task Task, cfg config.Config) string {
+func (s *Scheduler) promptWithHistory(task Task, cfg config.Config, instruction string) string {
 	history := s.automationHistory(task.Name, cfg)
+	instruction = strings.TrimSpace(instruction)
+	prompt := task.Prompt
+	if instruction != "" {
+		prompt = fmt.Sprintf(`Current owner/admin instruction from the Discord automation thread:
+%s
+
+Apply this instruction to this run while still following the automation's standing safety rules.
+
+Standing automation prompt:
+%s`, instruction, task.Prompt)
+	}
 	if strings.TrimSpace(history) == "" {
-		return task.Prompt
+		return prompt
 	}
 	return fmt.Sprintf(`Prior automation history for %s from local thread trace %s, newest first:
 %s
@@ -28,7 +39,7 @@ func (s *Scheduler) promptWithHistory(task Task, cfg config.Config) string {
 Use this history as the operational record. The persistent manual-intervention ledger is preserved across context compaction and long-running automation threads. Do not repeat actions that a prior run already marked as needing manual intervention unless the current live tool evidence clearly shows the blocker was resolved.
 
 Current automation prompt:
-%s`, task.Name, filepath.Join(cfg.ThreadsDirectory, "automations", task.Name+".jsonl"), history, task.Prompt)
+%s`, task.Name, filepath.Join(cfg.ThreadsDirectory, "automations", task.Name+".jsonl"), history, prompt)
 }
 
 func (s *Scheduler) automationHistory(name string, cfg config.Config) string {
@@ -155,6 +166,8 @@ func automationHistoryRecord(data []byte) string {
 		return automationRunSummary(record)
 	case "discord_automation_report":
 		return automationReportSummary(record)
+	case "discord_automation_instruction":
+		return automationInstructionSummary(record)
 	default:
 		return ""
 	}
@@ -184,6 +197,24 @@ func automationReportSummary(record map[string]any) string {
 		return "Discord automation thread report:\n" + message
 	}
 	return when + "\nDiscord automation thread report:\n" + message
+}
+
+func automationInstructionSummary(record map[string]any) string {
+	when := firstString(record, "at", "created_at")
+	author := strings.TrimSpace(firstString(record, "actor"))
+	message := strings.TrimSpace(firstString(record, "message"))
+	if message == "" {
+		return ""
+	}
+	message = compactAutomationHistoryText(message)
+	prefix := "Owner/admin instruction from Discord automation thread"
+	if author != "" {
+		prefix += " by " + author
+	}
+	if when == "" {
+		return prefix + ":\n" + message
+	}
+	return when + "\n" + prefix + ":\n" + message
 }
 
 func firstString(record map[string]any, keys ...string) string {
