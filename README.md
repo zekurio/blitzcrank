@@ -51,6 +51,7 @@ Keep secrets in `.env`, a systemd `EnvironmentFile`, SOPS/agenix, or another sec
 ```sh
 PI_TOOL_SECRET=long-random-local-secret
 DISCORD_TOKEN=... # optional, for automation reporting/triggering
+DISCORD_AUTOMATION_CHANNEL_ID=... # or DISCORD_CHANNEL_ID fallback
 SEERR_API_KEY=...
 JELLYFIN_API_KEY=...
 SONARR_API_KEY=...
@@ -70,7 +71,8 @@ Minimal TOML shape:
 [discord]
 # Optional automation reporting and /automatisierung command.
 guild_id = ""
-automation_channel_id = ""
+automation_channel_id = "" # falls back to discord.channel_id / DISCORD_CHANNEL_ID
+channel_id = ""
 automation_thread_lock = true
 
 [web]

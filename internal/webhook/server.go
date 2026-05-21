@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -56,6 +57,11 @@ func (s *Server) Start(ctx context.Context) error {
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
+	listener, err := net.Listen("tcp", listenAddr)
+	if err != nil {
+		cancel()
+		return err
+	}
 
 	go func() {
 		<-ctx.Done()
@@ -68,7 +74,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	go func() {
 		log.Printf("listening for HTTP requests on http://%s", listenAddr)
-		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := s.server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			log.Printf("webhook server failed: %v", err)
 		}
 	}()

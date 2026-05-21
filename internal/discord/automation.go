@@ -26,13 +26,19 @@ type Bot struct {
 }
 
 func New(cfg config.Config, scheduler Scheduler) (*Bot, error) {
-	if strings.TrimSpace(cfg.DiscordToken) == "" || strings.TrimSpace(cfg.DiscordAutomationChannelID) == "" {
+	if strings.TrimSpace(cfg.DiscordToken) == "" {
+		log.Printf("discord automation bot disabled: DISCORD_TOKEN is not set")
+		return nil, nil
+	}
+	if strings.TrimSpace(cfg.DiscordAutomationChannelID) == "" {
+		log.Printf("discord automation bot disabled: DISCORD_AUTOMATION_CHANNEL_ID or DISCORD_CHANNEL_ID is not set")
 		return nil, nil
 	}
 	s, err := discordgo.New("Bot " + strings.TrimSpace(cfg.DiscordToken))
 	if err != nil {
 		return nil, err
 	}
+	s.Identify.Intents = discordgo.IntentsGuilds
 	bot := &Bot{cfg: cfg, session: s, scheduler: scheduler}
 	s.AddHandler(bot.onInteractionCreate)
 	return bot, nil
