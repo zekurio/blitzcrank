@@ -75,3 +75,46 @@ func (s *Store) UpdateIssueThreadSummary(ctx context.Context, issueID, summary s
 	_, err := s.db.ExecContext(ctx, `UPDATE issue_threads SET summary = ?, updated_at = ? WHERE issue_id = ?`, summary, formatTime(updatedAt), issueID)
 	return err
 }
+
+func (s *Store) LoadIssueEvents(ctx context.Context, issueID string) ([]IssueEvent, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,issue_id,event_key,event_type,actor,payload_json,created_at FROM issue_thread_events WHERE issue_id = ? ORDER BY id`, issueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var events []IssueEvent
+	for rows.Next() {
+		var event IssueEvent
+		var eventKey sql.NullString
+		if err := rows.Scan(&event.ID, &event.IssueID, &eventKey, &event.EventType, &event.Actor, &event.PayloadJSON, scanTime(&event.CreatedAt)); err != nil {
+			return nil, err
+		}
+		event.EventKey = eventKey.String
+		events = append(events, event)
+	}
+	return events, rows.Err()
+}
+
+func (s *Store) LoadIssueRuns(ctx context.Context, issueID string) ([]IssueRun, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,issue_id,source_event_type,started_at,completed_at,posted,attribution,error,completion_reason FROM issue_runs WHERE issue_id = ? ORDER BY id`, issueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var runs []IssueRun
+	for rows.Next() {
+		var run IssueRun
+		var completedAt sql.NullString
+		var posted int
+		if err := rows.Scan(&run.ID, &run.IssueID, &run.SourceEventType, scanTime(&run.StartedAt), &completedAt, &posted, &run.Attribution, &run.Error, &run.CompletionReason); err != nil {
+			return nil, err
+		}
+		run.CompletedAt, err = parseNullTime(completedAt)
+		if err != nil {
+			return nil, err
+		}
+		run.Posted = posted == 1
+		runs = append(runs, run)
+	}
+	return runs, rows.Err()
+}

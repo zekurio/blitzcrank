@@ -8,16 +8,6 @@ func (r *Registry) OpenAITools() []any {
 
 func (r *Registry) OpenAIToolsForPolicy(policy ToolPolicy) []any {
 	defs := append([]toolDef{}, baseToolDefs...)
-	if strings.TrimSpace(r.cfg.ExaAPIKey) != "" {
-		defs = append(defs, toolDef{
-			Name:        "web_search",
-			Description: "Search the public web for current or external facts using Exa. Use after local media-server tools when an answer depends on outside facts, such as release availability, language/audio-track availability, schedules, or public metadata.",
-			Parameters: objectSchema(map[string]any{
-				"query": stringSchema("Search query"),
-				"limit": numberSchema("Maximum search results to return, from 1 to 10"),
-			}, []string{"query"}),
-		})
-	}
 	out := make([]any, 0, len(defs))
 	for _, def := range defs {
 		if !r.toolAllowed(def, policy) {
@@ -36,12 +26,8 @@ func (r *Registry) OpenAIToolsForPolicy(policy ToolPolicy) []any {
 }
 
 func (r *Registry) ToolNamesForPolicy(policy ToolPolicy) []string {
-	defs := append([]toolDef{}, baseToolDefs...)
-	if strings.TrimSpace(r.cfg.ExaAPIKey) != "" {
-		defs = append(defs, toolDef{Name: "web_search"})
-	}
-	names := make([]string, 0, len(defs))
-	for _, def := range defs {
+	names := make([]string, 0, len(baseToolDefs))
+	for _, def := range baseToolDefs {
 		if !r.toolAllowed(def, policy) {
 			continue
 		}
@@ -60,23 +46,15 @@ func (r *Registry) ToolAllowedForPolicy(name string, policy ToolPolicy) bool {
 
 func (r *Registry) IsMutatingTool(name string) bool {
 	def, ok := r.toolDef(name)
-	if !ok {
-		return false
-	}
-	return def.Mutating
+	return ok && def.Mutating
 }
 
 func (r *Registry) IsDestructiveTool(name string) bool {
 	def, ok := r.toolDef(name)
-	if !ok {
-		return false
-	}
-	return def.Destructive
+	return ok && def.Destructive
 }
 
-func (r *Registry) RequiresApproval(name string) bool {
-	return r.IsDestructiveTool(name)
-}
+func (r *Registry) RequiresApproval(name string) bool { return r.IsDestructiveTool(name) }
 
 func (r *Registry) AllowedInReadOnly(name string) bool {
 	def, ok := r.toolDef(name)
@@ -85,9 +63,6 @@ func (r *Registry) AllowedInReadOnly(name string) bool {
 
 func (r *Registry) toolAllowed(def toolDef, policy ToolPolicy) bool {
 	if policy.ReadOnly && def.Mutating && !def.ReadOnlyAllowed {
-		return false
-	}
-	if policy.SandboxServices && isServiceToolGroup(toolGroup(def.Name)) && !sandboxServicesExplicitTool(def.Name) {
 		return false
 	}
 	if len(policy.Groups) == 0 {
@@ -101,9 +76,6 @@ func (r *Registry) toolDef(name string) (toolDef, bool) {
 		if def.Name == name {
 			return def, true
 		}
-	}
-	if name == "web_search" && strings.TrimSpace(r.cfg.ExaAPIKey) != "" {
-		return toolDef{Name: "web_search"}, true
 	}
 	return toolDef{}, false
 }
@@ -122,10 +94,6 @@ func toolGroup(name string) string {
 		return "sabnzbd"
 	case strings.HasPrefix(name, "fs_"):
 		return "filesystem"
-	case strings.HasPrefix(name, "sandbox_"):
-		return "sandbox"
-	case name == "web_search":
-		return "web"
 	case strings.HasPrefix(name, "thread_history_"):
 		return "history"
 	default:
@@ -146,13 +114,6 @@ func isServiceToolGroup(group string) bool {
 	switch group {
 	case "seerr", "jellyfin", "sonarr", "radarr", "sabnzbd", "filesystem":
 		return true
-	default:
-		return false
-	}
-}
-
-func sandboxServicesExplicitTool(name string) bool {
-	switch name {
 	default:
 		return false
 	}

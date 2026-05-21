@@ -6,15 +6,18 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 func (r *Registry) Call(ctx context.Context, name string, args map[string]any) (any, error) {
+	if service, ok := strings.CutSuffix(name, "_request"); ok {
+		return r.ServiceRequest(ctx, service, args)
+	}
 	for _, dispatch := range []func(context.Context, string, map[string]any) (any, bool, error){
 		r.callSeerrTool,
 		r.callJellyfinTool,
 		r.callSonarrTool,
 		r.callRadarrTool,
-		r.callSandboxTool,
 		r.callUtilityTool,
 	} {
 		value, handled, err := dispatch(ctx, name, args)
@@ -342,12 +345,6 @@ func (r *Registry) callUtilityTool(ctx context.Context, name string, args map[st
 		return handled(r.fsFindRecent(stringArg(args, "root"), limit))
 	case "fs_disk_usage":
 		return handled(r.fsDiskUsage(stringArg(args, "path")))
-	case "web_search":
-		limit, err := intArg(args, "limit")
-		if err != nil {
-			return nil, true, err
-		}
-		return handled(r.exaSearch(ctx, stringArg(args, "query"), limit))
 	default:
 		return nil, false, nil
 	}

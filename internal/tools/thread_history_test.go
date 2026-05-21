@@ -101,7 +101,7 @@ func TestThreadHistorySearchSnippetsIncludeToolOutcomeSummaries(t *testing.T) {
 	root := t.TempDir()
 	writeTrace(t, filepath.Join(root, "issues", "issue-7.jsonl"), map[string]any{
 		"type":           "tool_call",
-		"tool_name":      "sandbox_run_typescript",
+		"tool_name":      "sonarr_request",
 		"result_summary": "Sonarr history showed Example Show S01E02 was blocklisted after an import rejection.",
 		"completed_at":   "2026-05-20T10:00:00Z",
 	})
@@ -119,7 +119,7 @@ func TestThreadHistorySearchSnippetsIncludeToolOutcomeSummaries(t *testing.T) {
 		t.Fatalf("result = %#v, want seerr_issue alias and one match", result)
 	}
 	text := result.Matches[0].Snippets[0].Text
-	if !strings.Contains(text, "sandbox_run_typescript") || !strings.Contains(text, "blocklisted") {
+	if !strings.Contains(text, "sonarr_request") || !strings.Contains(text, "blocklisted") {
 		t.Fatalf("snippet = %q, want tool name and result summary", text)
 	}
 }

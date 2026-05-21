@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"blitzcrank/internal/agent"
 	"blitzcrank/internal/config"
 	"blitzcrank/internal/runtimectx"
 	"blitzcrank/internal/tools"
@@ -27,13 +26,22 @@ type fakeRunner struct {
 	model string
 }
 
-func (f *fakeRunner) Respond(_ context.Context, req agent.Request) (string, error) {
+func (f *fakeRunner) Respond(_ context.Context, req Request) (string, error) {
 	f.calls++
 	return f.reply, f.err
 }
 
-func (f *fakeRunner) ModelName(agent.Request) string {
+func (f *fakeRunner) ModelName(Request) string {
 	return f.model
+}
+
+type runtimeRunner struct {
+	fakeRunner
+	effort string
+}
+
+func (r *runtimeRunner) RuntimeInfo(Request) (string, string) {
+	return r.model, r.effort
 }
 
 type observedRunner struct {
@@ -53,7 +61,7 @@ type progressRunner struct {
 	calls int
 }
 
-func (r *retryRunner) Respond(_ context.Context, req agent.Request) (string, error) {
+func (r *retryRunner) Respond(_ context.Context, req Request) (string, error) {
 	r.calls++
 	if r.calls == 1 {
 		return "", errors.New("temporary agent failure")
@@ -61,16 +69,15 @@ func (r *retryRunner) Respond(_ context.Context, req agent.Request) (string, err
 	return "Erledigt.", nil
 }
 
-func (r *progressRunner) Respond(_ context.Context, req agent.Request) (string, error) {
+func (r *progressRunner) Respond(_ context.Context, req Request) (string, error) {
 	r.calls++
 	if req.Progress != nil {
-		req.Progress(agent.ProgressEvent{Phase: "start"})
-		req.Progress(agent.ProgressEvent{Phase: "tool_start", ToolName: "sandbox_run_typescript"})
+		req.Progress(ProgressEvent{Phase: "assistant_turn", CurrentResponse: "Ich prüfe die Ursache.", Todos: []TodoItem{{Content: "Ursache prüfen"}, {Content: "Ergebnis melden"}}})
 	}
 	return "RESOLVE_ISSUE: no\n\nIch konnte den Status prüfen; ein sicherer Fix ist mit den verfügbaren Informationen nicht möglich.", nil
 }
 
-func (r *observedRunner) Respond(ctx context.Context, req agent.Request) (string, error) {
+func (r *observedRunner) Respond(ctx context.Context, req Request) (string, error) {
 	r.mu.Lock()
 	r.calls++
 	r.active++
@@ -179,17 +186,28 @@ func TestHandleWebhookResolveDirectivePostsCommentAndResolvesIssue(t *testing.T)
 
 func TestHandleWebhookPostsSingleProgressComment(t *testing.T) {
 	var posted []string
+	var updated []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/issue/42/comment" {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/issue/42/comment":
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			posted = append(posted, body["message"])
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"comment-1"}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/issue/42/comment/comment-1":
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			updated = append(updated, body["message"])
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"comment-1"}`))
+		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
-		var body map[string]string
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatal(err)
-		}
-		posted = append(posted, body["message"])
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 	defer server.Close()
 
@@ -207,14 +225,14 @@ func TestHandleWebhookPostsSingleProgressComment(t *testing.T) {
 	if runner.calls != 1 {
 		t.Fatalf("runner calls = %d, want 1", runner.calls)
 	}
-	if len(posted) != 2 {
-		t.Fatalf("posted comments = %d, want progress and final: %#v", len(posted), posted)
+	if len(posted) != 1 || len(updated) != 1 {
+		t.Fatalf("posted=%d updated=%d, want one post and one update: posted=%#v updated=%#v", len(posted), len(updated), posted, updated)
 	}
-	if !strings.Contains(posted[0], "Ich prüfe das gerade") {
+	if !strings.Contains(posted[0], "[ ] Ursache prüfen") || !strings.Contains(posted[0], "Ich prüfe die Ursache") {
 		t.Fatalf("first comment is not progress: %q", posted[0])
 	}
-	if strings.Contains(posted[1], "RESOLVE_ISSUE") || !strings.Contains(posted[1], "sicherer Fix") {
-		t.Fatalf("second comment is not final: %q", posted[1])
+	if strings.Contains(updated[0], "RESOLVE_ISSUE") || !strings.Contains(updated[0], "sicherer Fix") {
+		t.Fatalf("updated comment is not final: %q", updated[0])
 	}
 }
 
@@ -328,7 +346,6 @@ func TestHandleWebhookUpdatesIssueSummary(t *testing.T) {
 
 func TestCommentHeaderIgnoresDeprecatedFastMode(t *testing.T) {
 	cfg := testConfig("http://127.0.0.1.invalid", t.TempDir())
-	cfg.CodexFast = true
 	manager := NewManager(cfg, &fakeRunner{}, tools.NewRegistry(cfg), nil)
 
 	if got := manager.commentHeader(); got != "[blitzcrank w/ gpt-5.5]" {
@@ -358,6 +375,31 @@ func TestHandleWebhookHeaderUsesResolvedRunnerModel(t *testing.T) {
 	}
 	if len(posted) != 1 || !strings.HasPrefix(posted[0], "[blitzcrank w/ gpt-skill]") {
 		t.Fatalf("posted comment = %#v, want runner model header", posted)
+	}
+}
+
+func TestHandleWebhookHeaderUsesResolvedRuntimeInfo(t *testing.T) {
+	var posted []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		posted = append(posted, body["message"])
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	cfg := testConfig(server.URL, t.TempDir())
+	runner := &runtimeRunner{fakeRunner: fakeRunner{reply: "Erledigt.", model: "gpt-5.5"}, effort: "low"}
+	manager := NewManager(cfg, runner, tools.NewRegistry(cfg), nil)
+
+	if _, err := manager.HandleWebhook(context.Background(), issuePayload("Problem gemeldet", "alice", "file is stuck")); err != nil {
+		t.Fatalf("HandleWebhook() error = %v", err)
+	}
+	if len(posted) != 1 || !strings.HasPrefix(posted[0], "[blitzcrank w/ gpt-5.5 low]") {
+		t.Fatalf("posted comment = %#v, want model and reasoning header", posted)
 	}
 }
 
@@ -498,7 +540,7 @@ func TestIssueToolCallWritesJSONLTrace(t *testing.T) {
 	cfg := testConfig("http://127.0.0.1.invalid", dir)
 	manager := NewManager(cfg, &fakeRunner{}, tools.NewRegistry(cfg), nil)
 	startedAt := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)
-	manager.recordToolCall("42", "reported", startedAt, agent.ToolAuditRecord{
+	manager.recordToolCall("42", "reported", startedAt, ToolAuditRecord{
 		Name:             "seerr_get_issue",
 		ArgumentsSummary: `{"issue_id":"42"}`,
 		ResultSummary:    `{"id":42}`,
@@ -615,10 +657,9 @@ func testConfig(baseURL, threadDir string) config.Config {
 		SeerrBaseURL:        baseURL,
 		SeerrAPIKey:         "secret",
 		SeerrBotDisplayName: "Blitzcrank",
-		Model:               "gpt-5.5",
+		PiModels:            map[string]string{"default": "gpt-5.5"},
 		ThreadsDirectory:    threadDir,
 		RunTimeout:          time.Minute,
-		MaxToolIterations:   2,
 	}
 }
 

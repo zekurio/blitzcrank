@@ -2,57 +2,150 @@ package harness
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
-
-	"blitzcrank/internal/agent"
 )
 
 type seerrProgressReporter struct {
-	manager *Manager
-	issueID string
-	request agent.Request
-	once    sync.Once
+	manager   *Manager
+	issueID   string
+	request   Request
+	mu        sync.Mutex
+	todos     []TodoItem
+	commentID string
+	turns     int
 }
 
-func (m *Manager) newSeerrProgressReporter(issueID string, request agent.Request) *seerrProgressReporter {
+func (m *Manager) newSeerrProgressReporter(issueID string, request Request) *seerrProgressReporter {
 	return &seerrProgressReporter{manager: m, issueID: strings.TrimSpace(issueID), request: request}
 }
 
-func (r *seerrProgressReporter) callback(ctx context.Context) func(agent.ProgressEvent) {
-	return func(event agent.ProgressEvent) {
+func (r *seerrProgressReporter) callback(ctx context.Context) func(ProgressEvent) {
+	return func(event ProgressEvent) {
 		r.update(ctx, event)
 	}
 }
 
-func (r *seerrProgressReporter) update(ctx context.Context, event agent.ProgressEvent) {
+func (r *seerrProgressReporter) update(ctx context.Context, event ProgressEvent) {
 	if r == nil || r.manager == nil || r.issueID == "" || !seerrProgressVisible(event) {
 		return
 	}
-	r.once.Do(func() {
-		comment := r.manager.signedComment("Ich prüfe das gerade und melde mich hier mit dem Ergebnis.", r.request)
-		if _, err := r.manager.tools.CommentIssue(ctx, r.issueID, comment); err != nil {
-			log.Printf("seerr progress comment failed: issue=%s phase=%s error=%v", r.issueID, event.Phase, err)
-			return
-		}
-		r.manager.appendTrace("issues/issue-"+r.issueID+".jsonl", map[string]any{
-			"type":        "progress_comment",
-			"issue":       r.issueID,
-			"phase":       event.Phase,
-			"tool_name":   event.ToolName,
-			"message":     comment,
-			"attribution": r.manager.commentAttribution(),
-		})
-		log.Printf("seerr progress comment posted: issue=%s phase=%s", r.issueID, event.Phase)
+	r.mu.Lock()
+	r.todos = append([]TodoItem(nil), event.Todos...)
+	response := seerrProgressResponse(event)
+	if r.turns > 0 && strings.TrimSpace(response) != "" {
+		response = "[...]\n\n" + response
+	}
+	r.turns++
+	comment := r.manager.signedRunMessage(response, r.todos, r.request)
+	r.mu.Unlock()
+	if err := r.postOrUpdate(ctx, comment); err != nil {
+		log.Printf("seerr progress comment failed: issue=%s phase=%s error=%v", r.issueID, event.Phase, err)
+		return
+	}
+	r.manager.appendTrace("issues/issue-"+r.issueID+".jsonl", map[string]any{
+		"type":        "progress_comment",
+		"issue":       r.issueID,
+		"phase":       event.Phase,
+		"tool_name":   event.ToolName,
+		"message":     comment,
+		"attribution": r.manager.commentAttribution(),
 	})
+	log.Printf("seerr progress comment posted: issue=%s phase=%s", r.issueID, event.Phase)
 }
 
-func seerrProgressVisible(event agent.ProgressEvent) bool {
+func (r *seerrProgressReporter) render(response string) string {
+	if r == nil || r.manager == nil {
+		return strings.TrimSpace(response)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.turns > 0 && strings.TrimSpace(response) != "" {
+		response = "[...]\n\n" + strings.TrimSpace(response)
+	}
+	comment := r.manager.signedRunMessage(response, r.todos, r.request)
+	return comment
+}
+
+func (r *seerrProgressReporter) postOrUpdate(ctx context.Context, comment string) error {
+	comment = strings.TrimSpace(comment)
+	if comment == "" {
+		return nil
+	}
+	r.mu.Lock()
+	commentID := r.commentID
+	r.mu.Unlock()
+	if commentID != "" {
+		_, err := r.manager.tools.UpdateIssueComment(ctx, r.issueID, commentID, comment)
+		return err
+	}
+	result, err := r.manager.tools.CommentIssue(ctx, r.issueID, comment)
+	if err != nil {
+		return err
+	}
+	if id := seerrCommentID(result); id != "" {
+		r.mu.Lock()
+		r.commentID = id
+		r.mu.Unlock()
+	}
+	return nil
+}
+
+func seerrProgressVisible(event ProgressEvent) bool {
 	switch strings.TrimSpace(event.Phase) {
-	case "start", "model_start", "tools_selected", "tool_start", "approval_wait":
+	case "assistant_turn":
 		return true
 	default:
 		return false
 	}
+}
+
+func (r *seerrProgressReporter) latestTodos() []TodoItem {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]TodoItem(nil), r.todos...)
+}
+
+func seerrCommentID(value any) string {
+	switch typed := value.(type) {
+	case map[string]any:
+		for _, key := range []string{"id", "commentId", "comment_id"} {
+			if id := strings.TrimSpace(fmt.Sprint(typed[key])); id != "" && id != "<nil>" {
+				return id
+			}
+		}
+	}
+	return ""
+}
+
+func seerrProgressResponse(event ProgressEvent) string {
+	var sections []string
+	if reasoning := strings.TrimSpace(event.Reasoning); reasoning != "" {
+		sections = append(sections, reasoning)
+	}
+	response := strings.TrimSpace(event.CurrentResponse)
+	if response != "" {
+		sections = append(sections, response)
+	}
+	if len(event.ToolCalls) == 0 {
+		if len(sections) > 0 {
+			return strings.Join(sections, "\n\n")
+		}
+		return strings.TrimSpace(event.Message)
+	}
+	var lines []string
+	for _, call := range event.ToolCalls {
+		if strings.TrimSpace(call.Name) != "" {
+			lines = append(lines, "Tool call: "+strings.TrimSpace(call.Name))
+		}
+	}
+	if len(lines) > 0 {
+		sections = append(sections, strings.Join(lines, "\n"))
+	}
+	return strings.Join(sections, "\n\n")
 }

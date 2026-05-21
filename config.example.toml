@@ -1,124 +1,65 @@
+# Optional logging env vars:
+# LOG_LEVEL=debug|info|warn|error
+# NO_COLOR=1
+
 [bot]
 public_name = "Blitzcrank"
 
-[discord]
-token = ""
-# You can also provide DISCORD_TOKEN through env when you prefer overrides.
-guild_id = ""
-owner_id = ""
-# Optional role to ping for tool approvals. Members of this role may approve.
-admin_role_id = ""
-channel_id = ""
-triage_threshold = 0.75
-thread_archive_minutes = 1440
-context_recent_messages = 12
-# Optional override/fallback mapping from Discord user ids to Seerr user ids.
-seerr_user_map = {}
-
 [web]
-listen_addr = ""
+# Bind address for Seerr webhooks and the internal Pi tool gateway.
+listen_addr = "127.0.0.1:8080"
 
 [seerr]
-base_url = ""
-api_key = ""
-webhook_listen_addr = ""
+base_url = "https://seerr.example"
+api_key = "change-me"
 webhook_path = "/webhooks/seerr"
+# Optional shared secret for incoming Seerr webhooks.
 webhook_secret = ""
-bot_user_id = ""
+# User/display name used to ignore Blitzcrank-authored Seerr comments.
 bot_display_name = "Blitzcrank"
 
+[pi]
+# Pi is the only agent runtime. Blitzcrank invokes `pi --mode rpc`.
+command = "pi"
+cwd = "."
+# Persistent Pi sessions. Defaults to runtime.threads_dir/pi-sessions when empty.
+sessions_dir = ""
+# Required for Pi extension tools to call back into Blitzcrank.
+tool_secret = "change-me-local-secret"
+# Optional if Pi cannot infer the public URL from web.listen_addr.
+tool_base_url = "http://127.0.0.1:8080"
+# Optional per-task Pi model selection. Include Pi thinking inline, e.g. ":high".
+[pi.models]
+default = ""
+seerr = ""
+automation = ""
+
 [jellyfin]
-base_url = ""
-api_key = ""
+base_url = "https://jellyfin.example"
+api_key = "change-me"
 
 [sonarr]
-base_url = ""
-api_key = ""
+base_url = "https://sonarr.example"
+api_key = "change-me"
 
 [radarr]
-base_url = ""
-api_key = ""
+base_url = "https://radarr.example"
+api_key = "change-me"
 
 [sabnzbd]
-base_url = ""
-api_key = ""
+base_url = "https://sabnzbd.example"
+api_key = "change-me"
 
 [filesystem]
 allowed_roots = []
 
-[exa]
-base_url = "https://api.exa.ai"
-api_key = ""
-
-[llm.openai]
-# Set auth = "codex-oauth" to use OpenAI/Codex OAuth transport while keeping
-# runtime profiles on provider = "openai" or "openai-compatible".
-auth = ""
-base_url = "https://api.openai.com/v1"
-api_key = ""
-
-[llm.openrouter]
-base_url = "https://openrouter.ai/api/v1"
-api_key = ""
-http_referer = ""
-title = "Blitzcrank"
-
-[llm.codex]
-auth_profile = "default"
-auth_store = ""
-base_url = "https://chatgpt.com/backend-api/codex"
-# Deprecated no-op retained for existing configs.
-fast = false
-
 [runtime]
-skills_dir = "skills"
-automations_dir = "automations"
-automations_extra_dirs = []
 threads_dir = "threads"
+automations_dir = "automations"
 automations_enabled = false
-max_tool_iterations = 15
+automations_extra_dirs = []
+timezone = "UTC"
 run_timeout = "5m"
-timezone = "Europe/Vienna"
-
-[runtime.context]
-auto_compact = true
-reserved_tokens = 2000
-tail_turns = 2
-preserve_recent_tokens = 0
-
-[sandbox]
-deno_path = "deno"
-timeout = "20s"
-
-[runtime.profiles.default]
-provider = "openai-compatible"
-model = "gpt-5.5"
-reasoning_effort = "low"
-
-[runtime.profiles.seerr]
-provider = ""
-model = "gpt-5.5"
-reasoning_effort = "high"
-
-[runtime.profiles.discord]
-provider = ""
-model = "gpt-5.5"
-reasoning_effort = "medium"
-
-[runtime.profiles.automation]
-provider = ""
-model = "gpt-5.5"
-reasoning_effort = "high"
-
-[runtime.profiles.discord_triage]
-provider = ""
-model = "gpt-5.4-mini"
-reasoning_effort = "none"
-
-[runtime.profiles.sandbox_review]
-provider = ""
-model = "gpt-5.4-mini"
-reasoning_effort = "low"
 
 [storage]
 database_path = "./blitzcrank.sqlite"

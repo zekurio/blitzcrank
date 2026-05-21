@@ -21,17 +21,9 @@ type toolDef struct {
 	ReadOnlyAllowed bool
 }
 
-type SandboxPermissions struct {
-	AllowNet   []string `json:"allow_net,omitempty"`
-	AllowEnv   []string `json:"allow_env,omitempty"`
-	AllowRead  []string `json:"allow_read,omitempty"`
-	AllowWrite []string `json:"allow_write,omitempty"`
-}
-
 type ToolPolicy struct {
-	ReadOnly        bool
-	Groups          []string
-	SandboxServices bool
+	ReadOnly bool
+	Groups   []string
 }
 
 func NewRegistry(cfg config.Config) *Registry {

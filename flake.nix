@@ -1,5 +1,5 @@
 {
-  description = "Blitzcrank Jellyfin Discord bot";
+  description = "Blitzcrank Seerr automation gateway for Pi";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -24,106 +24,33 @@
         let
           cfg = config.services.blitzcrank;
           tomlFormat = pkgs.formats.toml { };
-          writeDirs = lib.unique (
-            map toString [
-              cfg.dataDir
-              cfg.threadsDir
-              "${cfg.dataDir}/cache"
-              (builtins.dirOf cfg.databasePath)
-            ]
-          );
           defaultSettings = {
             bot.public_name = cfg.publicName;
             storage.database_path = toString cfg.databasePath;
             storage.cache_dir = "${cfg.dataDir}/cache";
-            llm.openai.auth = cfg.openAIAuth;
-            llm.models_dev.path = "${cfg.package}/share/blitzcrank/models.dev.json";
             runtime = {
-              skills_dir = cfg.skillsDir;
+              threads_dir = toString cfg.threadsDir;
               automations_dir = cfg.automationsDir;
               automations_enabled = cfg.automations.enable;
               automations_extra_dirs = cfg.extraAutomationDirs;
-              threads_dir = toString cfg.threadsDir;
               timezone = cfg.timezone;
-              profiles = {
-                default = runtimeProfileJSON cfg.runtime.default;
-                seerr = runtimeProfileJSON cfg.runtime.seerr;
-                discord = runtimeProfileJSON cfg.runtime.discord;
-                automation = runtimeProfileJSON cfg.runtime.automation;
-                discord_triage = runtimeProfileJSON cfg.runtime.discordTriage;
-                sandbox_review = runtimeProfileJSON cfg.runtime.sandboxReview;
-              };
+            };
+            pi = {
+              command = cfg.piCommand;
+              cwd = cfg.piCwd;
+              sessions_dir = "${cfg.threadsDir}/pi-sessions";
+              tool_base_url = cfg.piToolBaseURL;
+              models = cfg.piModels;
             };
           };
           serviceConfigFile = tomlFormat.generate "blitzcrank.toml" (
             lib.recursiveUpdate defaultSettings cfg.settings
           );
           serviceConfigPath = if cfg.configFile != null then cfg.configFile else serviceConfigFile;
-          runtimeProfileJSON =
-            profile:
-            {
-              provider = profile.provider;
-              model = profile.model;
-              reasoning_effort = profile.reasoningEffort;
-            }
-            // lib.optionalAttrs (profile.contextLimit != null) {
-              context_limit = profile.contextLimit;
-            }
-            // lib.optionalAttrs (profile.inputLimit != null) {
-              input_limit = profile.inputLimit;
-            }
-            // lib.optionalAttrs (profile.outputLimit != null) {
-              output_limit = profile.outputLimit;
-            };
-          settingsEnv = {
-            BLITZCRANK_CONFIG = serviceConfigPath;
-          };
-          runtimeProfileOptions =
-            {
-              defaultProvider ? "",
-              defaultModel ? "gpt-5.5",
-              defaultReasoningEffort ? "",
-            }:
-            { ... }:
-            {
-              options = {
-                provider = lib.mkOption {
-                  type = lib.types.str;
-                  default = defaultProvider;
-                };
-                model = lib.mkOption {
-                  type = lib.types.str;
-                  default = defaultModel;
-                };
-                reasoningEffort = lib.mkOption {
-                  type = lib.types.str;
-                  default = defaultReasoningEffort;
-                };
-                contextLimit = lib.mkOption {
-                  type = lib.types.nullOr lib.types.ints.positive;
-                  default = null;
-                };
-                inputLimit = lib.mkOption {
-                  type = lib.types.nullOr lib.types.ints.positive;
-                  default = null;
-                };
-                outputLimit = lib.mkOption {
-                  type = lib.types.nullOr lib.types.ints.positive;
-                  default = null;
-                };
-              };
-            };
         in
         {
-          imports = [
-            (lib.mkRenamedOptionModule
-              [ "services" "blitzcrank" "cron" "enable" ]
-              [ "services" "blitzcrank" "automations" "enable" ]
-            )
-          ];
-
           options.services.blitzcrank = {
-            enable = lib.mkEnableOption "Blitzcrank Jellyfin Discord bot";
+            enable = lib.mkEnableOption "Blitzcrank Seerr automation gateway";
             package = lib.mkOption {
               type = lib.types.package;
               default = self.packages.${pkgs.system}.default;
@@ -143,55 +70,30 @@
             databasePath = lib.mkOption {
               type = lib.types.path;
               default = "${cfg.dataDir}/blitzcrank.sqlite";
-              description = "Default SQLite database path rendered into generated TOML.";
             };
             threadsDir = lib.mkOption {
               type = lib.types.path;
               default = "${cfg.dataDir}/threads";
-              description = "Default JSONL thread trace directory rendered into generated TOML.";
             };
             environmentFile = lib.mkOption {
               type = lib.types.nullOr lib.types.path;
               default = null;
-              description = "Optional systemd EnvironmentFile for secret or local overrides.";
             };
             configFile = lib.mkOption {
               type = lib.types.nullOr lib.types.path;
               default = null;
-              description = "Path to a TOML config file, including one produced by a secret manager. When unset, the module generates one from services.blitzcrank.settings and convenience options.";
             };
             settings = lib.mkOption {
               type = tomlFormat.type;
               default = { };
-              example = {
-                discord.channel_id = "123456789012345678";
-                seerr = {
-                  base_url = "https://seerr.example";
-                  webhook_listen_addr = "127.0.0.1:8080";
-                };
-                runtime.profiles.default = {
-                  provider = "openrouter";
-                  model = "openai/gpt-5.5";
-                };
-              };
-              description = "Blitzcrank TOML settings merged into the generated config file.";
             };
             publicName = lib.mkOption {
               type = lib.types.str;
               default = "Blitzcrank";
             };
-            openAIAuth = lib.mkOption {
-              type = lib.types.str;
-              default = "";
-              description = "Optional OpenAI auth surface. Set to \"codex-oauth\" to route OpenAI profiles through Codex OAuth while preserving OpenAI model slugs.";
-            };
             timezone = lib.mkOption {
               type = lib.types.str;
               default = "UTC";
-            };
-            skillsDir = lib.mkOption {
-              type = lib.types.str;
-              default = "${cfg.package}/share/blitzcrank/skills";
             };
             automationsDir = lib.mkOption {
               type = lib.types.str;
@@ -202,45 +104,22 @@
               default = [ ];
             };
             automations.enable = lib.mkEnableOption "Blitzcrank Markdown automations";
-            runtime = {
-              default = lib.mkOption {
-                type = lib.types.submodule (runtimeProfileOptions {
-                  defaultProvider = "openai-compatible";
-                });
-                default = { };
-              };
-              seerr = lib.mkOption {
-                type = lib.types.submodule (runtimeProfileOptions {
-                  defaultModel = "";
-                });
-                default = { };
-              };
-              discord = lib.mkOption {
-                type = lib.types.submodule (runtimeProfileOptions {
-                  defaultModel = "";
-                });
-                default = { };
-              };
-              automation = lib.mkOption {
-                type = lib.types.submodule (runtimeProfileOptions {
-                  defaultModel = "";
-                });
-                default = { };
-              };
-              discordTriage = lib.mkOption {
-                type = lib.types.submodule (runtimeProfileOptions {
-                  defaultModel = "gpt-5.4-mini";
-                  defaultReasoningEffort = "none";
-                });
-                default = { };
-              };
-              sandboxReview = lib.mkOption {
-                type = lib.types.submodule (runtimeProfileOptions {
-                  defaultModel = "gpt-5.4-mini";
-                  defaultReasoningEffort = "none";
-                });
-                default = { };
-              };
+            piCommand = lib.mkOption {
+              type = lib.types.str;
+              default = "${pkgs.pi-coding-agent}/bin/pi";
+            };
+            piCwd = lib.mkOption {
+              type = lib.types.str;
+              default = "${cfg.package}/share/blitzcrank";
+            };
+            piToolBaseURL = lib.mkOption {
+              type = lib.types.str;
+              default = "http://127.0.0.1:8080";
+            };
+            piModels = lib.mkOption {
+              type = lib.types.attrsOf lib.types.str;
+              default = { };
+              description = "Per-task Pi model map. Keys include default, seerr, and automation. Include thinking inline, for example anthropic/claude-sonnet-4-5:high.";
             };
           };
 
@@ -250,34 +129,30 @@
               isSystemUser = true;
               group = cfg.group;
               home = cfg.dataDir;
+              createHome = true;
             };
-            systemd.tmpfiles.rules = map (dir: "d ${dir} 0750 ${cfg.user} ${cfg.group} - -") writeDirs;
-
+            systemd.tmpfiles.rules = [
+              "d ${cfg.dataDir} 0750 ${cfg.user} ${cfg.group} - -"
+              "d ${cfg.threadsDir} 0750 ${cfg.user} ${cfg.group} - -"
+              "d ${cfg.dataDir}/cache 0750 ${cfg.user} ${cfg.group} - -"
+            ];
             systemd.services.blitzcrank = {
-              description = "Blitzcrank Jellyfin Discord bot";
+              description = "Blitzcrank Seerr automation gateway";
               wantedBy = [ "multi-user.target" ];
               after = [ "network-online.target" ];
               wants = [ "network-online.target" ];
+              environment = {
+                BLITZCRANK_CONFIG = serviceConfigPath;
+              };
               serviceConfig = {
-                ExecStart = "${cfg.package}/bin/blitzcrank";
                 User = cfg.user;
                 Group = cfg.group;
-                StateDirectory = [
-                  "blitzcrank"
-                  "blitzcrank/threads"
-                  "blitzcrank/cache"
-                ];
                 WorkingDirectory = cfg.dataDir;
+                ExecStart = "${cfg.package}/bin/blitzcrank";
                 Restart = "on-failure";
-                NoNewPrivileges = true;
-                PrivateTmp = true;
-                ProtectSystem = "strict";
-                ReadWritePaths = writeDirs;
-              }
-              // lib.optionalAttrs (cfg.environmentFile != null) {
-                EnvironmentFile = cfg.environmentFile;
+                RestartSec = "5s";
+                EnvironmentFile = lib.mkIf (cfg.environmentFile != null) cfg.environmentFile;
               };
-              environment = settingsEnv;
             };
           };
         };
@@ -285,28 +160,7 @@
     flake-utils.lib.eachDefaultSystem (
       system:
       let
-        pkgs = import nixpkgs { inherit system; };
-        moduleRuntimeProfileTest = nixpkgs.lib.nixosSystem {
-          inherit system;
-          modules = [
-            nixosModule
-            (
-              { ... }:
-              {
-                system.stateVersion = "26.05";
-                services.blitzcrank = {
-                  enable = true;
-                  openAIAuth = "codex-oauth";
-                  runtime.default = {
-                    provider = "openai";
-                    model = "gpt-5.4";
-                    reasoningEffort = "medium";
-                  };
-                };
-              }
-            )
-          ];
-        };
+        pkgs = nixpkgs.legacyPackages.${system};
       in
       {
         packages.default = pkgs.buildGoModule {
@@ -322,26 +176,25 @@
               in
               base != ".git" && base != ".direnv" && base != ".env" && base != "result";
           };
-          vendorHash = "sha256-thJHevu0+7YgyCUcZIGa8Mun/UyksZZqbWvmUAviO60=";
+          vendorHash = "sha256-s7jdUifNKa8KKlQy+9clttVdeWc9x+zB50LNiiMPbgM=";
           subPackages = [ "cmd/blitzcrank" ];
           nativeBuildInputs = [ pkgs.makeWrapper ];
-          ldflags = [
-            "-s"
-            "-w"
-          ];
           postInstall = ''
             mkdir -p $out/share/blitzcrank
-            cp -R skills automations $out/share/blitzcrank/
-            cp internal/llm/models/models.dev.json $out/share/blitzcrank/models.dev.json
+            cp -R automations .pi $out/share/blitzcrank/
             printf '%s\n' \
-              '[llm.models_dev]' \
-              "path = \"$out/share/blitzcrank/models.dev.json\"" \
               '[runtime]' \
-              "skills_dir = \"$out/share/blitzcrank/skills\"" \
               "automations_dir = \"$out/share/blitzcrank/automations\"" \
+              '[pi]' \
+              "cwd = \"$out/share/blitzcrank\"" \
               > $out/share/blitzcrank/config.toml
             wrapProgram $out/bin/blitzcrank \
-              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.deno ]} \
+              --prefix PATH : ${
+                pkgs.lib.makeBinPath [
+                  pkgs.deno
+                  pkgs.pi-coding-agent
+                ]
+              } \
               --set-default BLITZCRANK_CONFIG $out/share/blitzcrank/config.toml
           '';
         };
@@ -351,15 +204,6 @@
           program = "${self.packages.${system}.default}/bin/blitzcrank";
         };
 
-        checks.nixos-module-runtime-profile = pkgs.runCommand "nixos-module-runtime-profile" { } ''
-          config=${moduleRuntimeProfileTest.config.systemd.services.blitzcrank.environment.BLITZCRANK_CONFIG}
-          grep -q 'auth = "codex-oauth"' "$config"
-          grep -q 'provider = "openai"' "$config"
-          grep -q 'model = "gpt-5.4"' "$config"
-          grep -q 'reasoning_effort = "medium"' "$config"
-          touch "$out"
-        '';
-
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             go
@@ -368,6 +212,7 @@
             deno
             nixfmt
             sqlite
+            pi-coding-agent
           ];
         };
 

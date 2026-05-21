@@ -1,43 +1,24 @@
 # Blitzcrank
 
-Blitzcrank is a Go Discord bot and support agent for Seerr/Jellyfin operations.
+Blitzcrank is a Go gateway that connects Seerr webhooks and scheduled media-server automations to a Pi agent.
 
-## Repository Layout
+Pi owns the agent runtime, provider/auth setup, skills, model selection, durable agent sessions, and tool loop. Blitzcrank owns webhook handling, Seerr issue state, final Seerr comments/resolution, service credentials, and the internal tool gateway used by Pi.
 
-- `cmd/blitzcrank/`: executable entrypoint.
-- `internal/`: application packages for config, Discord, agent runs, tools, persistence, webhooks, and automations.
-- `prompts/`: embedded system/runtime prompts.
-- `skills/`: default Markdown skills loaded at runtime.
-- `automations/`: default Markdown automation jobs loaded at runtime.
-- `flake.nix`: package, dev shell, and NixOS module.
+## Current Scope
+
+- Seerr issue webhooks
+- Markdown scheduled automations
+- Pi RPC runner with persistent sessions
+- Typed Pi service request tools for Seerr, Jellyfin, Sonarr, Radarr, and SABnzBD
+- SQLite gateway state for Seerr issue dedupe/runs
+- JSONL traces for issue/automation history search
+
+Discord support, Blitzcrank's old native LLM runtime, Codex/OpenAI/OpenRouter clients, the Deno sandbox, root `skills/`, and root `prompts/` have been removed from the active gateway.
 
 ## Development
 
-Use the pinned shell when possible:
-
-```sh
-nix develop
-```
-
-For local config:
-
 ```sh
 cp config.example.toml blitzcrank.toml
-cp .env.example .env
-```
-
-Keep runtime settings in `blitzcrank.toml`. Use `.env` only to point at a config file or make explicit local overrides. Secrets can live in TOML or env, depending on how you manage secret material.
-
-Config load order:
-
-1. built-in defaults
-2. `.env` and process environment for bootstrap paths such as `BLITZCRANK_CONFIG`
-3. `blitzcrank.toml`, or `BLITZCRANK_CONFIG`
-4. `.env` and process environment overrides
-
-Run locally:
-
-```sh
 go run ./cmd/blitzcrank
 ```
 
@@ -45,110 +26,164 @@ Useful checks:
 
 ```sh
 go test ./...
-go test ./internal/config
 go build ./cmd/blitzcrank
+nix build
 ```
 
-Run a focused test while iterating:
+Logging uses Go `slog` with colored console output by default:
 
 ```sh
-go test ./internal/store -run TestStorePersistsIssueThreadEventAndRun
+LOG_LEVEL=debug   # debug|info|warn|error
+NO_COLOR=1        # disable ANSI colors
 ```
 
-Format changed Go files with `gofmt`.
+## Required Setup
 
-## Configuration Notes
+### Pi provider/auth
 
-The CLI does not expose config mutation. Edit TOML or inject env vars from the deployment layer.
+Configure providers in Pi, not Blitzcrank. For example, use Pi's normal settings/auth flow or provider environment variables such as `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc. Blitzcrank only passes the configured model string to Pi.
 
-Runtime profiles live under `[runtime.profiles.*]`:
+### Blitzcrank secrets
 
-- `default`: base LLM runtime
-- `seerr`: Seerr issue workflows
-- `discord`: Discord responses
-- `automation`: scheduled automations
-- `discord_triage`: Discord triage and summaries
-- `sandbox_review`: AI review of Deno TypeScript sandbox scripts before execution
-
-Provider values are `openai`, `openai-compatible`, `openrouter`, or `codex-oauth`. For the OpenCode-style setup, use `provider = "openai"` with `llm.openai.auth = "codex-oauth"`; Blitzcrank will route through Codex OAuth while applying Codex-specific model limits.
-
-Service diagnostics are routed through `sandbox_run_typescript`, a Deno sandbox tool. It runs short TypeScript snippets with `--no-prompt` and only the network, environment, and read permissions granted by the `sandbox_review` model. Configure the Deno binary and timeout with `[sandbox] deno_path` and `timeout`, or `SANDBOX_DENO_PATH` and `SANDBOX_TIMEOUT`.
-
-Codex OAuth helper commands are still available:
+Keep secrets in `.env`, a systemd `EnvironmentFile`, SOPS/agenix, or another secret manager:
 
 ```sh
-go run ./cmd/blitzcrank codex login
-go run ./cmd/blitzcrank codex status
-go run ./cmd/blitzcrank codex logout
+PI_TOOL_SECRET=long-random-local-secret
+SEERR_API_KEY=...
+JELLYFIN_API_KEY=...
+SONARR_API_KEY=...
+RADARR_API_KEY=...
+SABNZBD_API_KEY=...
+# Optional incoming webhook secret:
+SEERR_WEBHOOK_SECRET=...
 ```
 
-## Runtime State
+`PI_TOOL_SECRET` protects the internal credentialed tool gateway. Pi does not receive service API keys, but the gateway can perform authenticated service requests on Pi's behalf.
 
-SQLite state is stored at `storage.database_path`. Disk-backed caches use `storage.cache_dir` when set and otherwise fall back to the operating system user cache directory.
+## Configuration
 
-JSONL traces are written under `runtime.threads_dir`:
+Minimal TOML shape:
 
-- `issues/issue-<id>.jsonl`
-- `discord/<thread-id>.jsonl`
-- `discord/interactions/<message-id>.jsonl`
-- `automations/<name>.jsonl`
+```toml
+[web]
+listen_addr = "127.0.0.1:8080"
 
-Prompts are embedded at build time. Skills and automations are runtime inputs and default to `skills/` and `automations/` in source-tree runs.
+[seerr]
+base_url = "https://seerr.example"
+webhook_path = "/webhooks/seerr"
+bot_display_name = "Blitzcrank"
 
-## Deployment
+[pi]
+command = "pi"
+cwd = "."
+sessions_dir = "threads/pi-sessions"
+tool_base_url = "http://127.0.0.1:8080"
+# Prefer PI_TOOL_SECRET via env/secret manager for production.
+tool_secret = "local-dev-secret"
 
-Set service credentials through TOML, `.env`, a systemd `EnvironmentFile`, SOPS, or the process environment. Do not commit secrets.
+[pi.models]
+# Pi thinking is configured inline with the model, e.g. ":high".
+default = "anthropic/claude-sonnet-4-5:high"
+seerr = ""
+automation = ""
 
-For HTTP deployments, set `web.listen_addr`. Existing Seerr webhook deployments can keep using `seerr.webhook_listen_addr`; when that legacy setting is used, also provide `seerr.base_url` plus `SEERR_API_KEY`.
+[jellyfin]
+base_url = "https://jellyfin.example"
 
-For Discord deployments, provide `DISCORD_TOKEN` and set `discord.channel_id`. The Discord application needs Message Content intent enabled for normal channel-message triage.
+[sonarr]
+base_url = "https://sonarr.example"
 
-## Nix
+[radarr]
+base_url = "https://radarr.example"
 
-Build the package:
+[sabnzbd]
+base_url = "https://sabnzbd.example"
+
+[runtime]
+threads_dir = "threads"
+automations_dir = "automations"
+automations_enabled = false
+timezone = "UTC"
+run_timeout = "5m"
+
+[storage]
+database_path = "./blitzcrank.sqlite"
+```
+
+## Pi Resources
+
+Project-local Pi resources live in `.pi/`:
+
+- `.pi/skills/`: canonical Pi-discoverable Seerr/media skills.
+- `.pi/extensions/blitzcrank-tools.ts`: registers Pi tools that call Blitzcrank's internal tool gateway.
+
+Pi-visible tools:
+
+- `seerr_request`
+- `jellyfin_request`
+- `sonarr_request`
+- `radarr_request`
+- `sabnzbd_request`
+- `thread_history_search`
+
+All service request tools require a `purpose`. Paths must be service-relative and must not contain full URLs or credentials. Non-GET requests require `safety_level = "narrow_mutation"` and `safety_reason`.
+
+## Runtime Flow
+
+1. Seerr sends a webhook to Blitzcrank.
+2. Blitzcrank deduplicates and locks the issue.
+3. Blitzcrank sends one task prompt to Pi.
+4. Pi loads the Seerr skill and calls tools through `.pi/extensions/blitzcrank-tools.ts`.
+5. The extension calls Blitzcrank's internal tool gateway.
+6. Blitzcrank executes the Go-owned service request tool with configured credentials.
+7. Pi returns a final response beginning with `RESOLVE_ISSUE: yes/no`.
+8. Blitzcrank posts the final Seerr comment and resolves the issue only when requested.
+
+## Automations
+
+Markdown automations live in `automations/*.md` and use front matter:
+
+```md
+---
+name: hourly-stale-import-handler
+description: Example automation
+schedule: "@hourly"
+---
+
+Automation prompt body...
+```
+
+Enable them with:
+
+```toml
+[runtime]
+automations_enabled = true
+automations_dir = "automations"
+```
+
+Currently `@hourly` is supported. Each automation gets a durable Pi session derived from `automation:<name>`.
+
+## State
+
+- SQLite gateway state: `storage.database_path`
+  - `issue_threads`
+  - `issue_thread_events`
+  - `issue_runs`
+- JSONL traces: `runtime.threads_dir`
+- Pi sessions: `pi.sessions_dir`, or `runtime.threads_dir/pi-sessions` when unset
+- Seerr issue traces: `threads/issues/issue-<id>.jsonl`
+- Automation Pi sessions: one session per automation name
+
+Pi owns agent conversation history. SQLite is only for Blitzcrank gateway state.
+
+## Nix / NixOS
+
+Build:
 
 ```sh
 nix build
 ```
 
-The flake packages the binary plus default `skills/` and `automations/` under `$out/share/blitzcrank`. The wrapped binary points `BLITZCRANK_CONFIG` at a packaged TOML default so packaged runs do not depend on source-tree paths.
+The Nix package includes `automations/` and `.pi/`. Do not put secrets in Nix-store-generated config. Use `services.blitzcrank.environmentFile` or a secret manager for `PI_TOOL_SECRET` and service API keys.
 
-The flake exports `nixosModules.default` as `services.blitzcrank`. The module creates a system user, stores mutable state in `/var/lib/blitzcrank` by default, and accepts an `environmentFile` for overrides.
-
-Use `services.blitzcrank.settings` for TOML-backed application settings. Existing convenience options such as `publicName`, `timezone`, `automations.enable`, `databasePath`, `threadsDir`, and `runtime.*` feed generated defaults; `settings` can override or extend them. Set `services.blitzcrank.configFile` when you want to provide the whole TOML file yourself, including a file produced by SOPS or another secret manager.
-
-Example:
-
-```nix
-services.blitzcrank = {
-  enable = true;
-
-  settings = {
-    discord.channel_id = "123456789012345678";
-    seerr = {
-      base_url = "https://seerr.example";
-      webhook_listen_addr = "127.0.0.1:8080";
-    };
-  };
-
-  automations.enable = true;
-
-  runtime.automation = {
-    provider = "openrouter";
-    model = "anthropic/claude-sonnet-4.6";
-    reasoningEffort = "high";
-  };
-
-  runtime.seerr = {
-    provider = "openai";
-    model = "gpt-5.5";
-    reasoningEffort = "high";
-  };
-};
-```
-
-For a complete TOML file managed outside the module, set:
-
-```nix
-services.blitzcrank.configFile = config.sops.secrets.blitzcrank_toml.path;
-```
+Keep secrets out of commits; `.env*`, local TOML, SQLite files, and runtime threads are ignored.
