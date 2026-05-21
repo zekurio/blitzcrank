@@ -39,6 +39,7 @@
             pi = {
               command = cfg.piCommand;
               cwd = cfg.piCwd;
+              agent_dir = cfg.piAgentDir;
               sessions_dir = "${cfg.threadsDir}/pi-sessions";
               tool_base_url = cfg.piToolBaseURL;
               models = cfg.piModels;
@@ -112,6 +113,11 @@
             piCwd = lib.mkOption {
               type = lib.types.str;
               default = "${cfg.package}/share/blitzcrank";
+            };
+            piAgentDir = lib.mkOption {
+              type = lib.types.str;
+              default = "${cfg.dataDir}/pi-agent";
+              description = "Pi config/auth directory. Seed with auth.json/settings.json or run Pi login as the service user.";
             };
             piToolBaseURL = lib.mkOption {
               type = lib.types.str;

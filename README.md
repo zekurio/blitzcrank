@@ -44,6 +44,8 @@ NO_COLOR=1        # disable ANSI colors
 
 Configure providers in Pi, not Blitzcrank. For example, use Pi's normal settings/auth flow or provider environment variables such as `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc. Blitzcrank only passes the configured model string to Pi.
 
+For service deployments, set `[pi].agent_dir` / `PI_CODING_AGENT_DIR` to a writable Pi config directory and seed it with Pi's `auth.json`/`settings.json`, or run Pi login as the same service user. For Codex OAuth with GPT-5.5, use the provider string that `pi --list-models gpt-5.5` reports, for example `openai-codex/gpt-5.5:medium`.
+
 ### Blitzcrank secrets
 
 Keep secrets in `.env`, a systemd `EnvironmentFile`, SOPS/agenix, or another secret manager:
@@ -86,6 +88,8 @@ bot_display_name = "Blitzcrank"
 [pi]
 command = "pi"
 cwd = "."
+# Optional; set to a seeded Pi config/auth dir for service deployments.
+agent_dir = "/var/lib/blitzcrank/pi-agent"
 sessions_dir = "threads/pi-sessions"
 tool_base_url = "http://127.0.0.1:8080"
 # Prefer PI_TOOL_SECRET via env/secret manager for production.
