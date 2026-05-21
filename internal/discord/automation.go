@@ -135,6 +135,16 @@ type AutomationReporter struct {
 	session *discordgo.Session
 }
 
+type automationRunStatus string
+
+const (
+	automationRunStarted automationRunStatus = "started"
+	automationRunOK      automationRunStatus = "ok"
+	automationRunWarning automationRunStatus = "warning"
+	automationRunError   automationRunStatus = "error"
+	automationRunEmpty   automationRunStatus = "empty"
+)
+
 func (b *Bot) Reporter() *AutomationReporter {
 	if b == nil || b.session == nil {
 		return nil
@@ -146,69 +156,194 @@ func (r *AutomationReporter) AutomationStarted(ctx context.Context, task automat
 	if r == nil || r.session == nil || strings.TrimSpace(r.cfg.DiscordAutomationChannelID) == "" {
 		return "", nil
 	}
+	thread, err := r.ensureAutomationThread(task)
+	if err != nil {
+		return "", err
+	}
+	_, _ = r.session.ChannelMessageSendEmbed(thread.ID, automationStartedEmbed(task))
+	return thread.ID, r.lockAutomationThread(thread.ID)
+}
+
+func (r *AutomationReporter) AutomationCompleted(ctx context.Context, threadID string, task automation.Task, response string, runErr error) error {
+	if r == nil || r.session == nil {
+		return nil
+	}
+	if strings.TrimSpace(threadID) == "" {
+		thread, err := r.ensureAutomationThread(task)
+		if err != nil {
+			return err
+		}
+		threadID = thread.ID
+	}
+	if err := r.unlockAutomationThreadForPost(threadID); err != nil {
+		return err
+	}
+	_, err := r.session.ChannelMessageSendEmbed(threadID, automationCompletedEmbed(task, response, runErr))
+	if lockErr := r.lockAutomationThread(threadID); lockErr != nil && err == nil {
+		err = lockErr
+	}
+	return err
+}
+
+func (r *AutomationReporter) ensureAutomationThread(task automation.Task) (*discordgo.Channel, error) {
+	name := automationThreadName(task)
+	if thread, err := r.findAutomationThread(name); err != nil {
+		return nil, err
+	} else if thread != nil {
+		if err := r.unlockAutomationThreadForPost(thread.ID); err != nil {
+			return nil, err
+		}
+		return thread, nil
+	}
 	thread, err := r.session.ThreadStartComplex(r.cfg.DiscordAutomationChannelID, &discordgo.ThreadStart{
-		Name:                "automation: " + task.Name,
+		Name:                name,
 		Type:                discordgo.ChannelTypeGuildPublicThread,
 		AutoArchiveDuration: 1440,
 		Invitable:           false,
 	})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	_, _ = r.session.ChannelMessageSendEmbed(thread.ID, automationStartedEmbed(task))
-	if r.cfg.DiscordAutomationThreadLock {
-		locked := true
-		_, err = r.session.ChannelEditComplex(thread.ID, &discordgo.ChannelEdit{Locked: &locked})
-		if err != nil {
-			return thread.ID, err
-		}
-	}
-	return thread.ID, nil
+	return thread, nil
 }
 
-func (r *AutomationReporter) AutomationCompleted(ctx context.Context, threadID string, task automation.Task, response string, runErr error) error {
-	if r == nil || r.session == nil || strings.TrimSpace(threadID) == "" {
+func (r *AutomationReporter) findAutomationThread(name string) (*discordgo.Channel, error) {
+	active, err := r.session.ThreadsActive(r.cfg.DiscordAutomationChannelID)
+	if err != nil {
+		return nil, err
+	}
+	if thread := findThreadByName(active, name); thread != nil {
+		return thread, nil
+	}
+	archived, err := r.session.ThreadsArchived(r.cfg.DiscordAutomationChannelID, nil, 100)
+	if err != nil {
+		return nil, err
+	}
+	return findThreadByName(archived, name), nil
+}
+
+func findThreadByName(list *discordgo.ThreadsList, name string) *discordgo.Channel {
+	if list == nil {
 		return nil
 	}
-	_, err := r.session.ChannelMessageSendEmbed(threadID, automationCompletedEmbed(task, response, runErr))
+	for _, thread := range list.Threads {
+		if strings.EqualFold(strings.TrimSpace(thread.Name), strings.TrimSpace(name)) {
+			return thread
+		}
+	}
+	return nil
+}
+
+func (r *AutomationReporter) unlockAutomationThreadForPost(threadID string) error {
+	archived := false
+	locked := false
+	_, err := r.session.ChannelEditComplex(threadID, &discordgo.ChannelEdit{Archived: &archived, Locked: &locked})
 	return err
 }
 
+func (r *AutomationReporter) lockAutomationThread(threadID string) error {
+	if !r.cfg.DiscordAutomationThreadLock {
+		return nil
+	}
+	locked := true
+	_, err := r.session.ChannelEditComplex(threadID, &discordgo.ChannelEdit{Locked: &locked})
+	return err
+}
+
+func automationThreadName(task automation.Task) string {
+	return "automation: " + task.Name
+}
+
 func automationStartedEmbed(task automation.Task) *discordgo.MessageEmbed {
-	description := fmt.Sprintf("Automatisierung `%s` wurde gestartet.\n<t:%d:R>", task.Name, time.Now().Unix())
+	description := "Der Lauf wurde gestartet. Ergebnisse werden in diesem Thread gepostet."
 	if strings.TrimSpace(task.Description) != "" {
 		description += "\n\n" + strings.TrimSpace(task.Description)
 	}
-	return &discordgo.MessageEmbed{
-		Title:       "Automatisierung gestartet",
-		Description: truncateDiscordDescription(description),
-		Color:       0x58a6ff,
-		Timestamp:   time.Now().Format(time.RFC3339),
-		Footer:      &discordgo.MessageEmbedFooter{Text: task.Name},
-	}
+	return automationEmbed(automationRunStarted, task, "Lauf gestartet", description)
 }
 
 func automationCompletedEmbed(task automation.Task, response string, runErr error) *discordgo.MessageEmbed {
-	status := "Abgeschlossen"
-	color := 0x3fb950
 	description := strings.TrimSpace(response)
 	if runErr != nil {
-		status = "Fehlgeschlagen"
-		color = 0xf85149
 		description = fmt.Sprintf("Automatisierung `%s` konnte nicht ausgeführt werden.\n\n**Fehler:** %v", task.Name, runErr)
-	} else if description == "" {
-		status = "Keine Änderungen"
-		color = 0x8b949e
-		description = "Keine meldepflichtigen Änderungen gefunden."
-	} else {
-		description = decorateAutomationOutput(description)
+		return automationEmbed(automationRunError, task, "Fehler", description)
 	}
-	return &discordgo.MessageEmbed{
-		Title:       "Automatisierung: " + status,
+	if description == "" {
+		return automationEmbed(automationRunEmpty, task, "Keine Änderungen", "Keine meldepflichtigen Änderungen gefunden.")
+	}
+	status := classifyAutomationResponse(description)
+	return automationEmbed(status, task, automationStatusTitle(status), decorateAutomationOutput(description))
+}
+
+func automationEmbed(status automationRunStatus, task automation.Task, title string, description string) *discordgo.MessageEmbed {
+	embed := &discordgo.MessageEmbed{
+		Title:       automationStatusIcon(status) + " Automatisierung: " + title,
 		Description: truncateDiscordDescription(description),
-		Color:       color,
+		Color:       automationStatusColor(status),
 		Timestamp:   time.Now().Format(time.RFC3339),
-		Footer:      &discordgo.MessageEmbedFooter{Text: task.Name},
+		Footer:      &discordgo.MessageEmbedFooter{Text: "Blitzcrank · " + task.Name},
+		Fields: []*discordgo.MessageEmbedField{
+			{Name: "Automation", Value: "`" + task.Name + "`", Inline: true},
+			{Name: "Zeit", Value: fmt.Sprintf("<t:%d:R>", time.Now().Unix()), Inline: true},
+		},
+	}
+	return embed
+}
+
+func classifyAutomationResponse(response string) automationRunStatus {
+	value := strings.ToLower(response)
+	switch {
+	case strings.Contains(value, "konnte nicht ausgeführt werden"), strings.Contains(value, "fehlgeschlagen"), strings.Contains(value, "fehler"), strings.Contains(value, "timeout"):
+		return automationRunError
+	case strings.Contains(value, "manuell prüfen"), strings.Contains(value, "manual"), strings.Contains(value, "prüfen"), strings.Contains(value, "intervention"):
+		return automationRunWarning
+	default:
+		return automationRunOK
+	}
+}
+
+func automationStatusTitle(status automationRunStatus) string {
+	switch status {
+	case automationRunError:
+		return "Fehler"
+	case automationRunWarning:
+		return "Manuelle Prüfung nötig"
+	case automationRunEmpty:
+		return "Keine Änderungen"
+	case automationRunStarted:
+		return "Lauf gestartet"
+	default:
+		return "Abgeschlossen"
+	}
+}
+
+func automationStatusIcon(status automationRunStatus) string {
+	switch status {
+	case automationRunError:
+		return "❌"
+	case automationRunWarning:
+		return "⚠️"
+	case automationRunEmpty:
+		return "ℹ️"
+	case automationRunStarted:
+		return "🚀"
+	default:
+		return "✅"
+	}
+}
+
+func automationStatusColor(status automationRunStatus) int {
+	switch status {
+	case automationRunError:
+		return 0xf85149
+	case automationRunWarning:
+		return 0xd29922
+	case automationRunEmpty:
+		return 0x8b949e
+	case automationRunStarted:
+		return 0x58a6ff
+	default:
+		return 0x3fb950
 	}
 }
 
