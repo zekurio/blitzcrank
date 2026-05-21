@@ -14,13 +14,10 @@ import (
 	"sync"
 	"time"
 
+	"blitzcrank/internal/automation"
 	"blitzcrank/internal/config"
 	"blitzcrank/internal/harness"
 )
-
-type ToolErrorReporter interface {
-	PiToolFailed(context.Context, string, string, string) error
-}
 
 type Server struct {
 	cfg          config.Config
@@ -32,24 +29,44 @@ type Server struct {
 	shutdown     sync.Once
 	done         chan struct{}
 	err          error
-	reporterMu   sync.RWMutex
-	toolReporter ToolErrorReporter
+	toolErrorsMu sync.Mutex
+	toolErrors   map[string][]automation.ToolFailure
 }
 
 func NewServer(cfg config.Config, manager *harness.Manager) *Server {
-	return &Server{cfg: cfg, harness: manager, done: make(chan struct{})}
+	return &Server{cfg: cfg, harness: manager, done: make(chan struct{}), toolErrors: map[string][]automation.ToolFailure{}}
 }
 
-func (s *Server) SetToolErrorReporter(reporter ToolErrorReporter) {
-	s.reporterMu.Lock()
-	defer s.reporterMu.Unlock()
-	s.toolReporter = reporter
+func (s *Server) ResetToolFailures(threadID string) {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return
+	}
+	s.toolErrorsMu.Lock()
+	defer s.toolErrorsMu.Unlock()
+	delete(s.toolErrors, threadID)
 }
 
-func (s *Server) currentToolErrorReporter() ToolErrorReporter {
-	s.reporterMu.RLock()
-	defer s.reporterMu.RUnlock()
-	return s.toolReporter
+func (s *Server) DrainToolFailures(threadID string) []automation.ToolFailure {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return nil
+	}
+	s.toolErrorsMu.Lock()
+	defer s.toolErrorsMu.Unlock()
+	failures := append([]automation.ToolFailure(nil), s.toolErrors[threadID]...)
+	delete(s.toolErrors, threadID)
+	return failures
+}
+
+func (s *Server) recordToolFailure(threadID string, failure automation.ToolFailure) {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return
+	}
+	s.toolErrorsMu.Lock()
+	defer s.toolErrorsMu.Unlock()
+	s.toolErrors[threadID] = append(s.toolErrors[threadID], failure)
 }
 
 func (s *Server) Start(ctx context.Context) error {
