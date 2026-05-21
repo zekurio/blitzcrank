@@ -155,7 +155,7 @@ func (r *AutomationReporter) AutomationStarted(ctx context.Context, task automat
 	if err != nil {
 		return "", err
 	}
-	_, _ = r.session.ChannelMessageSend(thread.ID, fmt.Sprintf("Automatisierung `%s` gestartet.\n<t:%d:R>", task.Name, time.Now().Unix()))
+	_, _ = r.session.ChannelMessageSendEmbed(thread.ID, automationStartedEmbed(task))
 	if r.cfg.DiscordAutomationThreadLock {
 		locked := true
 		_, err = r.session.ChannelEditComplex(thread.ID, &discordgo.ChannelEdit{Locked: &locked})
@@ -170,12 +170,69 @@ func (r *AutomationReporter) AutomationCompleted(ctx context.Context, threadID s
 	if r == nil || r.session == nil || strings.TrimSpace(threadID) == "" {
 		return nil
 	}
-	content := strings.TrimSpace(response)
-	if runErr != nil {
-		content = fmt.Sprintf("Automatisierung `%s` fehlgeschlagen: %v", task.Name, runErr)
-	} else if content == "" {
-		content = fmt.Sprintf("Automatisierung `%s` abgeschlossen; keine meldepflichtigen Änderungen.", task.Name)
-	}
-	_, err := r.session.ChannelMessageSend(threadID, content)
+	_, err := r.session.ChannelMessageSendEmbed(threadID, automationCompletedEmbed(task, response, runErr))
 	return err
+}
+
+func automationStartedEmbed(task automation.Task) *discordgo.MessageEmbed {
+	description := fmt.Sprintf("Automatisierung `%s` wurde gestartet.\n<t:%d:R>", task.Name, time.Now().Unix())
+	if strings.TrimSpace(task.Description) != "" {
+		description += "\n\n" + strings.TrimSpace(task.Description)
+	}
+	return &discordgo.MessageEmbed{
+		Title:       "Automatisierung gestartet",
+		Description: truncateDiscordDescription(description),
+		Color:       0x58a6ff,
+		Timestamp:   time.Now().Format(time.RFC3339),
+		Footer:      &discordgo.MessageEmbedFooter{Text: task.Name},
+	}
+}
+
+func automationCompletedEmbed(task automation.Task, response string, runErr error) *discordgo.MessageEmbed {
+	status := "Abgeschlossen"
+	color := 0x3fb950
+	description := strings.TrimSpace(response)
+	if runErr != nil {
+		status = "Fehlgeschlagen"
+		color = 0xf85149
+		description = fmt.Sprintf("Automatisierung `%s` konnte nicht ausgeführt werden.\n\n**Fehler:** %v", task.Name, runErr)
+	} else if description == "" {
+		status = "Keine Änderungen"
+		color = 0x8b949e
+		description = "Keine meldepflichtigen Änderungen gefunden."
+	} else {
+		description = decorateAutomationOutput(description)
+	}
+	return &discordgo.MessageEmbed{
+		Title:       "Automatisierung: " + status,
+		Description: truncateDiscordDescription(description),
+		Color:       color,
+		Timestamp:   time.Now().Format(time.RFC3339),
+		Footer:      &discordgo.MessageEmbedFooter{Text: task.Name},
+	}
+}
+
+func decorateAutomationOutput(value string) string {
+	lines := strings.Split(strings.TrimSpace(value), "\n")
+	for i, line := range lines {
+		switch strings.TrimSpace(line) {
+		case "Importiert:":
+			lines[i] = "### ✅ Importiert"
+		case "Entfernt:":
+			lines[i] = "### 🗑️ Entfernt"
+		case "Manuell prüfen:":
+			lines[i] = "### ⚠️ Manuell prüfen"
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func truncateDiscordDescription(value string) string {
+	value = strings.TrimSpace(value)
+	const limit = 3900
+	if len([]rune(value)) <= limit {
+		return value
+	}
+	runes := []rune(value)
+	return string(runes[:limit]) + "\n\n… gekürzt"
 }
