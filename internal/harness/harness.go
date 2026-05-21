@@ -11,18 +11,21 @@ import (
 	"sync"
 	"time"
 
-	"blitzcrank/internal/agent"
 	"blitzcrank/internal/config"
 	"blitzcrank/internal/store"
 	"blitzcrank/internal/tools"
 )
 
 type Runner interface {
-	Respond(context.Context, agent.Request) (string, error)
+	Respond(context.Context, Request) (string, error)
 }
 
 type modelNamer interface {
-	ModelName(agent.Request) string
+	ModelName(Request) string
+}
+
+type runtimeInfoProvider interface {
+	RuntimeInfo(Request) (string, string)
 }
 
 type Manager struct {
@@ -264,17 +267,18 @@ func (m *Manager) run(ctx context.Context, thread *IssueThread, payload map[stri
 	record := RunRecord{StartedAt: start}
 	prompt := m.issuePromptContext(thread, payload, event)
 	m.recordIssuePromptCompactions(thread.IssueID, prompt.Compactions)
-	request := agent.Request{
+	request := Request{
 		Source:   "seerr_issue_" + event,
 		ThreadID: "issue:" + thread.IssueID,
 		Author:   actor(payload),
 		Audience: "seerr_issue",
 		Content:  prompt.Content,
-		ToolAudit: func(toolRecord agent.ToolAuditRecord) {
+		ToolAudit: func(toolRecord ToolAuditRecord) {
 			m.recordToolCall(thread.IssueID, event, start, toolRecord)
 		},
 	}
-	request.Progress = m.newSeerrProgressReporter(thread.IssueID, request).callback(runCtx)
+	progress := m.newSeerrProgressReporter(thread.IssueID, request)
+	request.Progress = progress.callback(runCtx)
 	log.Printf("seerr issue run started: issue=%s event=%s actor=%q prior_events=%d prior_runs=%d", thread.IssueID, event, request.Author, len(thread.Events), len(thread.Runs))
 
 	comment, err := m.runner.Respond(runCtx, request)
@@ -301,7 +305,7 @@ func (m *Manager) run(ctx context.Context, thread *IssueThread, payload map[stri
 		return record, err
 	}
 
-	comment = m.signedComment(comment, request)
+	comment = progress.render(comment)
 	if err := m.validateSignedFinalIssueComment(comment); err != nil {
 		record.Error = err.Error()
 		record.CompletionReason = "agent final comment failed validation"
@@ -311,7 +315,7 @@ func (m *Manager) run(ctx context.Context, thread *IssueThread, payload map[stri
 	record.FinalComment = comment
 	record.Attribution = m.commentAttribution()
 	log.Printf("seerr issue run completed: issue=%s event=%s duration=%s comment_bytes=%d", thread.IssueID, event, record.CompletedAt.Sub(record.StartedAt).Round(time.Millisecond), len(comment))
-	if _, err := m.tools.CommentIssue(runCtx, thread.IssueID, comment); err != nil {
+	if err := progress.postOrUpdate(runCtx, comment); err != nil {
 		record.Error = err.Error()
 		record.CompletionReason = "final comment failed"
 		log.Printf("seerr final comment failed: issue=%s event=%s error=%v", thread.IssueID, event, err)
@@ -334,7 +338,7 @@ func (m *Manager) run(ctx context.Context, thread *IssueThread, payload map[stri
 	return record, nil
 }
 
-func (m *Manager) recordToolCall(issueID, sourceEventType string, runStartedAt time.Time, record agent.ToolAuditRecord) {
+func (m *Manager) recordToolCall(issueID, sourceEventType string, runStartedAt time.Time, record ToolAuditRecord) {
 	m.appendTrace("issues/issue-"+issueID+".jsonl", map[string]any{
 		"type":              "tool_call",
 		"issue":             issueID,

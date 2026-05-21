@@ -23,8 +23,11 @@ type jsonRequest struct {
 }
 
 func (r *Registry) doJSON(ctx context.Context, request jsonRequest) (any, error) {
-	if request.BaseURL == "" || request.APIKey == "" {
-		return nil, fmt.Errorf("service is not configured")
+	if request.BaseURL == "" {
+		return nil, fmt.Errorf("service base URL is not configured")
+	}
+	if request.APIHeader != "" && request.APIKey == "" {
+		return nil, fmt.Errorf("service API key is not configured")
 	}
 
 	var reader io.Reader
@@ -40,7 +43,9 @@ func (r *Registry) doJSON(ctx context.Context, request jsonRequest) (any, error)
 	if err != nil {
 		return nil, fmt.Errorf("create %s %s request: %w", request.Method, request.Path, err)
 	}
-	req.Header.Set(request.APIHeader, request.APIKey)
+	if request.APIHeader != "" {
+		req.Header.Set(request.APIHeader, request.APIKey)
+	}
 	req.Header.Set("Accept", "application/json")
 	for key, value := range request.Headers {
 		if value != "" {

@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"blitzcrank/internal/agent"
 	"blitzcrank/internal/runtimectx"
 )
 
@@ -222,13 +221,52 @@ func truncatePromptText(value string, limit int) string {
 	return string(runes[:limit]) + "... [truncated]"
 }
 
-func (m *Manager) signedComment(comment string, request agent.Request) string {
+func (m *Manager) signedComment(comment string, request Request) string {
 	comment = strings.TrimSpace(comment)
 	header := m.commentHeader(request)
 	if strings.HasPrefix(comment, header) || strings.HasPrefix(comment, m.commentHeaderPrefix()) {
 		return comment
 	}
 	return header + "\n\n" + comment
+}
+
+func (m *Manager) signedRunMessage(comment string, todos []TodoItem, request Request) string {
+	comment = strings.TrimSpace(comment)
+	header := m.commentHeader(request)
+	if strings.HasPrefix(comment, header) || strings.HasPrefix(comment, m.commentHeaderPrefix()) {
+		return comment
+	}
+	return renderRunMessage(header, todos, comment)
+}
+
+func renderRunMessage(header string, todos []TodoItem, response string) string {
+	var parts []string
+	if header = strings.TrimSpace(header); header != "" {
+		parts = append(parts, header)
+	}
+	if list := renderTodoList(todos); list != "" {
+		parts = append(parts, list)
+	}
+	if response = strings.TrimSpace(response); response != "" {
+		parts = append(parts, response)
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func renderTodoList(todos []TodoItem) string {
+	var lines []string
+	for _, item := range todos {
+		content := strings.TrimSpace(item.Content)
+		if content == "" {
+			continue
+		}
+		mark := " "
+		if item.Completed {
+			mark = "X"
+		}
+		lines = append(lines, "["+mark+"] "+content)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m *Manager) validateFinalIssueComment(comment string) error {
@@ -290,14 +328,21 @@ func (m *Manager) validateSignedFinalIssueComment(comment string) error {
 	return nil
 }
 
-func (m *Manager) commentHeader(request ...agent.Request) string {
+func (m *Manager) commentHeader(request ...Request) string {
 	name := strings.ToLower(strings.TrimSpace(m.cfg.SeerrBotDisplayName))
 	if name == "" {
 		name = "blitzcrank"
 	}
-	model := strings.TrimSpace(m.cfg.Model)
+	model := strings.TrimSpace(m.cfg.PiModelFor("default"))
+	effort := ""
 	if len(request) > 0 {
-		if namer, ok := m.runner.(modelNamer); ok {
+		if provider, ok := m.runner.(runtimeInfoProvider); ok {
+			resolvedModel, resolvedEffort := provider.RuntimeInfo(request[0])
+			if strings.TrimSpace(resolvedModel) != "" {
+				model = strings.TrimSpace(resolvedModel)
+			}
+			effort = strings.TrimSpace(resolvedEffort)
+		} else if namer, ok := m.runner.(modelNamer); ok {
 			if resolved := strings.TrimSpace(namer.ModelName(request[0])); resolved != "" {
 				model = resolved
 			}
@@ -305,6 +350,9 @@ func (m *Manager) commentHeader(request ...agent.Request) string {
 	}
 	if model == "" {
 		model = "unknown-model"
+	}
+	if effort != "" {
+		model += " " + effort
 	}
 	return "[" + name + " w/ " + model + "]"
 }

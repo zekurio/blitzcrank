@@ -101,12 +101,6 @@ func applyEnvFields(cfg *Config, allowed map[string]struct{}) error {
 	})
 }
 
-func applyLegacyEnv(cfg *Config) {
-	if strings.TrimSpace(os.Getenv("AUTOMATIONS_ENABLED")) == "" {
-		cfg.AutomationsEnabled = boolEnv("CRON_ENABLED", cfg.AutomationsEnabled)
-	}
-}
-
 func applyTOMLFile(cfg *Config, path string) error {
 	file, err := os.Open(path)
 	if err != nil {
@@ -124,9 +118,6 @@ func applyTOMLFile(cfg *Config, path string) error {
 	flat := flattenTOML(tree, nil, map[string]any{})
 	if err := applyTOMLValues(cfg, flat); err != nil {
 		return fmt.Errorf("apply config values: %w", err)
-	}
-	if err := applyRuntimeProfilesFromTOML(cfg, flat); err != nil {
-		return fmt.Errorf("apply runtime profiles: %w", err)
 	}
 	return nil
 }

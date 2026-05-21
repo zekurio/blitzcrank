@@ -26,6 +26,27 @@ func (r *Registry) CommentIssue(ctx context.Context, issueID, message string) (a
 	return r.doJSON(ctx, jsonRequest{Method: http.MethodPost, BaseURL: r.cfg.SeerrBaseURL, Path: "/api/v1/issue/" + url.PathEscape(issueID) + "/comment", APIKey: r.cfg.SeerrAPIKey, APIHeader: "X-Api-Key", Headers: headers, Body: body})
 }
 
+func (r *Registry) UpdateIssueComment(ctx context.Context, issueID, commentID, message string) (any, error) {
+	issueID = strings.TrimSpace(issueID)
+	commentID = strings.TrimSpace(commentID)
+	message = strings.TrimSpace(message)
+	if issueID == "" {
+		return nil, fmt.Errorf("issue_id is required")
+	}
+	if commentID == "" {
+		return nil, fmt.Errorf("comment_id is required")
+	}
+	if message == "" {
+		return nil, fmt.Errorf("message is required")
+	}
+	headers := map[string]string{}
+	if r.cfg.SeerrBotUserID != "" {
+		headers["X-Api-User"] = r.cfg.SeerrBotUserID
+	}
+	body := map[string]any{"message": message}
+	return r.doJSON(ctx, jsonRequest{Method: http.MethodPut, BaseURL: r.cfg.SeerrBaseURL, Path: "/api/v1/issue/" + url.PathEscape(issueID) + "/comment/" + url.PathEscape(commentID), APIKey: r.cfg.SeerrAPIKey, APIHeader: "X-Api-Key", Headers: headers, Body: body})
+}
+
 func (r *Registry) ResolveIssue(ctx context.Context, issueID string) (any, error) {
 	issueID = strings.TrimSpace(issueID)
 	if issueID == "" {
@@ -178,11 +199,39 @@ func (r *Registry) seerrSearchMedia(ctx context.Context, query string, page int)
 }
 
 func (r *Registry) seerr(ctx context.Context, method, path string, body any) (any, error) {
+	if err := r.validateServiceConfigured("seerr"); err != nil {
+		return nil, err
+	}
 	return r.doJSON(ctx, jsonRequest{Method: method, BaseURL: r.cfg.SeerrBaseURL, Path: path, APIKey: r.cfg.SeerrAPIKey, APIHeader: "X-Api-Key", Body: body})
 }
 
 func (r *Registry) jellyfin(ctx context.Context, method, path string, body any) (any, error) {
-	return r.doJSON(ctx, jsonRequest{Method: method, BaseURL: r.cfg.JellyfinBaseURL, Path: path, APIKey: r.cfg.JellyfinAPIKey, APIHeader: "X-Emby-Token", Body: body})
+	if err := r.validateServiceConfigured("jellyfin"); err != nil {
+		return nil, err
+	}
+	return r.doJSON(ctx, jsonRequest{
+		Method:  method,
+		BaseURL: r.cfg.JellyfinBaseURL,
+		Path:    path,
+		Headers: map[string]string{
+			"Authorization": jellyfinAuthorizationHeader(r.cfg.JellyfinAPIKey),
+		},
+		Body: body,
+	})
+}
+
+func jellyfinAuthorizationHeader(token string) string {
+	return "MediaBrowser " + strings.Join([]string{
+		jellyfinAuthParam("Token", token),
+		jellyfinAuthParam("Client", "Blitzcrank"),
+		jellyfinAuthParam("Device", "Blitzcrank Gateway"),
+		jellyfinAuthParam("DeviceId", "blitzcrank-gateway"),
+		jellyfinAuthParam("Version", "0.1.0"),
+	}, ", ")
+}
+
+func jellyfinAuthParam(key, value string) string {
+	return key + `="` + url.QueryEscape(value) + `"`
 }
 
 func (r *Registry) jellyfinListItems(ctx context.Context, args map[string]any) (any, error) {
@@ -355,6 +404,9 @@ func (r *Registry) jellyfinItemUserData(ctx context.Context, userID, itemID stri
 }
 
 func (r *Registry) arr(ctx context.Context, service, method, path string, body any) (any, error) {
+	if err := r.validateServiceConfigured(service); err != nil {
+		return nil, err
+	}
 	if service == "sonarr" {
 		return r.doJSON(ctx, jsonRequest{Method: method, BaseURL: r.cfg.SonarrBaseURL, Path: path, APIKey: r.cfg.SonarrAPIKey, APIHeader: "X-Api-Key", Body: body})
 	}
@@ -362,6 +414,9 @@ func (r *Registry) arr(ctx context.Context, service, method, path string, body a
 }
 
 func (r *Registry) sabnzbd(ctx context.Context, mode string, values url.Values) (any, error) {
+	if err := r.validateServiceConfigured("sabnzbd"); err != nil {
+		return nil, err
+	}
 	if values == nil {
 		values = url.Values{}
 	}
