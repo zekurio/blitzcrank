@@ -250,6 +250,26 @@ func (r *AutomationReporter) lockAutomationThread(threadID string) error {
 	return err
 }
 
+func (r *AutomationReporter) PiToolFailed(ctx context.Context, threadID string, toolName string, message string) error {
+	if r == nil || r.session == nil || !strings.HasPrefix(strings.TrimSpace(threadID), "automation:") {
+		return nil
+	}
+	taskName := strings.TrimSpace(strings.TrimPrefix(threadID, "automation:"))
+	if taskName == "" {
+		return nil
+	}
+	task := automation.Task{Name: taskName}
+	thread, err := r.ensureAutomationThread(task)
+	if err != nil {
+		return err
+	}
+	_, err = r.session.ChannelMessageSendEmbed(thread.ID, automationToolErrorEmbed(task, toolName, message))
+	if lockErr := r.lockAutomationThread(thread.ID); lockErr != nil && err == nil {
+		err = lockErr
+	}
+	return err
+}
+
 func automationThreadName(task automation.Task) string {
 	return "automation: " + task.Name
 }
@@ -260,6 +280,11 @@ func automationStartedEmbed(task automation.Task) *discordgo.MessageEmbed {
 		description += "\n\n" + strings.TrimSpace(task.Description)
 	}
 	return automationEmbed(automationRunStarted, task, "Lauf gestartet", description)
+}
+
+func automationToolErrorEmbed(task automation.Task, toolName string, message string) *discordgo.MessageEmbed {
+	description := fmt.Sprintf("Ein Pi-Tool-Aufruf ist fehlgeschlagen. Die Automatisierung kann dadurch unvollständig sein.\n\n**Tool:** `%s`\n\n**Fehler:**\n```text\n%s\n```", toolName, truncateCodeBlock(message, 1200))
+	return automationEmbed(automationRunError, task, "Tool-Fehler", description)
 }
 
 func automationCompletedEmbed(task automation.Task, response string, runErr error) *discordgo.MessageEmbed {
@@ -360,6 +385,15 @@ func decorateAutomationOutput(value string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func truncateCodeBlock(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if len([]rune(value)) <= limit {
+		return value
+	}
+	runes := []rune(value)
+	return string(runes[:limit]) + "\n… gekürzt"
 }
 
 func truncateDiscordDescription(value string) string {

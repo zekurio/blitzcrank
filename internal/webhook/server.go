@@ -18,20 +18,38 @@ import (
 	"blitzcrank/internal/harness"
 )
 
+type ToolErrorReporter interface {
+	PiToolFailed(context.Context, string, string, string) error
+}
+
 type Server struct {
-	cfg        config.Config
-	harness    *harness.Manager
-	server     *http.Server
-	processCtx context.Context
-	cancel     context.CancelFunc
-	wg         sync.WaitGroup
-	shutdown   sync.Once
-	done       chan struct{}
-	err        error
+	cfg          config.Config
+	harness      *harness.Manager
+	server       *http.Server
+	processCtx   context.Context
+	cancel       context.CancelFunc
+	wg           sync.WaitGroup
+	shutdown     sync.Once
+	done         chan struct{}
+	err          error
+	reporterMu   sync.RWMutex
+	toolReporter ToolErrorReporter
 }
 
 func NewServer(cfg config.Config, manager *harness.Manager) *Server {
 	return &Server{cfg: cfg, harness: manager, done: make(chan struct{})}
+}
+
+func (s *Server) SetToolErrorReporter(reporter ToolErrorReporter) {
+	s.reporterMu.Lock()
+	defer s.reporterMu.Unlock()
+	s.toolReporter = reporter
+}
+
+func (s *Server) currentToolErrorReporter() ToolErrorReporter {
+	s.reporterMu.RLock()
+	defer s.reporterMu.RUnlock()
+	return s.toolReporter
 }
 
 func (s *Server) Start(ctx context.Context) error {

@@ -5,10 +5,13 @@ async function callBlitzcrankTool(name: string, args: Record<string, unknown>, s
   const baseURL = process.env.BLITZCRANK_TOOL_BASE_URL;
   const secret = process.env.BLITZCRANK_TOOL_SECRET;
   if (!baseURL || !secret) throw new Error("Blitzcrank tool gateway is not configured");
+  const headers: Record<string, string> = { "content-type": "application/json", "x-blitzcrank-tool-secret": secret };
+  if (process.env.BLITZCRANK_RUN_SOURCE) headers["x-blitzcrank-run-source"] = process.env.BLITZCRANK_RUN_SOURCE;
+  if (process.env.BLITZCRANK_THREAD_ID) headers["x-blitzcrank-thread-id"] = process.env.BLITZCRANK_THREAD_ID;
   const response = await fetch(`${baseURL.replace(/\/$/, "")}/internal/pi/tools/${encodeURIComponent(name)}`, {
     method: "POST",
     signal,
-    headers: { "content-type": "application/json", "x-blitzcrank-tool-secret": secret },
+    headers,
     body: JSON.stringify({ arguments: args }),
   });
   const payload = await response.json().catch(() => ({}));

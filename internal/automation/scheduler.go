@@ -57,18 +57,24 @@ func (s *Scheduler) Start(ctx context.Context) {
 }
 
 func (s *Scheduler) runHourly(ctx context.Context, name string) {
-	ticker := time.NewTicker(time.Hour)
-	defer ticker.Stop()
 	for {
+		next := nextHourlyRun(time.Now())
+		log.Printf("automation scheduled: name=%s next_run=%s", name, next.Format(time.RFC3339))
+		timer := time.NewTimer(time.Until(next))
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-ticker.C:
-			if err := s.RunAutomation(ctx, name); err != nil {
-				log.Printf("automation failed: name=%s error=%v", name, err)
-			}
+		case <-timer.C:
+		}
+		if err := s.RunAutomation(ctx, name); err != nil {
+			log.Printf("automation failed: name=%s error=%v", name, err)
 		}
 	}
+}
+
+func nextHourlyRun(now time.Time) time.Time {
+	return now.Truncate(time.Hour).Add(time.Hour)
 }
 
 func (s *Scheduler) RunAutomation(ctx context.Context, name string) error {
