@@ -7,6 +7,11 @@ import (
 )
 
 type Config struct {
+	DiscordToken                string `env:"DISCORD_TOKEN" toml:"discord.token"`
+	DiscordGuildID              string `env:"DISCORD_GUILD_ID" toml:"discord.guild_id"`
+	DiscordAutomationChannelID  string `env:"DISCORD_AUTOMATION_CHANNEL_ID" toml:"discord.automation_channel_id"`
+	DiscordAutomationThreadLock bool   `env:"DISCORD_AUTOMATION_THREAD_LOCK" toml:"discord.automation_thread_lock" default:"true"`
+
 	HTTPListenAddr         string `env:"BLITZCRANK_HTTP_LISTEN_ADDR" toml:"web.listen_addr"`
 	SeerrWebhookListenAddr string `env:"SEERR_WEBHOOK_LISTEN_ADDR" toml:"seerr.webhook_listen_addr"`
 	SeerrWebhookPath       string `env:"SEERR_WEBHOOK_PATH" toml:"seerr.webhook_path" default:"/webhooks/seerr"`

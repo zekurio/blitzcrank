@@ -8,12 +8,13 @@ Pi owns the agent runtime, provider/auth setup, skills, model selection, durable
 
 - Seerr issue webhooks
 - Markdown scheduled automations
+- Optional Discord automation reporting and `/automatisierung` trigger command
 - Pi RPC runner with persistent sessions
 - Typed Pi service request tools for Seerr, Jellyfin, Sonarr, Radarr, and SABnzBD
 - SQLite gateway state for Seerr issue dedupe/runs
 - JSONL traces for issue/automation history search
 
-Discord support, Blitzcrank's old native LLM runtime, Codex/OpenAI/OpenRouter clients, the Deno sandbox, root `skills/`, and root `prompts/` have been removed from the active gateway.
+General Discord support, Blitzcrank's old native LLM runtime, Codex/OpenAI/OpenRouter clients, the Deno sandbox, root `skills/`, and root `prompts/` have been removed. A lean Discord automation integration remains optional.
 
 ## Development
 
@@ -49,6 +50,7 @@ Keep secrets in `.env`, a systemd `EnvironmentFile`, SOPS/agenix, or another sec
 
 ```sh
 PI_TOOL_SECRET=long-random-local-secret
+DISCORD_TOKEN=... # optional, for automation reporting/triggering
 SEERR_API_KEY=...
 JELLYFIN_API_KEY=...
 SONARR_API_KEY=...
@@ -65,6 +67,12 @@ SEERR_WEBHOOK_SECRET=...
 Minimal TOML shape:
 
 ```toml
+[discord]
+# Optional automation reporting and /automatisierung command.
+guild_id = ""
+automation_channel_id = ""
+automation_thread_lock = true
+
 [web]
 listen_addr = "127.0.0.1:8080"
 
@@ -162,6 +170,8 @@ automations_dir = "automations"
 ```
 
 Currently `@hourly` is supported. Each automation gets a durable Pi session derived from `automation:<name>`.
+
+When `DISCORD_TOKEN` and `discord.automation_channel_id` are configured, every automation run creates a Discord thread titled `automation: {automation name}` in that channel, posts the result there, and locks the thread by default. The `/automatisierung` slash command can trigger one of the currently loaded automations manually.
 
 ## State
 
