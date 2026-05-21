@@ -164,6 +164,9 @@ func (r *Runner) RuntimeInfo(req harness.Request) (string, string) {
 
 func (r *Runner) env() []string {
 	env := os.Environ()
+	if agentDir := strings.TrimSpace(r.cfg.PiAgentDir); agentDir != "" {
+		env = append(env, "PI_CODING_AGENT_DIR="+agentDir)
+	}
 	if baseURL := strings.TrimSpace(r.cfg.PiToolBaseURL); baseURL != "" {
 		env = append(env, "BLITZCRANK_TOOL_BASE_URL="+baseURL)
 	} else if listen := firstListenAddr(r.cfg); listen != "" {

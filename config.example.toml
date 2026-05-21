@@ -32,6 +32,8 @@ bot_display_name = "Blitzcrank"
 # Pi is the only agent runtime. Blitzcrank invokes `pi --mode rpc`.
 command = "pi"
 cwd = "."
+# Optional Pi config/auth directory. Seed this with auth.json/settings.json for service deployments.
+agent_dir = ""
 # Persistent Pi sessions. Defaults to runtime.threads_dir/pi-sessions when empty.
 sessions_dir = ""
 # Required for Pi extension tools to call back into Blitzcrank.
