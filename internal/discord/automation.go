@@ -266,18 +266,14 @@ func automationCompletedEmbed(task automation.Task, response string, runErr erro
 	description := strings.TrimSpace(response)
 	failureSummary := formatToolFailures(failures)
 	if runErr != nil {
-		description = fmt.Sprintf("Automatisierung `%s` konnte nicht ausgeführt werden.\n\n**Fehler:** %v", task.Name, runErr)
+		description = fmt.Sprintf("Konnte nicht ausgeführt werden: %v", runErr)
 		if failureSummary != "" {
-			description += "\n\n" + failureSummary
+			description += "\n" + failureSummary
 		}
 		return automationEmbed(automationRunError, task, "Fehler", description)
 	}
 	if failureSummary != "" {
-		if description != "" {
-			description += "\n\n" + failureSummary
-		} else {
-			description = failureSummary
-		}
+		description = conciseFailureDescription(description, failureSummary)
 		return automationEmbed(automationRunError, task, "Tool-Fehler", description)
 	}
 	if description == "" {
@@ -287,21 +283,45 @@ func automationCompletedEmbed(task automation.Task, response string, runErr erro
 	return automationEmbed(status, task, automationStatusTitle(status), decorateAutomationOutput(description))
 }
 
+func conciseFailureDescription(response string, failureSummary string) string {
+	response = strings.TrimSpace(response)
+	if response == "" {
+		return failureSummary
+	}
+	return "**Kurzfassung:** " + firstNonEmptyLine(response) + "\n" + failureSummary
+}
+
 func formatToolFailures(failures []automation.ToolFailure) string {
 	if len(failures) == 0 {
 		return ""
 	}
-	var b strings.Builder
-	b.WriteString("### ❌ Tool-Fehler\n")
-	b.WriteString("Ein oder mehrere Pi-Tool-Aufrufe sind fehlgeschlagen. Die Automatisierung kann dadurch unvollständig sein.\n")
+	tools := make([]string, 0, len(failures))
+	seen := map[string]bool{}
+	reason := "Fehler beim Dienstaufruf"
 	for _, failure := range failures {
-		b.WriteString("\n**")
-		b.WriteString(failure.Tool)
-		b.WriteString(":**\n```text\n")
-		b.WriteString(truncateCodeBlock(failure.Error, 900))
-		b.WriteString("\n```")
+		tool := strings.TrimSpace(failure.Tool)
+		if tool != "" && !seen[tool] {
+			seen[tool] = true
+			tools = append(tools, "`"+tool+"`")
+		}
+		if strings.Contains(strings.ToLower(failure.Error), "timeout") {
+			reason = "Timeout beim Dienstaufruf"
+		}
 	}
-	return b.String()
+	if len(tools) == 0 {
+		tools = append(tools, "unbekannt")
+	}
+	return "**Tools:** " + strings.Join(tools, ", ") + "\n**Grund:** " + reason
+}
+
+func firstNonEmptyLine(value string) string {
+	for _, line := range strings.Split(value, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
+		}
+	}
+	return strings.TrimSpace(value)
 }
 
 func automationEmbed(status automationRunStatus, task automation.Task, title string, description string) *discordgo.MessageEmbed {
