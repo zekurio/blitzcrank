@@ -85,7 +85,9 @@ func runBot() error {
 			finishStep(err)
 			return fmt.Errorf("start discord automation bot: %w", err)
 		}
-		scheduler.SetReporter(discordBot.Reporter())
+		reporter := discordBot.Reporter()
+		scheduler.SetReporter(reporter)
+		webhookServer.SetToolErrorReporter(reporter)
 	}
 	finishStep(nil)
 

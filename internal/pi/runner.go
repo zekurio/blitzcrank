@@ -37,7 +37,7 @@ func (r *Runner) Respond(ctx context.Context, req harness.Request) (string, erro
 	slog.Debug("starting pi rpc", "command", r.command(), "args", args, "cwd", r.cwd(), "thread_id", req.ThreadID, "source", req.Source)
 	cmd := exec.CommandContext(cmdCtx, r.command(), args...)
 	cmd.Dir = r.cwd()
-	cmd.Env = r.env()
+	cmd.Env = r.env(req)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -162,8 +162,12 @@ func (r *Runner) RuntimeInfo(req harness.Request) (string, string) {
 	return r.ModelName(req), ""
 }
 
-func (r *Runner) env() []string {
+func (r *Runner) env(req harness.Request) []string {
 	env := os.Environ()
+	env = append(env,
+		"BLITZCRANK_RUN_SOURCE="+strings.TrimSpace(req.Source),
+		"BLITZCRANK_THREAD_ID="+strings.TrimSpace(req.ThreadID),
+	)
 	if agentDir := strings.TrimSpace(r.cfg.PiAgentDir); agentDir != "" {
 		env = append(env, "PI_CODING_AGENT_DIR="+agentDir)
 	}
