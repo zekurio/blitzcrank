@@ -13,6 +13,7 @@ import (
 
 	"blitzcrank/internal/automation"
 	"blitzcrank/internal/config"
+	"blitzcrank/internal/discord"
 	"blitzcrank/internal/harness"
 	"blitzcrank/internal/logging"
 	"blitzcrank/internal/pi"
@@ -68,8 +69,27 @@ func runBot() error {
 	}
 	finishStep(nil)
 
+	finishStep = startup.start("create_automation_scheduler")
+	scheduler := automation.NewScheduler(cfg, runner, nil)
+	finishStep(nil)
+
+	finishStep = startup.start("start_discord_automation_bot")
+	discordBot, err := discord.New(cfg, scheduler)
+	if err != nil {
+		finishStep(err)
+		return fmt.Errorf("create discord automation bot: %w", err)
+	}
+	if discordBot != nil {
+		defer discordBot.Close()
+		if err := discordBot.Start(); err != nil {
+			finishStep(err)
+			return fmt.Errorf("start discord automation bot: %w", err)
+		}
+		scheduler.SetReporter(discordBot.Reporter())
+	}
+	finishStep(nil)
+
 	finishStep = startup.start("start_automation_scheduler")
-	scheduler := automation.NewScheduler(cfg, runner)
 	scheduler.Start(ctx)
 	finishStep(nil)
 

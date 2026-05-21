@@ -5,6 +5,14 @@
 [bot]
 public_name = "Blitzcrank"
 
+[discord]
+# Optional lean Discord integration for automation reporting and /automatisierung.
+# Prefer DISCORD_TOKEN via environment/secret manager.
+token = ""
+guild_id = ""
+automation_channel_id = ""
+automation_thread_lock = true
+
 [web]
 # Bind address for Seerr webhooks and the internal Pi tool gateway.
 listen_addr = "127.0.0.1:8080"

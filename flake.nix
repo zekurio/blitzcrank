@@ -26,6 +26,7 @@
           tomlFormat = pkgs.formats.toml { };
           defaultSettings = {
             bot.public_name = cfg.publicName;
+            discord.automation_channel_id = cfg.discordAutomationChannelId;
             storage.database_path = toString cfg.databasePath;
             storage.cache_dir = "${cfg.dataDir}/cache";
             runtime = {
@@ -121,6 +122,11 @@
               default = { };
               description = "Per-task Pi model map. Keys include default, seerr, and automation. Include thinking inline, for example anthropic/claude-sonnet-4-5:high.";
             };
+            discordAutomationChannelId = lib.mkOption {
+              type = lib.types.str;
+              default = "";
+              description = "Discord channel id for automation run threads and /automatisierung reporting.";
+            };
           };
 
           config = lib.mkIf cfg.enable {
@@ -176,7 +182,7 @@
               in
               base != ".git" && base != ".direnv" && base != ".env" && base != "result";
           };
-          vendorHash = "sha256-s7jdUifNKa8KKlQy+9clttVdeWc9x+zB50LNiiMPbgM=";
+          vendorHash = "sha256-NWmrgKrWlgeu0So3kvkunty5EmPNHfe8MffZbvIoskk=";
           subPackages = [ "cmd/blitzcrank" ];
           nativeBuildInputs = [ pkgs.makeWrapper ];
           postInstall = ''
