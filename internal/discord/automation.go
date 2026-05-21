@@ -164,7 +164,7 @@ func (r *AutomationReporter) AutomationStarted(ctx context.Context, task automat
 	return thread.ID, r.lockAutomationThread(thread.ID)
 }
 
-func (r *AutomationReporter) AutomationCompleted(ctx context.Context, threadID string, task automation.Task, response string, runErr error) error {
+func (r *AutomationReporter) AutomationCompleted(ctx context.Context, threadID string, task automation.Task, response string, runErr error, failures []automation.ToolFailure) error {
 	if r == nil || r.session == nil {
 		return nil
 	}
@@ -178,7 +178,7 @@ func (r *AutomationReporter) AutomationCompleted(ctx context.Context, threadID s
 	if err := r.unlockAutomationThreadForPost(threadID); err != nil {
 		return err
 	}
-	_, err := r.session.ChannelMessageSendEmbed(threadID, automationCompletedEmbed(task, response, runErr))
+	_, err := r.session.ChannelMessageSendEmbed(threadID, automationCompletedEmbed(task, response, runErr, failures))
 	if lockErr := r.lockAutomationThread(threadID); lockErr != nil && err == nil {
 		err = lockErr
 	}
@@ -250,26 +250,6 @@ func (r *AutomationReporter) lockAutomationThread(threadID string) error {
 	return err
 }
 
-func (r *AutomationReporter) PiToolFailed(ctx context.Context, threadID string, toolName string, message string) error {
-	if r == nil || r.session == nil || !strings.HasPrefix(strings.TrimSpace(threadID), "automation:") {
-		return nil
-	}
-	taskName := strings.TrimSpace(strings.TrimPrefix(threadID, "automation:"))
-	if taskName == "" {
-		return nil
-	}
-	task := automation.Task{Name: taskName}
-	thread, err := r.ensureAutomationThread(task)
-	if err != nil {
-		return err
-	}
-	_, err = r.session.ChannelMessageSendEmbed(thread.ID, automationToolErrorEmbed(task, toolName, message))
-	if lockErr := r.lockAutomationThread(thread.ID); lockErr != nil && err == nil {
-		err = lockErr
-	}
-	return err
-}
-
 func automationThreadName(task automation.Task) string {
 	return "automation: " + task.Name
 }
@@ -282,22 +262,46 @@ func automationStartedEmbed(task automation.Task) *discordgo.MessageEmbed {
 	return automationEmbed(automationRunStarted, task, "Lauf gestartet", description)
 }
 
-func automationToolErrorEmbed(task automation.Task, toolName string, message string) *discordgo.MessageEmbed {
-	description := fmt.Sprintf("Ein Pi-Tool-Aufruf ist fehlgeschlagen. Die Automatisierung kann dadurch unvollständig sein.\n\n**Tool:** `%s`\n\n**Fehler:**\n```text\n%s\n```", toolName, truncateCodeBlock(message, 1200))
-	return automationEmbed(automationRunError, task, "Tool-Fehler", description)
-}
-
-func automationCompletedEmbed(task automation.Task, response string, runErr error) *discordgo.MessageEmbed {
+func automationCompletedEmbed(task automation.Task, response string, runErr error, failures []automation.ToolFailure) *discordgo.MessageEmbed {
 	description := strings.TrimSpace(response)
+	failureSummary := formatToolFailures(failures)
 	if runErr != nil {
 		description = fmt.Sprintf("Automatisierung `%s` konnte nicht ausgeführt werden.\n\n**Fehler:** %v", task.Name, runErr)
+		if failureSummary != "" {
+			description += "\n\n" + failureSummary
+		}
 		return automationEmbed(automationRunError, task, "Fehler", description)
+	}
+	if failureSummary != "" {
+		if description != "" {
+			description += "\n\n" + failureSummary
+		} else {
+			description = failureSummary
+		}
+		return automationEmbed(automationRunError, task, "Tool-Fehler", description)
 	}
 	if description == "" {
 		return automationEmbed(automationRunEmpty, task, "Keine Änderungen", "Keine meldepflichtigen Änderungen gefunden.")
 	}
 	status := classifyAutomationResponse(description)
 	return automationEmbed(status, task, automationStatusTitle(status), decorateAutomationOutput(description))
+}
+
+func formatToolFailures(failures []automation.ToolFailure) string {
+	if len(failures) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("### ❌ Tool-Fehler\n")
+	b.WriteString("Ein oder mehrere Pi-Tool-Aufrufe sind fehlgeschlagen. Die Automatisierung kann dadurch unvollständig sein.\n")
+	for _, failure := range failures {
+		b.WriteString("\n**")
+		b.WriteString(failure.Tool)
+		b.WriteString(":**\n```text\n")
+		b.WriteString(truncateCodeBlock(failure.Error, 900))
+		b.WriteString("\n```")
+	}
+	return b.String()
 }
 
 func automationEmbed(status automationRunStatus, task automation.Task, title string, description string) *discordgo.MessageEmbed {

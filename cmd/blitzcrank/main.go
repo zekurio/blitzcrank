@@ -71,6 +71,7 @@ func runBot() error {
 
 	finishStep = startup.start("create_automation_scheduler")
 	scheduler := automation.NewScheduler(cfg, runner, nil)
+	scheduler.SetToolFailureStore(webhookServer)
 	finishStep(nil)
 
 	finishStep = startup.start("start_discord_automation_bot")
@@ -85,9 +86,7 @@ func runBot() error {
 			finishStep(err)
 			return fmt.Errorf("start discord automation bot: %w", err)
 		}
-		reporter := discordBot.Reporter()
-		scheduler.SetReporter(reporter)
-		webhookServer.SetToolErrorReporter(reporter)
+		scheduler.SetReporter(discordBot.Reporter())
 	}
 	finishStep(nil)
 

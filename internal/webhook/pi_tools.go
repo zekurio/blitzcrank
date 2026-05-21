@@ -1,12 +1,12 @@
 package webhook
 
 import (
-	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 	"strings"
-	"time"
+
+	"blitzcrank/internal/automation"
 )
 
 type piToolRequest struct {
@@ -37,18 +37,7 @@ func (s *Server) handlePiTool(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		response["error"] = err.Error()
 		log.Printf("pi tool gateway failed: tool=%s error=%v", name, err)
-		if reporter := s.currentToolErrorReporter(); reporter != nil {
-			threadID := strings.TrimSpace(r.Header.Get("X-Blitzcrank-Thread-ID"))
-			if threadID != "" {
-				go func() {
-					ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-					defer cancel()
-					if reportErr := reporter.PiToolFailed(ctx, threadID, name, err.Error()); reportErr != nil {
-						log.Printf("pi tool gateway error report failed: tool=%s thread_id=%s error=%v", name, threadID, reportErr)
-					}
-				}()
-			}
-		}
+		s.recordToolFailure(r.Header.Get("X-Blitzcrank-Thread-ID"), automation.ToolFailure{Tool: name, Error: err.Error()})
 	}
 	w.Header().Set("Content-Type", "application/json")
 	if err != nil {
