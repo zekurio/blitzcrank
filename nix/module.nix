@@ -10,10 +10,16 @@ let
   cfg = config.services.blitzcrank;
   tomlFormat = pkgs.formats.toml { };
   defaultSettings = {
-    bot.public_name = cfg.publicName;
-    discord.automation_channel_id = cfg.discordAutomationChannelId;
-    storage.database_path = toString cfg.databasePath;
-    storage.cache_dir = "${cfg.dataDir}/cache";
+    bot = {
+      public_name = cfg.publicName;
+    };
+    discord = {
+      automation_channel_id = cfg.discordAutomationChannelId;
+    };
+    storage = {
+      database_path = toString cfg.databasePath;
+      cache_dir = "${cfg.dataDir}/cache";
+    };
     runtime = {
       threads_dir = toString cfg.threadsDir;
       automations_dir = cfg.automationsDir;
@@ -36,7 +42,7 @@ let
 in
 {
   options.services.blitzcrank = {
-    enable = lib.mkEnableOption "Blitzcrank Seerr automation gateway";
+    enable = lib.mkEnableOption "Blitzcrank Seerr automation agent";
     package = lib.mkOption {
       type = lib.types.package;
       default = self.packages.${pkgs.system}.default;
@@ -75,7 +81,7 @@ in
     };
     publicName = lib.mkOption {
       type = lib.types.str;
-      default = "Blitzcrank";
+      default = "blitzcrank";
     };
     timezone = lib.mkOption {
       type = lib.types.str;
@@ -129,7 +135,7 @@ in
       "d ${cfg.dataDir}/cache 0750 ${cfg.user} ${cfg.group} - -"
     ];
     systemd.services.blitzcrank = {
-      description = "Blitzcrank Seerr automation gateway";
+      description = "Blitzcrank Seerr automation agent";
       wantedBy = [ "multi-user.target" ];
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];

@@ -3,7 +3,7 @@
 # NO_COLOR=1
 
 [bot]
-public_name = "Blitzcrank"
+public_name = "blitzcrank"
 
 [discord]
 # Optional lean Discord integration for automation reporting and /automatisierung.
