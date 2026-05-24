@@ -70,6 +70,10 @@ Blitzcrank passes configured service environment to the spawned Pi process so th
 Minimal TOML shape:
 
 ```toml
+[bot]
+# Public display name used in logs and Discord automation embed footers.
+public_name = "blitzcrank"
+
 [discord]
 # Optional automation reporting and /automatisierung command.
 guild_id = ""

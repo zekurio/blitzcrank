@@ -192,7 +192,7 @@ func (l *startupLogger) start(name string) func(error) {
 func (l *startupLogger) done(publicName string) {
 	name := strings.TrimSpace(publicName)
 	if name == "" {
-		name = "Blitzcrank"
+		name = "blitzcrank"
 	}
 	log.Printf("startup completed: bot=%q duration=%s", name, startupDuration(time.Since(l.startedAt)))
 }
