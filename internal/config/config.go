@@ -33,8 +33,6 @@ type Config struct {
 	PiCWD         string            `env:"PI_CWD" toml:"pi.cwd" default:"."`
 	PiAgentDir    string            `env:"PI_CODING_AGENT_DIR" toml:"pi.agent_dir"`
 	PiSessionsDir string            `env:"PI_SESSIONS_DIR" toml:"pi.sessions_dir"`
-	PiToolBaseURL string            `env:"PI_TOOL_BASE_URL" toml:"pi.tool_base_url"`
-	PiToolSecret  string            `env:"PI_TOOL_SECRET" toml:"pi.tool_secret"`
 	PiModels      map[string]string `env:"PI_MODELS" toml:"pi.models"`
 
 	ConfigPath           string        `env:"BLITZCRANK_CONFIG" default:"./blitzcrank.toml"`

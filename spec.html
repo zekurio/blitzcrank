@@ -14,7 +14,7 @@
 
 <header>
   <h1>Blitzcrank</h1>
-  <p class="subtitle">A Go gateway that connects Seerr webhooks and media-server automations to a Pi agent</p>
+  <p class="subtitle">A TypeScript tool that connects Seerr webhooks and media-server automations to a Pi agent</p>
   <span class="badge">Go · Pi · Seerr · Jellyfin · Sonarr · Radarr · SABnzbd</span>
 </header>
 
@@ -35,24 +35,24 @@
 
 <h2 id="overview">1. Overview</h2>
 <p>
-Blitzcrank is now a narrow Go gateway for Seerr/Jellyfin media-server operations. It receives Seerr issue webhooks,
+Blitzcrank is now a narrow TypeScript tool for Seerr/Jellyfin media-server operations. It receives Seerr issue webhooks,
 runs scheduled Markdown automations, owns service credentials and gateway state, and delegates all agentic reasoning to
 <a href="https://github.com/earendil-works/pi-coding-agent">Pi</a> through Pi RPC mode.
 </p>
 <p>
-Pi owns the model/provider configuration, skills, durable agent sessions, tool loop, and conversation history. Blitzcrank owns
-webhook ingress, SQLite issue state, Seerr final comments/resolution, service API credentials, and a small internal HTTP tool gateway.
+Pi owns the model/provider configuration, skills, durable agent sessions, tool loop, project TypeScript tools, and conversation history. Blitzcrank owns
+webhook ingress, SQLite issue state, Seerr final comments/resolution, and passing configured service credentials to Pi runs.
 </p>
 <div class="callout">
   <strong>Current scope:</strong> Seerr issue workflows and scheduled automations only. Discord support, the old native LLM runtime,
-  Codex/OpenAI/OpenRouter clients, Deno TypeScript sandboxing, and old generic agent thread storage have been removed.
+  Codex/OpenAI/OpenRouter clients, old TypeScript sandboxing, and old generic agent thread storage have been removed.
 </div>
 
 <h2 id="features">2. Features</h2>
 <div class="feature-grid">
   <div class="feature-card"><h4>Seerr Issue Gateway</h4><p>Accepts Seerr webhooks, deduplicates events, locks per issue, runs Pi, posts final comments, and resolves issues when Pi returns <code>RESOLVE_ISSUE: yes</code>.</p></div>
   <div class="feature-card"><h4>Pi Agent Runtime</h4><p>Blitzcrank starts <code>pi --mode rpc</code> with persistent sessions, project skills, and a project extension that registers media-server tools.</p></div>
-  <div class="feature-card"><h4>Typed Service Tools</h4><p>Pi calls <code>seerr_request</code>, <code>jellyfin_request</code>, <code>sonarr_request</code>, <code>radarr_request</code>, and <code>sabnzbd_request</code>; Go injects credentials and enforces service-relative paths.</p></div>
+  <div class="feature-card"><h4>Typed Service Tools</h4><p>Pi calls <code>seerr_request</code>, <code>jellyfin_request</code>, <code>sonarr_request</code>, <code>radarr_request</code>, and <code>sabnzbd_request</code>; TypeScript tools call configured services directly and enforce service-relative paths.</p></div>
   <div class="feature-card"><h4>Markdown Automations</h4><p>Scheduled Markdown tasks run through Pi with one durable Pi session per automation.</p></div>
   <div class="feature-card"><h4>Gateway Persistence</h4><p>SQLite stores only Seerr issue gateway state. Pi JSONL sessions store agent conversation history.</p></div>
   <div class="feature-card"><h4>Trace Search</h4><p>JSONL traces remain searchable through <code>thread_history_search</code> for repeated issues and automation history.</p></div>
@@ -88,18 +88,15 @@ webhook ingress, SQLite issue state, Seerr final comments/resolution, service AP
                                │ tool call
                                ▼
 ┌──────────────────────────────────────────────────────────────┐
-│ Blitzcrank Internal Tool Gateway                             │
-│ POST /internal/pi/tools/{tool} + PI_TOOL_SECRET              │
-│ seerr/jellyfin/sonarr/radarr/sabnzbd_request                 │
-└──────────────────────────────┬───────────────────────────────┘
-                               ▼
-                  Service APIs + JSONL traces</div></div>
+│ Direct TypeScript Tools                                      │
+│ service APIs · Kagi web search/fetch · JSONL traces          │
+└──────────────────────────────────────────────────────────────┘</div></div>
 
 <div class="flow-step"><span class="step-num">1</span><p><strong>Load config</strong> from defaults, TOML, and environment.</p></div>
 <div class="flow-step"><span class="step-num">2</span><p><strong>Create tool registry</strong> with configured Seerr/Jellyfin/Sonarr/Radarr/SABnzBD clients.</p></div>
 <div class="flow-step"><span class="step-num">3</span><p><strong>Open SQLite</strong> for Seerr issue gateway state only.</p></div>
 <div class="flow-step"><span class="step-num">4</span><p><strong>Create Pi runner</strong> for Pi RPC subprocesses and persistent sessions.</p></div>
-<div class="flow-step"><span class="step-num">5</span><p><strong>Start HTTP server</strong> for Seerr webhooks and the internal Pi tool gateway.</p></div>
+<div class="flow-step"><span class="step-num">5</span><p><strong>Start HTTP server</strong> for Seerr webhooks.</p></div>
 <div class="flow-step"><span class="step-num">6</span><p><strong>Start automations</strong> when enabled.</p></div>
 
 <h2 id="workflows">4. Workflows</h2>
@@ -126,18 +123,19 @@ stale downloads or remove clearly rejected stale queue items. It reports only co
 
 <h2 id="tools">5. Tool System</h2>
 <p>
-Pi sees a small typed tool surface registered by <code>.pi/extensions/blitzcrank-tools.ts</code>. The extension calls Blitzcrank's internal
-HTTP gateway, and Go performs the service request with configured credentials.
+Pi sees a small typed tool surface registered by <code>.pi/extensions/blitzcrank-tools.ts</code>. The extension calls configured services directly using environment passed to the Pi process.
 </p>
 <table>
   <thead><tr><th>Pi Tool</th><th>Purpose</th><th>Backend</th></tr></thead>
   <tbody>
-    <tr><td><code>seerr_request</code></td><td>Seerr issue/request/media/user APIs. Comments and issue resolution are blocked.</td><td>Go gateway injects <code>X-Api-Key</code></td></tr>
-    <tr><td><code>jellyfin_request</code></td><td>Jellyfin item, media stream, user view, and session APIs.</td><td>Go gateway injects <code>X-Emby-Token</code></td></tr>
-    <tr><td><code>sonarr_request</code></td><td>Sonarr series, episode, queue, history, blocklist, command, and manual-import APIs.</td><td>Go gateway injects <code>X-Api-Key</code></td></tr>
-    <tr><td><code>radarr_request</code></td><td>Radarr movie, queue, history, blocklist, command, and manual-import APIs.</td><td>Go gateway injects <code>X-Api-Key</code></td></tr>
-    <tr><td><code>sabnzbd_request</code></td><td>SABnzBD <code>/api?mode=...</code> reads. Blitzcrank injects <code>apikey</code> and <code>output=json</code>.</td><td>Go gateway</td></tr>
+    <tr><td><code>seerr_request</code></td><td>Seerr issue/request/media/user APIs. Comments and issue resolution are blocked.</td><td>TypeScript tool injects <code>X-Api-Key</code></td></tr>
+    <tr><td><code>jellyfin_request</code></td><td>Jellyfin item, media stream, user view, and session APIs.</td><td>TypeScript tool injects <code>X-Emby-Token</code></td></tr>
+    <tr><td><code>sonarr_request</code></td><td>Sonarr series, episode, queue, history, blocklist, command, and manual-import APIs.</td><td>TypeScript tool injects <code>X-Api-Key</code></td></tr>
+    <tr><td><code>radarr_request</code></td><td>Radarr movie, queue, history, blocklist, command, and manual-import APIs.</td><td>TypeScript tool injects <code>X-Api-Key</code></td></tr>
+    <tr><td><code>sabnzbd_request</code></td><td>SABnzBD <code>/api?mode=...</code> reads. Blitzcrank injects <code>apikey</code> and <code>output=json</code>.</td><td>TypeScript tool</td></tr>
     <tr><td><code>thread_history_search</code></td><td>Search prior Blitzcrank JSONL traces for repeated issue/automation clues.</td><td>Local trace files</td></tr>
+    <tr><td><code>web_search</code></td><td>Search the public web.</td><td>Kagi Search API</td></tr>
+    <tr><td><code>web_fetch</code></td><td>Extract markdown from a URL.</td><td>Kagi Extract API</td></tr>
   </tbody>
 </table>
 <p>All service request tools require <code>purpose</code>. Paths must be service-relative and must not contain full URLs or credentials. Non-GET requests require <code>safety_level = "narrow_mutation"</code> and <code>safety_reason</code>.</p>
@@ -147,13 +145,11 @@ HTTP gateway, and Go performs the service request with configured credentials.
 Blitzcrank uses Pi as the only agent runtime. Provider setup, API keys, OAuth, default models, skill loading, context management,
 compaction, and tool-loop behavior belong to Pi.
 </p>
-<p>Blitzcrank controls only which Pi binary to call, working directory, persistent session location, per-task model override, and tool gateway connection.</p>
+<p>Blitzcrank controls only which Pi binary to call, working directory, persistent session location, per-task model override, and process environment.</p>
 <pre><code>[pi]
 command = "pi"
 cwd = "."
 sessions_dir = "threads/pi-sessions"
-tool_base_url = "http://127.0.0.1:8080"
-tool_secret = "change-me"
 
 [pi.models]
 default = "anthropic/claude-sonnet-4-5:high"
@@ -165,11 +161,11 @@ automation = ""</code></pre>
 <table>
   <thead><tr><th>Section</th><th>Purpose</th></tr></thead>
   <tbody>
-    <tr><td><code>[web]</code></td><td>HTTP listen address for Seerr webhooks and internal Pi tool gateway.</td></tr>
+    <tr><td><code>[web]</code></td><td>HTTP listen address for Seerr webhooks.</td></tr>
     <tr><td><code>[seerr]</code></td><td>Seerr base URL/API key, webhook path/secret, bot identity for comments.</td></tr>
-    <tr><td><code>[pi]</code></td><td>Pi command, cwd, sessions dir, internal tool gateway URL/secret.</td></tr>
+    <tr><td><code>[pi]</code></td><td>Pi command, cwd, agent dir, sessions dir, and model selection.</td></tr>
     <tr><td><code>[pi.models]</code></td><td>Per-task Pi model strings for <code>default</code>, <code>seerr</code>, and <code>automation</code>.</td></tr>
-    <tr><td><code>[jellyfin]</code>, <code>[sonarr]</code>, <code>[radarr]</code>, <code>[sabnzbd]</code></td><td>Service base URLs and API keys used by the Go gateway.</td></tr>
+    <tr><td><code>[jellyfin]</code>, <code>[sonarr]</code>, <code>[radarr]</code>, <code>[sabnzbd]</code></td><td>Service base URLs and API keys passed to Pi tools.</td></tr>
     <tr><td><code>[runtime]</code></td><td>Trace directory, automation directory, automation enable flag, timezone, run timeout.</td></tr>
     <tr><td><code>[storage]</code></td><td>SQLite database path and cache directory.</td></tr>
   </tbody>
@@ -201,7 +197,7 @@ session per Seerr issue and per automation using sanitized thread ids such as <c
 <h2 id="safety">9. Safety Model</h2>
 <ul>
   <li><strong>Small tool surface:</strong> Pi only sees service request tools and trace search.</li>
-  <li><strong>Credential isolation:</strong> API keys remain in Go config and are injected by the gateway, not placed in Pi prompts or tool arguments.</li>
+  <li><strong>Credential isolation:</strong> API keys are passed as process environment to Pi tools, not placed in prompts or tool arguments.</li>
   <li><strong>Relative paths only:</strong> service tools reject full URLs and credential-looking path parameters.</li>
   <li><strong>Mutation friction:</strong> non-GET requests require <code>narrow_mutation</code> and a concrete safety reason.</li>
   <li><strong>Harness-owned Seerr lifecycle:</strong> Pi cannot post final comments or resolve issues directly.</li>
@@ -218,10 +214,10 @@ go run ./cmd/blitzcrank</code></pre>
 go build ./cmd/blitzcrank
 nix build</code></pre>
 <p>Provider credentials are configured through Pi's normal environment/settings, for example <code>ANTHROPIC_API_KEY</code>, <code>OPENAI_API_KEY</code>, or Pi auth storage. Blitzcrank should not own provider setup.</p>
-<p>Keep <code>PI_TOOL_SECRET</code> secret. It protects the internal tool gateway used by Pi extensions.</p>
+<p>Kagi web tools require <code>KAGI_API_KEY</code> in the service environment.</p>
 
 <hr>
-<p style="text-align:center;color:var(--text-secondary);font-size:.85rem;">Blitzcrank — Go gateway for Pi-powered Seerr issue solving and media-server automation.</p>
+<p style="text-align:center;color:var(--text-secondary);font-size:.85rem;">Blitzcrank — TypeScript tool for Pi-powered Seerr issue solving and media-server automation.</p>
 
 </div>
 </body>
