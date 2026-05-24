@@ -23,6 +23,8 @@ api_key = "change-me"
 webhook_path = "/webhooks/seerr"
 # Optional shared secret for incoming Seerr webhooks.
 webhook_secret = ""
+# Seerr user id to act as for comments/resolution (sent as X-Api-User), so the API key owner is not shown.
+bot_user_id = ""
 # User/display name used to ignore Blitzcrank-authored Seerr comments.
 bot_display_name = "Blitzcrank"
 

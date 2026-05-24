@@ -144,6 +144,7 @@ func TestHandleWebhookReportedPostsOneFinalComment(t *testing.T) {
 func TestHandleWebhookResolveDirectivePostsCommentAndResolvesIssue(t *testing.T) {
 	var posted []string
 	var resolved bool
+	var resolvedBotUser string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/issue/42/comment":
@@ -154,6 +155,7 @@ func TestHandleWebhookResolveDirectivePostsCommentAndResolvesIssue(t *testing.T)
 			posted = append(posted, body["message"])
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/issue/42/resolved":
 			resolved = true
+			resolvedBotUser = r.Header.Get("X-Api-User")
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
@@ -163,6 +165,7 @@ func TestHandleWebhookResolveDirectivePostsCommentAndResolvesIssue(t *testing.T)
 	defer server.Close()
 
 	cfg := testConfig(server.URL, t.TempDir())
+	cfg.SeerrBotUserID = "7"
 	runner := &fakeRunner{reply: "RESOLVE_ISSUE: yes\n\nDas Problem wurde behoben und erfolgreich geprüft."}
 	manager := NewManager(cfg, runner, tools.NewRegistry(cfg), nil)
 
@@ -181,6 +184,9 @@ func TestHandleWebhookResolveDirectivePostsCommentAndResolvesIssue(t *testing.T)
 	}
 	if !resolved {
 		t.Fatal("issue was not resolved")
+	}
+	if resolvedBotUser != "7" {
+		t.Fatalf("resolve X-Api-User = %q, want 7", resolvedBotUser)
 	}
 }
 
@@ -349,6 +355,16 @@ func TestCommentHeaderIgnoresDeprecatedFastMode(t *testing.T) {
 	manager := NewManager(cfg, &fakeRunner{}, tools.NewRegistry(cfg), nil)
 
 	if got := manager.commentHeader(); got != "[blitzcrank w/ gpt-5.5]" {
+		t.Fatalf("commentHeader() = %q", got)
+	}
+}
+
+func TestCommentHeaderShortensProviderModelSlug(t *testing.T) {
+	cfg := testConfig("http://127.0.0.1.invalid", t.TempDir())
+	cfg.PiModels["default"] = "openai-codex/gpt-5.5:medium"
+	manager := NewManager(cfg, &fakeRunner{}, tools.NewRegistry(cfg), nil)
+
+	if got := manager.commentHeader(); got != "[blitzcrank w/ gpt-5.5:medium]" {
 		t.Fatalf("commentHeader() = %q", got)
 	}
 }
