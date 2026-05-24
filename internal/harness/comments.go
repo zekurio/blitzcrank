@@ -348,6 +348,7 @@ func (m *Manager) commentHeader(request ...Request) string {
 			}
 		}
 	}
+	model = displayModelName(model)
 	if model == "" {
 		model = "unknown-model"
 	}
@@ -355,6 +356,14 @@ func (m *Manager) commentHeader(request ...Request) string {
 		model += " " + effort
 	}
 	return "[" + name + " w/ " + model + "]"
+}
+
+func displayModelName(model string) string {
+	model = strings.TrimSpace(model)
+	if i := strings.LastIndex(model, "/"); i >= 0 {
+		model = strings.TrimSpace(model[i+1:])
+	}
+	return model
 }
 
 func (m *Manager) commentHeaderPrefix() string {
