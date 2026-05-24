@@ -14,7 +14,7 @@ automation_channel_id = ""
 automation_thread_lock = true
 
 [web]
-# Bind address for Seerr webhooks and the internal Pi tool gateway.
+# Bind address for Seerr webhooks.
 listen_addr = "127.0.0.1:8080"
 
 [seerr]
@@ -34,10 +34,6 @@ cwd = "."
 agent_dir = ""
 # Persistent Pi sessions. Defaults to runtime.threads_dir/pi-sessions when empty.
 sessions_dir = ""
-# Required for Pi extension tools to call back into Blitzcrank.
-tool_secret = "change-me-local-secret"
-# Optional if Pi cannot infer the public URL from web.listen_addr.
-tool_base_url = "http://127.0.0.1:8080"
 # Optional per-task Pi model selection. Include Pi thinking inline, e.g. ":high".
 [pi.models]
 default = ""

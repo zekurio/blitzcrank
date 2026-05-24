@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -24,9 +25,69 @@ import (
 
 func main() {
 	logging.SetupFromEnv()
+	if len(os.Args) > 1 && os.Args[1] == "pi" {
+		code, err := runPiPassthrough(os.Args[2:])
+		if err != nil {
+			log.Printf("pi command failed: %v", err)
+		}
+		os.Exit(code)
+	}
 	if err := runBot(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func runPiPassthrough(args []string) (int, error) {
+	cfg, err := config.LoadRelaxed(".env")
+	if err != nil {
+		return 1, fmt.Errorf("load config: %w", err)
+	}
+	if len(args) > 0 && args[0] == "--" {
+		args = args[1:]
+	}
+
+	cmd := exec.Command(cfg.PiCommand, args...)
+	if cwd := strings.TrimSpace(cfg.PiCWD); cwd != "" {
+		cmd.Dir = cwd
+	}
+	cmd.Env = os.Environ()
+	cmd.Env = append(cmd.Env, "BLITZCRANK_THREADS_DIR="+strings.TrimSpace(cfg.ThreadsDirectory))
+	if agentDir := strings.TrimSpace(cfg.PiAgentDir); agentDir != "" {
+		cmd.Env = append(cmd.Env, "PI_CODING_AGENT_DIR="+agentDir)
+	}
+	if sessionsDir := strings.TrimSpace(cfg.PiSessionsDir); sessionsDir != "" {
+		cmd.Env = append(cmd.Env, "PI_CODING_AGENT_SESSION_DIR="+sessionsDir)
+	}
+	cmd.Env = appendPassthroughEnv(cmd.Env, "SEERR_BASE_URL", cfg.SeerrBaseURL)
+	cmd.Env = appendPassthroughEnv(cmd.Env, "SEERR_API_KEY", cfg.SeerrAPIKey)
+	cmd.Env = appendPassthroughEnv(cmd.Env, "SEERR_BOT_USER_ID", cfg.SeerrBotUserID)
+	cmd.Env = appendPassthroughEnv(cmd.Env, "JELLYFIN_BASE_URL", cfg.JellyfinBaseURL)
+	cmd.Env = appendPassthroughEnv(cmd.Env, "JELLYFIN_API_KEY", cfg.JellyfinAPIKey)
+	cmd.Env = appendPassthroughEnv(cmd.Env, "SONARR_BASE_URL", cfg.SonarrBaseURL)
+	cmd.Env = appendPassthroughEnv(cmd.Env, "SONARR_API_KEY", cfg.SonarrAPIKey)
+	cmd.Env = appendPassthroughEnv(cmd.Env, "RADARR_BASE_URL", cfg.RadarrBaseURL)
+	cmd.Env = appendPassthroughEnv(cmd.Env, "RADARR_API_KEY", cfg.RadarrAPIKey)
+	cmd.Env = appendPassthroughEnv(cmd.Env, "SABNZBD_BASE_URL", cfg.SabnzbdBaseURL)
+	cmd.Env = appendPassthroughEnv(cmd.Env, "SABNZBD_API_KEY", cfg.SabnzbdAPIKey)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return exitErr.ExitCode(), err
+		}
+		return 1, err
+	}
+	return 0, nil
+}
+
+func appendPassthroughEnv(env []string, key, value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return env
+	}
+	return append(env, key+"="+strings.TrimSpace(value))
 }
 
 func runBot() error {

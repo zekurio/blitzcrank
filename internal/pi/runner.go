@@ -98,7 +98,7 @@ func (r *Runner) cwd() string {
 }
 
 func (r *Runner) argsFor(req harness.Request) ([]string, error) {
-	args := []string{"--mode", "rpc", "--tools", "seerr_request,jellyfin_request,sonarr_request,radarr_request,sabnzbd_request,thread_history_search"}
+	args := []string{"--mode", "rpc", "--tools", "seerr_request,jellyfin_request,sonarr_request,radarr_request,sabnzbd_request,thread_history_search,web_search,web_fetch"}
 	if sessionPath := r.sessionPath(req); sessionPath != "" {
 		if err := os.MkdirAll(filepath.Dir(sessionPath), 0o755); err != nil {
 			return nil, fmt.Errorf("create pi session directory: %w", err)
@@ -167,26 +167,33 @@ func (r *Runner) env(req harness.Request) []string {
 	env = append(env,
 		"BLITZCRANK_RUN_SOURCE="+strings.TrimSpace(req.Source),
 		"BLITZCRANK_THREAD_ID="+strings.TrimSpace(req.ThreadID),
+		"BLITZCRANK_THREADS_DIR="+strings.TrimSpace(r.cfg.ThreadsDirectory),
 	)
 	if agentDir := strings.TrimSpace(r.cfg.PiAgentDir); agentDir != "" {
 		env = append(env, "PI_CODING_AGENT_DIR="+agentDir)
 	}
-	if baseURL := strings.TrimSpace(r.cfg.PiToolBaseURL); baseURL != "" {
-		env = append(env, "BLITZCRANK_TOOL_BASE_URL="+baseURL)
-	} else if listen := firstListenAddr(r.cfg); listen != "" {
-		env = append(env, "BLITZCRANK_TOOL_BASE_URL=http://"+listen)
+	if sessionsDir := strings.TrimSpace(r.cfg.PiSessionsDir); sessionsDir != "" {
+		env = append(env, "PI_CODING_AGENT_SESSION_DIR="+sessionsDir)
 	}
-	if secret := strings.TrimSpace(r.cfg.PiToolSecret); secret != "" {
-		env = append(env, "BLITZCRANK_TOOL_SECRET="+secret)
-	}
+	env = appendConfigEnv(env, "SEERR_BASE_URL", r.cfg.SeerrBaseURL)
+	env = appendConfigEnv(env, "SEERR_API_KEY", r.cfg.SeerrAPIKey)
+	env = appendConfigEnv(env, "SEERR_BOT_USER_ID", r.cfg.SeerrBotUserID)
+	env = appendConfigEnv(env, "JELLYFIN_BASE_URL", r.cfg.JellyfinBaseURL)
+	env = appendConfigEnv(env, "JELLYFIN_API_KEY", r.cfg.JellyfinAPIKey)
+	env = appendConfigEnv(env, "SONARR_BASE_URL", r.cfg.SonarrBaseURL)
+	env = appendConfigEnv(env, "SONARR_API_KEY", r.cfg.SonarrAPIKey)
+	env = appendConfigEnv(env, "RADARR_BASE_URL", r.cfg.RadarrBaseURL)
+	env = appendConfigEnv(env, "RADARR_API_KEY", r.cfg.RadarrAPIKey)
+	env = appendConfigEnv(env, "SABNZBD_BASE_URL", r.cfg.SabnzbdBaseURL)
+	env = appendConfigEnv(env, "SABNZBD_API_KEY", r.cfg.SabnzbdAPIKey)
 	return env
 }
 
-func firstListenAddr(cfg config.Config) string {
-	if strings.TrimSpace(cfg.HTTPListenAddr) != "" {
-		return strings.TrimSpace(cfg.HTTPListenAddr)
+func appendConfigEnv(env []string, key, value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return env
 	}
-	return strings.TrimSpace(cfg.SeerrWebhookListenAddr)
+	return append(env, key+"="+strings.TrimSpace(value))
 }
 
 func (r *Runner) prompt(req harness.Request) string {

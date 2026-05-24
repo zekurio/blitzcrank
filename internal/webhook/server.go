@@ -80,9 +80,6 @@ func (s *Server) Start(ctx context.Context) error {
 
 	mux := NewRouter()
 	mux.Handle("GET", "/healthz", noContent)
-	if s.piToolGatewayEnabled() {
-		mux.Handle("POST", "/internal/pi/tools/", s.handlePiTool)
-	}
 	if s.seerrWebhookEnabled() {
 		mux.Handle("POST", s.cfg.SeerrWebhookPath, s.handleSeerr)
 	}
@@ -126,10 +123,6 @@ func (s *Server) listenAddr() string {
 
 func (s *Server) seerrWebhookEnabled() bool {
 	return s.harness != nil && strings.TrimSpace(s.cfg.SeerrWebhookPath) != "" && strings.TrimSpace(s.cfg.SeerrBaseURL) != "" && strings.TrimSpace(s.cfg.SeerrAPIKey) != ""
-}
-
-func (s *Server) piToolGatewayEnabled() bool {
-	return s.harness != nil && strings.TrimSpace(s.cfg.PiToolSecret) != ""
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {

@@ -35,6 +35,7 @@
         apps.default = {
           type = "app";
           program = "${self.packages.${system}.default}/bin/blitzcrank";
+          meta.description = "Run the Blitzcrank Seerr automation gateway";
         };
 
         devShells.default = pkgs.mkShell {
@@ -42,7 +43,6 @@
             go
             gopls
             go-tools
-            deno
             nixfmt
             sqlite
           ];

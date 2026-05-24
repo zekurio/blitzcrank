@@ -2,7 +2,6 @@
   buildGoModule,
   lib,
   makeWrapper,
-  deno,
   pi-coding-agent,
 }:
 
@@ -34,7 +33,6 @@ buildGoModule {
     wrapProgram $out/bin/blitzcrank \
       --prefix PATH : ${
         lib.makeBinPath [
-          deno
           pi-coding-agent
         ]
       } \

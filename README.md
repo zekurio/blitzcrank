@@ -1,8 +1,8 @@
 # Blitzcrank
 
-Blitzcrank is a Go gateway that connects Seerr webhooks and scheduled media-server automations to a Pi agent.
+Blitzcrank connects Seerr webhooks and scheduled media-server automations to a Pi agent.
 
-Pi owns the agent runtime, provider/auth setup, skills, model selection, durable agent sessions, and tool loop. Blitzcrank owns webhook handling, Seerr issue state, final Seerr comments/resolution, service credentials, and the internal tool gateway used by Pi.
+Pi owns the agent runtime, provider/auth setup, skills, model selection, durable agent sessions, tool loop, and project-local TypeScript tools. Blitzcrank owns webhook handling, Seerr issue state, final Seerr comments/resolution, and passing configured service credentials to Pi runs.
 
 ## Current Scope
 
@@ -14,7 +14,7 @@ Pi owns the agent runtime, provider/auth setup, skills, model selection, durable
 - SQLite gateway state for Seerr issue dedupe/runs
 - JSONL traces for issue/automation history search
 
-General Discord support, Blitzcrank's old native LLM runtime, Codex/OpenAI/OpenRouter clients, the Deno sandbox, root `skills/`, and root `prompts/` have been removed. A lean Discord automation integration remains optional.
+General Discord support, Blitzcrank's old native LLM runtime, Codex/OpenAI/OpenRouter clients, the old TypeScript sandbox, root `skills/`, and root `prompts/` have been removed. A lean Discord automation integration remains optional.
 
 ## Development
 
@@ -51,7 +51,6 @@ For service deployments, set `[pi].agent_dir` / `PI_CODING_AGENT_DIR` to a writa
 Keep secrets in `.env`, a systemd `EnvironmentFile`, SOPS/agenix, or another secret manager:
 
 ```sh
-PI_TOOL_SECRET=long-random-local-secret
 DISCORD_TOKEN=... # optional, for automation reporting/triggering
 DISCORD_AUTOMATION_CHANNEL_ID=...
 SEERR_API_KEY=...
@@ -59,11 +58,12 @@ JELLYFIN_API_KEY=...
 SONARR_API_KEY=...
 RADARR_API_KEY=...
 SABNZBD_API_KEY=...
+KAGI_API_KEY=... # optional, enables web_search/web_fetch Pi tools
 # Optional incoming webhook secret:
 SEERR_WEBHOOK_SECRET=...
 ```
 
-`PI_TOOL_SECRET` protects the internal credentialed tool gateway. Pi does not receive service API keys, but the gateway can perform authenticated service requests on Pi's behalf.
+Blitzcrank passes configured service environment to the spawned Pi process so the project-local Pi tools can call Seerr/Jellyfin/Sonarr/Radarr/SABnzBD directly.
 
 ## Configuration
 
@@ -90,9 +90,6 @@ cwd = "."
 # Optional; set to a seeded Pi config/auth dir for service deployments.
 agent_dir = "/var/lib/blitzcrank/pi-agent"
 sessions_dir = "threads/pi-sessions"
-tool_base_url = "http://127.0.0.1:8080"
-# Prefer PI_TOOL_SECRET via env/secret manager for production.
-tool_secret = "local-dev-secret"
 
 [pi.models]
 # Pi thinking is configured inline with the model, e.g. ":high".
@@ -128,7 +125,7 @@ database_path = "./blitzcrank.sqlite"
 Project-local Pi resources live in `.pi/`:
 
 - `.pi/skills/`: canonical Pi-discoverable Seerr/media skills.
-- `.pi/extensions/blitzcrank-tools.ts`: registers Pi tools that call Blitzcrank's internal tool gateway.
+- `.pi/extensions/blitzcrank-tools.ts`: registers direct TypeScript tools for media services, thread history, and Kagi web search/fetch.
 
 Pi-visible tools:
 
@@ -138,6 +135,8 @@ Pi-visible tools:
 - `radarr_request`
 - `sabnzbd_request`
 - `thread_history_search`
+- `web_search`
+- `web_fetch`
 
 All service request tools require a `purpose`. Paths must be service-relative and must not contain full URLs or credentials. Non-GET requests require `safety_level = "narrow_mutation"` and `safety_reason`.
 
@@ -147,10 +146,9 @@ All service request tools require a `purpose`. Paths must be service-relative an
 2. Blitzcrank deduplicates and locks the issue.
 3. Blitzcrank sends one task prompt to Pi.
 4. Pi loads the Seerr skill and calls tools through `.pi/extensions/blitzcrank-tools.ts`.
-5. The extension calls Blitzcrank's internal tool gateway.
-6. Blitzcrank executes the Go-owned service request tool with configured credentials.
-7. Pi returns a final response beginning with `RESOLVE_ISSUE: yes/no`.
-8. Blitzcrank posts the final Seerr comment and resolves the issue only when requested.
+5. The extension calls configured services directly with environment passed to the Pi process.
+6. Pi returns a final response beginning with `RESOLVE_ISSUE: yes/no`.
+7. Blitzcrank posts the final Seerr comment and resolves the issue only when requested.
 
 ## Automations
 
@@ -199,6 +197,6 @@ Build:
 nix build
 ```
 
-The Nix package includes `automations/` and `.pi/`. Do not put secrets in Nix-store-generated config. Use `services.blitzcrank.environmentFile` or a secret manager for `PI_TOOL_SECRET` and service API keys.
+The Nix package includes `automations/` and `.pi/`. Do not put secrets in Nix-store-generated config. Use `services.blitzcrank.environmentFile` or a secret manager for service API keys.
 
 Keep secrets out of commits; `.env*`, local TOML, SQLite files, and runtime threads are ignored.
