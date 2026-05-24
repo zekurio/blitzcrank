@@ -10,7 +10,6 @@ type Config struct {
 	DiscordToken                string `env:"DISCORD_TOKEN" toml:"discord.token"`
 	DiscordGuildID              string `env:"DISCORD_GUILD_ID" toml:"discord.guild_id"`
 	DiscordAutomationChannelID  string `env:"DISCORD_AUTOMATION_CHANNEL_ID" toml:"discord.automation_channel_id"`
-	DiscordChannelID            string `env:"DISCORD_CHANNEL_ID" toml:"discord.channel_id"`
 	DiscordAutomationThreadLock bool   `env:"DISCORD_AUTOMATION_THREAD_LOCK" toml:"discord.automation_thread_lock" default:"true"`
 
 	HTTPListenAddr         string `env:"BLITZCRANK_HTTP_LISTEN_ADDR" toml:"web.listen_addr"`
@@ -80,9 +79,6 @@ func load(dotenvPath string, validate bool) (Config, error) {
 		return cfg, fmt.Errorf("apply environment config overrides: %w", err)
 	}
 	cfg.PiModels = normalizePiModels(cfg.PiModels)
-	if strings.TrimSpace(cfg.DiscordAutomationChannelID) == "" {
-		cfg.DiscordAutomationChannelID = strings.TrimSpace(cfg.DiscordChannelID)
-	}
 
 	if !validate {
 		return cfg, nil

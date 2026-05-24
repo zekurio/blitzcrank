@@ -10,9 +10,7 @@ public_name = "Blitzcrank"
 # Prefer DISCORD_TOKEN via environment/secret manager.
 token = ""
 guild_id = ""
-# Falls back to DISCORD_CHANNEL_ID / discord.channel_id when unset.
 automation_channel_id = ""
-channel_id = ""
 automation_thread_lock = true
 
 [web]

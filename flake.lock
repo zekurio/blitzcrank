@@ -34,24 +34,10 @@
         "type": "github"
       }
     },
-    "pi-coding-agent-src": {
-      "flake": false,
-      "locked": {
-        "lastModified": 499162500,
-        "narHash": "sha256-8a++WHrYJXf7otNK1upA9JoYlRSJ7MHlZruCSOJ8lh0=",
-        "type": "tarball",
-        "url": "https://registry.npmjs.org/@earendil-works/pi-coding-agent/-/pi-coding-agent-0.75.4.tgz"
-      },
-      "original": {
-        "type": "tarball",
-        "url": "https://registry.npmjs.org/@earendil-works/pi-coding-agent/-/pi-coding-agent-0.75.4.tgz"
-      }
-    },
     "root": {
       "inputs": {
         "flake-utils": "flake-utils",
-        "nixpkgs": "nixpkgs",
-        "pi-coding-agent-src": "pi-coding-agent-src"
+        "nixpkgs": "nixpkgs"
       }
     },
     "systems": {
