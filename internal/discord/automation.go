@@ -31,7 +31,7 @@ func New(cfg config.Config, scheduler Scheduler) (*Bot, error) {
 		return nil, nil
 	}
 	if strings.TrimSpace(cfg.DiscordAutomationChannelID) == "" {
-		log.Printf("discord automation bot disabled: DISCORD_AUTOMATION_CHANNEL_ID or DISCORD_CHANNEL_ID is not set")
+		log.Printf("discord automation bot disabled: DISCORD_AUTOMATION_CHANNEL_ID is not set")
 		return nil, nil
 	}
 	s, err := discordgo.New("Bot " + strings.TrimSpace(cfg.DiscordToken))
