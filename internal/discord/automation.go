@@ -187,6 +187,9 @@ func (r *AutomationReporter) AutomationCompleted(ctx context.Context, handle aut
 	embed := automationCompletedEmbed(response, runErr, failures, r.cfg.BotPublicName)
 	messageID := strings.TrimSpace(handle.MessageID)
 	var err error
+	if cleanupErr := r.deletePreviousAutomationMessages(threadID, messageID); cleanupErr != nil {
+		log.Printf("discord automation cleanup failed: thread=%s error=%v", threadID, cleanupErr)
+	}
 	if embed == nil {
 		if messageID != "" {
 			err = r.session.ChannelMessageDelete(threadID, messageID)
@@ -267,6 +270,50 @@ func (r *AutomationReporter) lockAutomationThread(threadID string) error {
 	return err
 }
 
+func (r *AutomationReporter) deletePreviousAutomationMessages(threadID string, keepMessageID string) error {
+	messages, err := r.session.ChannelMessages(threadID, 100, "", "", "")
+	if err != nil {
+		return err
+	}
+	botID := ""
+	if r.session.State != nil && r.session.State.User != nil {
+		botID = strings.TrimSpace(r.session.State.User.ID)
+	}
+	for _, message := range messages {
+		if message == nil || strings.TrimSpace(message.ID) == "" || message.ID == keepMessageID {
+			continue
+		}
+		if botID != "" && (message.Author == nil || message.Author.ID != botID) {
+			continue
+		}
+		if !isAutomationStatusMessage(message, r.cfg.BotPublicName) {
+			continue
+		}
+		if err := r.session.ChannelMessageDelete(threadID, message.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func isAutomationStatusMessage(message *discordgo.Message, botName string) bool {
+	for _, embed := range message.Embeds {
+		if embed == nil {
+			continue
+		}
+		if embed.Footer != nil && strings.TrimSpace(embed.Footer.Text) == automationFooterBotName(botName) {
+			return true
+		}
+		title := strings.TrimSpace(embed.Title)
+		for _, icon := range []string{"❌", "⚠️", "ℹ️", "🚀", "✅"} {
+			if strings.HasPrefix(title, icon+" ") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func automationThreadName(task automation.Task) string {
 	return "automation: " + task.Name
 }
@@ -297,7 +344,8 @@ func automationCompletedEmbed(response string, runErr error, failures []automati
 		return nil
 	}
 	status := classifyAutomationResponse(description)
-	return automationEmbed(status, botName, automationStatusTitle(status), decorateAutomationOutput(description))
+	decorated := trimLeadingSingleAutomationHeading(decorateAutomationOutput(description))
+	return automationEmbed(status, botName, automationStatusTitle(status), decorated)
 }
 
 func conciseFailureDescription(response string, failureSummary string) string {
@@ -429,6 +477,33 @@ func decorateAutomationOutput(value string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func trimLeadingSingleAutomationHeading(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	lines := strings.Split(value, "\n")
+	headingCount := 0
+	for _, line := range lines {
+		if isAutomationOutputHeading(line) {
+			headingCount++
+		}
+	}
+	if headingCount != 1 || !isAutomationOutputHeading(lines[0]) {
+		return value
+	}
+	return strings.TrimSpace(strings.Join(lines[1:], "\n"))
+}
+
+func isAutomationOutputHeading(line string) bool {
+	switch strings.TrimSpace(line) {
+	case "### ✅ Importiert", "### 🗑️ Entfernt", "### ⚠️ Manuell prüfen":
+		return true
+	default:
+		return false
+	}
 }
 
 func truncateCodeBlock(value string, limit int) string {
