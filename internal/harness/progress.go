@@ -28,6 +28,13 @@ func (r *seerrProgressReporter) callback(ctx context.Context) func(ProgressEvent
 	}
 }
 
+func (r *seerrProgressReporter) start(ctx context.Context) error {
+	if r == nil || r.manager == nil || r.issueID == "" || !r.manager.cfg.SeerrTransientRunComments {
+		return nil
+	}
+	return r.postOrUpdate(ctx, r.manager.signedRunMessage("Ich prüfe das gerade.", nil, r.request))
+}
+
 func (r *seerrProgressReporter) update(ctx context.Context, event ProgressEvent) {
 	if r == nil || r.manager == nil || r.issueID == "" || !seerrProgressVisible(event) {
 		return
@@ -91,6 +98,21 @@ func (r *seerrProgressReporter) postOrUpdate(ctx context.Context, comment string
 		r.mu.Unlock()
 	}
 	return nil
+}
+
+func (r *seerrProgressReporter) delete(ctx context.Context) error {
+	if r == nil || r.manager == nil || r.issueID == "" {
+		return nil
+	}
+	r.mu.Lock()
+	commentID := r.commentID
+	r.commentID = ""
+	r.mu.Unlock()
+	if commentID == "" {
+		return nil
+	}
+	_, err := r.manager.tools.DeleteIssueComment(ctx, r.issueID, commentID)
+	return err
 }
 
 func seerrProgressVisible(event ProgressEvent) bool {
