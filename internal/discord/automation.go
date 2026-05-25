@@ -151,23 +151,30 @@ func (b *Bot) Reporter() *AutomationReporter {
 	return &AutomationReporter{cfg: b.cfg, session: b.session}
 }
 
-func (r *AutomationReporter) AutomationStarted(ctx context.Context, task automation.Task) (string, error) {
+func (r *AutomationReporter) AutomationStarted(ctx context.Context, task automation.Task) (automation.ReportHandle, error) {
 	if r == nil || r.session == nil || strings.TrimSpace(r.cfg.DiscordAutomationChannelID) == "" {
-		return "", nil
+		return automation.ReportHandle{}, nil
 	}
 	thread, err := r.ensureAutomationThread(task)
 	if err != nil {
-		return "", err
+		return automation.ReportHandle{}, err
 	}
-	_, _ = r.session.ChannelMessageSendEmbed(thread.ID, automationStartedEmbed(task, r.cfg.BotPublicName))
-	return thread.ID, r.lockAutomationThread(thread.ID)
+	msg, err := r.session.ChannelMessageSendEmbed(thread.ID, automationStartedEmbed(task, r.cfg.BotPublicName))
+	if lockErr := r.lockAutomationThread(thread.ID); lockErr != nil && err == nil {
+		err = lockErr
+	}
+	if err != nil {
+		return automation.ReportHandle{ThreadID: thread.ID}, err
+	}
+	return automation.ReportHandle{ThreadID: thread.ID, MessageID: msg.ID}, nil
 }
 
-func (r *AutomationReporter) AutomationCompleted(ctx context.Context, threadID string, task automation.Task, response string, runErr error, failures []automation.ToolFailure) error {
+func (r *AutomationReporter) AutomationCompleted(ctx context.Context, handle automation.ReportHandle, task automation.Task, response string, runErr error, failures []automation.ToolFailure) error {
 	if r == nil || r.session == nil {
 		return nil
 	}
-	if strings.TrimSpace(threadID) == "" {
+	threadID := strings.TrimSpace(handle.ThreadID)
+	if threadID == "" {
 		thread, err := r.ensureAutomationThread(task)
 		if err != nil {
 			return err
@@ -177,7 +184,18 @@ func (r *AutomationReporter) AutomationCompleted(ctx context.Context, threadID s
 	if err := r.unlockAutomationThreadForPost(threadID); err != nil {
 		return err
 	}
-	_, err := r.session.ChannelMessageSendEmbed(threadID, automationCompletedEmbed(response, runErr, failures, r.cfg.BotPublicName))
+	embed := automationCompletedEmbed(response, runErr, failures, r.cfg.BotPublicName)
+	messageID := strings.TrimSpace(handle.MessageID)
+	var err error
+	if embed == nil {
+		if messageID != "" {
+			err = r.session.ChannelMessageDelete(threadID, messageID)
+		}
+	} else if messageID != "" {
+		_, err = r.session.ChannelMessageEditEmbed(threadID, messageID, embed)
+	} else {
+		_, err = r.session.ChannelMessageSendEmbed(threadID, embed)
+	}
 	if lockErr := r.lockAutomationThread(threadID); lockErr != nil && err == nil {
 		err = lockErr
 	}
@@ -276,7 +294,7 @@ func automationCompletedEmbed(response string, runErr error, failures []automati
 		return automationEmbed(automationRunError, botName, "Tool-Fehler", description)
 	}
 	if description == "" {
-		return automationEmbed(automationRunEmpty, botName, "Keine Änderungen", "Keine meldepflichtigen Änderungen gefunden.")
+		return nil
 	}
 	status := classifyAutomationResponse(description)
 	return automationEmbed(status, botName, automationStatusTitle(status), decorateAutomationOutput(description))

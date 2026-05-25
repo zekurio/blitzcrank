@@ -280,27 +280,46 @@ func (m *Manager) run(ctx context.Context, thread *IssueThread, payload map[stri
 	progress := m.newSeerrProgressReporter(thread.IssueID, request)
 	request.Progress = progress.callback(runCtx)
 	log.Printf("seerr issue run started: issue=%s event=%s actor=%q prior_events=%d prior_runs=%d", thread.IssueID, event, request.Author, len(thread.Events), len(thread.Runs))
+	if err := progress.start(runCtx); err != nil {
+		log.Printf("seerr transient comment failed: issue=%s event=%s error=%v", thread.IssueID, event, err)
+	}
 
-	comment, err := m.runner.Respond(runCtx, request)
+	response, err := m.runner.Respond(runCtx, request)
 	record.CompletedAt = time.Now().UTC()
 	if err != nil {
 		record.Error = err.Error()
 		record.CompletionReason = "agent run failed"
+		if m.cfg.SeerrTransientRunComments {
+			_ = progress.postOrUpdate(runCtx, m.signedRunMessage("Die Prüfung ist fehlgeschlagen.", progress.latestTodos(), request))
+		}
 		log.Printf("seerr issue run failed: issue=%s event=%s duration=%s error=%v", thread.IssueID, event, record.CompletedAt.Sub(record.StartedAt).Round(time.Millisecond), err)
 		return record, err
 	}
-	resolveIssue := false
-	comment, resolveIssue = parseIssueResolutionDirective(comment)
+	decision := parseIssueRunDecision(response)
+	if decision.Action == "none" {
+		if err := progress.delete(runCtx); err != nil {
+			record.Error = err.Error()
+			record.CompletionReason = "transient comment delete failed"
+			return record, fmt.Errorf("delete transient issue comment: %w", err)
+		}
+		record.CompletionReason = "no public update needed"
+		log.Printf("seerr issue run completed without public update: issue=%s event=%s duration=%s", thread.IssueID, event, record.CompletedAt.Sub(record.StartedAt).Round(time.Millisecond))
+		return record, nil
+	}
+	comment := decision.Comment
+	resolveIssue := decision.ResolveIssue
 	if strings.TrimSpace(comment) == "" {
 		err := fmt.Errorf("agent returned empty final comment")
 		record.Error = err.Error()
 		record.CompletionReason = "agent run returned empty comment"
+		_ = progress.delete(runCtx)
 		log.Printf("seerr issue run failed: issue=%s event=%s duration=%s error=%v", thread.IssueID, event, record.CompletedAt.Sub(record.StartedAt).Round(time.Millisecond), err)
 		return record, err
 	}
 	if err := m.validateFinalIssueComment(comment); err != nil {
 		record.Error = err.Error()
 		record.CompletionReason = "agent final comment failed validation"
+		_ = progress.delete(runCtx)
 		log.Printf("seerr issue run failed validation: issue=%s event=%s duration=%s error=%v", thread.IssueID, event, record.CompletedAt.Sub(record.StartedAt).Round(time.Millisecond), err)
 		return record, err
 	}
@@ -309,6 +328,7 @@ func (m *Manager) run(ctx context.Context, thread *IssueThread, payload map[stri
 	if err := m.validateSignedFinalIssueComment(comment); err != nil {
 		record.Error = err.Error()
 		record.CompletionReason = "agent final comment failed validation"
+		_ = progress.delete(runCtx)
 		log.Printf("seerr issue run failed validation: issue=%s event=%s duration=%s error=%v", thread.IssueID, event, record.CompletedAt.Sub(record.StartedAt).Round(time.Millisecond), err)
 		return record, err
 	}

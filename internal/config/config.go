@@ -44,8 +44,9 @@ type Config struct {
 	DatabasePath         string        `env:"DATABASE_PATH" toml:"storage.database_path" default:"./blitzcrank.sqlite"`
 	CacheDirectory       string        `env:"CACHE_DIR" toml:"storage.cache_dir"`
 
-	SeerrBotUserID      string `env:"SEERR_BOT_USER_ID" toml:"seerr.bot_user_id"`
-	SeerrBotDisplayName string `env:"SEERR_BOT_DISPLAY_NAME" toml:"seerr.bot_display_name" default:"Blitzcrank"`
+	SeerrBotUserID            string `env:"SEERR_BOT_USER_ID" toml:"seerr.bot_user_id"`
+	SeerrBotDisplayName       string `env:"SEERR_BOT_DISPLAY_NAME" toml:"seerr.bot_display_name" default:"Blitzcrank"`
+	SeerrTransientRunComments bool   `env:"SEERR_TRANSIENT_RUN_COMMENTS" toml:"seerr.transient_run_comments" default:"true"`
 
 	BotPublicName string `env:"BOT_PUBLIC_NAME" toml:"bot.public_name" default:"blitzcrank"`
 	Timezone      string `env:"TIMEZONE" toml:"runtime.timezone" default:"UTC"`

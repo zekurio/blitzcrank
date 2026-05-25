@@ -21,9 +21,14 @@ type ToolFailure struct {
 	Error string
 }
 
+type ReportHandle struct {
+	ThreadID  string
+	MessageID string
+}
+
 type Reporter interface {
-	AutomationStarted(context.Context, Task) (string, error)
-	AutomationCompleted(context.Context, string, Task, string, error, []ToolFailure) error
+	AutomationStarted(context.Context, Task) (ReportHandle, error)
+	AutomationCompleted(context.Context, ReportHandle, Task, string, error, []ToolFailure) error
 }
 
 type ToolFailureStore interface {
@@ -108,14 +113,14 @@ func (s *Scheduler) RunAutomation(ctx context.Context, name string) error {
 	if store := s.currentToolFailureStore(); store != nil {
 		store.ResetToolFailures(threadID)
 	}
-	reportThreadID := ""
+	reportHandle := ReportHandle{}
 	reporter := s.currentReporter()
 	if reporter != nil {
-		id, err := reporter.AutomationStarted(ctx, task)
+		handle, err := reporter.AutomationStarted(ctx, task)
 		if err != nil {
 			log.Printf("automation reporter start failed: name=%s error=%v", task.Name, err)
 		} else {
-			reportThreadID = id
+			reportHandle = handle
 		}
 	}
 	response, err := s.runner.Respond(ctx, harness.Request{
@@ -130,7 +135,7 @@ func (s *Scheduler) RunAutomation(ctx context.Context, name string) error {
 		failures = store.DrainToolFailures(threadID)
 	}
 	if reporter != nil {
-		if reportErr := reporter.AutomationCompleted(ctx, reportThreadID, task, response, err, failures); reportErr != nil {
+		if reportErr := reporter.AutomationCompleted(ctx, reportHandle, task, response, err, failures); reportErr != nil {
 			log.Printf("automation reporter completion failed: name=%s error=%v", task.Name, reportErr)
 		}
 	}

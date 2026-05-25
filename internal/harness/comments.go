@@ -53,12 +53,14 @@ Recent thread events:
 Recent solver outcomes:
 %s
 
-Use the tools to investigate the issue, apply safe fixes when appropriate, validate the result, and return exactly one final Seerr issue comment body.
+Use the tools to investigate the issue, apply safe fixes when appropriate, validate the result, and return exactly one JSON object.
 If the reported user message is an explicit diagnostic or test instruction, perform a safe read-only tool call when possible and summarize the result.
 
-Required final comment:
-- First line must be exactly "RESOLVE_ISSUE: yes" when validation proves the issue should be marked resolved, otherwise exactly "RESOLVE_ISSUE: no". This line is internal and will be stripped before posting.
-- Leave one blank line after the RESOLVE_ISSUE line, then write the public Seerr issue comment.
+Required final JSON shape:
+{"action":"post|none","resolve_issue":false,"comment":"public Seerr issue comment or empty"}
+- Use action "post" only when a public issue comment should be posted because something was fixed, blocked, or explicitly diagnosed.
+- Use action "none" when nothing changed and there is no useful user-facing update; leave comment empty and resolve_issue false.
+- Set resolve_issue true only when validation proves the issue should be marked resolved.
 - Use the system language rules: default to German, but if the reporting user clearly wrote the actual issue in another language, write the final comment in that language.
 - Return a final, closed-form comment: either the issue was fixed with a short cause/result explanation, or it could not be fixed with a short blocker explanation.
 - Use at most two short sentences.
@@ -83,7 +85,28 @@ Webhook payload:
 	}
 }
 
-func parseIssueResolutionDirective(response string) (string, bool) {
+type issueRunDecision struct {
+	Action       string `json:"action"`
+	ResolveIssue bool   `json:"resolve_issue"`
+	Comment      string `json:"comment"`
+}
+
+func parseIssueRunDecision(response string) issueRunDecision {
+	response = strings.TrimSpace(response)
+	var decision issueRunDecision
+	if err := json.Unmarshal([]byte(response), &decision); err == nil && strings.TrimSpace(decision.Action) != "" {
+		decision.Action = strings.ToLower(strings.TrimSpace(decision.Action))
+		decision.Comment = strings.TrimSpace(decision.Comment)
+		if decision.Action != "none" {
+			decision.Action = "post"
+		}
+		return decision
+	}
+	comment, resolve := parseLegacyIssueResolutionDirective(response)
+	return issueRunDecision{Action: "post", ResolveIssue: resolve, Comment: strings.TrimSpace(comment)}
+}
+
+func parseLegacyIssueResolutionDirective(response string) (string, bool) {
 	response = strings.TrimSpace(response)
 	first, rest, ok := strings.Cut(response, "\n")
 	if !ok {
@@ -283,7 +306,6 @@ func (m *Manager) validateFinalIssueComment(comment string) error {
 		"tool result",
 		"tool_results",
 		"```",
-		"{\"",
 	} {
 		if strings.Contains(lower, marker) {
 			return fmt.Errorf("final issue comment appears to expose internal output")
