@@ -1,24 +1,14 @@
 package harness
 
-import (
-	"context"
-	"time"
-)
+import "time"
 
 type Request struct {
-	Source       string
-	ThreadID     string
-	Author       string
-	AuthorID     string
-	IsAdmin      bool
-	Audience     string
-	Content      string
-	Context      string
-	ToolGroups   []string
-	ToolAudit    func(ToolAuditRecord)
-	Progress     func(ProgressEvent)
-	ToolApproval func(context.Context, ToolApprovalRequest) (ToolApprovalDecision, error)
-	SeerrUserID  string
+	Source   string
+	ThreadID string
+	Author   string
+	Audience string
+	Content  string
+	Progress func(ProgressEvent)
 }
 
 type ProgressEvent struct {
@@ -47,27 +37,4 @@ type TodoItem struct {
 type ProgressToolCall struct {
 	Name      string `json:"name"`
 	Arguments string `json:"arguments,omitempty"`
-}
-
-type ToolAuditRecord struct {
-	Name             string
-	Mutating         bool
-	ArgumentsSummary string
-	ResultSummary    string
-	Error            string
-	StartedAt        time.Time
-	CompletedAt      time.Time
-}
-
-type ToolApprovalRequest struct {
-	Name             string
-	Mutating         bool
-	Destructive      bool
-	ArgumentsSummary string
-}
-
-type ToolApprovalDecision struct {
-	Approved bool
-	Actor    string
-	Reason   string
 }

@@ -51,7 +51,6 @@ func runPiPassthrough(args []string) (int, error) {
 		cmd.Dir = cwd
 	}
 	cmd.Env = os.Environ()
-	cmd.Env = append(cmd.Env, "BLITZCRANK_THREADS_DIR="+strings.TrimSpace(cfg.ThreadsDirectory))
 	if agentDir := strings.TrimSpace(cfg.PiAgentDir); agentDir != "" {
 		cmd.Env = append(cmd.Env, "PI_CODING_AGENT_DIR="+agentDir)
 	}

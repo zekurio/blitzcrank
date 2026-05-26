@@ -235,16 +235,6 @@ func (m *Manager) appendEventRecord(ctx context.Context, thread *IssueThread, ev
 	m.insertEvent(ctx, thread.IssueID, thread.Events[len(thread.Events)-1])
 	m.mu.Unlock()
 
-	m.appendTrace("issues/issue-"+thread.IssueID+".jsonl", map[string]any{
-		"type":    "webhook_event",
-		"issue":   thread.IssueID,
-		"key":     eventRecord.Key,
-		"event":   eventRecord.Type,
-		"actor":   eventRecord.Actor,
-		"message": eventRecord.Message,
-		"payload": payload,
-		"at":      eventRecord.At.Format(time.RFC3339Nano),
-	})
 	log.Printf("seerr thread event recorded: issue=%s event=%s actor=%q events=%d", thread.IssueID, eventRecord.Type, eventRecord.Actor, len(thread.Events))
 }
 
@@ -266,16 +256,12 @@ func (m *Manager) run(ctx context.Context, thread *IssueThread, payload map[stri
 	start := time.Now().UTC()
 	record := RunRecord{StartedAt: start}
 	prompt := m.issuePromptContext(thread, payload, event)
-	m.recordIssuePromptCompactions(thread.IssueID, prompt.Compactions)
 	request := Request{
 		Source:   "seerr_issue_" + event,
 		ThreadID: "issue:" + thread.IssueID,
 		Author:   actor(payload),
 		Audience: "seerr_issue",
 		Content:  prompt.Content,
-		ToolAudit: func(toolRecord ToolAuditRecord) {
-			m.recordToolCall(thread.IssueID, event, start, toolRecord)
-		},
 	}
 	progress := m.newSeerrProgressReporter(thread.IssueID, request)
 	request.Progress = progress.callback(runCtx)
@@ -358,22 +344,6 @@ func (m *Manager) run(ctx context.Context, thread *IssueThread, payload map[stri
 	return record, nil
 }
 
-func (m *Manager) recordToolCall(issueID, sourceEventType string, runStartedAt time.Time, record ToolAuditRecord) {
-	m.appendTrace("issues/issue-"+issueID+".jsonl", map[string]any{
-		"type":              "tool_call",
-		"issue":             issueID,
-		"source_event_type": sourceEventType,
-		"run_started_at":    runStartedAt.Format(time.RFC3339Nano),
-		"tool_name":         record.Name,
-		"mutating":          record.Mutating,
-		"arguments_summary": record.ArgumentsSummary,
-		"result_summary":    record.ResultSummary,
-		"error":             record.Error,
-		"started_at":        record.StartedAt.Format(time.RFC3339Nano),
-		"completed_at":      record.CompletedAt.Format(time.RFC3339Nano),
-	})
-}
-
 func (m *Manager) recordRun(ctx context.Context, thread *IssueThread, record RunRecord) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -382,18 +352,6 @@ func (m *Manager) recordRun(ctx context.Context, thread *IssueThread, record Run
 	thread.UpdatedAt = time.Now().UTC()
 	m.upsertThread(ctx, thread)
 	m.insertRun(ctx, thread.IssueID, record, "webhook")
-	m.appendTrace("issues/issue-"+thread.IssueID+".jsonl", map[string]any{
-		"type":              "agent_run",
-		"issue":             thread.IssueID,
-		"started_at":        record.StartedAt.Format(time.RFC3339Nano),
-		"completed_at":      record.CompletedAt.Format(time.RFC3339Nano),
-		"final_comment":     record.FinalComment,
-		"posted":            record.Posted,
-		"attribution":       record.Attribution,
-		"error":             record.Error,
-		"completion_reason": record.CompletionReason,
-		"summary":           thread.Summary,
-	})
 }
 
 func (m *Manager) complete(ctx context.Context, thread *IssueThread, reason string) {
@@ -406,11 +364,5 @@ func (m *Manager) complete(ctx context.Context, thread *IssueThread, reason stri
 	m.mu.Unlock()
 
 	m.upsertThread(ctx, thread)
-	m.appendTrace("issues/issue-"+thread.IssueID+".jsonl", map[string]any{
-		"type":              "issue_completed",
-		"issue":             thread.IssueID,
-		"completion_reason": reason,
-		"at":                now.Format(time.RFC3339Nano),
-	})
 	log.Printf("seerr issue completed: issue=%s reason=%q", thread.IssueID, reason)
 }

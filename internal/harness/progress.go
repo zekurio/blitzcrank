@@ -52,14 +52,6 @@ func (r *seerrProgressReporter) update(ctx context.Context, event ProgressEvent)
 		log.Printf("seerr progress comment failed: issue=%s phase=%s error=%v", r.issueID, event.Phase, err)
 		return
 	}
-	r.manager.appendTrace("issues/issue-"+r.issueID+".jsonl", map[string]any{
-		"type":        "progress_comment",
-		"issue":       r.issueID,
-		"phase":       event.Phase,
-		"tool_name":   event.ToolName,
-		"message":     comment,
-		"attribution": r.manager.commentAttribution(),
-	})
 	log.Printf("seerr progress comment posted: issue=%s phase=%s", r.issueID, event.Phase)
 }
 

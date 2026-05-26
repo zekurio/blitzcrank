@@ -12,9 +12,9 @@ Pi owns the agent runtime, provider/auth setup, skills, model selection, durable
 - Pi RPC runner with persistent sessions
 - Typed Pi service request tools for Seerr, Jellyfin, Sonarr, Radarr, and SABnzBD
 - SQLite gateway state for Seerr issue dedupe/runs
-- JSONL traces for issue/automation history search
+- Pi session search for prior issue context
 
-General Discord support, Blitzcrank's old native LLM runtime, Codex/OpenAI/OpenRouter clients, the old TypeScript sandbox, root `skills/`, and root `prompts/` have been removed. A lean Discord automation integration remains optional.
+Blitzcrank intentionally keeps only a lean Discord automation integration; Pi owns provider integrations, skills, and tool execution.
 
 ## Development
 
@@ -93,7 +93,7 @@ command = "pi"
 cwd = "."
 # Optional; set to a seeded Pi config/auth dir for service deployments.
 agent_dir = "/var/lib/blitzcrank/pi-agent"
-sessions_dir = "threads/pi-sessions"
+sessions_dir = "pi-sessions"
 
 [pi.models]
 # Pi thinking is configured inline with the model, e.g. ":high".
@@ -114,7 +114,6 @@ base_url = "https://radarr.example"
 base_url = "https://sabnzbd.example"
 
 [runtime]
-threads_dir = "threads"
 automations_dir = "automations"
 automations_enabled = false
 timezone = "UTC"
@@ -129,7 +128,7 @@ database_path = "./blitzcrank.sqlite"
 Project-local Pi resources live in `.pi/`:
 
 - `.pi/skills/`: canonical Pi-discoverable Seerr/media skills.
-- `.pi/extensions/blitzcrank-tools.ts`: registers direct TypeScript tools for media services, thread history, and Kagi web search/fetch.
+- `.pi/extensions/blitzcrank-tools.ts`: registers direct TypeScript tools for media services, Pi session history, and Kagi web search/fetch.
 
 Pi-visible tools:
 
@@ -176,9 +175,9 @@ automations_enabled = true
 automations_dir = "automations"
 ```
 
-Currently `@hourly` is supported. Each automation gets a durable Pi session derived from `automation:<name>`.
+Currently `@hourly` is supported. Automation runs are invoked without a durable Pi session; each run should treat live service state as the source of truth.
 
-When `DISCORD_TOKEN` and `discord.automation_channel_id` are configured, every automation run creates a Discord thread titled `automation: {automation name}` in that channel, posts the result there, and locks the thread by default. The `/automatisierung` slash command can trigger one of the currently loaded automations manually.
+When `DISCORD_TOKEN` and `discord.automation_channel_id` are configured, each automation has a Discord thread titled `automation: {automation name}`. Blitzcrank keeps one transient bot report in that thread, editing it for each run so it reflects the current outstanding automation state, and locks the thread by default. The `/automatisierung` slash command can trigger one of the currently loaded automations manually.
 
 ## State
 
@@ -186,12 +185,8 @@ When `DISCORD_TOKEN` and `discord.automation_channel_id` are configured, every a
   - `issue_threads`
   - `issue_thread_events`
   - `issue_runs`
-- JSONL traces: `runtime.threads_dir`
-- Pi sessions: `pi.sessions_dir`, or `runtime.threads_dir/pi-sessions` when unset
-- Seerr issue traces: `threads/issues/issue-<id>.jsonl`
-- Automation Pi sessions: one session per automation name
-
-Pi owns agent conversation history. SQLite is only for Blitzcrank gateway state.
+- Pi sessions: `pi.sessions_dir` for non-automation issue runs and history search
+Pi owns agent conversation history for issue runs. Automation runs are stateless at the Pi session layer. SQLite is only for Blitzcrank gateway state.
 
 ## Nix / NixOS
 
@@ -203,4 +198,4 @@ nix build
 
 The Nix package includes `automations/` and `.pi/`. Do not put secrets in Nix-store-generated config. Use `services.blitzcrank.environmentFile` or a secret manager for service API keys.
 
-Keep secrets out of commits; `.env*`, local TOML, SQLite files, and runtime threads are ignored.
+Keep secrets out of commits; `.env*`, local TOML, SQLite files, and Pi session data are ignored.

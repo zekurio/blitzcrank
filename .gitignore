@@ -38,7 +38,7 @@ blitzcrank.toml
 *.sqlite-shm
 *.sqlite-wal
 runtime-config.json
-threads/
+pi-sessions/
 memories/
 
 # Editor and OS files
@@ -47,5 +47,4 @@ memories/
 *.swp
 *~
 .DS_Store
-threads/*
 docs/*

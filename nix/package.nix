@@ -24,6 +24,7 @@ buildGoModule {
   postInstall = ''
     mkdir -p $out/share/blitzcrank
     cp -R automations .pi $out/share/blitzcrank/
+    cp README.md config.example.toml spec.html $out/share/blitzcrank/
     printf '%s\n' \
       '[runtime]' \
       "automations_dir = \"$out/share/blitzcrank/automations\"" \

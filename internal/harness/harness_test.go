@@ -4,18 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"blitzcrank/internal/config"
-	"blitzcrank/internal/runtimectx"
 	"blitzcrank/internal/tools"
 )
 
@@ -452,7 +448,7 @@ func TestHandleWebhookSerializesRunsForSameIssue(t *testing.T) {
 	}
 }
 
-func TestHandleWebhookDoesNotPostEmptyFinalComment(t *testing.T) {
+func TestHandleWebhookIgnoresEmptyFinalComment(t *testing.T) {
 	var posted []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		posted = append(posted, r.URL.Path)
@@ -465,8 +461,12 @@ func TestHandleWebhookDoesNotPostEmptyFinalComment(t *testing.T) {
 	runner := &fakeRunner{reply: "   "}
 	manager := NewManager(cfg, runner, tools.NewRegistry(cfg), nil)
 
-	if _, err := manager.HandleWebhook(context.Background(), issuePayload("Problem gemeldet", "alice", "file is stuck")); err == nil {
-		t.Fatal("HandleWebhook() error = nil, want empty comment error")
+	result, err := manager.HandleWebhook(context.Background(), issuePayload("Problem gemeldet", "alice", "file is stuck"))
+	if err != nil {
+		t.Fatalf("HandleWebhook() error = %v", err)
+	}
+	if result.Ignored {
+		t.Fatalf("HandleWebhook() ignored = true: %s", result.Reason)
 	}
 	if len(posted) != 0 {
 		t.Fatalf("posted comments = %#v, want none", posted)
@@ -515,166 +515,12 @@ func TestHandleWebhookRejectsSignedFinalCommentOverLimit(t *testing.T) {
 	}
 }
 
-func TestHandleWebhookResolvedWritesIssueJSONLTraceOnly(t *testing.T) {
-	dir := t.TempDir()
-	cfg := testConfig("http://127.0.0.1.invalid", dir)
-	manager := NewManager(cfg, &fakeRunner{}, tools.NewRegistry(cfg), nil)
-
-	result, err := manager.HandleWebhook(context.Background(), issuePayload("Problem gelöst", "alice", "fixed"))
-	if err != nil {
-		t.Fatalf("HandleWebhook() error = %v", err)
-	}
-	if result.Ignored {
-		t.Fatalf("HandleWebhook() ignored = true: %s", result.Reason)
-	}
-
-	legacyJSONPath := filepath.Join(dir, "issue-42.json")
-	if _, err := os.Stat(legacyJSONPath); !os.IsNotExist(err) {
-		t.Fatalf("unexpected legacy issue JSON at %s: %v", legacyJSONPath, err)
-	}
-
-	tracePath := filepath.Join(dir, "issues", "issue-42.jsonl")
-	data, err := os.ReadFile(tracePath)
-	if err != nil {
-		t.Fatalf("ReadFile(%s) error = %v", tracePath, err)
-	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("trace lines = %d, want 2: %s", len(lines), data)
-	}
-	var completion map[string]any
-	if err := json.Unmarshal([]byte(lines[1]), &completion); err != nil {
-		t.Fatalf("Unmarshal completion trace error = %v", err)
-	}
-	if completion["type"] != "issue_completed" {
-		t.Fatalf("completion trace type = %v, want issue_completed", completion["type"])
-	}
-}
-
-func TestIssueToolCallWritesJSONLTrace(t *testing.T) {
-	dir := t.TempDir()
-	cfg := testConfig("http://127.0.0.1.invalid", dir)
-	manager := NewManager(cfg, &fakeRunner{}, tools.NewRegistry(cfg), nil)
-	startedAt := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)
-	manager.recordToolCall("42", "reported", startedAt, ToolAuditRecord{
-		Name:             "seerr_get_issue",
-		ArgumentsSummary: `{"issue_id":"42"}`,
-		ResultSummary:    `{"id":42}`,
-		StartedAt:        startedAt,
-		CompletedAt:      startedAt.Add(time.Second),
-	})
-
-	data, err := os.ReadFile(filepath.Join(dir, "issues", "issue-42.jsonl"))
-	if err != nil {
-		t.Fatalf("ReadFile() error = %v", err)
-	}
-	var record map[string]any
-	if err := json.Unmarshal([]byte(strings.TrimSpace(string(data))), &record); err != nil {
-		t.Fatalf("Unmarshal() error = %v", err)
-	}
-	if record["type"] != "tool_call" || record["tool_name"] != "seerr_get_issue" {
-		t.Fatalf("tool call trace = %#v", record)
-	}
-}
-
-func TestIssuePromptContextReportsCompactions(t *testing.T) {
-	base := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)
-	thread := &IssueThread{IssueID: "42", Summary: "older context summarized"}
-	for i := 0; i < issueRecentEventLimit+1; i++ {
-		message := "event message"
-		if i == issueRecentEventLimit {
-			message = strings.Repeat("e", issueLineValueLimit+1)
-		}
-		thread.Events = append(thread.Events, ThreadEvent{
-			Type:    "comment",
-			Key:     fmt.Sprintf("event-%02d", i),
-			Actor:   "alice",
-			Message: message,
-			At:      base.Add(time.Duration(i) * time.Minute),
-		})
-	}
-	for i := 0; i < issueRecentRunLimit+1; i++ {
-		comment := "run result"
-		if i == issueRecentRunLimit {
-			comment = strings.Repeat("r", issueLineValueLimit+1)
-		}
-		thread.Runs = append(thread.Runs, RunRecord{
-			StartedAt:        base.Add(time.Duration(i) * time.Hour),
-			FinalComment:     comment,
-			CompletionReason: "completed",
-		})
-	}
-
-	manager := &Manager{}
-	result := manager.issuePromptContext(thread, map[string]any{
-		"message": strings.Repeat("payload", issuePromptPayloadLimit/2),
-	}, "comment")
-
-	if result.Content == "" {
-		t.Fatal("prompt content is empty")
-	}
-	components := map[string]bool{}
-	for _, entry := range result.Compactions {
-		component, _ := entry.Details["component"].(string)
-		components[component] = true
-		if entry.Summary == "" || entry.FirstKeptEntryID == "" || entry.TokensBefore <= 0 {
-			t.Fatalf("invalid compaction entry: %#v", entry)
-		}
-	}
-	for _, component := range []string{"seerr_recent_events", "seerr_recent_runs", "seerr_event_line_values", "seerr_run_line_values", "seerr_webhook_payload"} {
-		if !components[component] {
-			t.Fatalf("missing compaction component %q in %#v", component, components)
-		}
-	}
-}
-
-func TestRecordIssuePromptCompactionsWritesLedgerAndTrace(t *testing.T) {
-	dir := t.TempDir()
-	cfg := testConfig("http://127.0.0.1.invalid", dir)
-	manager := NewManager(cfg, &fakeRunner{}, tools.NewRegistry(cfg), nil)
-	entries := []runtimectx.CompactionEntry{
-		runtimectx.NewCompactionEntry(runtimectx.NewCompactionEntryOptions{
-			Summary:          "Seerr issue event context compacted.",
-			FirstKeptEntryID: "seerr_event:event-08",
-			TokensBefore:     120,
-			Details: map[string]any{
-				"component": "seerr_recent_events",
-				"issue_id":  "42",
-			},
-		}),
-	}
-
-	manager.recordIssuePromptCompactions("42", entries)
-
-	ledgerPath := filepath.Join(dir, "issues", "issue-42.compactions.jsonl")
-	stored, err := runtimectx.ReadCompactionEntries(ledgerPath, 0)
-	if err != nil {
-		t.Fatalf("ReadCompactionEntries() error = %v", err)
-	}
-	if len(stored) != 1 || stored[0].Summary != entries[0].Summary {
-		t.Fatalf("stored compactions = %#v, want %#v", stored, entries)
-	}
-
-	data, err := os.ReadFile(filepath.Join(dir, "issues", "issue-42.jsonl"))
-	if err != nil {
-		t.Fatalf("ReadFile() error = %v", err)
-	}
-	var trace map[string]any
-	if err := json.Unmarshal([]byte(strings.TrimSpace(string(data))), &trace); err != nil {
-		t.Fatalf("Unmarshal() error = %v", err)
-	}
-	if trace["type"] != "context_compaction" || trace["entry_id"] != entries[0].ID {
-		t.Fatalf("trace = %#v", trace)
-	}
-}
-
 func testConfig(baseURL, threadDir string) config.Config {
 	return config.Config{
 		SeerrBaseURL:        baseURL,
 		SeerrAPIKey:         "secret",
 		SeerrBotDisplayName: "Blitzcrank",
 		PiModels:            map[string]string{"default": "gpt-5.5"},
-		ThreadsDirectory:    threadDir,
 		RunTimeout:          time.Minute,
 	}
 }
