@@ -27,16 +27,14 @@ type Config struct {
 	RadarrAPIKey    string   `env:"RADARR_API_KEY" toml:"radarr.api_key"`
 	SabnzbdBaseURL  string   `env:"SABNZBD_BASE_URL" toml:"sabnzbd.base_url"`
 	SabnzbdAPIKey   string   `env:"SABNZBD_API_KEY" toml:"sabnzbd.api_key"`
-	FSAllowedRoots  []string `env:"FS_TOOL_ALLOWED_ROOTS" toml:"filesystem.allowed_roots"`
 
 	PiCommand     string            `env:"PI_COMMAND" toml:"pi.command" default:"pi"`
 	PiCWD         string            `env:"PI_CWD" toml:"pi.cwd" default:"."`
 	PiAgentDir    string            `env:"PI_CODING_AGENT_DIR" toml:"pi.agent_dir"`
-	PiSessionsDir string            `env:"PI_SESSIONS_DIR" toml:"pi.sessions_dir"`
+	PiSessionsDir string            `env:"PI_SESSIONS_DIR" toml:"pi.sessions_dir" default:"pi-sessions"`
 	PiModels      map[string]string `env:"PI_MODELS" toml:"pi.models"`
 
 	ConfigPath           string        `env:"BLITZCRANK_CONFIG" default:"./blitzcrank.toml"`
-	ThreadsDirectory     string        `env:"AGENT_THREADS_DIR" toml:"runtime.threads_dir" default:"threads"`
 	AutomationsDirectory string        `env:"AUTOMATIONS_DIR" toml:"runtime.automations_dir" default:"automations"`
 	AutomationsEnabled   bool          `env:"AUTOMATIONS_ENABLED" toml:"runtime.automations_enabled"`
 	AutomationsExtraDirs []string      `env:"AUTOMATIONS_EXTRA_DIRS" toml:"runtime.automations_extra_dirs"`

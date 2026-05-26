@@ -39,29 +39,6 @@ func loadDotenv(path string) error {
 	return nil
 }
 
-func getenv(key, fallback string) string {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback
-	}
-	return value
-}
-
-func boolEnv(key string, fallback bool) bool {
-	value := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
-	if value == "" {
-		return fallback
-	}
-	switch value {
-	case "1", "true", "yes", "on":
-		return true
-	case "0", "false", "no", "off":
-		return false
-	default:
-		return fallback
-	}
-}
-
 func applyDefaults(cfg *Config) error {
 	return walkConfigFields(cfg, func(field reflect.Value, structField reflect.StructField) error {
 		value := strings.TrimSpace(structField.Tag.Get("default"))

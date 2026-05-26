@@ -34,8 +34,8 @@ command = "pi"
 cwd = "."
 # Optional Pi config/auth directory. Seed this with auth.json/settings.json for service deployments.
 agent_dir = ""
-# Persistent Pi sessions. Defaults to runtime.threads_dir/pi-sessions when empty.
-sessions_dir = ""
+# Persistent Pi sessions for non-automation issue runs and history search.
+sessions_dir = "pi-sessions"
 # Optional per-task Pi model selection. Include Pi thinking inline, e.g. ":high".
 [pi.models]
 default = ""
@@ -58,11 +58,7 @@ api_key = "change-me"
 base_url = "https://sabnzbd.example"
 api_key = "change-me"
 
-[filesystem]
-allowed_roots = []
-
 [runtime]
-threads_dir = "threads"
 automations_dir = "automations"
 automations_enabled = false
 automations_extra_dirs = []

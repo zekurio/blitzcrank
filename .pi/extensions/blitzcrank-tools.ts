@@ -170,7 +170,7 @@ async function threadHistorySearch(params: { query: string; source?: string; lim
   if (!query) throw new Error("query is required");
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
   const limit = Math.max(1, Math.min(10, Number(params.limit || 5)));
-  const roots = [env("BLITZCRANK_THREADS_DIR"), env("PI_CODING_AGENT_SESSION_DIR")].filter(Boolean);
+  const roots = [env("PI_CODING_AGENT_SESSION_DIR")].filter(Boolean);
   const files: string[] = [];
   for (const root of roots) await collectFiles(root, files);
 
@@ -199,12 +199,7 @@ async function kagiSearch(params: { query: string; limit?: number; include_markd
   const limit = Math.max(1, Math.min(10, Number(params.limit || 5)));
   const body = { q: query, limit, ...(params.include_markdown ? { extract: true } : {}) };
   const headers = { authorization: `Bearer ${requireEnv("KAGI_API_KEY")}`, "content-type": "application/json", accept: "application/json" };
-  try {
-    return await jsonRequest("https://kagi.com/api/v1/search", { method: "POST", headers, body: JSON.stringify(body) }, signal);
-  } catch (err) {
-    const fallback = { query, limit, ...(params.include_markdown ? { extract: true } : {}) };
-    return await jsonRequest("https://kagi.com/api/v1/search", { method: "POST", headers, body: JSON.stringify(fallback) }, signal);
-  }
+  return await jsonRequest("https://kagi.com/api/v1/search", { method: "POST", headers, body: JSON.stringify(body) }, signal);
 }
 
 function assertPublicHTTPURL(value: string) {
@@ -233,10 +228,10 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "thread_history_search",
     label: "Search Blitzcrank thread history",
-    description: "Search prior Blitzcrank issue and automation traces for similar investigations or fixes. Treat results as clues and validate current state before acting.",
+    description: "Search prior Pi session history for similar investigations or fixes. Treat results as clues and validate current live state before acting.",
     parameters: Type.Object({
       query: Type.String({ description: "Search terms such as a title, error, queue/import symptom, or prior fix" }),
-      source: Type.Optional(Type.String({ description: "Optional source filter: all, issues, automations, or legacy discord" })),
+      source: Type.Optional(Type.String({ description: "Optional source filter: all, issues, or automations" })),
       limit: Type.Optional(Type.Number({ description: "Maximum threads to return, from 1 to 10" })),
       exclude_thread_id: Type.Optional(Type.String({ description: "Current thread or issue id to omit" })),
     }),

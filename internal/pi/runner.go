@@ -114,10 +114,10 @@ func (r *Runner) argsFor(req harness.Request) ([]string, error) {
 }
 
 func (r *Runner) sessionPath(req harness.Request) string {
-	base := strings.TrimSpace(r.cfg.PiSessionsDir)
-	if base == "" && strings.TrimSpace(r.cfg.ThreadsDirectory) != "" {
-		base = filepath.Join(strings.TrimSpace(r.cfg.ThreadsDirectory), "pi-sessions")
+	if strings.HasPrefix(strings.TrimSpace(req.Source), "automation") || strings.HasPrefix(strings.TrimSpace(req.ThreadID), "automation:") {
+		return ""
 	}
+	base := strings.TrimSpace(r.cfg.PiSessionsDir)
 	if base == "" {
 		return ""
 	}
@@ -167,7 +167,6 @@ func (r *Runner) env(req harness.Request) []string {
 	env = append(env,
 		"BLITZCRANK_RUN_SOURCE="+strings.TrimSpace(req.Source),
 		"BLITZCRANK_THREAD_ID="+strings.TrimSpace(req.ThreadID),
-		"BLITZCRANK_THREADS_DIR="+strings.TrimSpace(r.cfg.ThreadsDirectory),
 	)
 	if agentDir := strings.TrimSpace(r.cfg.PiAgentDir); agentDir != "" {
 		env = append(env, "PI_CODING_AGENT_DIR="+agentDir)

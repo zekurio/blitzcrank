@@ -8,11 +8,11 @@ Run the hourly stale import handler with `sonarr_request`, `radarr_request`, `sa
 
 ## Goal
 
-Find Sonarr/Radarr queue entries where a download is complete but not imported. Import only clearly safe manual-import candidates. Remove only clearly rejected stale downloads from Arr and the download client. Report only new actions or newly discovered manual-review blockers.
+Find Sonarr/Radarr queue entries where a download is complete but not imported. Import only clearly safe manual-import candidates. Remove only clearly rejected stale downloads from Arr and the download client. Report actions from this run and all current manual-review blockers that still remain in the live queues.
 
 ## Required first checks
 
-1. Search prior automation history with `thread_history_search` for stale import/manual intervention records. Treat prior `MANUAL_INTERVENTION_REQUIRED` lines as a persistent do-not-touch ledger unless current evidence proves the exact blocker has changed or the item now qualifies for rejection cleanup.
+1. Search prior Pi session history with `thread_history_search` for related stale import/manual intervention records when available. Treat results as clues only; current live Sonarr/Radarr evidence is authoritative.
 2. Read Sonarr queue: `sonarr_request GET /api/v3/queue?page=1&pageSize=100&includeUnknownSeriesItems=true`.
 3. Read Radarr queue: `radarr_request GET /api/v3/queue?page=1&pageSize=100&includeUnknownMovieItems=true`.
 4. Consider only completed/stale import candidates where Sonarr/Radarr indicates import is blocked, delayed, failed, unknown, or waiting despite a completed download.
@@ -63,23 +63,23 @@ Validate removal by reading the queue again and confirming the item disappeared.
 
 ## Do not do these
 
-- Do not mutate any item that plausibly matches a prior manual-intervention ledger entry unless the current evidence qualifies it for rejection cleanup.
+- Do not mutate any item that current evidence shows is unsafe or ambiguous.
 - Do not import uncertain matches.
 - Do not force import substantive rejections.
 - Do not trigger searches, retries, refreshes, blocklist clearing, filesystem deletion, direct SABnzbd deletion, or Seerr issue resolution from this automation.
-- Do not report unchanged prior manual-intervention items.
+- Do not re-inspect or mutate unchanged prior manual-intervention items beyond the evidence needed to confirm they are still present in the live queue.
 
 ## Output
 
 Return a German operations note. Suppress empty sections completely.
 
-Use only these sections when they contain concrete new items from this run:
+Use only these sections when they contain concrete items:
 
-- `Importiert:` for validated imports.
-- `Entfernt:` for validated rejection-based queue removals.
-- `Manuell prüfen:` for newly inspected unsafe/uncertain items requiring human review.
+- `Importiert:` for validated imports performed in this run.
+- `Entfernt:` for validated rejection-based queue removals performed in this run.
+- `Manuell prüfen:` for all currently present unsafe/uncertain items requiring human review.
 
-If no new stale imports, removals, or newly blocked downloads were found, return an empty response.
+If no imports/removals were performed and no manual-review blockers are currently present, return an empty response.
 
 Each bullet must be human-readable and include the service, title, season/episode or movie year when available, release/folder/file when useful, the practical reason, and the validation outcome for actions.
 

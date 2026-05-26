@@ -21,7 +21,6 @@ let
       cache_dir = "${cfg.dataDir}/cache";
     };
     runtime = {
-      threads_dir = toString cfg.threadsDir;
       automations_dir = cfg.automationsDir;
       automations_enabled = cfg.automations.enable;
       automations_extra_dirs = cfg.extraAutomationDirs;
@@ -31,7 +30,7 @@ let
       command = cfg.piCommand;
       cwd = cfg.piCwd;
       agent_dir = cfg.piAgentDir;
-      sessions_dir = "${cfg.threadsDir}/pi-sessions";
+      sessions_dir = "${cfg.dataDir}/pi-sessions";
       models = cfg.piModels;
     };
   };
@@ -62,10 +61,6 @@ in
     databasePath = lib.mkOption {
       type = lib.types.path;
       default = "${cfg.dataDir}/blitzcrank.sqlite";
-    };
-    threadsDir = lib.mkOption {
-      type = lib.types.path;
-      default = "${cfg.dataDir}/threads";
     };
     environmentFile = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
@@ -131,7 +126,6 @@ in
     };
     systemd.tmpfiles.rules = [
       "d ${cfg.dataDir} 0750 ${cfg.user} ${cfg.group} - -"
-      "d ${cfg.threadsDir} 0750 ${cfg.user} ${cfg.group} - -"
       "d ${cfg.dataDir}/cache 0750 ${cfg.user} ${cfg.group} - -"
     ];
     systemd.services.blitzcrank = {

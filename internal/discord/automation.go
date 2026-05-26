@@ -159,14 +159,24 @@ func (r *AutomationReporter) AutomationStarted(ctx context.Context, task automat
 	if err != nil {
 		return automation.ReportHandle{}, err
 	}
-	msg, err := r.session.ChannelMessageSendEmbed(thread.ID, automationStartedEmbed(task, r.cfg.BotPublicName))
+	embed := automationStartedEmbed(task, r.cfg.BotPublicName)
+	messageID, err := r.latestAutomationStatusMessageID(thread.ID)
+	if err == nil && messageID != "" {
+		_, err = r.session.ChannelMessageEditEmbed(thread.ID, messageID, embed)
+	} else if err == nil {
+		var msg *discordgo.Message
+		msg, err = r.session.ChannelMessageSendEmbed(thread.ID, embed)
+		if err == nil && msg != nil {
+			messageID = msg.ID
+		}
+	}
 	if lockErr := r.lockAutomationThread(thread.ID); lockErr != nil && err == nil {
 		err = lockErr
 	}
 	if err != nil {
-		return automation.ReportHandle{ThreadID: thread.ID}, err
+		return automation.ReportHandle{ThreadID: thread.ID, MessageID: messageID}, err
 	}
-	return automation.ReportHandle{ThreadID: thread.ID, MessageID: msg.ID}, nil
+	return automation.ReportHandle{ThreadID: thread.ID, MessageID: messageID}, nil
 }
 
 func (r *AutomationReporter) AutomationCompleted(ctx context.Context, handle automation.ReportHandle, task automation.Task, response string, runErr error, failures []automation.ToolFailure) error {
@@ -187,9 +197,6 @@ func (r *AutomationReporter) AutomationCompleted(ctx context.Context, handle aut
 	embed := automationCompletedEmbed(response, runErr, failures, r.cfg.BotPublicName)
 	messageID := strings.TrimSpace(handle.MessageID)
 	var err error
-	if cleanupErr := r.deletePreviousAutomationMessages(threadID, messageID); cleanupErr != nil {
-		log.Printf("discord automation cleanup failed: thread=%s error=%v", threadID, cleanupErr)
-	}
 	if embed == nil {
 		if messageID != "" {
 			err = r.session.ChannelMessageDelete(threadID, messageID)
@@ -270,30 +277,27 @@ func (r *AutomationReporter) lockAutomationThread(threadID string) error {
 	return err
 }
 
-func (r *AutomationReporter) deletePreviousAutomationMessages(threadID string, keepMessageID string) error {
+func (r *AutomationReporter) latestAutomationStatusMessageID(threadID string) (string, error) {
 	messages, err := r.session.ChannelMessages(threadID, 100, "", "", "")
 	if err != nil {
-		return err
+		return "", err
 	}
 	botID := ""
 	if r.session.State != nil && r.session.State.User != nil {
 		botID = strings.TrimSpace(r.session.State.User.ID)
 	}
 	for _, message := range messages {
-		if message == nil || strings.TrimSpace(message.ID) == "" || message.ID == keepMessageID {
+		if message == nil || strings.TrimSpace(message.ID) == "" {
 			continue
 		}
 		if botID != "" && (message.Author == nil || message.Author.ID != botID) {
 			continue
 		}
-		if !isAutomationStatusMessage(message, r.cfg.BotPublicName) {
-			continue
-		}
-		if err := r.session.ChannelMessageDelete(threadID, message.ID); err != nil {
-			return err
+		if isAutomationStatusMessage(message, r.cfg.BotPublicName) {
+			return message.ID, nil
 		}
 	}
-	return nil
+	return "", nil
 }
 
 func isAutomationStatusMessage(message *discordgo.Message, botName string) bool {
