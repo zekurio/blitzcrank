@@ -128,6 +128,17 @@ func (r *seerrProgressReporter) latestTodos() []TodoItem {
 func seerrCommentID(value any) string {
 	switch typed := value.(type) {
 	case map[string]any:
+		if comments, ok := typed["comments"].([]any); ok {
+			for i := len(comments) - 1; i >= 0; i-- {
+				comment, ok := comments[i].(map[string]any)
+				if !ok {
+					continue
+				}
+				if id := strings.TrimSpace(fmt.Sprint(comment["id"])); id != "" && id != "<nil>" {
+					return id
+				}
+			}
+		}
 		for _, key := range []string{"id", "commentId", "comment_id"} {
 			if id := strings.TrimSpace(fmt.Sprint(typed[key])); id != "" && id != "<nil>" {
 				return id

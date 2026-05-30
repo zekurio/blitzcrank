@@ -198,8 +198,8 @@ func TestHandleWebhookPostsSingleProgressComment(t *testing.T) {
 			}
 			posted = append(posted, body["message"])
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"id":"comment-1"}`))
-		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/issue/42/comment/comment-1":
+			_, _ = w.Write([]byte(`{"id":42,"comments":[{"id":"comment-1"}]}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/issueComment/comment-1":
 			var body map[string]string
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatal(err)
