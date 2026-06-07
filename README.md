@@ -127,7 +127,8 @@ database_path = "./blitzcrank.sqlite"
 
 Project-local Pi resources live in `.pi/`:
 
-- `.pi/skills/`: canonical Pi-discoverable Seerr/media skills.
+- `.pi/system-prompts/`: first-class Pi agent contracts for Seerr issue runs and scheduled automations.
+- `.pi/skills/`: Pi-discoverable service/domain cookbooks for Seerr, Jellyfin, Sonarr, Radarr, SABnzBD, and filesystem limitations.
 - `.pi/extensions/blitzcrank-tools.ts`: registers direct TypeScript tools for media services, Pi session history, and Kagi web search/fetch.
 
 Pi-visible tools:
@@ -147,8 +148,8 @@ All service request tools require a `purpose`. Paths must be service-relative an
 
 1. Seerr sends a webhook to Blitzcrank.
 2. Blitzcrank deduplicates and locks the issue.
-3. Blitzcrank sends one task prompt to Pi.
-4. Pi loads the Seerr skill and calls tools through `.pi/extensions/blitzcrank-tools.ts`.
+3. Blitzcrank sends Pi the Seerr issue system prompt plus one task prompt.
+4. Pi loads service skills and calls tools through `.pi/extensions/blitzcrank-tools.ts`.
 5. The extension calls configured services directly with environment passed to the Pi process.
 6. Pi returns a final response beginning with `RESOLVE_ISSUE: yes/no`.
 7. Blitzcrank posts the final Seerr comment and resolves the issue only when requested.
@@ -164,7 +165,7 @@ description: Example automation
 schedule: "@hourly"
 ---
 
-Automation prompt body...
+Automation task body...
 ```
 
 Enable them with:
@@ -175,7 +176,7 @@ automations_enabled = true
 automations_dir = "automations"
 ```
 
-Currently `@hourly` is supported. Automation runs are invoked without a durable Pi session; each run should treat live service state as the source of truth.
+Currently `@hourly` is supported. Automation runs use the automation system prompt plus the markdown task body, and are invoked without a durable Pi session; each run should treat live service state as the source of truth.
 
 When `DISCORD_TOKEN` and `discord.automation_channel_id` are configured, each automation has a Discord thread titled `automation: {automation name}`. Blitzcrank keeps one transient bot report in that thread, editing it for each run so it reflects the current outstanding automation state, and locks the thread by default. The `/automatisierung` slash command can trigger one of the currently loaded automations manually.
 

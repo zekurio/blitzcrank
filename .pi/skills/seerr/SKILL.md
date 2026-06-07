@@ -1,6 +1,6 @@
 ---
 name: seerr
-description: Use when handling Seerr issue webhooks, reading issue/request/media/user state, and preparing final Seerr issue comments.
+description: Use when reading or safely mutating Seerr issue/request/media/user state.
 ---
 
 # Seerr Skill
@@ -28,4 +28,3 @@ Use `seerr_request` with relative `/api/v1/...` paths. Every request needs `purp
 - For acquisition requests, prefer Seerr request APIs over downstream Sonarr/Radarr add or monitor mutations.
 - Search Seerr first, confirm the correct media id and type, then check quota before creating a request.
 - If the user/quota/permission state blocks a request, explain that blocker directly.
-- Final comments must be short, closed-form, and follow the Seerr Issue Solver format.
