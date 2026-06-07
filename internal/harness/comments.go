@@ -50,27 +50,8 @@ Recent thread events:
 Recent solver outcomes:
 %s
 
-Use the tools to investigate the issue, apply safe fixes when appropriate, validate the result, and return exactly one final response in Blitzcrank's directive format.
+Use the Pi system prompt to investigate the issue, apply safe fixes when appropriate, validate the result, and return exactly one final response in Blitzcrank's directive format.
 If the reported user message is an explicit diagnostic or test instruction, perform a safe read-only tool call when possible and summarize the result.
-
-Final response format:
-- Start with 'RESOLVE_ISSUE: yes' only when validation proves the issue should be marked resolved; otherwise start with 'RESOLVE_ISSUE: no'.
-- Then one blank line and the public Seerr issue comment.
-- If nothing changed and there is no useful user-facing update, return 'RESOLVE_ISSUE: no' followed by a blank line and no comment.
-- Use the system language rules: default to German, but if the reporting user clearly wrote the actual issue in another language, write the final comment in that language.
-- Return a final, closed-form comment: either the issue was fixed with a short cause/result explanation, or it could not be fixed with a short blocker explanation.
-- Use at most two short sentences.
-- Answer the latest user message directly and do not repeat earlier bot comments.
-- Do not include next steps, manual-action guidance, "please check", "try again", "when available", or requests for the user to confirm.
-- Do not mention searches, retries, refreshes, or replacement attempts that were not performed.
-- For fixed issues, explain what caused the issue and what was done to fix it.
-- For unresolved issues, explain why it could not be fixed; do not instruct the user what to do next.
-- For verified external availability blockers, write a natural availability answer instead of failure phrasing like "konnte nicht repariert werden"; for example, say that the German version is available on the verified date and the user has to wait until then.
-- For diagnostic/test instructions, report the diagnostic action and result instead of inventing a cause/fix.
-- Mention verification only when a fix or diagnostic action was actually checked, and write it as a normal sentence.
-- Do not use labeled sections such as "Validierung:", "Ursache:", "Fix:", or "Nächste Schritte:".
-- Do not include a signature/header; the harness adds a bracket header with the bot name and model.
-- Keep it concise and readable as a Seerr issue comment.
 
 Webhook payload:
 %s`, event, thread.IssueID, len(thread.Events), len(thread.Runs), emptyIssueSummary(thread.Summary), reportedMessage, eventsText, runsText, payloadText)
