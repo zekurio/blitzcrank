@@ -20,6 +20,9 @@ func TestArgsForAutomationUsesNoSession(t *testing.T) {
 	if !containsArg(args, "--no-session") {
 		t.Fatalf("expected --no-session for automation run, got %q", joined)
 	}
+	if !containsArg(args, "--extension") || !containsArgSuffix(args, ".pi/extensions/blitzcrank-tools.ts") {
+		t.Fatalf("expected explicit Blitzcrank extension so Pi loads service tools in rpc mode, got %q", joined)
+	}
 	if containsArg(args, "--session") {
 		t.Fatalf("did not expect --session for automation run, got %q", joined)
 	}
@@ -36,6 +39,9 @@ func TestArgsForIssueUsesSession(t *testing.T) {
 	joined := strings.Join(args, " ")
 	if !containsArg(args, "--session") {
 		t.Fatalf("expected --session for issue run, got %q", joined)
+	}
+	if !containsArg(args, "--extension") || !containsArgSuffix(args, ".pi/extensions/blitzcrank-tools.ts") {
+		t.Fatalf("expected explicit Blitzcrank extension so Pi loads service tools in rpc mode, got %q", joined)
 	}
 	if containsArg(args, "--no-session") {
 		t.Fatalf("did not expect --no-session for issue run, got %q", joined)
@@ -110,6 +116,15 @@ func TestPromptForAutomationUsesAutomationSystemPromptAndServiceSkills(t *testin
 func containsArg(args []string, want string) bool {
 	for _, arg := range args {
 		if arg == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsArgSuffix(args []string, want string) bool {
+	for _, arg := range args {
+		if strings.HasSuffix(arg, want) {
 			return true
 		}
 	}

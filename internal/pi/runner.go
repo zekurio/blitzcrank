@@ -102,7 +102,11 @@ func (r *Runner) cwd() string {
 }
 
 func (r *Runner) argsFor(req harness.Request) ([]string, error) {
-	args := []string{"--mode", "rpc", "--tools", "seerr_request,jellyfin_request,sonarr_request,radarr_request,sabnzbd_request,thread_history_search,web_search,web_fetch"}
+	args := []string{
+		"--mode", "rpc",
+		"--extension", filepath.Join(r.cwd(), ".pi", "extensions", "blitzcrank-tools.ts"),
+		"--tools", "seerr_request,jellyfin_request,sonarr_request,radarr_request,sabnzbd_request,thread_history_search,web_search,web_fetch",
+	}
 	if sessionPath := r.sessionPath(req); sessionPath != "" {
 		if err := os.MkdirAll(filepath.Dir(sessionPath), 0o755); err != nil {
 			return nil, fmt.Errorf("create pi session directory: %w", err)
