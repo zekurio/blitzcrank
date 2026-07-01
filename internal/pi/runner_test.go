@@ -23,6 +23,9 @@ func TestArgsForAutomationUsesNoSession(t *testing.T) {
 	if !containsArg(args, "--extension") || !containsArgSuffix(args, ".pi/extensions/blitzcrank-tools.ts") {
 		t.Fatalf("expected explicit Blitzcrank extension so Pi loads service tools in rpc mode, got %q", joined)
 	}
+	if !containsTool(args, "anvil_status") {
+		t.Fatalf("expected anvil_status tool for automation run, got %q", joined)
+	}
 	if containsArg(args, "--session") {
 		t.Fatalf("did not expect --session for automation run, got %q", joined)
 	}
@@ -68,6 +71,7 @@ func TestPromptForIssueUsesSystemPromptAndServiceSkills(t *testing.T) {
 		"/skill:sonarr",
 		"/skill:radarr",
 		"/skill:sabnzbd",
+		"/skill:anvil",
 		"/skill:filesystem",
 		"System prompt:\n\n# Blitzcrank Seerr Issue Agent",
 		"Task prompt:\n\nHandle this Seerr issue event.",
@@ -99,6 +103,7 @@ func TestPromptForAutomationUsesAutomationSystemPromptAndServiceSkills(t *testin
 		"/skill:sonarr",
 		"/skill:radarr",
 		"/skill:sabnzbd",
+		"/skill:anvil",
 		"/skill:filesystem",
 		"System prompt:\n\n# Blitzcrank Automation Agent",
 		"Task prompt:\n\nRun this scheduled Blitzcrank media-server automation.",
@@ -113,10 +118,34 @@ func TestPromptForAutomationUsesAutomationSystemPromptAndServiceSkills(t *testin
 	}
 }
 
+func TestEnvPassesConfiguredAnvilSystemdUnit(t *testing.T) {
+	runner := NewRunner(config.Config{AnvilSystemdUnit: "anvil-transcode.service"})
+
+	env := runner.env(harness.Request{})
+
+	if !containsArg(env, "ANVIL_SYSTEMD_UNIT=anvil-transcode.service") {
+		t.Fatalf("env missing configured Anvil unit")
+	}
+}
+
 func containsArg(args []string, want string) bool {
 	for _, arg := range args {
 		if arg == want {
 			return true
+		}
+	}
+	return false
+}
+
+func containsTool(args []string, want string) bool {
+	for index, arg := range args {
+		if arg != "--tools" || index+1 >= len(args) {
+			continue
+		}
+		for _, tool := range strings.Split(args[index+1], ",") {
+			if strings.TrimSpace(tool) == want {
+				return true
+			}
 		}
 	}
 	return false

@@ -58,6 +58,10 @@ api_key = "change-me"
 base_url = "https://sabnzbd.example"
 api_key = "change-me"
 
+[anvil]
+# Systemd unit checked before treating completed Arr imports as stale.
+systemd_unit = "anvil.service"
+
 [runtime]
 automations_dir = "automations"
 automations_enabled = false

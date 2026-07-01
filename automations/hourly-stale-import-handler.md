@@ -4,18 +4,19 @@ description: Hourly Sonarr/Radarr handler for stale completed downloads that are
 schedule: "@hourly"
 ---
 
-Run the hourly stale import handler with `sonarr_request`, `radarr_request`, `sabnzbd_request`, and `thread_history_search`.
+Run the hourly stale import handler with `sonarr_request`, `radarr_request`, `sabnzbd_request`, `anvil_status`, and `thread_history_search`.
 
 ## Goal
 
-Find Sonarr/Radarr queue entries where a download is complete but not imported. Import only clearly safe manual-import candidates. Remove only clearly rejected stale downloads from Arr and the download client. Report actions from this run and all current manual-review blockers that still remain in the live queues.
+Find Sonarr/Radarr queue entries where a download is complete but not imported. Import only clearly safe manual-import candidates. Remove only clearly rejected stale downloads from Arr and the download client. Treat Anvil encoding between SABnzbd and Arr as a normal temporary wait. Report actions from this run and all current manual-review blockers that still remain in the live queues.
 
 ## Required first checks
 
 1. Search prior Pi session history with `thread_history_search` for related stale import/manual intervention records when available. Treat results as clues only; current live Sonarr/Radarr evidence is authoritative.
 2. Read Sonarr queue: `sonarr_request GET /api/v3/queue?page=1&pageSize=100&includeUnknownSeriesItems=true`.
 3. Read Radarr queue: `radarr_request GET /api/v3/queue?page=1&pageSize=100&includeUnknownMovieItems=true`.
-4. Consider only completed/stale import candidates where Sonarr/Radarr indicates import is blocked, delayed, failed, unknown, or waiting despite a completed download.
+4. Read Anvil status with `anvil_status` before deciding whether any completed Arr queue item is stale.
+5. Consider only completed/stale import candidates where Sonarr/Radarr indicates import is blocked, delayed, failed, unknown, or waiting despite a completed download.
 
 ## Candidate inspection
 
@@ -27,6 +28,21 @@ For each relevant queue item:
 - Inspect candidate `rejections` before deciding, even when the candidate looks safe.
 - Use SABnzbd queue/history only when Sonarr/Radarr evidence needs downloader confirmation, for example `sabnzbd_request GET /api?mode=queue` or `GET /api?mode=history&limit=20`.
 
+## Anvil wait rules
+
+Anvil encodes completed SABnzbd downloads before Sonarr/Radarr can import them. A completed SABnzbd job can therefore be healthy even while Arr reports import blockers.
+
+Treat a queue item as an Anvil wait when either is true:
+
+- `anvil_status` shows the configured Anvil unit is active, activating, reloading, has a queued systemd job, or returns `wait_recommended: true`, and the Sonarr/Radarr/manual-import evidence is only file-not-ready style evidence: no importable files found, missing or unavailable path, locked/in-use file, size still changing, waiting/delayed import, or access/permission-like failures while Anvil may own the file.
+- Anvil status is unavailable, but Sonarr/Radarr evidence is only file-not-ready style evidence and the item is less than 24 hours past SAB completion or Arr queue timestamp. If no reliable age evidence exists, treat it as within this grace window.
+
+For Anvil waits:
+
+- Do not manual import, force import, remove, blocklist, search, retry, refresh, trigger Seerr activity, or perform any filesystem action.
+- Do not include Anvil wait items under `Manuell prüfen:`. If all current blockers are Anvil waits and no action was taken, return an empty response.
+- If an item is older than 24 hours, Anvil is inactive or unavailable, and the only evidence is still file-not-ready style, report it under `Manuell prüfen:` as a possible stuck Anvil/import handoff. Do not delete it automatically.
+
 ## Safe import rules
 
 Import a candidate only when all are true:
@@ -34,6 +50,7 @@ Import a candidate only when all are true:
 - The candidate is resolved by Sonarr/Radarr to the exact queued episode or movie.
 - The file path/download id belongs to the queued completed download.
 - Quality, language, and custom-format evidence are acceptable for the target.
+- The item is not an Anvil wait.
 - There is no substantive rejection such as wrong target, sample, missing path, permissions failure, duplicate/existing file conflict, unwanted language, low score, or profile cutoff.
 
 Mutation shape:
@@ -52,6 +69,7 @@ Remove a stale download only when all are true:
 - Sonarr/Radarr resolves the manual import candidate to the exact queued episode/movie or clearly identifies it as the wrong candidate for that queued target.
 - The file path/download id belongs to the queued completed download.
 - The explicit rejection/candidate data makes the download clearly not useful to import.
+- The item is not an Anvil wait.
 - There is no ambiguity about which queue item and download-client job will be removed.
 
 Mutation shape:
