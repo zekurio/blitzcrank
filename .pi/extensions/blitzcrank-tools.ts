@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { execFile } from "node:child_process";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -61,6 +62,10 @@ const serviceRequestSchema = Type.Object({
   body: Type.Optional(Type.Any({ description: "JSON body for POST/PUT/PATCH requests" })),
   safety_level: Type.Optional(Type.String({ description: "Use narrow_mutation for non-GET requests" })),
   safety_reason: Type.Optional(Type.String({ description: "Required for non-GET requests; explain the exact target and why it is safe" })),
+});
+
+const anvilStatusSchema = Type.Object({
+  purpose: Type.String({ description: "Why the Anvil systemd service state is needed for this diagnosis or automation run" }),
 });
 
 type ServiceRequest = {
@@ -134,6 +139,105 @@ function registerServiceTool(pi: ExtensionAPI, service: string, description: str
       return toolResult(await callService(service, params as ServiceRequest, signal));
     },
   });
+}
+
+function anvilSystemdUnit(): string {
+  let unit = env("ANVIL_SYSTEMD_UNIT") || "anvil.service";
+  if (!unit.includes(".")) unit += ".service";
+  if (!/^[A-Za-z0-9_.@:-]+\.service$/.test(unit)) {
+    throw new Error("ANVIL_SYSTEMD_UNIT must name a single .service unit");
+  }
+  return unit;
+}
+
+function execFileText(file: string, args: string[], signal: AbortSignal): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, { signal, timeout: 10_000, maxBuffer: 128 * 1024 }, (error, stdout, stderr) => {
+      if (error) {
+        const detail = String(stderr || stdout || error.message).trim();
+        reject(new Error(detail || error.message));
+        return;
+      }
+      resolve({ stdout: String(stdout), stderr: String(stderr) });
+    });
+  });
+}
+
+function parseSystemctlShow(text: string): Record<string, string> {
+  const properties: Record<string, string> = {};
+  for (const line of text.split(/\r?\n/)) {
+    const index = line.indexOf("=");
+    if (index <= 0) continue;
+    properties[line.slice(0, index)] = line.slice(index + 1);
+  }
+  return properties;
+}
+
+function waitRecommendedFromSystemd(properties: Record<string, string>, jobs: string[]): boolean {
+  const activeState = (properties.ActiveState || "").toLowerCase();
+  const subState = (properties.SubState || "").toLowerCase();
+  if (jobs.length > 0) return true;
+  if (activeState === "activating" || activeState === "reloading") return true;
+  return activeState === "active" && subState !== "exited" && subState !== "dead";
+}
+
+async function anvilStatus(input: { purpose?: string }, signal: AbortSignal) {
+  if (!input.purpose?.trim()) throw new Error("purpose is required");
+  const unit = anvilSystemdUnit();
+  const properties = [
+    "Id",
+    "Names",
+    "Description",
+    "LoadState",
+    "ActiveState",
+    "SubState",
+    "Result",
+    "MainPID",
+    "ExecMainPID",
+    "ExecMainCode",
+    "ExecMainStatus",
+    "NRestarts",
+    "ActiveEnterTimestamp",
+    "InactiveEnterTimestamp",
+    "ExecMainStartTimestamp",
+    "ExecMainExitTimestamp",
+  ].join(",");
+  let show: { stdout: string; stderr: string };
+  try {
+    show = await execFileText("systemctl", ["show", unit, "--no-page", `--property=${properties}`], signal);
+  } catch (error) {
+    return {
+      unit,
+      available: false,
+      wait_recommended: false,
+      active_state: "",
+      sub_state: "",
+      result: "",
+      main_pid: "",
+      jobs: [],
+      error: error instanceof Error ? error.message : String(error),
+      properties: {},
+    };
+  }
+  const parsed = parseSystemctlShow(show.stdout);
+  let jobs: string[] = [];
+  try {
+    const listed = await execFileText("systemctl", ["list-jobs", "--no-legend", "--plain", unit], signal);
+    jobs = listed.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  } catch {
+    jobs = [];
+  }
+  return {
+    unit,
+    available: Boolean(parsed.LoadState) && parsed.LoadState !== "not-found",
+    wait_recommended: waitRecommendedFromSystemd(parsed, jobs),
+    active_state: parsed.ActiveState || "",
+    sub_state: parsed.SubState || "",
+    result: parsed.Result || "",
+    main_pid: parsed.MainPID || "",
+    jobs,
+    properties: parsed,
+  };
 }
 
 async function collectFiles(root: string, out: string[], maxFiles = 1000): Promise<void> {
@@ -224,6 +328,16 @@ export default function (pi: ExtensionAPI) {
   registerServiceTool(pi, "sonarr", "Call the configured Sonarr API. Use relative /api/v3 paths for series, history, queue, commands, manual import, etc.");
   registerServiceTool(pi, "radarr", "Call the configured Radarr API. Use relative /api/v3 paths for movies, history, queue, commands, manual import, etc.");
   registerServiceTool(pi, "sabnzbd", "Call the configured SABnzbd API. Use /api?mode=... paths; the tool injects apikey and output=json.");
+
+  pi.registerTool({
+    name: "anvil_status",
+    label: "Anvil systemd status",
+    description: "Read the configured Anvil systemd service state. This is read-only and cannot start, stop, restart, or mutate services.",
+    parameters: anvilStatusSchema,
+    async execute(_toolCallId, params, signal) {
+      return toolResult(await anvilStatus(params as { purpose?: string }, signal));
+    },
+  });
 
   pi.registerTool({
     name: "thread_history_search",

@@ -105,7 +105,7 @@ func (r *Runner) argsFor(req harness.Request) ([]string, error) {
 	args := []string{
 		"--mode", "rpc",
 		"--extension", filepath.Join(r.cwd(), ".pi", "extensions", "blitzcrank-tools.ts"),
-		"--tools", "seerr_request,jellyfin_request,sonarr_request,radarr_request,sabnzbd_request,thread_history_search,web_search,web_fetch",
+		"--tools", "seerr_request,jellyfin_request,sonarr_request,radarr_request,sabnzbd_request,anvil_status,thread_history_search,web_search,web_fetch",
 	}
 	if sessionPath := r.sessionPath(req); sessionPath != "" {
 		if err := os.MkdirAll(filepath.Dir(sessionPath), 0o755); err != nil {
@@ -193,6 +193,7 @@ func (r *Runner) env(req harness.Request) []string {
 	env = appendConfigEnv(env, "RADARR_API_KEY", r.cfg.RadarrAPIKey)
 	env = appendConfigEnv(env, "SABNZBD_BASE_URL", r.cfg.SabnzbdBaseURL)
 	env = appendConfigEnv(env, "SABNZBD_API_KEY", r.cfg.SabnzbdAPIKey)
+	env = appendConfigEnv(env, "ANVIL_SYSTEMD_UNIT", r.cfg.AnvilSystemdUnit)
 	return env
 }
 
@@ -245,11 +246,11 @@ func composePrompt(skillDirectives []string, system, task string) string {
 }
 
 func seerrIssueSkillDirectives() []string {
-	return []string{"seerr", "jellyfin", "sonarr", "radarr", "sabnzbd", "filesystem"}
+	return []string{"seerr", "jellyfin", "sonarr", "radarr", "sabnzbd", "anvil", "filesystem"}
 }
 
 func automationSkillDirectives() []string {
-	return []string{"sonarr", "radarr", "sabnzbd", "filesystem"}
+	return []string{"sonarr", "radarr", "sabnzbd", "anvil", "filesystem"}
 }
 
 func (r *Runner) seerrIssueTaskPrompt(req harness.Request) string {

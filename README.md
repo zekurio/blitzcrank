@@ -10,7 +10,7 @@ Pi owns the agent runtime, provider/auth setup, skills, model selection, durable
 - Markdown scheduled automations
 - Optional Discord automation reporting and `/automatisierung` trigger command
 - Pi RPC runner with persistent sessions
-- Typed Pi service request tools for Seerr, Jellyfin, Sonarr, Radarr, and SABnzBD
+- Typed Pi service request tools for Seerr, Jellyfin, Sonarr, Radarr, SABnzBD, and Anvil systemd status
 - SQLite gateway state for Seerr issue dedupe/runs
 - Pi session search for prior issue context
 
@@ -58,6 +58,7 @@ JELLYFIN_API_KEY=...
 SONARR_API_KEY=...
 RADARR_API_KEY=...
 SABNZBD_API_KEY=...
+ANVIL_SYSTEMD_UNIT=anvil.service # optional; defaults to anvil.service
 KAGI_API_KEY=... # optional, enables web_search/web_fetch Pi tools
 # Optional incoming webhook secret:
 SEERR_WEBHOOK_SECRET=...
@@ -113,6 +114,9 @@ base_url = "https://radarr.example"
 [sabnzbd]
 base_url = "https://sabnzbd.example"
 
+[anvil]
+systemd_unit = "anvil.service"
+
 [runtime]
 automations_dir = "automations"
 automations_enabled = false
@@ -128,7 +132,7 @@ database_path = "./blitzcrank.sqlite"
 Project-local Pi resources live in `.pi/`:
 
 - `.pi/system-prompts/`: first-class Pi agent contracts for Seerr issue runs and scheduled automations.
-- `.pi/skills/`: Pi-discoverable service/domain cookbooks for Seerr, Jellyfin, Sonarr, Radarr, SABnzBD, and filesystem limitations.
+- `.pi/skills/`: Pi-discoverable service/domain cookbooks for Seerr, Jellyfin, Sonarr, Radarr, SABnzBD, Anvil, and filesystem limitations.
 - `.pi/extensions/blitzcrank-tools.ts`: registers direct TypeScript tools for media services, Pi session history, and Kagi web search/fetch.
 
 Pi-visible tools:
@@ -138,11 +142,12 @@ Pi-visible tools:
 - `sonarr_request`
 - `radarr_request`
 - `sabnzbd_request`
+- `anvil_status`
 - `thread_history_search`
 - `web_search`
 - `web_fetch`
 
-All service request tools require a `purpose`. Paths must be service-relative and must not contain full URLs or credentials. Non-GET requests require `safety_level = "narrow_mutation"` and `safety_reason`.
+All service request tools and `anvil_status` require a `purpose`. Paths must be service-relative and must not contain full URLs or credentials. Non-GET requests require `safety_level = "narrow_mutation"` and `safety_reason`. `anvil_status` reads only the configured systemd unit and cannot control services.
 
 ## Runtime Flow
 
