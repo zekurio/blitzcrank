@@ -238,6 +238,99 @@ func TestHandleWebhookPostsSingleProgressComment(t *testing.T) {
 	}
 }
 
+func TestSeerrProgressToolDoneUpdatesTransientComment(t *testing.T) {
+	var posted []string
+	var updated []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/issue/42/comment":
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			posted = append(posted, body["message"])
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":42,"comments":[{"id":"comment-1"}]}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/issueComment/comment-1":
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			updated = append(updated, body["message"])
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"comment-1"}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	cfg := testConfig(server.URL, t.TempDir())
+	cfg.SeerrTransientRunComments = true
+	manager := NewManager(cfg, &fakeRunner{}, tools.NewRegistry(cfg), nil)
+
+	reporter := manager.newSeerrProgressReporter("42", Request{})
+	ctx := context.Background()
+	reporter.update(ctx, ProgressEvent{Phase: "tool_done", ToolName: "sonarr_request", Message: "Pi finished a tool call."})
+	reporter.update(ctx, ProgressEvent{Phase: "tool_done", ToolName: "sonarr_request", Message: "Pi finished a tool call."})
+
+	if len(posted) != 1 || len(updated) != 1 {
+		t.Fatalf("posted=%d updated=%d, want one post and one update: posted=%#v updated=%#v", len(posted), len(updated), posted, updated)
+	}
+	if !strings.Contains(updated[0], "2 Schritte abgeschlossen") {
+		t.Fatalf("second comment missing step counter: %q", updated[0])
+	}
+	if strings.Contains(updated[0], "sonarr_request") || strings.Contains(updated[0], "Pi finished") {
+		t.Fatalf("comment leaked internal tool detail: %q", updated[0])
+	}
+}
+
+func TestSeerrFinalCommentUnaffectedByToolProgress(t *testing.T) {
+	var posted []string
+	var updated []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/issue/42/comment":
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			posted = append(posted, body["message"])
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":42,"comments":[{"id":"comment-1"}]}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/issueComment/comment-1":
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			updated = append(updated, body["message"])
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"comment-1"}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	cfg := testConfig(server.URL, t.TempDir())
+	cfg.SeerrTransientRunComments = true
+	manager := NewManager(cfg, &fakeRunner{}, tools.NewRegistry(cfg), nil)
+
+	reporter := manager.newSeerrProgressReporter("42", Request{})
+	ctx := context.Background()
+	reporter.update(ctx, ProgressEvent{Phase: "tool_done", ToolName: "sonarr_request"})
+	reporter.update(ctx, ProgressEvent{Phase: "tool_done", ToolName: "sonarr_request"})
+	reporter.update(ctx, ProgressEvent{Phase: "tool_done", ToolName: "sonarr_request"})
+
+	final := reporter.render("Das Problem wurde behoben und erfolgreich geprüft.")
+	if strings.HasPrefix(strings.TrimSpace(final), "[...]") {
+		t.Fatalf("final comment should not carry the multi-turn prefix after tool progress: %q", final)
+	}
+	if len(posted) != 1 || len(updated) != 2 {
+		t.Fatalf("posted=%d updated=%d, want one post and two tool_done updates: posted=%#v updated=%#v", len(posted), len(updated), posted, updated)
+	}
+}
+
 func TestHandleWebhookIgnoresBotAuthoredComment(t *testing.T) {
 	cfg := testConfig("http://127.0.0.1.invalid", t.TempDir())
 	runner := &fakeRunner{reply: "should not run"}
