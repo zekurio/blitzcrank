@@ -43,10 +43,11 @@ type Scheduler struct {
 	toolFailures ToolFailureStore
 	mu           sync.RWMutex
 	tasks        map[string]Task
+	running      map[string]bool
 }
 
 func NewScheduler(cfg config.Config, runner Runner, reporter Reporter) *Scheduler {
-	return &Scheduler{cfg: cfg, runner: runner, reporter: reporter, tasks: map[string]Task{}}
+	return &Scheduler{cfg: cfg, runner: runner, reporter: reporter, tasks: map[string]Task{}, running: map[string]bool{}}
 }
 
 func (s *Scheduler) SetReporter(reporter Reporter) {
@@ -109,6 +110,24 @@ func (s *Scheduler) RunAutomation(ctx context.Context, name string) error {
 	if !ok {
 		return fmt.Errorf("unknown automation %q", name)
 	}
+	s.mu.Lock()
+	if s.running[task.Name] {
+		s.mu.Unlock()
+		return fmt.Errorf("automation %q is already running", task.Name)
+	}
+	s.running[task.Name] = true
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.running, task.Name)
+		s.mu.Unlock()
+	}()
+	runCtx := ctx
+	if s.cfg.RunTimeout > 0 {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(ctx, s.cfg.RunTimeout)
+		defer cancel()
+	}
 	threadID := "automation:" + task.Name
 	if store := s.currentToolFailureStore(); store != nil {
 		store.ResetToolFailures(threadID)
@@ -116,14 +135,14 @@ func (s *Scheduler) RunAutomation(ctx context.Context, name string) error {
 	reportHandle := ReportHandle{}
 	reporter := s.currentReporter()
 	if reporter != nil {
-		handle, err := reporter.AutomationStarted(ctx, task)
+		handle, err := reporter.AutomationStarted(runCtx, task)
 		if err != nil {
 			log.Printf("automation reporter start failed: name=%s error=%v", task.Name, err)
 		} else {
 			reportHandle = handle
 		}
 	}
-	response, err := s.runner.Respond(ctx, harness.Request{
+	response, err := s.runner.Respond(runCtx, harness.Request{
 		Source:   "automation_cron",
 		ThreadID: threadID,
 		Author:   "scheduler",
@@ -135,7 +154,7 @@ func (s *Scheduler) RunAutomation(ctx context.Context, name string) error {
 		failures = store.DrainToolFailures(threadID)
 	}
 	if reporter != nil {
-		if reportErr := reporter.AutomationCompleted(ctx, reportHandle, task, response, err, failures); reportErr != nil {
+		if reportErr := reporter.AutomationCompleted(runCtx, reportHandle, task, response, err, failures); reportErr != nil {
 			log.Printf("automation reporter completion failed: name=%s error=%v", task.Name, reportErr)
 		}
 	}
@@ -150,9 +169,9 @@ func (s *Scheduler) RunAutomation(ctx context.Context, name string) error {
 
 func (s *Scheduler) AutomationNames() []string {
 	_ = s.reload()
-	names := make([]string, 0, len(s.tasks))
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	names := make([]string, 0, len(s.tasks))
 	for name := range s.tasks {
 		names = append(names, name)
 	}
