@@ -38,7 +38,7 @@ func Setup(opts Options) {
 	default:
 		level = slog.LevelInfo
 	}
-	logger := slog.New(&prettyHandler{out: os.Stderr, level: level, color: opts.Color})
+	logger := slog.New(&prettyHandler{out: os.Stderr, level: level, color: opts.Color, mu: &sync.Mutex{}})
 	slog.SetDefault(logger)
 	log.SetFlags(0)
 	log.SetOutput(&stdLogWriter{logger: logger})
@@ -48,7 +48,7 @@ type prettyHandler struct {
 	out   io.Writer
 	level slog.Level
 	color bool
-	mu    sync.Mutex
+	mu    *sync.Mutex
 	attrs []slog.Attr
 	group string
 }
