@@ -147,7 +147,7 @@ Pi-visible tools:
 - `web_search`
 - `web_fetch`
 
-All service request tools and `anvil_status` require a `purpose`. Paths must be service-relative and must not contain full URLs or credentials. Non-GET requests require `safety_level = "narrow_mutation"` and `safety_reason`. `anvil_status` reads only the configured systemd unit and cannot control services.
+All service request tools and `anvil_status` require a `purpose`. Paths must be service-relative and must not contain full URLs or credentials. Non-GET requests require `safety_level = "narrow_mutation"` and `safety_reason`. Non-GET requests must additionally match a per-service allowlist enforced in `.pi/extensions/blitzcrank-tools.ts`, covering only the narrow mutations documented in `.pi/skills/`; SABnzbd is read-only. `anvil_status` reads only the configured systemd unit and cannot control services.
 
 ## Runtime Flow
 

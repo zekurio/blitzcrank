@@ -37,6 +37,45 @@ function assertMutationSafety(method: string, input: { safety_level?: string; sa
   }
 }
 
+type MutationRule = { method: string; pattern: RegExp; commandNames?: string[] };
+
+const MUTATION_ALLOWLIST: Record<string, MutationRule[]> = {
+  sonarr: [
+    { method: "POST", pattern: /^\/api\/v3\/command\/?$/i, commandNames: ["EpisodeSearch", "SeasonSearch", "SeriesSearch", "RefreshSeries", "ManualImport"] },
+    { method: "POST", pattern: /^\/api\/v3\/queue\/grab\/\d+\/?$/i },
+    { method: "DELETE", pattern: /^\/api\/v3\/queue\/\d+(\?.*)?$/i },
+    { method: "DELETE", pattern: /^\/api\/v3\/blocklist\/\d+\/?$/i },
+  ],
+  radarr: [
+    { method: "POST", pattern: /^\/api\/v3\/command\/?$/i, commandNames: ["MoviesSearch", "RefreshMovie", "ManualImport"] },
+    { method: "POST", pattern: /^\/api\/v3\/queue\/grab\/\d+\/?$/i },
+    { method: "DELETE", pattern: /^\/api\/v3\/queue\/\d+(\?.*)?$/i },
+    { method: "DELETE", pattern: /^\/api\/v3\/blocklist\/\d+\/?$/i },
+  ],
+  jellyfin: [
+    { method: "POST", pattern: /^\/Items\/[^/]+\/Refresh(\?.*)?$/i },
+  ],
+  seerr: [
+    { method: "POST", pattern: /^\/api\/v1\/request\/?$/i },
+  ],
+  sabnzbd: [], // documented read-only (.pi/skills/sabnzbd/SKILL.md)
+};
+
+function assertMutationAllowed(service: string, method: string, path: string, body: unknown) {
+  if (method === "GET") return;
+  const rules = MUTATION_ALLOWLIST[service] ?? [];
+  const rule = rules.find((r) => r.method === method && r.pattern.test(path));
+  if (!rule) {
+    throw new Error(`${method} ${path} is not in the ${service} mutation allowlist; this gateway only permits the narrow mutations documented in .pi/skills`);
+  }
+  if (rule.commandNames) {
+    const name = typeof body === "object" && body !== null ? String((body as Record<string, unknown>).name ?? "") : "";
+    if (!rule.commandNames.some((allowed) => allowed.toLowerCase() === name.toLowerCase())) {
+      throw new Error(`${service} command "${name}" is not in the allowed command set: ${rule.commandNames.join(", ")}`);
+    }
+  }
+}
+
 async function jsonRequest(url: string, init: RequestInit, signal: AbortSignal) {
   const response = await fetch(url, { ...init, signal });
   const text = await response.text();
@@ -86,6 +125,7 @@ async function callService(service: string, input: ServiceRequest, signal: Abort
   if (service === "seerr" && (/\/comment\b/i.test(path) || /\/resolved\b/i.test(path))) {
     throw new Error("Seerr comments and issue resolution are owned by Blitzcrank");
   }
+  assertMutationAllowed(service, method, path, input.body);
 
   const headers: Record<string, string> = { accept: "application/json" };
   let url: string;
@@ -309,10 +349,17 @@ async function kagiSearch(params: { query: string; limit?: number; include_markd
 function assertPublicHTTPURL(value: string) {
   const url = new URL(value);
   if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("only http(s) URLs are allowed");
-  const host = url.hostname.toLowerCase();
-  if (host === "localhost" || host === "127.0.0.1" || host === "::1" || host.endsWith(".local")) {
-    throw new Error("local/private URLs are not allowed");
-  }
+  // The fetch itself is performed remotely by Kagi's extract API, not from this
+  // process, so a hostname that merely resolves to a private IP is out of reach
+  // here; rejecting private/reserved literals is the appropriate depth for this check.
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const privateHost =
+    host === "localhost" || host.endsWith(".local") || host.endsWith(".internal") ||
+    /^127\./.test(host) || host === "::1" || host === "0.0.0.0" ||
+    /^10\./.test(host) || /^192\.168\./.test(host) || /^169\.254\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
+    /^f[cd][0-9a-f]{2}:/i.test(host) || /^fe80:/i.test(host);
+  if (privateHost) throw new Error("local/private URLs are not allowed");
   return url.toString();
 }
 
