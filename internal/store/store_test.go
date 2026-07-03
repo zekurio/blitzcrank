@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -86,6 +88,58 @@ func TestIssueEventKeyIsUniquePerIssue(t *testing.T) {
 	}
 	if err := store.InsertIssueEvent(ctx, IssueEvent{IssueID: "1", EventKey: "same", EventType: "reported", PayloadJSON: `{}`, CreatedAt: now}); err == nil {
 		t.Fatal("duplicate InsertIssueEvent error = nil, want unique constraint")
+	}
+}
+
+func TestStoreConcurrentWritesDoNotFail(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := store.UpsertIssueThread(ctx, IssueThread{
+		IssueID:   "concurrent",
+		Status:    "active",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("UpsertIssueThread() error = %v", err)
+	}
+
+	const goroutines = 20
+	var wg sync.WaitGroup
+	errCh := make(chan error, goroutines*2)
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if err := store.InsertIssueEvent(ctx, IssueEvent{
+				IssueID:     "concurrent",
+				EventKey:    fmt.Sprintf("event-%d", i),
+				EventType:   "reported",
+				PayloadJSON: `{}`,
+				CreatedAt:   now,
+			}); err != nil {
+				errCh <- fmt.Errorf("InsertIssueEvent(%d): %w", i, err)
+				return
+			}
+			if err := store.InsertIssueRun(ctx, IssueRun{
+				IssueID:         "concurrent",
+				SourceEventType: fmt.Sprintf("run-%d", i),
+				StartedAt:       now,
+			}); err != nil {
+				errCh <- fmt.Errorf("InsertIssueRun(%d): %w", i, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		t.Errorf("concurrent write error: %v", err)
 	}
 }
 

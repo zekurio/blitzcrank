@@ -66,6 +66,9 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite database %s: %w", path, err)
 	}
+	// SQLite allows one writer; a single shared connection removes SQLITE_BUSY
+	// between this process's own goroutines entirely, and read volume here is trivial.
+	db.SetMaxOpenConns(1)
 	store := &Store{db: db}
 	if err := store.migrate(ctx); err != nil {
 		_ = db.Close()
@@ -76,7 +79,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 
 func sqliteDSN(path string) string {
 	if path == ":memory:" {
-		return "file::memory:?cache=shared&_pragma=foreign_keys(1)"
+		return "file::memory:?cache=shared&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
 	}
 	absPath, err := filepath.Abs(path)
 	if err != nil {
@@ -89,6 +92,7 @@ func sqliteDSN(path string) string {
 	uri := url.URL{Scheme: "file", Path: uriPath}
 	query := url.Values{}
 	query.Add("_pragma", "foreign_keys(1)")
+	query.Add("_pragma", "busy_timeout(5000)")
 	uri.RawQuery = query.Encode()
 	return uri.String()
 }
