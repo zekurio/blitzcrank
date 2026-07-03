@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"blitzcrank/internal/config"
 	"blitzcrank/internal/harness"
@@ -53,7 +54,11 @@ func (r *Runner) Respond(ctx context.Context, req harness.Request) (string, erro
 	}
 
 	var stderrBuf safeBuffer
-	go func() { _, _ = io.Copy(&stderrBuf, stderr) }()
+	stderrDone := make(chan struct{})
+	go func() {
+		defer close(stderrDone)
+		_, _ = io.Copy(&stderrBuf, stderr)
+	}()
 
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("start pi rpc: %w", err)
@@ -62,6 +67,7 @@ func (r *Runner) Respond(ctx context.Context, req harness.Request) (string, erro
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
 		}
+		<-stderrDone
 		_ = cmd.Wait()
 	}()
 
@@ -74,7 +80,7 @@ func (r *Runner) Respond(ctx context.Context, req harness.Request) (string, erro
 		return "", fmt.Errorf("send pi prompt: %w", err)
 	}
 
-	final, err := readUntilAgentEnd(ctx, stdout, req)
+	final, err := readUntilAgentEnd(cmdCtx, stdout, req)
 	if err != nil {
 		if detail := strings.TrimSpace(stderrBuf.String()); detail != "" {
 			return "", fmt.Errorf("%w: %s", err, limitString(detail, 2000))
@@ -389,6 +395,19 @@ func limitString(value string, limit int) string {
 	return value[:limit] + "…"
 }
 
-type safeBuffer struct{ bytes.Buffer }
+type safeBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
 
-func (b *safeBuffer) String() string { return b.Buffer.String() }
+func (b *safeBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *safeBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
