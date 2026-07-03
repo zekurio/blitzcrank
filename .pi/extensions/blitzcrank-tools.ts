@@ -309,6 +309,14 @@ function snippet(text: string, terms: string[]) {
   return text.slice(start, end).replace(/\s+/g, " ").trim();
 }
 
+// TS port of the Go safeSessionName (internal/pi/runner.go): lowercase; every
+// non-[a-z0-9] run collapses to a single "-"; trim leading/trailing "-".
+// Unlike the Go version, an empty input returns "" rather than "session", so
+// an unset env var doesn't accidentally exclude files containing "session".
+function safeSessionName(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
 async function threadHistorySearch(params: { query: string; source?: string; limit?: number; exclude_thread_id?: string }) {
   const query = (params.query || "").trim();
   if (!query) throw new Error("query is required");
@@ -318,12 +326,16 @@ async function threadHistorySearch(params: { query: string; source?: string; lim
   const files: string[] = [];
   for (const root of roots) await collectFiles(root, files);
 
-  const exclude = (params.exclude_thread_id || "").toLowerCase();
+  // Enforced exclusion: the current thread's own session must never be
+  // returned, regardless of what the model passes (or omits).
+  const currentThread = safeSessionName(env("BLITZCRANK_THREAD_ID"));
+  const modelExclude = (params.exclude_thread_id || "").toLowerCase();
   const source = (params.source || "all").toLowerCase();
   const results: Array<Record<string, unknown>> = [];
   for (const file of files) {
     const lowerFile = file.toLowerCase();
-    if (exclude && lowerFile.includes(exclude)) continue;
+    if (currentThread && lowerFile.includes(currentThread)) continue;
+    if (modelExclude && lowerFile.includes(modelExclude)) continue;
     if (source !== "all" && source && !lowerFile.includes(source.replace(/s$/, ""))) continue;
     let text: string;
     try { text = await readFile(file, "utf8"); } catch { continue; }
@@ -334,7 +346,8 @@ async function threadHistorySearch(params: { query: string; source?: string; lim
     results.push({ path: file, score, modified: info.mtime?.toISOString(), size: info.size, snippet: snippet(text, terms) });
   }
   results.sort((a, b) => Number(b.score) - Number(a.score));
-  return { query, results: results.slice(0, limit) };
+  const capped = results.slice(0, limit).map((r) => ({ ...r, snippet: String(r.snippet).slice(0, 700) }));
+  return { query, results: capped };
 }
 
 async function kagiSearch(params: { query: string; limit?: number; include_markdown?: boolean }, signal: AbortSignal) {
@@ -389,7 +402,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "thread_history_search",
     label: "Search Blitzcrank thread history",
-    description: "Search prior Pi session history for similar investigations or fixes. Treat results as clues and validate current live state before acting.",
+    description: "Search prior Pi session history for similar investigations or fixes. Treat results as clues and validate current live state before acting. The current thread's own session is always excluded.",
     parameters: Type.Object({
       query: Type.String({ description: "Search terms such as a title, error, queue/import symptom, or prior fix" }),
       source: Type.Optional(Type.String({ description: "Optional source filter: all, issues, or automations" })),
