@@ -212,6 +212,72 @@ func TestReadUntilAgentEndPromptRejected(t *testing.T) {
 	}
 }
 
+func TestReadUntilAgentEndReportsToolFailure(t *testing.T) {
+	stream := `{"type":"response","id":"blitzcrank-request","success":true}
+{"type":"tool_execution_end","toolName":"sonarr_request","isError":true,"error":"boom"}
+{"type":"agent_end","messages":[{"role":"assistant","content":"final answer"}]}
+`
+	var events []harness.ProgressEvent
+	req := harness.Request{Progress: func(ev harness.ProgressEvent) {
+		events = append(events, ev)
+	}}
+
+	final, err := readUntilAgentEnd(context.Background(), strings.NewReader(stream), req)
+	if err != nil {
+		t.Fatalf("readUntilAgentEnd returned error: %v", err)
+	}
+	if final != "final answer" {
+		t.Fatalf("expected %q, got %q", "final answer", final)
+	}
+
+	var found bool
+	for _, ev := range events {
+		if ev.Phase != "tool_done" {
+			continue
+		}
+		found = true
+		if ev.Error != "boom" {
+			t.Fatalf("expected Error %q, got %q", "boom", ev.Error)
+		}
+	}
+	if !found {
+		t.Fatalf("expected a tool_done progress event, got %+v", events)
+	}
+}
+
+func TestReadUntilAgentEndToolDoneWithoutErrorFieldsHasNoError(t *testing.T) {
+	stream := `{"type":"response","id":"blitzcrank-request","success":true}
+{"type":"tool_execution_end","toolName":"sonarr_request"}
+{"type":"agent_end","messages":[{"role":"assistant","content":"final answer"}]}
+`
+	var events []harness.ProgressEvent
+	req := harness.Request{Progress: func(ev harness.ProgressEvent) {
+		events = append(events, ev)
+	}}
+
+	final, err := readUntilAgentEnd(context.Background(), strings.NewReader(stream), req)
+	if err != nil {
+		t.Fatalf("readUntilAgentEnd returned error: %v", err)
+	}
+	if final != "final answer" {
+		t.Fatalf("expected %q, got %q", "final answer", final)
+	}
+
+	var found bool
+	for _, ev := range events {
+		if ev.Phase != "tool_done" {
+			continue
+		}
+		found = true
+		if ev.Error != "" {
+			t.Fatalf("expected empty Error, got %q", ev.Error)
+		}
+	}
+	if !found {
+		t.Fatalf("expected a tool_done progress event, got %+v", events)
+	}
+}
+
 func TestSafeBufferConcurrentWriteAndString(t *testing.T) {
 	var buf safeBuffer
 

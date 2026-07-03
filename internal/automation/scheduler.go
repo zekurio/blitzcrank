@@ -34,6 +34,7 @@ type Reporter interface {
 type ToolFailureStore interface {
 	ResetToolFailures(threadID string)
 	DrainToolFailures(threadID string) []ToolFailure
+	RecordToolFailure(threadID string, failure ToolFailure)
 }
 
 type Scheduler struct {
@@ -142,13 +143,21 @@ func (s *Scheduler) RunAutomation(ctx context.Context, name string) error {
 			reportHandle = handle
 		}
 	}
-	response, err := s.runner.Respond(runCtx, harness.Request{
+	request := harness.Request{
 		Source:   "automation_cron",
 		ThreadID: threadID,
 		Author:   "scheduler",
 		Audience: "automation",
 		Content:  automationPrompt(task),
-	})
+	}
+	if store := s.currentToolFailureStore(); store != nil {
+		request.Progress = func(event harness.ProgressEvent) {
+			if event.Phase == "tool_done" && strings.TrimSpace(event.Error) != "" {
+				store.RecordToolFailure(threadID, ToolFailure{Tool: event.ToolName, Error: event.Error})
+			}
+		}
+	}
+	response, err := s.runner.Respond(runCtx, request)
 	var failures []ToolFailure
 	if store := s.currentToolFailureStore(); store != nil {
 		failures = store.DrainToolFailures(threadID)

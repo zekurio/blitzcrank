@@ -338,7 +338,12 @@ func readUntilAgentEnd(ctx context.Context, stdout io.Reader, req harness.Reques
 				}
 			case "tool_execution_end":
 				if req.Progress != nil {
-					req.Progress(harness.ProgressEvent{Phase: "tool_done", ToolName: stringValue(event, "toolName"), Message: "Pi finished a tool call."})
+					req.Progress(harness.ProgressEvent{
+						Phase:    "tool_done",
+						ToolName: stringValue(event, "toolName"),
+						Message:  "Pi finished a tool call.",
+						Error:    limitString(toolEventError(event), 500),
+					})
 				}
 			case "agent_end":
 				if !accepted {
@@ -348,6 +353,28 @@ func readUntilAgentEnd(ctx context.Context, stdout io.Reader, req harness.Reques
 			}
 		}
 	}
+}
+
+// toolEventError extracts a failure message from a tool_execution_end event.
+// Pi's exact field name is not pinned by this repo, so several plausible keys
+// are checked; an unrecognized shape yields "" (no failure recorded).
+func toolEventError(event map[string]any) string {
+	if isErr, _ := event["isError"].(bool); isErr {
+		if msg := stringValue(event, "error"); msg != "" {
+			return msg
+		}
+		if msg := stringValue(event, "message"); msg != "" {
+			return msg
+		}
+		return "tool call failed"
+	}
+	if msg := stringValue(event, "error"); msg != "" {
+		return msg
+	}
+	if msg := stringValue(event, "errorMessage"); msg != "" {
+		return msg
+	}
+	return ""
 }
 
 func finalAssistantText(event map[string]any) string {

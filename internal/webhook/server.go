@@ -70,7 +70,7 @@ func (s *Server) DrainToolFailures(threadID string) []automation.ToolFailure {
 	return failures
 }
 
-func (s *Server) recordToolFailure(threadID string, failure automation.ToolFailure) {
+func (s *Server) RecordToolFailure(threadID string, failure automation.ToolFailure) {
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" {
 		return
