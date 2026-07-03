@@ -1,8 +1,12 @@
 package pi
 
 import (
+	"context"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"blitzcrank/internal/config"
 	"blitzcrank/internal/harness"
@@ -126,6 +130,104 @@ func TestEnvPassesConfiguredAnvilSystemdUnit(t *testing.T) {
 	if !containsArg(env, "ANVIL_SYSTEMD_UNIT=anvil-transcode.service") {
 		t.Fatalf("env missing configured Anvil unit")
 	}
+}
+
+func TestReadUntilAgentEndReturnsFinalAssistantText(t *testing.T) {
+	stream := `{"type":"response","id":"blitzcrank-request","success":true}
+{"type":"agent_end","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"final answer"}]}
+`
+	final, err := readUntilAgentEnd(context.Background(), strings.NewReader(stream), harness.Request{})
+	if err != nil {
+		t.Fatalf("readUntilAgentEnd returned error: %v", err)
+	}
+	if final != "final answer" {
+		t.Fatalf("expected %q, got %q", "final answer", final)
+	}
+}
+
+func TestReadUntilAgentEndIgnoresTrailingOutputAfterAgentEnd(t *testing.T) {
+	// A stream with extra JSON lines after agent_end leaves the scanner
+	// goroutine parked on `lines <- event` (nobody is reading anymore).
+	// It should only unblock once the context passed to readUntilAgentEnd
+	// is canceled -- proving the reader is tied to the per-run context.
+	stream := `{"type":"response","id":"blitzcrank-request","success":true}
+{"type":"agent_end","messages":[{"role":"assistant","content":"final answer"}]}
+{"type":"tool_execution_start","toolName":"noop"}
+{"type":"tool_execution_end","toolName":"noop"}
+`
+	ctx, cancel := context.WithCancel(context.Background())
+
+	final, err := readUntilAgentEnd(ctx, strings.NewReader(stream), harness.Request{})
+	if err != nil {
+		t.Fatalf("readUntilAgentEnd returned error: %v", err)
+	}
+	if final != "final answer" {
+		t.Fatalf("expected %q, got %q", "final answer", final)
+	}
+
+	// The scanner goroutine's name never changes; look for it by stack frame
+	// instead of a raw NumGoroutine count so unrelated GC/runtime goroutines
+	// can't make this flaky.
+	const marker = "blitzcrank/internal/pi.readUntilAgentEnd.func1"
+
+	if !waitForGoroutine(marker, true, 5*time.Second) {
+		t.Fatalf("expected scanner goroutine %q to still be parked before cancel", marker)
+	}
+
+	cancel()
+
+	if !waitForGoroutine(marker, false, 5*time.Second) {
+		t.Fatalf("scanner goroutine %q leaked after context cancel", marker)
+	}
+}
+
+// waitForGoroutine polls the process's goroutine stack dump until a frame
+// containing marker is present (want=true) or absent (want=false), or the
+// timeout elapses. It returns whether the desired state was observed.
+func waitForGoroutine(marker string, want bool, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	buf := make([]byte, 1<<20)
+	for {
+		n := runtime.Stack(buf, true)
+		present := strings.Contains(string(buf[:n]), marker)
+		if present == want {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestReadUntilAgentEndPromptRejected(t *testing.T) {
+	stream := `{"type":"response","id":"blitzcrank-request","success":false,"error":"bad prompt"}
+`
+	_, err := readUntilAgentEnd(context.Background(), strings.NewReader(stream), harness.Request{})
+	if err == nil {
+		t.Fatalf("expected error for rejected prompt")
+	}
+	if !strings.Contains(err.Error(), "bad prompt") {
+		t.Fatalf("expected error to contain %q, got %v", "bad prompt", err)
+	}
+}
+
+func TestSafeBufferConcurrentWriteAndString(t *testing.T) {
+	var buf safeBuffer
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 1000; i++ {
+			_, _ = buf.Write([]byte("x"))
+		}
+	}()
+
+	for i := 0; i < 1000; i++ {
+		_ = buf.String()
+	}
+	wg.Wait()
 }
 
 func containsArg(args []string, want string) bool {
