@@ -18,7 +18,7 @@ buildGoModule {
       in
       base != ".git" && base != ".direnv" && base != ".env" && base != "result";
   };
-  vendorHash = "sha256-NWmrgKrWlgeu0So3kvkunty5EmPNHfe8MffZbvIoskk=";
+  vendorHash = "sha256-QcEdiccOzzPhzMbXCBtMMCi8CqvUCGoqdjVP9n9gHJQ=";
   subPackages = [ "cmd/blitzcrank" ];
   nativeBuildInputs = [ makeWrapper ];
   postInstall = ''
