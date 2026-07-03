@@ -31,10 +31,21 @@ type Server struct {
 	err          error
 	toolErrorsMu sync.Mutex
 	toolErrors   map[string][]automation.ToolFailure
+	runSlots     chan struct{}
 }
 
 func NewServer(cfg config.Config, manager *harness.Manager) *Server {
-	return &Server{cfg: cfg, harness: manager, done: make(chan struct{}), toolErrors: map[string][]automation.ToolFailure{}}
+	n := cfg.MaxConcurrentRuns
+	if n < 1 {
+		n = 4
+	}
+	return &Server{
+		cfg:        cfg,
+		harness:    manager,
+		done:       make(chan struct{}),
+		toolErrors: map[string][]automation.ToolFailure{},
+		runSlots:   make(chan struct{}, n),
+	}
 }
 
 func (s *Server) ResetToolFailures(threadID string) {
@@ -73,6 +84,9 @@ func (s *Server) Start(ctx context.Context) error {
 	listenAddr := s.listenAddr()
 	if listenAddr == "" {
 		return nil
+	}
+	if s.cfg.SeerrWebhookSecret == "" && !isLoopbackAddr(listenAddr) {
+		log.Printf("WARNING: webhook listener %s is not loopback and SEERR_WEBHOOK_SECRET is not set; anyone who can reach it can trigger agent runs", listenAddr)
 	}
 	processCtx, cancel := context.WithCancel(ctx)
 	s.processCtx = processCtx
@@ -119,6 +133,27 @@ func (s *Server) listenAddr() string {
 		return strings.TrimSpace(s.cfg.HTTPListenAddr)
 	}
 	return strings.TrimSpace(s.cfg.SeerrWebhookListenAddr)
+}
+
+// isLoopbackAddr reports whether addr (a host:port listen address) resolves
+// to a loopback-only interface. Empty hosts (e.g. ":8080") bind all
+// interfaces and are treated as non-loopback. Unparseable hostnames are
+// treated conservatively as non-loopback.
+func isLoopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if host == "" {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 func (s *Server) seerrWebhookEnabled() bool {
@@ -192,9 +227,25 @@ func (s *Server) handleSeerr(w http.ResponseWriter, r *http.Request) {
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
+		release, ok := s.acquireRunSlot(processCtx)
+		if !ok {
+			return
+		}
+		defer release()
 		s.process(processCtx, payload)
 	}()
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// acquireRunSlot blocks until a run slot is free or ctx ends. The returned
+// release func must be called when the run finishes.
+func (s *Server) acquireRunSlot(ctx context.Context) (func(), bool) {
+	select {
+	case s.runSlots <- struct{}{}:
+		return func() { <-s.runSlots }, true
+	case <-ctx.Done():
+		return nil, false
+	}
 }
 
 func (s *Server) authorized(r *http.Request) bool {

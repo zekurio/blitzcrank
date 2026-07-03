@@ -40,6 +40,7 @@ type Config struct {
 	AutomationsEnabled   bool          `env:"AUTOMATIONS_ENABLED" toml:"runtime.automations_enabled"`
 	AutomationsExtraDirs []string      `env:"AUTOMATIONS_EXTRA_DIRS" toml:"runtime.automations_extra_dirs"`
 	RunTimeout           time.Duration `env:"AGENT_RUN_TIMEOUT" toml:"runtime.run_timeout" default:"5m"`
+	MaxConcurrentRuns    int           `env:"MAX_CONCURRENT_RUNS" toml:"runtime.max_concurrent_runs" default:"4"`
 	DatabasePath         string        `env:"DATABASE_PATH" toml:"storage.database_path" default:"./blitzcrank.sqlite"`
 	CacheDirectory       string        `env:"CACHE_DIR" toml:"storage.cache_dir"`
 
