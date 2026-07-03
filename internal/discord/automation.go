@@ -347,9 +347,38 @@ func automationCompletedEmbed(response string, runErr error, failures []automati
 	if description == "" {
 		return nil
 	}
-	status := classifyAutomationResponse(description)
+	status, remainder, ok := parseExplicitStatus(description)
+	if ok {
+		description = remainder
+		if description == "" {
+			return nil
+		}
+	} else {
+		status = classifyAutomationResponse(description)
+	}
 	decorated := trimLeadingSingleAutomationHeading(decorateAutomationOutput(description))
 	return automationEmbed(status, botName, automationStatusTitle(status), decorated)
+}
+
+// parseExplicitStatus extracts a leading "STATUS: ok|warnung|fehler" line that
+// automations may emit as their first line, returning the remaining text.
+func parseExplicitStatus(response string) (automationRunStatus, string, bool) {
+	trimmed := strings.TrimSpace(response)
+	line, rest, _ := strings.Cut(trimmed, "\n")
+	value, ok := strings.CutPrefix(strings.TrimSpace(strings.ToLower(line)), "status:")
+	if !ok {
+		return automationRunOK, response, false
+	}
+	switch strings.TrimSpace(value) {
+	case "ok":
+		return automationRunOK, strings.TrimSpace(rest), true
+	case "warnung", "warning":
+		return automationRunWarning, strings.TrimSpace(rest), true
+	case "fehler", "error":
+		return automationRunError, strings.TrimSpace(rest), true
+	default:
+		return automationRunOK, response, false
+	}
 }
 
 func conciseFailureDescription(response string, failureSummary string) string {
