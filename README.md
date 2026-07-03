@@ -181,7 +181,7 @@ automations_enabled = true
 automations_dir = "automations"
 ```
 
-Currently `@hourly` is supported. Automation runs use the automation system prompt plus the markdown task body, and are invoked without a durable Pi session; each run should treat live service state as the source of truth.
+`schedule` accepts standard 5-field cron expressions (`*/15 * * * *`), descriptors (`@hourly`, `@daily`, `@weekly`, ...), and `@every` intervals (`@every 30m`), evaluated in the timezone configured via `runtime.timezone`. Invalid schedules are skipped at startup with a log line rather than dropped silently. Automation runs use the automation system prompt plus the markdown task body, and are invoked without a durable Pi session; each run should treat live service state as the source of truth.
 
 When `DISCORD_TOKEN` and `discord.automation_channel_id` are configured, each automation has a Discord thread titled `automation: {automation name}`. Blitzcrank keeps one transient bot report in that thread, editing it for each run so it reflects the current outstanding automation state, and locks the thread by default. The `/automatisierung` slash command can trigger one of the currently loaded automations manually.
 

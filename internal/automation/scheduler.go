@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/robfig/cron/v3"
+
 	"blitzcrank/internal/config"
 	"blitzcrank/internal/harness"
 )
@@ -45,10 +47,16 @@ type Scheduler struct {
 	mu           sync.RWMutex
 	tasks        map[string]Task
 	running      map[string]bool
+	loc          *time.Location
 }
 
 func NewScheduler(cfg config.Config, runner Runner, reporter Reporter) *Scheduler {
-	return &Scheduler{cfg: cfg, runner: runner, reporter: reporter, tasks: map[string]Task{}, running: map[string]bool{}}
+	loc, err := time.LoadLocation(strings.TrimSpace(cfg.Timezone))
+	if err != nil || loc == nil {
+		log.Printf("invalid runtime.timezone %q, falling back to UTC: %v", cfg.Timezone, err)
+		loc = time.UTC
+	}
+	return &Scheduler{cfg: cfg, runner: runner, reporter: reporter, tasks: map[string]Task{}, running: map[string]bool{}, loc: loc}
 }
 
 func (s *Scheduler) SetReporter(reporter Reporter) {
@@ -73,16 +81,29 @@ func (s *Scheduler) Start(ctx context.Context) {
 		return
 	}
 	for _, task := range s.snapshot() {
-		if strings.EqualFold(strings.TrimSpace(task.Schedule), "@hourly") {
-			go s.runHourly(ctx, task.Name)
+		sched, err := parseSchedule(task.Schedule)
+		if err != nil {
+			log.Printf("automation has invalid schedule, skipping: name=%s schedule=%q error=%v", task.Name, task.Schedule, err)
+			continue
 		}
+		go s.runScheduled(ctx, task.Name, sched)
 	}
 	log.Printf("automation scheduler started: tasks=%d", len(s.snapshot()))
 }
 
-func (s *Scheduler) runHourly(ctx context.Context, name string) {
+func parseSchedule(spec string) (cron.Schedule, error) {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return nil, fmt.Errorf("schedule is empty")
+	}
+	return cron.ParseStandard(spec)
+}
+
+// Schedules are read once at Start; RunAutomation reloads task bodies per
+// run, but schedule changes require a restart (matches previous behavior).
+func (s *Scheduler) runScheduled(ctx context.Context, name string, sched cron.Schedule) {
 	for {
-		next := nextHourlyRun(time.Now())
+		next := sched.Next(time.Now().In(s.loc))
 		log.Printf("automation scheduled: name=%s next_run=%s", name, next.Format(time.RFC3339))
 		timer := time.NewTimer(time.Until(next))
 		select {
@@ -95,10 +116,6 @@ func (s *Scheduler) runHourly(ctx context.Context, name string) {
 			log.Printf("automation failed: name=%s error=%v", name, err)
 		}
 	}
-}
-
-func nextHourlyRun(now time.Time) time.Time {
-	return now.Truncate(time.Hour).Add(time.Hour)
 }
 
 func (s *Scheduler) RunAutomation(ctx context.Context, name string) error {
