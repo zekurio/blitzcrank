@@ -77,6 +77,77 @@ func TestAutomationCompletedEmbed(t *testing.T) {
 			t.Errorf("footer = %+v, want text %q", embed.Footer, "botname")
 		}
 	})
+
+	t.Run("explicit ok status overrides false-positive heuristic", func(t *testing.T) {
+		embed := automationCompletedEmbed("STATUS: ok\n\nKeine Fehler gefunden.", nil, nil, "botname")
+		if embed == nil {
+			t.Fatal("expected non-nil embed")
+		}
+		if !strings.HasPrefix(embed.Title, "✅") {
+			t.Errorf("title = %q, want prefix ✅", embed.Title)
+		}
+		if !strings.Contains(embed.Title, "Abgeschlossen") {
+			t.Errorf("title = %q, want to contain %q", embed.Title, "Abgeschlossen")
+		}
+		if strings.Contains(embed.Description, "STATUS:") {
+			t.Errorf("description = %q, should not contain the STATUS: line", embed.Description)
+		}
+	})
+}
+
+func TestParseExplicitStatus(t *testing.T) {
+	tests := []struct {
+		name     string
+		response string
+		wantStat automationRunStatus
+		wantRest string
+		wantOK   bool
+	}{
+		{
+			name:     "explicit error with details",
+			response: "STATUS: fehler\n\nDetails",
+			wantStat: automationRunError,
+			wantRest: "Details",
+			wantOK:   true,
+		},
+		{
+			name:     "case-insensitive ok",
+			response: "status: OK\nrest",
+			wantStat: automationRunOK,
+			wantRest: "rest",
+			wantOK:   true,
+		},
+		{
+			name:     "unrecognized value falls back",
+			response: "STATUS: bogus\nrest",
+			wantStat: automationRunOK,
+			wantRest: "STATUS: bogus\nrest",
+			wantOK:   false,
+		},
+		{
+			name:     "no token present",
+			response: "No token",
+			wantStat: automationRunOK,
+			wantRest: "No token",
+			wantOK:   false,
+		},
+		{
+			name:     "token only with empty rest",
+			response: "STATUS: warnung",
+			wantStat: automationRunWarning,
+			wantRest: "",
+			wantOK:   true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotStat, gotRest, gotOK := parseExplicitStatus(tt.response)
+			if gotStat != tt.wantStat || gotRest != tt.wantRest || gotOK != tt.wantOK {
+				t.Errorf("parseExplicitStatus(%q) = (%v, %q, %v), want (%v, %q, %v)",
+					tt.response, gotStat, gotRest, gotOK, tt.wantStat, tt.wantRest, tt.wantOK)
+			}
+		})
+	}
 }
 
 func TestIsAutomationStatusMessage(t *testing.T) {
