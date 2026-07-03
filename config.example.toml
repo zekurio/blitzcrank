@@ -68,6 +68,8 @@ automations_enabled = false
 automations_extra_dirs = []
 timezone = "UTC"
 run_timeout = "5m"
+# Cap on simultaneous webhook-triggered Pi runs.
+max_concurrent_runs = 4
 
 [storage]
 database_path = "./blitzcrank.sqlite"
