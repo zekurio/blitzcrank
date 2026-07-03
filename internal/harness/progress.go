@@ -16,6 +16,7 @@ type seerrProgressReporter struct {
 	todos     []TodoItem
 	commentID string
 	turns     int
+	steps     int
 }
 
 func (m *Manager) newSeerrProgressReporter(issueID string, request Request) *seerrProgressReporter {
@@ -40,6 +41,23 @@ func (r *seerrProgressReporter) update(ctx context.Context, event ProgressEvent)
 		return
 	}
 	r.mu.Lock()
+	if strings.TrimSpace(event.Phase) == "tool_done" {
+		if !r.manager.cfg.SeerrTransientRunComments {
+			r.mu.Unlock()
+			return
+		}
+		r.steps++
+		comment := r.manager.signedRunMessage(
+			fmt.Sprintf("Ich prüfe das gerade – %d Schritte abgeschlossen.", r.steps),
+			r.todos, r.request)
+		r.mu.Unlock()
+		if err := r.postOrUpdate(ctx, comment); err != nil {
+			log.Printf("seerr progress comment failed: issue=%s phase=%s error=%v", r.issueID, event.Phase, err)
+			return
+		}
+		log.Printf("seerr progress comment posted: issue=%s phase=%s", r.issueID, event.Phase)
+		return
+	}
 	r.todos = append([]TodoItem(nil), event.Todos...)
 	response := seerrProgressResponse(event)
 	if r.turns > 0 && strings.TrimSpace(response) != "" {
@@ -109,7 +127,7 @@ func (r *seerrProgressReporter) delete(ctx context.Context) error {
 
 func seerrProgressVisible(event ProgressEvent) bool {
 	switch strings.TrimSpace(event.Phase) {
-	case "assistant_turn":
+	case "assistant_turn", "tool_done":
 		return true
 	default:
 		return false
