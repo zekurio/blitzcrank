@@ -268,3 +268,72 @@ func TestRunAutomationRecordsToolFailures(t *testing.T) {
 		t.Fatalf("expected failure %+v, got %+v", want, failures[0])
 	}
 }
+
+func TestParseSchedule(t *testing.T) {
+	tests := []struct {
+		name    string
+		spec    string
+		wantErr bool
+	}{
+		{name: "hourly descriptor", spec: "@hourly", wantErr: false},
+		{name: "every 15 minutes", spec: "*/15 * * * *", wantErr: false},
+		{name: "daily at 3am", spec: "0 3 * * *", wantErr: false},
+		{name: "every interval", spec: "@every 30m", wantErr: false},
+		{name: "garbage", spec: "not a schedule", wantErr: true},
+		{name: "empty", spec: "", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sched, err := parseSchedule(tt.spec)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("parseSchedule(%q) expected error, got nil", tt.spec)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseSchedule(%q) unexpected error: %v", tt.spec, err)
+			}
+			if sched == nil {
+				t.Fatalf("parseSchedule(%q) returned nil schedule with no error", tt.spec)
+			}
+		})
+	}
+}
+
+func TestScheduleNextRespectsTimezone(t *testing.T) {
+	sched, err := parseSchedule("0 3 * * *")
+	if err != nil {
+		t.Fatalf("parseSchedule returned error: %v", err)
+	}
+
+	loc := time.FixedZone("X", 2*3600)
+	now := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
+
+	next := sched.Next(now.In(loc))
+	if got := next.In(loc).Hour(); got != 3 {
+		t.Fatalf("expected next run at hour 3 in loc, got hour %d (next=%s)", got, next.In(loc))
+	}
+}
+
+func TestStartSkipsInvalidSchedules(t *testing.T) {
+	dir := t.TempDir()
+	writeTask(t, dir, "valid-hourly")
+
+	badBody := "---\nname: bad-schedule\nschedule: \"banana\"\n---\n\nBody"
+	if err := os.WriteFile(filepath.Join(dir, "bad-schedule.md"), []byte(badBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Config{
+		AutomationsDirectory: dir,
+		AutomationsEnabled:   true,
+		RunTimeout:           time.Second,
+	}
+	s := NewScheduler(cfg, &fakeRunner{reply: "ok"}, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s.Start(ctx)
+	cancel()
+}

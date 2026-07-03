@@ -66,6 +66,7 @@ systemd_unit = "anvil.service"
 automations_dir = "automations"
 automations_enabled = false
 automations_extra_dirs = []
+# Timezone automation cron schedules are evaluated in.
 timezone = "UTC"
 run_timeout = "5m"
 # Cap on simultaneous webhook-triggered Pi runs.
