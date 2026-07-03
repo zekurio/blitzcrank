@@ -4,8 +4,10 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 
+	"blitzcrank/internal/automation"
 	"blitzcrank/internal/config"
 )
 
@@ -65,4 +67,30 @@ func TestAcquireRunSlot(t *testing.T) {
 		t.Fatalf("third acquire after release: ok = false, want true")
 	}
 	release3()
+}
+
+func TestToolFailureRecordDrain(t *testing.T) {
+	s := NewServer(config.Config{}, nil)
+
+	first := automation.ToolFailure{Tool: "sonarr_request", Error: "HTTP 500"}
+	second := automation.ToolFailure{Tool: "radarr_request", Error: "timeout"}
+
+	s.RecordToolFailure("thread-1", first)
+	s.RecordToolFailure("thread-1", second)
+
+	got := s.DrainToolFailures("thread-1")
+	want := []automation.ToolFailure{first, second}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DrainToolFailures = %+v, want %+v", got, want)
+	}
+
+	if got := s.DrainToolFailures("thread-1"); len(got) != 0 {
+		t.Fatalf("expected drain to empty the store, got %+v", got)
+	}
+
+	s.RecordToolFailure("thread-2", first)
+	s.ResetToolFailures("thread-2")
+	if got := s.DrainToolFailures("thread-2"); len(got) != 0 {
+		t.Fatalf("expected ResetToolFailures to clear the store, got %+v", got)
+	}
 }
