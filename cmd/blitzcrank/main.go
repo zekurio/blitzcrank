@@ -129,6 +129,10 @@ func runBot() error {
 	}
 	finishStep(nil)
 
+	finishStep = startup.start("start_issue_revisit_loop")
+	manager.StartRevisitLoop(ctx)
+	finishStep(nil)
+
 	finishStep = startup.start("create_automation_scheduler")
 	scheduler := automation.NewScheduler(cfg, runner, nil)
 	scheduler.SetToolFailureStore(webhookServer)

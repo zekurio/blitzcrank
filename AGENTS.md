@@ -16,6 +16,8 @@ Seerr issue flow:
 4. Pi executes service tools defined in `.pi/extensions/blitzcrank-tools.ts` (Seerr/Jellyfin/Sonarr/Radarr/SABnzbd/Anvil, with mutation allowlists).
 5. Progress comments and final Seerr comment/resolution go through `internal/tools/services.go`; issue/thread/run history lands in `internal/store`.
 
+Issue revisits: when `seerr.revisits_enabled` is set, the agent can schedule its own follow-up on an open issue via `REVISIT_IN`/`REVISIT_REASON` directives in its final response (e.g. while a download or Anvil encode is pending); `internal/harness/revisit.go` re-runs the thread once the scheduled time passes (capped by `seerr.revisit_max` consecutive revisits without user activity) so the agent can confirm the fix, ask the reporter whether the issue can be closed, or resolve it.
+
 Automation flow: `internal/automation/tasks.go` parses `automations/*.md` (front matter: `name`, `description`, `schedule`; body = task prompt), `scheduler.go` schedules via `robfig/cron` `ParseStandard`, runs tasks through the Pi runner, and reports optionally to Discord (`internal/discord/automation.go`, slash command `/automatisierung`).
 
 ## Key Directories

@@ -11,8 +11,9 @@ func (s *Store) LoadIssueThread(ctx context.Context, issueID string) (IssueThrea
 	var thread IssueThread
 	var completedAt, reason sql.NullString
 	var summary sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT issue_id,status,summary,created_at,updated_at,completed_at,completion_reason,last_payload_json FROM issue_threads WHERE issue_id = ?`, issueID).Scan(
-		&thread.IssueID, &thread.Status, &summary, scanTime(&thread.CreatedAt), scanTime(&thread.UpdatedAt), &completedAt, &reason, &thread.LastPayloadJSON,
+	var nextRevisitAt, revisitReason sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT issue_id,status,summary,created_at,updated_at,completed_at,completion_reason,next_revisit_at,revisit_reason,last_payload_json FROM issue_threads WHERE issue_id = ?`, issueID).Scan(
+		&thread.IssueID, &thread.Status, &summary, scanTime(&thread.CreatedAt), scanTime(&thread.UpdatedAt), &completedAt, &reason, &nextRevisitAt, &revisitReason, &thread.LastPayloadJSON,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return IssueThread{}, false, nil
@@ -25,6 +26,11 @@ func (s *Store) LoadIssueThread(ctx context.Context, issueID string) (IssueThrea
 	if err != nil {
 		return IssueThread{}, false, err
 	}
+	thread.NextRevisitAt, err = parseNullTime(nextRevisitAt)
+	if err != nil {
+		return IssueThread{}, false, err
+	}
+	thread.RevisitReason = revisitReason.String
 	thread.CompletionReason = reason.String
 
 	events, err := s.LoadIssueEvents(ctx, issueID)
@@ -42,16 +48,18 @@ func (s *Store) LoadIssueThread(ctx context.Context, issueID string) (IssueThrea
 
 func (s *Store) UpsertIssueThread(ctx context.Context, thread IssueThread) error {
 	_, err := s.db.ExecContext(ctx, `
-INSERT INTO issue_threads(issue_id,status,summary,created_at,updated_at,completed_at,completion_reason,last_payload_json)
-VALUES(?,?,?,?,?,?,?,?)
+INSERT INTO issue_threads(issue_id,status,summary,created_at,updated_at,completed_at,completion_reason,next_revisit_at,revisit_reason,last_payload_json)
+VALUES(?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(issue_id) DO UPDATE SET
   status=excluded.status,
   summary=excluded.summary,
   updated_at=excluded.updated_at,
   completed_at=excluded.completed_at,
   completion_reason=excluded.completion_reason,
+  next_revisit_at=excluded.next_revisit_at,
+  revisit_reason=excluded.revisit_reason,
   last_payload_json=excluded.last_payload_json
-`, thread.IssueID, thread.Status, thread.Summary, formatTime(thread.CreatedAt), formatTime(thread.UpdatedAt), formatTimePtr(thread.CompletedAt), thread.CompletionReason, metadataJSON(thread.LastPayloadJSON))
+`, thread.IssueID, thread.Status, thread.Summary, formatTime(thread.CreatedAt), formatTime(thread.UpdatedAt), formatTimePtr(thread.CompletedAt), thread.CompletionReason, formatTimePtr(thread.NextRevisitAt), thread.RevisitReason, metadataJSON(thread.LastPayloadJSON))
 	return err
 }
 
@@ -74,6 +82,23 @@ func (s *Store) InsertIssueRun(ctx context.Context, run IssueRun) error {
 func (s *Store) UpdateIssueThreadSummary(ctx context.Context, issueID, summary string, updatedAt time.Time) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE issue_threads SET summary = ?, updated_at = ? WHERE issue_id = ?`, summary, formatTime(updatedAt), issueID)
 	return err
+}
+
+func (s *Store) ListActiveIssueThreadIDs(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT issue_id FROM issue_threads WHERE status = 'active' ORDER BY issue_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 func (s *Store) LoadIssueEvents(ctx context.Context, issueID string) ([]IssueEvent, error) {

@@ -16,14 +16,16 @@ import (
 )
 
 type fakeRunner struct {
-	calls int
-	reply string
-	err   error
-	model string
+	calls    int
+	reply    string
+	err      error
+	model    string
+	requests []Request
 }
 
 func (f *fakeRunner) Respond(_ context.Context, req Request) (string, error) {
 	f.calls++
+	f.requests = append(f.requests, req)
 	return f.reply, f.err
 }
 
@@ -184,6 +186,66 @@ func TestHandleWebhookResolveDirectivePostsCommentAndResolvesIssue(t *testing.T)
 	if resolvedBotUser != "7" {
 		t.Fatalf("resolve X-Api-User = %q, want 7", resolvedBotUser)
 	}
+}
+
+func TestHandleWebhookAppliesRevisitDecision(t *testing.T) {
+	t.Run("revisit directives persist then later webhook clears schedule", func(t *testing.T) {
+		ctx := context.Background()
+		server, recorder := newRevisitSeerrServer(t)
+		defer server.Close()
+
+		state := openRevisitStore(t, ctx)
+		defer state.Close()
+
+		cfg := testConfig(server.URL, t.TempDir())
+		cfg.SeerrTransientRunComments = false
+		runner := &fakeRunner{reply: "RESOLVE_ISSUE: no\nREVISIT_IN: 45m\nREVISIT_REASON: wait for import to finish\n\nI’ll check again."}
+		manager := NewManager(cfg, runner, tools.NewRegistry(cfg), state)
+		beforeFirst := time.Now().UTC()
+
+		first, err := manager.HandleWebhook(ctx, issuePayload("Problem gemeldet", "alice", "file is stuck"))
+		if err != nil {
+			t.Fatalf("first HandleWebhook() error = %v", err)
+		}
+		if first.Ignored {
+			t.Fatalf("first HandleWebhook() ignored = true: %s", first.Reason)
+		}
+
+		thread := loadStoredRevisitThread(t, ctx, state, "42")
+		if thread.NextRevisitAt == nil {
+			t.Fatal("thread NextRevisitAt = nil, want persisted schedule")
+		}
+		if !thread.NextRevisitAt.After(beforeFirst) {
+			t.Fatalf("thread NextRevisitAt = %s, want after %s", thread.NextRevisitAt, beforeFirst)
+		}
+		if thread.RevisitReason != "wait for import to finish" {
+			t.Fatalf("thread RevisitReason = %q, want wait for import to finish", thread.RevisitReason)
+		}
+
+		runner.reply = "RESOLVE_ISSUE: no\n\nDie Rückmeldung ist notiert; ich prüfe den aktuellen Stand."
+		second, err := manager.HandleWebhook(ctx, issuePayload("Problem Kommentar", "alice", "reporter added context"))
+		if err != nil {
+			t.Fatalf("second HandleWebhook() error = %v", err)
+		}
+		if second.Ignored {
+			t.Fatalf("second HandleWebhook() ignored = true: %s", second.Reason)
+		}
+
+		thread = loadStoredRevisitThread(t, ctx, state, "42")
+		if thread.Status != "active" {
+			t.Fatalf("thread status = %q, want active", thread.Status)
+		}
+		if thread.NextRevisitAt != nil {
+			t.Fatalf("thread NextRevisitAt = %s, want nil after follow-up without directives", thread.NextRevisitAt)
+		}
+		if thread.RevisitReason != "" {
+			t.Fatalf("thread RevisitReason = %q, want empty", thread.RevisitReason)
+		}
+		comments, resolved, deleted := recorder.snapshot()
+		if len(comments) != 2 || resolved != 0 || deleted != 0 {
+			t.Fatalf("seerr calls comments=%#v resolved=%d deleted=%d, want two comments only", comments, resolved, deleted)
+		}
+	})
 }
 
 func TestHandleWebhookPostsSingleProgressComment(t *testing.T) {

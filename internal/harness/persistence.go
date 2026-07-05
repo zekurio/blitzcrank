@@ -28,6 +28,8 @@ func (m *Manager) loadThread(ctx context.Context, issueID string) (*IssueThread,
 		UpdatedAt:        loaded.UpdatedAt,
 		CompletedAt:      loaded.CompletedAt,
 		CompletionReason: loaded.CompletionReason,
+		NextRevisitAt:    loaded.NextRevisitAt,
+		RevisitReason:    loaded.RevisitReason,
 		LastPayload:      json.RawMessage(loaded.LastPayloadJSON),
 	}
 	for _, event := range loaded.Events {
@@ -70,6 +72,8 @@ func (m *Manager) upsertThread(ctx context.Context, thread *IssueThread) {
 		UpdatedAt:        thread.UpdatedAt,
 		CompletedAt:      thread.CompletedAt,
 		CompletionReason: thread.CompletionReason,
+		NextRevisitAt:    thread.NextRevisitAt,
+		RevisitReason:    thread.RevisitReason,
 		LastPayloadJSON:  string(thread.LastPayload),
 	}); err != nil {
 		log.Printf("upsert issue thread %s: %v", thread.IssueID, err)

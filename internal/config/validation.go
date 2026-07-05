@@ -15,5 +15,8 @@ func validateStrictConfig(cfg Config) error {
 			return fmt.Errorf("SEERR_WEBHOOK_PATH must start with /")
 		}
 	}
+	if cfg.SeerrRevisitMax < 0 {
+		return errors.New("SEERR_REVISIT_MAX must be zero or positive")
+	}
 	return nil
 }

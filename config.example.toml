@@ -27,6 +27,12 @@ webhook_secret = ""
 bot_user_id = ""
 # User/display name used to ignore Blitzcrank-authored Seerr comments.
 bot_display_name = "Blitzcrank"
+# Agent-scheduled issue revisits: when the agent leaves an issue open because
+# work is pending (download, encode, import), it can schedule its own follow-up
+# via REVISIT_IN/REVISIT_REASON directives; Blitzcrank re-runs it at that time.
+revisits_enabled = false
+# Safety cap: max consecutive revisits without new user activity.
+revisit_max = 5
 
 [pi]
 # Pi is the only agent runtime. Blitzcrank invokes `pi --mode rpc`.

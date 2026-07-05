@@ -46,6 +46,8 @@ type IssueThread struct {
 	UpdatedAt        time.Time       `json:"updated_at"`
 	CompletedAt      *time.Time      `json:"completed_at,omitempty"`
 	CompletionReason string          `json:"completion_reason,omitempty"`
+	NextRevisitAt    *time.Time      `json:"next_revisit_at,omitempty"`
+	RevisitReason    string          `json:"revisit_reason,omitempty"`
 	Events           []ThreadEvent   `json:"events"`
 	Runs             []RunRecord     `json:"runs"`
 	LastPayload      json.RawMessage `json:"last_payload,omitempty"`
@@ -69,6 +71,11 @@ type RunRecord struct {
 	Attribution      string    `json:"attribution"`
 	Error            string    `json:"error,omitempty"`
 	CompletionReason string    `json:"completion_reason,omitempty"`
+
+	// RevisitIn and RevisitReason carry the agent's follow-up request to the
+	// caller; they are applied to the thread, not persisted per run.
+	RevisitIn     time.Duration `json:"-"`
+	RevisitReason string        `json:"-"`
 }
 
 type Result struct {
@@ -124,11 +131,12 @@ func (m *Manager) HandleWebhook(ctx context.Context, payload map[string]any) (Re
 		promptThread.Events = append(promptThread.Events, eventRecord)
 		record, err := m.run(ctx, promptThread, payload, event)
 		if err != nil {
-			m.recordRun(ctx, thread, record)
+			m.recordRun(ctx, thread, record, "webhook")
 			return Result{IssueID: issueID, Event: event}, err
 		}
 		m.appendEventRecord(ctx, thread, eventRecord, payload)
-		m.recordRun(ctx, thread, record)
+		m.recordRun(ctx, thread, record, "webhook")
+		m.applyRevisitDecision(ctx, thread, record)
 		return Result{IssueID: issueID, Event: event}, nil
 	default:
 		return Result{Ignored: true, Reason: "event ignored", IssueID: issueID, Event: event}, nil
@@ -282,6 +290,8 @@ func (m *Manager) run(ctx context.Context, thread *IssueThread, payload map[stri
 		return record, err
 	}
 	decision := parseIssueRunDecision(response)
+	record.RevisitIn = decision.RevisitIn
+	record.RevisitReason = decision.RevisitReason
 	if decision.Action == "none" {
 		if err := progress.delete(runCtx); err != nil {
 			record.Error = err.Error()
@@ -344,14 +354,14 @@ func (m *Manager) run(ctx context.Context, thread *IssueThread, payload map[stri
 	return record, nil
 }
 
-func (m *Manager) recordRun(ctx context.Context, thread *IssueThread, record RunRecord) {
+func (m *Manager) recordRun(ctx context.Context, thread *IssueThread, record RunRecord, source string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	thread.Runs = append(thread.Runs, record)
 	thread.Summary = buildIssueSummary(thread)
 	thread.UpdatedAt = time.Now().UTC()
 	m.upsertThread(ctx, thread)
-	m.insertRun(ctx, thread.IssueID, record, "webhook")
+	m.insertRun(ctx, thread.IssueID, record, source)
 }
 
 func (m *Manager) complete(ctx context.Context, thread *IssueThread, reason string) {
@@ -361,6 +371,8 @@ func (m *Manager) complete(ctx context.Context, thread *IssueThread, reason stri
 	thread.CompletedAt = &now
 	thread.CompletionReason = reason
 	thread.UpdatedAt = now
+	thread.NextRevisitAt = nil
+	thread.RevisitReason = ""
 	m.mu.Unlock()
 
 	m.upsertThread(ctx, thread)

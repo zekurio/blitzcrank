@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -68,6 +69,111 @@ func TestStorePersistsIssueThreadEventAndRun(t *testing.T) {
 	if !loaded.Runs[0].Posted || loaded.Runs[0].CompletionReason != "posted" {
 		t.Fatalf("run = %#v", loaded.Runs[0])
 	}
+}
+
+func TestIssueThreadRevisitFields(t *testing.T) {
+	t.Run("upsert and load round trips schedule", func(t *testing.T) {
+		ctx := context.Background()
+		store, err := Open(ctx, filepath.Join(t.TempDir(), "state.sqlite"))
+		if err != nil {
+			t.Fatalf("Open() error = %v", err)
+		}
+		defer store.Close()
+
+		now := time.Now().UTC().Truncate(time.Second)
+		nextRevisitAt := now.Add(45 * time.Minute)
+		if err := store.UpsertIssueThread(ctx, IssueThread{
+			IssueID:       "42",
+			Status:        "active",
+			Summary:       "Example issue",
+			CreatedAt:     now,
+			UpdatedAt:     now,
+			NextRevisitAt: &nextRevisitAt,
+			RevisitReason: "verify encode finished",
+		}); err != nil {
+			t.Fatalf("UpsertIssueThread() error = %v", err)
+		}
+
+		loaded, ok, err := store.LoadIssueThread(ctx, "42")
+		if err != nil {
+			t.Fatalf("LoadIssueThread() error = %v", err)
+		}
+		if !ok {
+			t.Fatal("LoadIssueThread() ok = false")
+		}
+		if loaded.NextRevisitAt == nil {
+			t.Fatal("NextRevisitAt = nil, want persisted time")
+		}
+		if !loaded.NextRevisitAt.Equal(nextRevisitAt) {
+			t.Fatalf("NextRevisitAt = %s, want %s", loaded.NextRevisitAt, nextRevisitAt)
+		}
+		if loaded.RevisitReason != "verify encode finished" {
+			t.Fatalf("RevisitReason = %q, want verify encode finished", loaded.RevisitReason)
+		}
+	})
+
+	t.Run("migration adds schedule columns to old schema", func(t *testing.T) {
+		ctx := context.Background()
+		path := filepath.Join(t.TempDir(), "state.sqlite")
+		db, err := sql.Open("sqlite", sqliteDSN(path))
+		if err != nil {
+			t.Fatalf("sql.Open() error = %v", err)
+		}
+		_, err = db.ExecContext(ctx, `
+CREATE TABLE issue_threads (
+  issue_id TEXT PRIMARY KEY,
+  status TEXT NOT NULL,
+  summary TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_at TEXT,
+  completion_reason TEXT,
+  last_payload_json TEXT
+);`)
+		if err != nil {
+			_ = db.Close()
+			t.Fatalf("create old issue_threads schema: %v", err)
+		}
+		if err := db.Close(); err != nil {
+			t.Fatalf("close raw db: %v", err)
+		}
+
+		store, err := Open(ctx, path)
+		if err != nil {
+			t.Fatalf("Open() with old schema error = %v", err)
+		}
+		defer store.Close()
+
+		now := time.Now().UTC().Truncate(time.Second)
+		nextRevisitAt := now.Add(time.Hour)
+		if err := store.UpsertIssueThread(ctx, IssueThread{
+			IssueID:       "43",
+			Status:        "active",
+			CreatedAt:     now,
+			UpdatedAt:     now,
+			NextRevisitAt: &nextRevisitAt,
+			RevisitReason: "old database migrated",
+		}); err != nil {
+			t.Fatalf("UpsertIssueThread() after migration error = %v", err)
+		}
+
+		loaded, ok, err := store.LoadIssueThread(ctx, "43")
+		if err != nil {
+			t.Fatalf("LoadIssueThread() after migration error = %v", err)
+		}
+		if !ok {
+			t.Fatal("LoadIssueThread() after migration ok = false")
+		}
+		if loaded.NextRevisitAt == nil {
+			t.Fatal("NextRevisitAt after migration = nil, want persisted time")
+		}
+		if !loaded.NextRevisitAt.Equal(nextRevisitAt) {
+			t.Fatalf("NextRevisitAt after migration = %s, want %s", loaded.NextRevisitAt, nextRevisitAt)
+		}
+		if loaded.RevisitReason != "old database migrated" {
+			t.Fatalf("RevisitReason after migration = %q, want old database migrated", loaded.RevisitReason)
+		}
+	})
 }
 
 func TestIssueEventKeyIsUniquePerIssue(t *testing.T) {

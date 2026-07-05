@@ -26,6 +26,8 @@ type IssueThread struct {
 	UpdatedAt        time.Time
 	CompletedAt      *time.Time
 	CompletionReason string
+	NextRevisitAt    *time.Time
+	RevisitReason    string
 	LastPayloadJSON  string
 	Events           []IssueEvent
 	Runs             []IssueRun
@@ -117,7 +119,9 @@ CREATE TABLE IF NOT EXISTS issue_threads (
   updated_at TEXT NOT NULL,
   completed_at TEXT,
   completion_reason TEXT,
-  last_payload_json TEXT
+  last_payload_json TEXT,
+  next_revisit_at TEXT,
+  revisit_reason TEXT
 );
 
 CREATE TABLE IF NOT EXISTS issue_thread_events (
@@ -151,6 +155,36 @@ CREATE TABLE IF NOT EXISTS issue_runs (
 	`)
 	if err != nil {
 		return fmt.Errorf("run base schema migration: %w", err)
+	}
+	if err := s.ensureColumn(ctx, "issue_threads", "next_revisit_at", "TEXT"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "issue_threads", "revisit_reason", "TEXT"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Store) ensureColumn(ctx context.Context, table, column, columnType string) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return fmt.Errorf("inspect %s schema: %w", table, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return fmt.Errorf("inspect %s schema: %w", table, err)
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("inspect %s schema: %w", table, err)
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE `+table+` ADD COLUMN `+column+` `+columnType); err != nil {
+		return fmt.Errorf("add column %s.%s: %w", table, column, err)
 	}
 	return nil
 }

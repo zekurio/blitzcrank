@@ -48,6 +48,9 @@ type Config struct {
 	SeerrBotDisplayName       string `env:"SEERR_BOT_DISPLAY_NAME" toml:"seerr.bot_display_name" default:"Blitzcrank"`
 	SeerrTransientRunComments bool   `env:"SEERR_TRANSIENT_RUN_COMMENTS" toml:"seerr.transient_run_comments" default:"true"`
 
+	SeerrRevisitsEnabled bool `env:"SEERR_REVISITS_ENABLED" toml:"seerr.revisits_enabled"`
+	SeerrRevisitMax      int  `env:"SEERR_REVISIT_MAX" toml:"seerr.revisit_max" default:"5"`
+
 	BotPublicName string `env:"BOT_PUBLIC_NAME" toml:"bot.public_name" default:"blitzcrank"`
 	Timezone      string `env:"TIMEZONE" toml:"runtime.timezone" default:"UTC"`
 }

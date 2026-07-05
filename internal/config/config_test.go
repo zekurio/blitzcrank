@@ -80,6 +80,76 @@ func TestLoadMissingTOMLIsNotAnError(t *testing.T) {
 	}
 }
 
+func TestLoadRevisitConfig(t *testing.T) {
+	tests := []struct {
+		name        string
+		toml        string
+		env         map[string]string
+		wantEnabled bool
+		wantMax     int
+	}{
+		{
+			name:        "defaults disable revisits with max five",
+			wantEnabled: false,
+			wantMax:     5,
+		},
+		{
+			name: "toml overrides revisit settings",
+			toml: `
+[seerr]
+revisits_enabled = true
+revisit_max = 4
+`,
+			wantEnabled: true,
+			wantMax:     4,
+		},
+		{
+			name: "env overrides revisit settings",
+			toml: `
+[seerr]
+revisits_enabled = false
+revisit_max = 3
+`,
+			env: map[string]string{
+				"SEERR_REVISITS_ENABLED": "true",
+				"SEERR_REVISIT_MAX":      "7",
+			},
+			wantEnabled: true,
+			wantMax:     7,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sanitizeConfigEnv(t, "SEERR_REVISITS_ENABLED", "SEERR_REVISIT_MAX")
+			dir := t.TempDir()
+			tomlPath := filepath.Join(dir, "blitzcrank.toml")
+			if tt.toml != "" {
+				if err := os.WriteFile(tomlPath, []byte(tt.toml), 0o600); err != nil {
+					t.Fatalf("write toml config: %v", err)
+				}
+			} else {
+				tomlPath = filepath.Join(dir, "missing.toml")
+			}
+			t.Setenv("BLITZCRANK_CONFIG", tomlPath)
+			for key, value := range tt.env {
+				t.Setenv(key, value)
+			}
+
+			cfg, err := load(filepath.Join(t.TempDir(), "no-dotenv"), false)
+			if err != nil {
+				t.Fatalf("load() error = %v", err)
+			}
+			if cfg.SeerrRevisitsEnabled != tt.wantEnabled {
+				t.Fatalf("SeerrRevisitsEnabled = %v, want %v", cfg.SeerrRevisitsEnabled, tt.wantEnabled)
+			}
+			if cfg.SeerrRevisitMax != tt.wantMax {
+				t.Fatalf("SeerrRevisitMax = %d, want %d", cfg.SeerrRevisitMax, tt.wantMax)
+			}
+		})
+	}
+}
+
 func TestLoadRejectsBadDuration(t *testing.T) {
 	sanitizeConfigEnv(t, "AGENT_RUN_TIMEOUT")
 
@@ -141,6 +211,13 @@ func TestValidateStrictConfig(t *testing.T) {
 			name:    "webhook disabled requires nothing",
 			cfg:     Config{},
 			wantErr: false,
+		},
+		{
+			name: "negative revisit max is rejected",
+			cfg: Config{
+				SeerrRevisitMax: -1,
+			},
+			wantErr: true,
 		},
 	}
 

@@ -33,6 +33,23 @@ func (m *Manager) issuePromptContext(thread *IssueThread, payload map[string]any
 	}
 	eventsText := formatIssueEvents(thread.Events, issueRecentEventLimit)
 	runsText := formatIssueRuns(thread.Runs, issueRecentRunLimit)
+	instructions := `Use the Pi system prompt to investigate the issue, apply safe fixes when appropriate, validate the result, and return exactly one final response in Blitzcrank's directive format.
+If the reported user message is an explicit diagnostic or test instruction, perform a safe read-only tool call when possible and summarize the result.`
+	if event == "revisit" {
+		reason := strings.TrimSpace(thread.RevisitReason)
+		if reason == "" {
+			reason = "(none recorded)"
+		}
+		instructions = fmt.Sprintf(`This is a revisit you scheduled earlier with REVISIT_IN, not a new user message.
+Your recorded reason for this revisit:
+%s
+
+Re-verify that pending work with read-only calls first and only act on what the reason names.
+If validation now confirms the issue is solved, post a short confirmation and use RESOLVE_ISSUE: yes.
+If the fix is technically complete but only the reporter can confirm the user-visible result, briefly ask whether everything works now and whether the issue can be closed, and use RESOLVE_ISSUE: no.
+If the pending work is still in progress, re-schedule with REVISIT_IN and an updated REVISIT_REASON, and add a public comment only if there is user-visible news.
+If you do not re-schedule, Blitzcrank will not revisit this issue again on its own.`, reason)
+	}
 	content := fmt.Sprintf(`Seerr issue workflow event: %s
 Issue id: %s
 Prior thread events: %d
@@ -50,48 +67,76 @@ Recent thread events:
 Recent solver outcomes:
 %s
 
-Use the Pi system prompt to investigate the issue, apply safe fixes when appropriate, validate the result, and return exactly one final response in Blitzcrank's directive format.
-If the reported user message is an explicit diagnostic or test instruction, perform a safe read-only tool call when possible and summarize the result.
+%s
 
 Webhook payload:
-%s`, event, thread.IssueID, len(thread.Events), len(thread.Runs), emptyIssueSummary(thread.Summary), reportedMessage, eventsText, runsText, payloadText)
+%s`, event, thread.IssueID, len(thread.Events), len(thread.Runs), emptyIssueSummary(thread.Summary), reportedMessage, eventsText, runsText, instructions, payloadText)
 
 	return issuePromptResult{Content: content}
 }
 
 type issueRunDecision struct {
-	Action       string `json:"action"`
-	ResolveIssue bool   `json:"resolve_issue"`
-	Comment      string `json:"comment"`
+	Action        string
+	ResolveIssue  bool
+	Comment       string
+	RevisitIn     time.Duration
+	RevisitReason string
 }
 
 func parseIssueRunDecision(response string) issueRunDecision {
-	comment, resolve := parseIssueResolutionDirective(response)
-	action := "post"
-	if strings.TrimSpace(comment) == "" {
-		action = "none"
-	}
-	return issueRunDecision{Action: action, ResolveIssue: resolve, Comment: strings.TrimSpace(comment)}
-}
-
-func parseIssueResolutionDirective(response string) (string, bool) {
 	response = strings.TrimSpace(response)
-	first, rest, ok := strings.Cut(response, "\n")
-	if !ok {
-		return response, false
-	}
-	key, value, ok := strings.Cut(strings.TrimSpace(first), ":")
+	lines := strings.Split(response, "\n")
+	key, value, ok := strings.Cut(strings.TrimSpace(lines[0]), ":")
 	if !ok || !strings.EqualFold(strings.TrimSpace(key), "RESOLVE_ISSUE") {
-		return response, false
+		return commentOnlyDecision(response)
 	}
+	decision := issueRunDecision{}
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "yes", "true":
-		return strings.TrimSpace(rest), true
+		decision.ResolveIssue = true
 	case "no", "false":
-		return strings.TrimSpace(rest), false
+		decision.ResolveIssue = false
 	default:
-		return response, false
+		return commentOnlyDecision(response)
 	}
+	rest := lines[1:]
+directives:
+	for len(rest) > 0 {
+		trimmed := strings.TrimSpace(rest[0])
+		if trimmed == "" {
+			rest = rest[1:]
+			continue
+		}
+		key, value, ok := strings.Cut(trimmed, ":")
+		if !ok {
+			break
+		}
+		switch strings.ToUpper(strings.TrimSpace(key)) {
+		case "REVISIT_IN":
+			if delay, err := time.ParseDuration(strings.TrimSpace(value)); err == nil && delay > 0 {
+				decision.RevisitIn = delay
+			}
+		case "REVISIT_REASON":
+			decision.RevisitReason = strings.TrimSpace(value)
+		default:
+			break directives
+		}
+		rest = rest[1:]
+	}
+	decision.Comment = strings.TrimSpace(strings.Join(rest, "\n"))
+	decision.Action = "post"
+	if decision.Comment == "" {
+		decision.Action = "none"
+	}
+	return decision
+}
+
+func commentOnlyDecision(response string) issueRunDecision {
+	action := "post"
+	if response == "" {
+		action = "none"
+	}
+	return issueRunDecision{Action: action, Comment: response}
 }
 
 func emptyIssueSummary(summary string) string {
