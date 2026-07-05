@@ -1,156 +1,88 @@
-# AGENTS.md
+# Repository Guidelines
 
-Repo-specific context for AI agents working in Blitzcrank.
+## Project Overview
 
-- The default branch in this repo is `main`. Use `main` or `origin/main` for diffs.
-- Keep secrets out of commits; `.env*`, local SQLite databases, and built binaries are ignored or should remain untracked.
-- Commit scopes when helpful: `agent`, `automation`, `config`, `discord`, `harness`, `llm`, `store`, `tools`, `webhook`, `nix`. Example: `fix(store): persist thread events`.
+Blitzcrank is a Go Discord bot and support agent for Seerr/Jellyfin media operations. It is a thin orchestrator around an external Pi agent runtime: Blitzcrank owns Seerr webhook ingress, issue state, scheduled automations, Discord reporting, and SQLite persistence; Pi owns the LLM provider auth, model selection, tool loop, and durable sessions. The repo is an early WIP — sweeping maintainability improvements are welcome.
 
-## Repo-Specific Style
+## Architecture & Data Flow
 
-- Be conservative around Discord actions, Seerr/Jellyfin mutations, and scheduled automation state. Prefer explicit safety checks and clear logs over implicit behavior.
-- Pass `ctx` on operations that call LLM providers, Discord/Seerr/Jellyfin, SQLite, or automations; external service calls must respect cancellation and diagnose failures without leaking secrets.
-- Keep the executable entrypoint in `cmd/blitzcrank` thin. Application behavior belongs under `internal/`.
-- Keep prompt and tool-call construction in `internal/agent`/`internal/pi`; avoid leaking provider details through unrelated packages.
-- Keep Discord gateway behavior in `internal/discord`, Seerr/Jellyfin tool behavior in `internal/tools`, and webhook handling in `internal/webhook`.
-- Keep persistence concerns in `internal/store`; callers should receive explicit domain data instead of raw SQL details.
+`cmd/blitzcrank/main.go` builds the object graph explicitly (constructor injection, no framework): config → tools registry → SQLite store → Pi runner → harness manager → webhook server → automation scheduler → optional Discord bot.
 
-## Testing
+Seerr issue flow:
 
-Do not rely on real Discord, Seerr, Jellyfin, or LLM credentials in tests.
+1. `internal/webhook/server.go` receives Seerr webhooks (auth, body limits, concurrency gating).
+2. `internal/harness/harness.go` classifies/dedupes events, locks the issue, persists via `internal/store`, and builds the run prompt (`internal/harness/comments.go`).
+3. `internal/pi/runner.go` spawns the Pi RPC process, injects `/skill:<name>` directives and system prompts from `.pi/`, and streams JSON events back as progress + final text.
+4. Pi executes service tools defined in `.pi/extensions/blitzcrank-tools.ts` (Seerr/Jellyfin/Sonarr/Radarr/SABnzbd/Anvil, with mutation allowlists).
+5. Progress comments and final Seerr comment/resolution go through `internal/tools/services.go`; issue/thread/run history lands in `internal/store`.
 
-## Task Completion Requirements
+Automation flow: `internal/automation/tasks.go` parses `automations/*.md` (front matter: `name`, `description`, `schedule`; body = task prompt), `scheduler.go` schedules via `robfig/cron` `ParseStandard`, runs tasks through the Pi runner, and reports optionally to Discord (`internal/discord/automation.go`, slash command `/automatisierung`).
 
-Before considering a Go coding task completed, run:
+## Key Directories
+
+- `cmd/blitzcrank` — executable entrypoint; keep it thin, behavior lives under `internal/`. Includes a `blitzcrank pi` passthrough subcommand.
+- `internal/harness` — Seerr issue workflow orchestration (classification, dedupe, prompts, finalization).
+- `internal/pi` — Pi process/RPC boundary; prompt composition and skill directive injection.
+- `internal/webhook` — Seerr webhook HTTP server and routing.
+- `internal/automation` — Markdown automation parsing and cron scheduling.
+- `internal/discord` — optional Discord automation bot (slash commands, status threads).
+- `internal/store` — SQLite persistence (`modernc.org/sqlite`, pure Go); callers get domain data, not raw SQL.
+- `internal/tools` — Go-side Seerr HTTP helpers (comment/update/resolve) used by harness and progress reporter.
+- `internal/config` — layered config: struct-tag defaults → `.env` → TOML at `BLITZCRANK_CONFIG` → env overrides.
+- `internal/logging` — slog setup (pretty handler, stdlib log redirect).
+- `internal/cache` — TTL file-cache helpers.
+- `.pi/` — Pi runtime assets: `system-prompts/*.md`, `skills/<name>/SKILL.md` (YAML front matter + Markdown), `extensions/blitzcrank-tools.ts` (the actual tool implementations and mutation allowlist).
+- `automations/` — scheduled Markdown jobs.
+- `nix/` — package (`nix/package.nix`) and NixOS module (`nix/module.nix`, `services.blitzcrank`).
+
+## Development Commands
 
 ```sh
-go test ./...
-go build ./cmd/blitzcrank
+go run ./cmd/blitzcrank        # run locally (after: cp config.example.toml blitzcrank.toml)
+go test ./...                  # test suite (CI adds -race)
+go build ./cmd/blitzcrank      # build check
+go vet ./... && gofmt -l .     # CI static checks
+nix build                      # Nix package (run when nix/, flake, or packaging changes)
 ```
 
-Run `nix build` when packaging, flake wiring, or the NixOS module changes.
+Completion requirement for Go coding tasks: `go test ./...` and `go build ./cmd/blitzcrank` must pass. Run `nix build` when packaging, flake wiring, or the NixOS module changes. There is no Makefile/justfile; `.envrc` (`use flake`) provides the dev shell (go, gopls, go-tools, nixfmt, sqlite).
 
-## Package Roles
+## Code Conventions & Common Patterns
 
-- `cmd/blitzcrank` - executable entrypoint for the Discord bot.
-- `internal/agent` - prompt construction and agent/tool-call behavior.
-- `internal/automation` - scheduled Markdown automation tasks.
-- `internal/cache` - local cached data helpers.
-- `internal/config` - environment and TOML configuration loading.
-- `internal/discord` - Discord gateway, commands, and message handling.
-- `internal/harness` - issue workflow coordination.
-- `internal/logging` - logging setup and helpers.
-- `internal/pi` - Pi/client integration.
-- `internal/store` - SQLite persistence.
-- `internal/tools` - Seerr/Jellyfin/media-server tools exposed to agents.
-- `internal/webhook` - Seerr webhook server.
-- `skills` - agent behavior definitions.
-- `automations` - scheduled Markdown jobs.
-- `nix` - Nix package and module support.
+- `gofmt` formatting; no hand-formatting. Avoid dot imports. Minimize exported surface.
+- Conventional commits: `type(scope): summary`; types `feat|fix|docs|chore|refactor|test`; useful scopes: `agent`, `automation`, `config`, `discord`, `harness`, `llm`, `store`, `tools`, `webhook`, `nix`. Branch names: ≤3 hyphenated words, no slashes or type prefixes (`session-recovery`, `fix-scroll-state`).
+- Context: pass `ctx context.Context` first on anything that blocks, calls Pi/Discord/Seerr/Jellyfin, touches SQLite, or participates in shutdown. Never store ctx in structs; propagate the caller's context; call cancel on all paths.
+- Errors: wrap with `%w`, lowercase messages, no trailing punctuation; check every returned error; `errors.Is`/`errors.As` for sentinels; log **or** return, not both — log at process/job boundaries. No `panic` for expected failures.
+- Logging: structured `slog` via `internal/logging`; stable messages, variable data as attributes; never leak secrets, tokens, upstream payloads, or private media metadata (see `internal/store/json_sanitize.go` for the persistence-side scrub).
+- Control flow: early returns, no needless `else`, `switch` over long if/else chains; named booleans for compound business rules. No goroutines or async orchestration unless the operation is genuinely concurrent.
+- Style: boring explicit code over clever abstractions; no single-use helper extraction; named fields in composite literals; `:=` for non-zero values, `var` for intentional zero values; a little copying beats a little dependency.
+- Boundaries: prompt/tool-call construction stays in `internal/pi` and `internal/harness`; Discord behavior in `internal/discord`; Seerr HTTP mutations in `internal/tools`; persistence in `internal/store`. Don't leak provider or SQL details across packages.
+- Safety: be conservative around Discord actions, Seerr/Jellyfin mutations, and automation state — prefer explicit checks and clear logs over implicit behavior. Reliability and operator trust come first.
 
-## Project Snapshot
+## Important Files
 
-Blitzcrank is a Go Discord bot and support agent for Seerr/Jellyfin operations. It coordinates Discord, webhooks, scheduled automations, local skills, model-provider calls, and SQLite state.
+- `cmd/blitzcrank/main.go` — wiring, shutdown handling, `pi` passthrough.
+- `internal/harness/harness.go` — core issue manager; `comments.go` — prompt build, `RESOLVE_ISSUE` parsing, final-comment validation; `progress.go` — transient Seerr progress comments.
+- `internal/pi/runner.go` — Pi process spawn, env/model/session plumbing, JSON event stream parsing.
+- `internal/config/config.go` + `env.go` — config schema and load precedence; `pi.go` — per-source model selection (`PiModelFor`).
+- `internal/store/store.go` + `issues.go` — SQLite open/migrate and issue CRUD.
+- `.pi/extensions/blitzcrank-tools.ts` — all agent-facing service tools and the mutation allowlist.
+- `config.example.toml`, `.env.example` — configuration templates; `BLITZCRANK_CONFIG` points at the TOML (default `./blitzcrank.toml`).
+- `flake.nix`, `nix/package.nix`, `nix/module.nix` — packaging and `services.blitzcrank` NixOS module.
+- `.github/workflows/ci.yml` — gofmt check, `go vet`, build, `go test ./... -race`.
 
-This repository is a VERY EARLY WIP. Proposing sweeping changes that improve long-term maintainability is encouraged.
+## Runtime/Tooling Preferences
 
-## Core Priorities
+- Go 1.26 (see `go.mod`). Key deps: `bwmarrin/discordgo`, `robfig/cron/v3`, `BurntSushi/toml`, `modernc.org/sqlite` (CGO-free — keep it that way).
+- No LLM SDKs in Go: provider auth/config belongs to Pi, not this module. Don't add provider dependencies here.
+- Nix flake is the canonical dev/deploy environment; `nixfmt` formats nix files (`nix fmt`).
+- Secrets: `.env`/`EnvironmentFile`/SOPS only. `.gitignore` excludes `.env*` (except `.env.example`), `blitzcrank.toml`, `*.sqlite*`, `pi-sessions/`. Never commit any of these.
+- Default branch is `main`; use `main`/`origin/main` for diffs.
 
-1. Reliability first.
-2. Operator trust first: diagnostics should be clear, stable, and safe to share.
-3. Keep behavior predictable during webhook retries, Discord reconnects, automation runs, external service failures, and model/provider errors.
-4. Avoid leaking secrets, tokens, upstream payloads, or private media metadata.
+## Testing & QA
 
-If a tradeoff is required, choose correctness, debuggability, and safe operation over short-term convenience.
-
-## Shared Conventions
-
-<!-- Shared across repos; sync deliberate changes to the other repos' AGENTS.md. -->
-
-### Branch Names
-
-Use a short branch name of at most three words, separated by hyphens. Do not use slashes or type prefixes such as `feat/` or `fix/`. Examples: `session-recovery`, `fix-scroll-state`.
-
-### Commits and PR Titles
-
-Use conventional commit-style messages and PR titles: `type(scope): summary`.
-
-Valid types are `feat`, `fix`, `docs`, `chore`, `refactor`, and `test`. Scopes are optional; useful scopes are listed at the top of this file.
-
-### Style: General Principles
-
-- Keep related logic in one function unless extracting it makes the behavior easier to reuse, test, or reason about.
-- Do not extract single-use helpers preemptively. Inline the logic at the call site unless the helper is reused, hides a genuinely complex boundary, or has a clear independent name that improves the caller.
-- Keep the happy path readable: handle validation, missing resources, and errors early with early returns; avoid unnecessary `else`.
-- Reduce total variable count by inlining values that are only used once, but keep named intermediates when they explain business logic.
-- Prefer boring, explicit code over clever abstractions.
-- Keep synchronous parsing, validation, and option building synchronous. Do not introduce async control flow or concurrency unless the operation is actually asynchronous.
-- Add comments for non-obvious constraints and surprising behavior, not for obvious assignments or control flow.
-
-### Testing
-
-- Avoid mocks as much as possible; prefer real temporary directories, in-memory fixtures, and small fake implementations.
-- Test observable behavior and public contracts; do not duplicate production logic into tests.
-- Run targeted checks while iterating, then run the completion checks listed above before calling a coding task done.
-
-### Task Completion
-
-- Coding tasks: the completion checks listed above must pass before the task is considered done.
-- Nix tasks: run appropriate checks for the changed surface; issue builds only when actually warranted.
-- Documentation or planning tasks: verification can be limited to reading the changed files unless the user asks for more. Still keep examples and commands accurate.
-
-### Maintainability
-
-Long-term maintainability is a core priority. When adding functionality, first check if there is shared logic that can be extracted to a separate module or package, or an existing module that owns it. Duplicate logic across multiple files is a code smell. Don't be afraid to change existing code; don't take shortcuts by adding isolated local logic to solve a problem.
-
-## Go Style
-
-<!-- Shared across repos; sync deliberate changes to the other repos' AGENTS.md. -->
-
-### Formatting and Organization
-
-- Use `gofmt`/`go fmt`; do not hand-format Go code. Keep imports grouped and let Go tooling order them.
-- Avoid dot imports. Blank imports should be limited to entrypoints or tests where side effects are obvious.
-- Keep related declarations together: constants, types, constructors, methods, then helpers. Keep helpers close to the code they support, usually below the main exported function/type that uses them.
-- Minimize public surface area. Export only what is used across packages or is part of a deliberate package API.
-- A little copying is better than a little dependency.
-
-### Variables and Data Structures
-
-- Use `:=` for non-zero values and `var` for intentional zero-value initialization. Prefer `const` where possible.
-- Initialize slices and maps explicitly when they may be returned, serialized, or mutated; avoid surprising nil slices/maps. Preallocate only when there is a clear expected size.
-- Use named fields in composite literals for structs from the repo and for external structs whose shape may change.
-
-### Control Flow
-
-- Prefer early returns for errors and edge cases; avoid unnecessary `else` after `return`, `break`, or `continue`.
-- Prefer `switch` over long `if`/`else if` chains when comparing the same value or expressing mutually exclusive modes.
-- Extract complex conditions into named booleans when they encode multiple business rules.
-- Do not introduce goroutines or async-style orchestration unless the operation is actually concurrent.
-
-### Context and Cancellation
-
-- Pass `context.Context` as the first parameter, named `ctx`, on operations that can block, call external services or processes, access persistence, or participate in shutdown.
-- Do not store contexts in structs; pass them explicitly. Do not create `context.Background()` in the middle of a request/job path; propagate the caller's context.
-- Always call cancel functions on every control-flow path unless ownership is explicitly returned or transferred.
-- External calls and processes must respect context cancellation and capture enough metadata to diagnose failures without leaking secrets.
-
-### Errors and Logging
-
-- Returned errors must be checked; do not discard errors with `_` unless there is a documented, safe reason.
-- Wrap errors with useful context using `%w`; keep error strings lowercase and without trailing punctuation.
-- Errors should be either logged or returned, not both. Log at process/job boundaries where the error is handled.
-- Use `errors.Is`/`errors.As` for sentinel or typed error handling.
-- Use structured logging (`slog` or the repo's helpers) for operator diagnostics. Keep log messages stable and attach variable data as attributes.
-- Avoid `panic` for expected operational failures. Reserve it for impossible programmer errors or startup invariants that cannot be recovered.
-
-### Package Boundaries
-
-- Keep executable entrypoints thin; application behavior belongs in library packages.
-- Avoid import cycles by pushing shared concepts down into focused packages rather than creating broad utility packages.
-
-### Go Testing
-
-- Prefer table-driven tests with named subtests for behavior matrices.
-- Avoid mocks unless they clarify a package boundary. Use `t.TempDir()` for filesystem tests and keep tests independent of execution order.
-- Do not rely on real external services or credentials in tests.
+- Stdlib-only tests (no testify, no mocking framework), white-box in-package, table-driven with named subtests.
+- Isolation techniques already in use — follow them: `t.TempDir()` for filesystem state, `t.Setenv` for env, `httptest` servers for Seerr/HTTP fakes (`internal/harness/harness_test.go`), `:memory:`/temp-file SQLite (`internal/store/store_test.go`), manual fakes like `fakeRunner`/`fakeReporter` instead of mocks.
+- Never rely on real Discord, Seerr, Jellyfin, or LLM credentials in tests. Tests must be order-independent; no build tags exist.
+- Test observable behavior and public contracts; don't duplicate production logic in tests. Real fixtures are preferred — e.g. `internal/automation/tasks_test.go` parses the actual `automations/hourly-stale-import-handler.md`.
+- Run targeted packages while iterating (`go test ./internal/harness/`), then the full completion checks before calling a task done.
