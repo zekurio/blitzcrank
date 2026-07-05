@@ -6,6 +6,7 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"time"
 
 	"blitzcrank/internal/automation"
 	"blitzcrank/internal/config"
@@ -159,7 +160,7 @@ func (r *AutomationReporter) AutomationStarted(ctx context.Context, task automat
 	if err != nil {
 		return automation.ReportHandle{}, err
 	}
-	embed := automationStartedEmbed(task, r.cfg.BotPublicName)
+	embed := automationStartedEmbed(task)
 	messageID, err := r.latestAutomationStatusMessageID(thread.ID)
 	if err == nil && messageID != "" {
 		_, err = r.session.ChannelMessageEditEmbed(thread.ID, messageID, embed)
@@ -194,7 +195,7 @@ func (r *AutomationReporter) AutomationCompleted(ctx context.Context, handle aut
 	if err := r.unlockAutomationThreadForPost(threadID); err != nil {
 		return err
 	}
-	embed := automationCompletedEmbed(response, runErr, failures, r.cfg.BotPublicName)
+	embed := automationCompletedEmbed(task, response, runErr, failures)
 	messageID := strings.TrimSpace(handle.MessageID)
 	var err error
 	if embed == nil {
@@ -293,20 +294,17 @@ func (r *AutomationReporter) latestAutomationStatusMessageID(threadID string) (s
 		if botID != "" && (message.Author == nil || message.Author.ID != botID) {
 			continue
 		}
-		if isAutomationStatusMessage(message, r.cfg.BotPublicName) {
+		if isAutomationStatusMessage(message) {
 			return message.ID, nil
 		}
 	}
 	return "", nil
 }
 
-func isAutomationStatusMessage(message *discordgo.Message, botName string) bool {
+func isAutomationStatusMessage(message *discordgo.Message) bool {
 	for _, embed := range message.Embeds {
 		if embed == nil {
 			continue
-		}
-		if embed.Footer != nil && strings.TrimSpace(embed.Footer.Text) == automationFooterBotName(botName) {
-			return true
 		}
 		title := strings.TrimSpace(embed.Title)
 		for _, icon := range []string{"❌", "⚠️", "ℹ️", "🚀", "✅"} {
@@ -322,15 +320,15 @@ func automationThreadName(task automation.Task) string {
 	return "automation: " + task.Name
 }
 
-func automationStartedEmbed(task automation.Task, botName string) *discordgo.MessageEmbed {
+func automationStartedEmbed(task automation.Task) *discordgo.MessageEmbed {
 	description := "Der Lauf wurde gestartet. Ergebnisse werden in diesem Thread gepostet."
 	if strings.TrimSpace(task.Description) != "" {
 		description += "\n\n" + strings.TrimSpace(task.Description)
 	}
-	return automationEmbed(automationRunStarted, botName, "Lauf gestartet", description)
+	return automationEmbed(automationRunStarted, task, "Lauf gestartet", description)
 }
 
-func automationCompletedEmbed(response string, runErr error, failures []automation.ToolFailure, botName string) *discordgo.MessageEmbed {
+func automationCompletedEmbed(task automation.Task, response string, runErr error, failures []automation.ToolFailure) *discordgo.MessageEmbed {
 	description := strings.TrimSpace(response)
 	failureSummary := formatToolFailures(failures)
 	if runErr != nil {
@@ -338,11 +336,11 @@ func automationCompletedEmbed(response string, runErr error, failures []automati
 		if failureSummary != "" {
 			description += "\n" + failureSummary
 		}
-		return automationEmbed(automationRunError, botName, "Fehler", description)
+		return automationEmbed(automationRunError, task, "Fehler", description)
 	}
 	if failureSummary != "" {
 		description = conciseFailureDescription(description, failureSummary)
-		return automationEmbed(automationRunError, botName, "Tool-Fehler", description)
+		return automationEmbed(automationRunError, task, "Tool-Fehler", description)
 	}
 	if description == "" {
 		return nil
@@ -357,7 +355,7 @@ func automationCompletedEmbed(response string, runErr error, failures []automati
 		status = classifyAutomationResponse(description)
 	}
 	decorated := trimLeadingSingleAutomationHeading(decorateAutomationOutput(description))
-	return automationEmbed(status, botName, automationStatusTitle(status), decorated)
+	return automationEmbed(status, task, automationStatusTitle(status), decorated)
 }
 
 // parseExplicitStatus extracts a leading "STATUS: ok|warnung|fehler" line that
@@ -422,22 +420,27 @@ func firstNonEmptyLine(value string) string {
 	return strings.TrimSpace(value)
 }
 
-func automationEmbed(status automationRunStatus, botName string, title string, description string) *discordgo.MessageEmbed {
+func automationEmbed(status automationRunStatus, task automation.Task, title string, description string) *discordgo.MessageEmbed {
 	embed := &discordgo.MessageEmbed{
 		Title:       automationStatusIcon(status) + " " + title,
 		Description: truncateDiscordDescription(description),
 		Color:       automationStatusColor(status),
-		Footer:      &discordgo.MessageEmbedFooter{Text: automationFooterBotName(botName)},
+		Timestamp:   time.Now().UTC().Format(time.RFC3339),
+	}
+	if name := strings.TrimSpace(task.Name); name != "" {
+		embed.Author = &discordgo.MessageEmbedAuthor{Name: name}
+	}
+	if footer := automationFooterText(task); footer != "" {
+		embed.Footer = &discordgo.MessageEmbedFooter{Text: footer}
 	}
 	return embed
 }
 
-func automationFooterBotName(botName string) string {
-	name := strings.TrimSpace(botName)
-	if name == "" {
-		return "blitzcrank"
+func automationFooterText(task automation.Task) string {
+	if schedule := strings.TrimSpace(task.Schedule); schedule != "" {
+		return "Zeitplan: " + schedule
 	}
-	return name
+	return ""
 }
 
 func classifyAutomationResponse(response string) automationRunStatus {

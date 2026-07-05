@@ -72,7 +72,7 @@ Minimal TOML shape:
 
 ```toml
 [bot]
-# Public display name used in logs and Discord automation embed footers.
+# Public display name used in startup and status logs.
 public_name = "blitzcrank"
 
 [discord]

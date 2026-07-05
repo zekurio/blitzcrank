@@ -35,7 +35,7 @@ func TestClassifyAutomationResponse(t *testing.T) {
 
 func TestAutomationCompletedEmbed(t *testing.T) {
 	t.Run("run error takes precedence", func(t *testing.T) {
-		embed := automationCompletedEmbed("", errors.New("boom"), nil, "botname")
+		embed := automationCompletedEmbed(automation.Task{}, "", errors.New("boom"), nil)
 		if embed == nil {
 			t.Fatal("expected non-nil embed")
 		}
@@ -49,7 +49,7 @@ func TestAutomationCompletedEmbed(t *testing.T) {
 
 	t.Run("tool failures with response", func(t *testing.T) {
 		failures := []automation.ToolFailure{{Tool: "sonarr", Error: "connection refused"}}
-		embed := automationCompletedEmbed("Alles gut gelaufen.", nil, failures, "botname")
+		embed := automationCompletedEmbed(automation.Task{}, "Alles gut gelaufen.", nil, failures)
 		if embed == nil {
 			t.Fatal("expected non-nil embed")
 		}
@@ -62,24 +62,45 @@ func TestAutomationCompletedEmbed(t *testing.T) {
 	})
 
 	t.Run("empty response no error no failures", func(t *testing.T) {
-		embed := automationCompletedEmbed("", nil, nil, "botname")
+		embed := automationCompletedEmbed(automation.Task{}, "", nil, nil)
 		if embed != nil {
 			t.Errorf("expected nil embed, got %+v", embed)
 		}
 	})
 
-	t.Run("plain success", func(t *testing.T) {
-		embed := automationCompletedEmbed("Alles in Ordnung.", nil, nil, "botname")
+	t.Run("plain success includes task metadata", func(t *testing.T) {
+		task := automation.Task{Name: "stale-import-handler", Schedule: "0 * * * *"}
+
+		embed := automationCompletedEmbed(task, "Alles in Ordnung.", nil, nil)
 		if embed == nil {
 			t.Fatal("expected non-nil embed")
 		}
-		if embed.Footer == nil || embed.Footer.Text != "botname" {
-			t.Errorf("footer = %+v, want text %q", embed.Footer, "botname")
+		if embed.Author == nil || embed.Author.Name != task.Name {
+			t.Errorf("author = %+v, want name %q", embed.Author, task.Name)
+		}
+		if embed.Footer == nil || embed.Footer.Text != "Zeitplan: "+task.Schedule {
+			t.Errorf("footer = %+v, want text %q", embed.Footer, "Zeitplan: "+task.Schedule)
+		}
+		if embed.Timestamp == "" {
+			t.Error("timestamp is empty")
+		}
+	})
+
+	t.Run("plain success omits empty task metadata", func(t *testing.T) {
+		embed := automationCompletedEmbed(automation.Task{}, "Alles in Ordnung.", nil, nil)
+		if embed == nil {
+			t.Fatal("expected non-nil embed")
+		}
+		if embed.Author != nil {
+			t.Errorf("author = %+v, want nil", embed.Author)
+		}
+		if embed.Footer != nil {
+			t.Errorf("footer = %+v, want nil", embed.Footer)
 		}
 	})
 
 	t.Run("explicit ok status overrides false-positive heuristic", func(t *testing.T) {
-		embed := automationCompletedEmbed("STATUS: ok\n\nKeine Fehler gefunden.", nil, nil, "botname")
+		embed := automationCompletedEmbed(automation.Task{}, "STATUS: ok\n\nKeine Fehler gefunden.", nil, nil)
 		if embed == nil {
 			t.Fatal("expected non-nil embed")
 		}
@@ -154,61 +175,53 @@ func TestIsAutomationStatusMessage(t *testing.T) {
 	tests := []struct {
 		name    string
 		message *discordgo.Message
-		botName string
 		want    bool
 	}{
 		{
-			name: "footer matches bot name",
+			name: "footer without status icon is ignored",
 			message: &discordgo.Message{Embeds: []*discordgo.MessageEmbed{
-				{Footer: &discordgo.MessageEmbedFooter{Text: "botname"}},
+				{Title: "Automation status", Footer: &discordgo.MessageEmbedFooter{Text: "botname"}},
 			}},
-			botName: "botname",
-			want:    true,
+			want: false,
 		},
 		{
 			name: "title icon error",
 			message: &discordgo.Message{Embeds: []*discordgo.MessageEmbed{
 				{Title: "❌ Fehler"},
 			}},
-			botName: "botname",
-			want:    true,
+			want: true,
 		},
 		{
 			name: "title icon warning",
 			message: &discordgo.Message{Embeds: []*discordgo.MessageEmbed{
 				{Title: "⚠️ Manuelle Prüfung nötig"},
 			}},
-			botName: "botname",
-			want:    true,
+			want: true,
 		},
 		{
 			name: "title icon empty",
 			message: &discordgo.Message{Embeds: []*discordgo.MessageEmbed{
 				{Title: "ℹ️ Keine Änderungen"},
 			}},
-			botName: "botname",
-			want:    true,
+			want: true,
 		},
 		{
 			name: "title icon started",
 			message: &discordgo.Message{Embeds: []*discordgo.MessageEmbed{
 				{Title: "🚀 Lauf gestartet"},
 			}},
-			botName: "botname",
-			want:    true,
+			want: true,
 		},
 		{
 			name: "title icon ok",
 			message: &discordgo.Message{Embeds: []*discordgo.MessageEmbed{
 				{Title: "✅ Abgeschlossen"},
 			}},
-			botName: "botname",
-			want:    true,
+			want: true,
 		},
 		{
 			name:    "plain text message with no embeds",
 			message: &discordgo.Message{Content: "just a regular message"},
-			botName: "botname",
 			want:    false,
 		},
 		{
@@ -217,13 +230,12 @@ func TestIsAutomationStatusMessage(t *testing.T) {
 				nil,
 				{Title: "Some unrelated title"},
 			}},
-			botName: "botname",
-			want:    false,
+			want: false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := isAutomationStatusMessage(tt.message, tt.botName); got != tt.want {
+			if got := isAutomationStatusMessage(tt.message); got != tt.want {
 				t.Errorf("isAutomationStatusMessage() = %v, want %v", got, tt.want)
 			}
 		})
