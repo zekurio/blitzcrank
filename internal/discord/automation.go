@@ -427,9 +427,6 @@ func automationEmbed(status automationRunStatus, task automation.Task, title str
 		Color:       automationStatusColor(status),
 		Timestamp:   time.Now().UTC().Format(time.RFC3339),
 	}
-	if name := strings.TrimSpace(task.Name); name != "" {
-		embed.Author = &discordgo.MessageEmbedAuthor{Name: name}
-	}
 	if footer := automationFooterText(task); footer != "" {
 		embed.Footer = &discordgo.MessageEmbedFooter{Text: footer}
 	}

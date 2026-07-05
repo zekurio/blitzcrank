@@ -68,15 +68,12 @@ func TestAutomationCompletedEmbed(t *testing.T) {
 		}
 	})
 
-	t.Run("plain success includes task metadata", func(t *testing.T) {
+	t.Run("plain success includes schedule footer", func(t *testing.T) {
 		task := automation.Task{Name: "stale-import-handler", Schedule: "0 * * * *"}
 
 		embed := automationCompletedEmbed(task, "Alles in Ordnung.", nil, nil)
 		if embed == nil {
 			t.Fatal("expected non-nil embed")
-		}
-		if embed.Author == nil || embed.Author.Name != task.Name {
-			t.Errorf("author = %+v, want name %q", embed.Author, task.Name)
 		}
 		if embed.Footer == nil || embed.Footer.Text != "Zeitplan: "+task.Schedule {
 			t.Errorf("footer = %+v, want text %q", embed.Footer, "Zeitplan: "+task.Schedule)
@@ -86,13 +83,10 @@ func TestAutomationCompletedEmbed(t *testing.T) {
 		}
 	})
 
-	t.Run("plain success omits empty task metadata", func(t *testing.T) {
+	t.Run("plain success omits footer for unscheduled task", func(t *testing.T) {
 		embed := automationCompletedEmbed(automation.Task{}, "Alles in Ordnung.", nil, nil)
 		if embed == nil {
 			t.Fatal("expected non-nil embed")
-		}
-		if embed.Author != nil {
-			t.Errorf("author = %+v, want nil", embed.Author)
 		}
 		if embed.Footer != nil {
 			t.Errorf("footer = %+v, want nil", embed.Footer)
