@@ -1147,8 +1147,12 @@ func ownerMessageFromDiscord(message *discordgo.Message) ownerMessage {
 func privateThreadName(topic, category, language string) string {
 	topic = strings.Join(strings.Fields(topic), " ")
 	topic = strings.Trim(topic, " .·-_")
+	const prefix = "blitzcrank:"
+	if len(topic) >= len(prefix) && strings.EqualFold(topic[:len(prefix)], prefix) {
+		topic = strings.TrimSpace(topic[len(prefix):])
+	}
 	if topic != "" && !strings.Contains(topic, "@") && len([]rune(topic)) <= 60 {
-		return topic
+		return "blitzcrank: " + topic
 	}
 	english := strings.HasPrefix(strings.ToLower(strings.TrimSpace(language)), "en")
 	labels := map[string][2]string{
@@ -1164,9 +1168,9 @@ func privateThreadName(topic, category, language string) string {
 		label = [2]string{"Medien-Support", "Media support"}
 	}
 	if english {
-		return "Blitzcrank · " + label[1]
+		return "blitzcrank: " + label[1]
 	}
-	return "Blitzcrank · " + label[0]
+	return "blitzcrank: " + label[0]
 }
 
 func messageReference(message *discordgo.Message) *discordgo.MessageReference {

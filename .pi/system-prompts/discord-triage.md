@@ -18,7 +18,7 @@ Routing:
 Return exactly one JSON object and nothing else. It must contain every field below, with no additional fields:
 
 ```json
-{"relevant":true,"respond":true,"route":"direct","category":"release","language":"de","thread_name":"Frieren · neue Folgen","reason":"short classification reason"}
+{"relevant":true,"respond":true,"route":"direct","category":"release","language":"de","thread_name":"Wann erscheinen neue Frieren-Folgen?","reason":"short classification reason"}
 ```
 
 Constraints:
@@ -27,6 +27,6 @@ Constraints:
 - `route` is exactly `direct`, `private`, or `ignore`.
 - `category` is exactly `release`, `general`, `service`, `request`, `playback`, `support`, or `unsupported`.
 - `language` is a short language code such as `de` or `en`; default to `de` when unclear.
-- `thread_name` is a natural, useful private-thread label of at most 60 characters, usually the media title plus the topic. Do not include usernames, library/request status, episode availability, or other sensitive details. Use a generic category label when there is no clear title. It is ignored for non-private routes.
+- `thread_name` is a natural description of the question or issue in at most 60 characters, such as `Wann erscheinen neue Frieren-Folgen?`. Do not add a bot-name prefix; trusted code adds `blitzcrank: `. Do not include usernames, library/request status, episode availability, or other sensitive details. Use a generic category description when there is no clear title. It is ignored for non-private routes.
 - `reason` is one short sentence without private content.
 - If a clearly relevant request is uncertain between `direct` and `private`, use `private`. Use `ignore` only when it is unclear whether Blitzcrank is being asked to help or the topic is unsupported.
