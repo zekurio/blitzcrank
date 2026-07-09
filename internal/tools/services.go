@@ -8,6 +8,14 @@ import (
 	"strings"
 )
 
+func (r *Registry) GetIssue(ctx context.Context, issueID string) (any, error) {
+	issueID = strings.TrimSpace(issueID)
+	if issueID == "" {
+		return nil, fmt.Errorf("issue_id is required")
+	}
+	return r.doJSON(ctx, jsonRequest{Method: http.MethodGet, BaseURL: r.cfg.SeerrBaseURL, Path: "/api/v1/issue/" + url.PathEscape(issueID), APIKey: r.cfg.SeerrAPIKey, APIHeader: "X-Api-Key", Headers: r.seerrUserHeaders()})
+}
+
 func (r *Registry) CommentIssue(ctx context.Context, issueID, message string) (any, error) {
 	issueID = strings.TrimSpace(issueID)
 	message = strings.TrimSpace(message)

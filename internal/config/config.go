@@ -7,10 +7,17 @@ import (
 )
 
 type Config struct {
-	DiscordToken                string `env:"DISCORD_TOKEN" toml:"discord.token"`
-	DiscordGuildID              string `env:"DISCORD_GUILD_ID" toml:"discord.guild_id"`
-	DiscordAutomationChannelID  string `env:"DISCORD_AUTOMATION_CHANNEL_ID" toml:"discord.automation_channel_id"`
-	DiscordAutomationThreadLock bool   `env:"DISCORD_AUTOMATION_THREAD_LOCK" toml:"discord.automation_thread_lock" default:"true"`
+	DiscordToken                string        `env:"DISCORD_TOKEN" toml:"discord.token"`
+	DiscordGuildID              string        `env:"DISCORD_GUILD_ID" toml:"discord.guild_id"`
+	DiscordAutomationChannelID  string        `env:"DISCORD_AUTOMATION_CHANNEL_ID" toml:"discord.automation_channel_id"`
+	DiscordAutomationThreadLock bool          `env:"DISCORD_AUTOMATION_THREAD_LOCK" toml:"discord.automation_thread_lock" default:"true"`
+	DiscordWatchedChannelIDs    []string      `env:"DISCORD_WATCHED_CHANNEL_IDS" toml:"discord.watched_channel_ids"`
+	DiscordTriageTimeout        time.Duration `env:"DISCORD_TRIAGE_TIMEOUT" toml:"discord.triage_timeout" default:"8s"`
+	DiscordRunTimeout           time.Duration `env:"DISCORD_RUN_TIMEOUT" toml:"discord.run_timeout"`
+	DiscordDebounce             time.Duration `env:"DISCORD_DEBOUNCE" toml:"discord.debounce" default:"750ms"`
+	DiscordThreadInactivity     time.Duration `env:"DISCORD_THREAD_INACTIVITY" toml:"discord.thread_inactivity" default:"24h"`
+	DiscordRetention            time.Duration `env:"DISCORD_RETENTION" toml:"discord.retention" default:"720h"`
+	DiscordMutationBudget       int           `env:"DISCORD_MUTATION_BUDGET" toml:"discord.mutation_budget" default:"3"`
 
 	HTTPListenAddr         string `env:"BLITZCRANK_HTTP_LISTEN_ADDR" toml:"web.listen_addr"`
 	SeerrWebhookListenAddr string `env:"SEERR_WEBHOOK_LISTEN_ADDR" toml:"seerr.webhook_listen_addr"`
@@ -50,6 +57,12 @@ type Config struct {
 
 	SeerrRevisitsEnabled bool `env:"SEERR_REVISITS_ENABLED" toml:"seerr.revisits_enabled"`
 	SeerrRevisitMax      int  `env:"SEERR_REVISIT_MAX" toml:"seerr.revisit_max" default:"5"`
+	SeerrMutationBudget  int  `env:"SEERR_MUTATION_BUDGET" toml:"seerr.mutation_budget" default:"5"`
+
+	ReviewTimeout            time.Duration `env:"REVIEW_TIMEOUT" toml:"runtime.review_timeout" default:"15s"`
+	ReviewCapacity           int           `env:"REVIEW_CAPACITY" toml:"runtime.review_capacity" default:"1"`
+	ConfirmationTTL          time.Duration `env:"CONFIRMATION_TTL" toml:"review.confirmation_ttl" default:"15m"`
+	AutomationMutationBudget int           `env:"AUTOMATION_MUTATION_BUDGET" toml:"runtime.automation_mutation_budget" default:"5"`
 
 	BotPublicName string `env:"BOT_PUBLIC_NAME" toml:"bot.public_name" default:"blitzcrank"`
 	Timezone      string `env:"TIMEZONE" toml:"runtime.timezone" default:"UTC"`
@@ -81,6 +94,7 @@ func load(dotenvPath string, validate bool) (Config, error) {
 		return cfg, fmt.Errorf("apply environment config overrides: %w", err)
 	}
 	cfg.PiModels = normalizePiModels(cfg.PiModels)
+	cfg.DiscordWatchedChannelIDs = normalizeStrings(cfg.DiscordWatchedChannelIDs)
 
 	if !validate {
 		return cfg, nil
@@ -89,4 +103,27 @@ func load(dotenvPath string, validate bool) (Config, error) {
 		return cfg, fmt.Errorf("validate config: %w", err)
 	}
 	return cfg, nil
+}
+
+func normalizeStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

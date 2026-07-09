@@ -6,12 +6,28 @@
 public_name = "blitzcrank"
 
 [discord]
-# Optional lean Discord integration for automation reporting and /automatisierung.
+# Optional Discord automation reporting and conversational support agent.
 # Prefer DISCORD_TOKEN via environment/secret manager.
 token = ""
 guild_id = ""
 automation_channel_id = ""
 automation_thread_lock = true
+# The conversational agent watches only these public guild channels. DMs and
+# messages elsewhere are ignored. Discord snowflakes should remain strings.
+# A non-empty list requires DISCORD_TOKEN and pi.models.discord_triage.
+watched_channel_ids = []
+# Fast, no-tools, no-session passive-message triage deadline.
+triage_timeout = "8s"
+# Optional working-agent override. When omitted, runtime.run_timeout is used.
+# run_timeout = "5m"
+# Briefly combine rapid consecutive owner messages in a private thread.
+debounce = "750ms"
+# Archive bot-owned private threads after this much inactivity, and retain
+# completed Discord routing/dedup metadata for this long.
+thread_inactivity = "24h"
+retention = "720h"
+# Maximum approved operational mutations in one Discord working-agent run.
+mutation_budget = 3
 
 [web]
 # Bind address for Seerr webhooks.
@@ -33,6 +49,8 @@ bot_display_name = "Blitzcrank"
 revisits_enabled = false
 # Safety cap: max consecutive revisits without new user activity.
 revisit_max = 5
+# Maximum approved operational mutations in one Seerr issue run.
+mutation_budget = 5
 
 [pi]
 # Pi is the only agent runtime. Blitzcrank invokes `pi --mode rpc`.
@@ -40,13 +58,21 @@ command = "pi"
 cwd = "."
 # Optional Pi config/auth directory. Seed this with auth.json/settings.json for service deployments.
 agent_dir = ""
-# Persistent Pi sessions for non-automation issue runs and history search.
+# Persistent Pi sessions, partitioned into Seerr and private-Discord namespaces.
 sessions_dir = "pi-sessions"
 # Optional per-task Pi model selection. Include Pi thinking inline, e.g. ":high".
 [pi.models]
 default = ""
 seerr = ""
 automation = ""
+# Required when watched_channel_ids is non-empty; use a separately configured
+# lightweight model for strict no-tools/no-session triage.
+discord_triage = ""
+discord = ""
+# Independent no-tools/no-session mutation reviewer used in the enforcement
+# path. Required when Discord, Seerr, or automations are enabled with a non-zero
+# mutation budget. This must be an explicit entry and never inherits default.
+review = ""
 
 [jellyfin]
 base_url = "https://jellyfin.example"
@@ -75,8 +101,19 @@ automations_extra_dirs = []
 # Timezone automation cron schedules are evaluated in.
 timezone = "UTC"
 run_timeout = "5m"
-# Cap on simultaneous webhook-triggered Pi runs.
+# Process-wide working-agent concurrency cap. Reviewer capacity is reserved
+# separately so mutation review cannot deadlock behind working runs.
 max_concurrent_runs = 4
+# Deadline and reserved capacity for independent mutation reviews.
+review_timeout = "15s"
+review_capacity = 1
+# Global automation ceiling; a task manifest may declare a lower per-run budget.
+automation_mutation_budget = 5
+
+[review]
+# Confirmations are actor/conversation/action bound and never preserve a stale
+# HTTP request; confirmation triggers fresh reads and a fresh proposal/review.
+confirmation_ttl = "15m"
 
 [storage]
 database_path = "./blitzcrank.sqlite"

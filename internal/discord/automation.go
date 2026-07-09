@@ -6,6 +6,7 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"blitzcrank/internal/automation"
@@ -23,14 +24,26 @@ type Bot struct {
 	cfg       config.Config
 	session   *discordgo.Session
 	scheduler Scheduler
+	ctx       context.Context
+	cancel    context.CancelFunc
+	agent     *conversationAgent
+	tasks     taskGroup
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func New(cfg config.Config, scheduler Scheduler) (*Bot, error) {
+	return newBot(cfg, scheduler, false)
+}
+
+func newBot(cfg config.Config, scheduler Scheduler, conversations bool) (*Bot, error) {
 	if strings.TrimSpace(cfg.DiscordToken) == "" {
-		log.Printf("discord automation bot disabled: DISCORD_TOKEN is not set")
+		log.Printf("discord bot disabled: DISCORD_TOKEN is not set")
 		return nil, nil
 	}
-	if strings.TrimSpace(cfg.DiscordAutomationChannelID) == "" {
+	automationEnabled := strings.TrimSpace(cfg.DiscordAutomationChannelID) != ""
+	conversationEnabled := conversations && len(cfg.DiscordWatchedChannelIDs) > 0
+	if !automationEnabled && !conversationEnabled {
 		log.Printf("discord automation bot disabled: DISCORD_AUTOMATION_CHANNEL_ID is not set")
 		return nil, nil
 	}
@@ -39,8 +52,10 @@ func New(cfg config.Config, scheduler Scheduler) (*Bot, error) {
 		return nil, err
 	}
 	s.Identify.Intents = discordgo.IntentsGuilds
-	bot := &Bot{cfg: cfg, session: s, scheduler: scheduler}
-	s.AddHandler(bot.onInteractionCreate)
+	bot := &Bot{cfg: cfg, session: s, scheduler: scheduler, ctx: context.Background()}
+	if automationEnabled {
+		s.AddHandler(bot.onInteractionCreate)
+	}
 	return bot, nil
 }
 
@@ -51,11 +66,23 @@ func (b *Bot) Start() error {
 	if err := b.session.Open(); err != nil {
 		return err
 	}
-	if err := b.registerCommands(); err != nil {
-		_ = b.session.Close()
-		return err
+	if strings.TrimSpace(b.cfg.DiscordAutomationChannelID) != "" {
+		if err := b.registerCommands(); err != nil {
+			_ = b.session.Close()
+			return err
+		}
 	}
-	log.Printf("discord automation bot started: channel=%s", b.cfg.DiscordAutomationChannelID)
+	if b.agent != nil {
+		if err := b.agent.recover(b.ctx); err != nil {
+			_ = b.session.Close()
+			return fmt.Errorf("recover discord conversations: %w", err)
+		}
+		// Do not accept gateway messages until persisted private-thread ownership
+		// has been restored. Otherwise an early owner message can look like traffic
+		// from an unknown, unwatched channel and be dropped.
+		b.agent.start(b.ctx, defaultDiscordIngressWorkers, defaultDiscordIngressCapacity)
+	}
+	log.Printf("discord bot started: automation_channel=%s watched_channels=%d", b.cfg.DiscordAutomationChannelID, len(b.cfg.DiscordWatchedChannelIDs))
 	return nil
 }
 
@@ -63,7 +90,21 @@ func (b *Bot) Close() error {
 	if b == nil || b.session == nil {
 		return nil
 	}
-	return b.session.Close()
+	b.closeOnce.Do(func() {
+		b.tasks.stop()
+		if b.agent != nil {
+			b.agent.stop()
+		}
+		if b.cancel != nil {
+			b.cancel()
+		}
+		b.closeErr = b.session.Close()
+		b.tasks.wait()
+		if b.agent != nil {
+			b.agent.wait()
+		}
+	})
+	return b.closeErr
 }
 
 func (b *Bot) registerCommands() error {
@@ -117,13 +158,13 @@ func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.Interaction
 		return
 	}
 	_ = s.InteractionRespond(i.Interaction, ephemeral(fmt.Sprintf("Automatisierung `%s` wurde gestartet.", name)))
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), b.cfg.RunTimeout)
+	b.tasks.goRun(func() {
+		ctx, cancel := context.WithTimeout(b.ctx, b.cfg.RunTimeout)
 		defer cancel()
 		if err := b.scheduler.RunAutomation(ctx, name); err != nil {
 			log.Printf("discord-triggered automation failed: name=%s error=%v", name, err)
 		}
-	}()
+	})
 }
 
 func ephemeral(content string) *discordgo.InteractionResponse {

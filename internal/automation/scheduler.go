@@ -160,12 +160,20 @@ func (s *Scheduler) RunAutomation(ctx context.Context, name string) error {
 			reportHandle = handle
 		}
 	}
+	effectiveTask := task
+	effectiveTask.MutationBudget = automationMutationBudget(task.MutationBudget, s.cfg.AutomationMutationBudget)
+	prompt := automationPrompt(effectiveTask)
 	request := harness.Request{
-		Source:   "automation_cron",
-		ThreadID: threadID,
-		Author:   "scheduler",
-		Audience: "automation",
-		Content:  automationPrompt(task),
+		Source:         "automation_cron",
+		ThreadID:       threadID,
+		Author:         "scheduler",
+		ActorID:        "scheduler",
+		Audience:       "automation",
+		Content:        prompt,
+		Authority:      prompt,
+		Capabilities:   append([]string(nil), task.Capabilities...),
+		MutationPolicy: task.MutationPolicy,
+		MutationBudget: effectiveTask.MutationBudget,
 	}
 	if store := s.currentToolFailureStore(); store != nil {
 		request.Progress = func(event harness.ProgressEvent) {
@@ -191,6 +199,13 @@ func (s *Scheduler) RunAutomation(ctx context.Context, name string) error {
 		log.Printf("automation completed: name=%s response=%s", task.Name, strings.TrimSpace(response))
 	}
 	return nil
+}
+
+func automationMutationBudget(taskBudget, configuredMaximum int) int {
+	if configuredMaximum >= 0 && configuredMaximum < taskBudget {
+		return configuredMaximum
+	}
+	return taskBudget
 }
 
 func (s *Scheduler) AutomationNames() []string {
@@ -248,7 +263,15 @@ func automationPrompt(task Task) string {
 	if task.Description != "" {
 		b.WriteString("Description: " + task.Description + "\n")
 	}
-	b.WriteString("Schedule: " + task.Schedule + "\n\n")
+	b.WriteString("Schedule: " + task.Schedule + "\n")
+	b.WriteString(fmt.Sprintf("Mutation budget: %d\n", task.MutationBudget))
+	if task.MutationPolicy != "" {
+		b.WriteString("Mutation policy: " + task.MutationPolicy + "\n")
+	}
+	if len(task.Capabilities) > 0 {
+		b.WriteString("Declared capabilities: " + strings.Join(task.Capabilities, ", ") + "\n")
+	}
+	b.WriteString("\n")
 	b.WriteString(task.Body)
 	return b.String()
 }

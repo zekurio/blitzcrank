@@ -21,6 +21,18 @@ buildGoModule {
   vendorHash = "sha256-QcEdiccOzzPhzMbXCBtMMCi8CqvUCGoqdjVP9n9gHJQ=";
   subPackages = [ "cmd/blitzcrank" ];
   nativeBuildInputs = [ makeWrapper ];
+  nativeCheckInputs = [ pi-coding-agent ];
+  postCheck = ''
+    mkdir -p "$TMPDIR/pi-agent"
+    response="$TMPDIR/pi-extension-smoke.jsonl"
+    printf '%s\n' '{"type":"get_state"}' \
+      | PI_OFFLINE=1 PI_CODING_AGENT_DIR="$TMPDIR/pi-agent" \
+        pi --mode rpc --no-session --no-context-files --no-skills \
+          --no-prompt-templates --no-extensions \
+          --extension .pi/extensions/blitzcrank-tools.ts \
+      > "$response"
+    grep -F '"command":"get_state","success":true' "$response" >/dev/null
+  '';
   postInstall = ''
     mkdir -p $out/share/blitzcrank
     cp -R automations .pi $out/share/blitzcrank/

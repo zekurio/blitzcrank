@@ -18,6 +18,7 @@ import (
 	"blitzcrank/internal/harness"
 	"blitzcrank/internal/logging"
 	"blitzcrank/internal/pi"
+	"blitzcrank/internal/review"
 	"blitzcrank/internal/store"
 	"blitzcrank/internal/tools"
 	"blitzcrank/internal/webhook"
@@ -115,10 +116,31 @@ func runBot() error {
 
 	finishStep = startup.start("create_pi_runner")
 	runner := pi.NewRunner(cfg)
+	if err := runner.PrepareSessionStorage(); err != nil {
+		finishStep(err)
+		return fmt.Errorf("prepare Pi session storage: %w", err)
+	}
+	finishStep(nil)
+
+	finishStep = startup.start("start_mutation_review_broker")
+	reviewBroker := review.NewBroker(runner, review.Options{
+		ReviewTimeout:    cfg.ReviewTimeout,
+		RunTokenTTL:      reviewRunTokenTTL(cfg),
+		ConfirmationTTL:  cfg.ConfirmationTTL,
+		ReviewerCapacity: cfg.ReviewCapacity,
+		Audit:            state,
+	})
+	if err := reviewBroker.Start(ctx); err != nil {
+		finishStep(err)
+		return fmt.Errorf("start mutation review broker: %w", err)
+	}
+	defer reviewBroker.Close()
+	runner.SetReviewBroker(reviewBroker)
 	finishStep(nil)
 
 	finishStep = startup.start("create_harness_manager")
 	manager := harness.NewManager(cfg, runner, registry, state)
+	manager.SetIssueResolutionReviewer(harness.NewBrokerIssueResolutionReviewer(reviewBroker, cfg.SeerrMutationBudget))
 	finishStep(nil)
 
 	finishStep = startup.start("start_webhook_server")
@@ -139,7 +161,11 @@ func runBot() error {
 	finishStep(nil)
 
 	finishStep = startup.start("start_discord_automation_bot")
-	discordBot, err := discord.New(cfg, scheduler)
+	discordBot, err := discord.NewWithConversation(cfg, scheduler, discord.ConversationOptions{
+		Context: ctx,
+		Runner:  runner,
+		Store:   state,
+	})
 	if err != nil {
 		finishStep(err)
 		return fmt.Errorf("create discord automation bot: %w", err)
@@ -168,6 +194,17 @@ func runBot() error {
 		log.Printf("shutdown webhook server: %v", err)
 	}
 	return nil
+}
+
+func reviewRunTokenTTL(cfg config.Config) time.Duration {
+	ttl := cfg.RunTimeout
+	if cfg.DiscordRunTimeout > ttl {
+		ttl = cfg.DiscordRunTimeout
+	}
+	if ttl <= 0 {
+		ttl = 5 * time.Minute
+	}
+	return ttl + time.Minute
 }
 
 type startupLogger struct {

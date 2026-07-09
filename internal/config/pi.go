@@ -7,10 +7,17 @@ func (cfg Config) PiModelFor(source string) string {
 	if len(models) == 0 {
 		return ""
 	}
-	for _, key := range piModelKeysForSource(source) {
+	keys := piModelKeysForSource(source)
+	for _, key := range keys {
 		if model := strings.TrimSpace(models[key]); model != "" {
 			return model
 		}
+	}
+	// Mutation review is an independent safety boundary. It must never silently
+	// inherit the working agent's default model when its dedicated entry is
+	// absent, even for callers using relaxed configuration loading.
+	if len(keys) == 1 && keys[0] == "review" {
+		return ""
 	}
 	return strings.TrimSpace(models["default"])
 }
@@ -18,6 +25,12 @@ func (cfg Config) PiModelFor(source string) string {
 func piModelKeysForSource(source string) []string {
 	source = strings.ToLower(strings.TrimSpace(source))
 	switch {
+	case source == "discord_triage", source == "discord-triage", strings.HasPrefix(source, "discord_triage_"):
+		return []string{"discord_triage"}
+	case strings.HasPrefix(source, "discord"):
+		return []string{"discord"}
+	case source == "review", strings.HasPrefix(source, "review_"), strings.HasPrefix(source, "mutation_review"):
+		return []string{"review"}
 	case strings.HasPrefix(source, "automation"):
 		return []string{"automation"}
 	case strings.HasPrefix(source, "seerr"):

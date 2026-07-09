@@ -367,6 +367,7 @@ func TestRevisitSweepAppliesAgentScheduledDecisions(t *testing.T) {
 			cfg := revisitTestConfig(server.URL)
 			runner := &fakeRunner{reply: tt.reply}
 			manager := NewManager(cfg, runner, tools.NewRegistry(cfg), state)
+			manager.SetIssueResolutionReviewer(&fakeIssueResolutionReviewer{decision: IssueResolutionDecision{Verdict: "approve"}})
 			beforeSweep := time.Now().UTC()
 
 			manager.RevisitSweep(ctx)
@@ -582,6 +583,9 @@ func newRevisitSeerrServer(t *testing.T) (*httptest.Server, *revisitSeerrRecorde
 			recorder.mu.Unlock()
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"ok":true}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/issue/42":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":2}`))
 		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/issueComment/comment-1":
 			recorder.mu.Lock()
 			recorder.deleted++

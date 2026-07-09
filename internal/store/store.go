@@ -152,6 +152,98 @@ CREATE TABLE IF NOT EXISTS issue_runs (
   FOREIGN KEY (issue_id) REFERENCES issue_threads(issue_id)
 );
 
+CREATE TABLE IF NOT EXISTS discord_conversations (
+  thread_id TEXT PRIMARY KEY,
+  parent_channel_id TEXT NOT NULL,
+  owner_id TEXT NOT NULL,
+  trigger_message_id TEXT NOT NULL,
+  route TEXT NOT NULL,
+  category TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_discord_conversations_status_updated
+ON discord_conversations(status, updated_at);
+
+CREATE TABLE IF NOT EXISTS discord_messages (
+  message_id TEXT PRIMARY KEY,
+  channel_id TEXT NOT NULL,
+  author_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  received_at TEXT NOT NULL,
+  completed_at TEXT,
+  error TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_discord_messages_status_received
+ON discord_messages(status, received_at);
+
+CREATE TABLE IF NOT EXISTS discord_runs (
+  run_id TEXT PRIMARY KEY,
+  message_id TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  source TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  route TEXT NOT NULL,
+  category TEXT NOT NULL,
+  status TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  error TEXT,
+  FOREIGN KEY (message_id) REFERENCES discord_messages(message_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_discord_runs_recovery
+ON discord_runs(completed_at, started_at);
+
+CREATE TABLE IF NOT EXISTS mutation_reviews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  proposal_hash TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  source TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  service TEXT NOT NULL,
+  method TEXT NOT NULL,
+  capability TEXT NOT NULL,
+  risk TEXT NOT NULL,
+  verdict TEXT NOT NULL,
+  outcome_code TEXT NOT NULL,
+  mutation_index INTEGER NOT NULL,
+  confirmed INTEGER NOT NULL,
+  reviewed_at TEXT NOT NULL,
+  duration_ms INTEGER NOT NULL,
+  error TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_mutation_reviews_run
+ON mutation_reviews(run_id, mutation_index);
+
+CREATE INDEX IF NOT EXISTS idx_mutation_reviews_reviewed
+ON mutation_reviews(reviewed_at);
+
+CREATE TABLE IF NOT EXISTS mutation_executions (
+  proposal_hash TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  executed_at TEXT NOT NULL,
+  PRIMARY KEY(proposal_hash, run_id)
+);
+
+CREATE TABLE IF NOT EXISTS mutation_validations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  proposal_hash TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  service TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  observed_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_mutation_validations_proposal
+ON mutation_validations(proposal_hash, run_id, observed_at);
+
 	`)
 	if err != nil {
 		return fmt.Errorf("run base schema migration: %w", err)

@@ -3,12 +3,19 @@ package harness
 import "time"
 
 type Request struct {
-	Source   string
-	ThreadID string
-	Author   string
-	Audience string
-	Content  string
-	Progress func(ProgressEvent)
+	Source         string
+	ThreadID       string
+	RunID          string
+	Author         string
+	ActorID        string
+	Audience       string
+	Content        string
+	Authority      string
+	Capabilities   []string
+	MutationPolicy string
+	MutationBudget int
+	Confirmation   bool
+	Progress       func(ProgressEvent)
 }
 
 type ProgressEvent struct {
