@@ -4,6 +4,7 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    llm-agents.url = "github:numtide/llm-agents.nix";
 
   };
 
@@ -12,6 +13,7 @@
       self,
       nixpkgs,
       flake-utils,
+      llm-agents,
       ...
     }:
     let
@@ -28,8 +30,10 @@
       in
       {
         packages = {
-          default = pkgs.callPackage ./nix/package.nix { };
-          pi-coding-agent = pkgs.pi-coding-agent;
+          default = pkgs.callPackage ./nix/package.nix {
+            pi = llm-agents.packages.${system}.pi;
+          };
+          pi-coding-agent = llm-agents.packages.${system}.pi;
         };
 
         apps.default = {

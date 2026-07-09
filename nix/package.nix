@@ -2,7 +2,7 @@
   buildGoModule,
   lib,
   makeWrapper,
-  pi-coding-agent,
+  pi,
 }:
 
 buildGoModule {
@@ -21,7 +21,7 @@ buildGoModule {
   vendorHash = "sha256-QcEdiccOzzPhzMbXCBtMMCi8CqvUCGoqdjVP9n9gHJQ=";
   subPackages = [ "cmd/blitzcrank" ];
   nativeBuildInputs = [ makeWrapper ];
-  nativeCheckInputs = [ pi-coding-agent ];
+  nativeCheckInputs = [ pi ];
   postCheck = ''
     mkdir -p "$TMPDIR/pi-agent"
     response="$TMPDIR/pi-extension-smoke.jsonl"
@@ -46,7 +46,7 @@ buildGoModule {
     wrapProgram $out/bin/blitzcrank \
       --prefix PATH : ${
         lib.makeBinPath [
-          pi-coding-agent
+          pi
         ]
       } \
       --set-default BLITZCRANK_CONFIG $out/share/blitzcrank/config.toml
