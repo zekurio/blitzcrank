@@ -367,6 +367,7 @@ func TestRevisitSweepAppliesAgentScheduledDecisions(t *testing.T) {
 			cfg := revisitTestConfig(server.URL)
 			runner := &fakeRunner{reply: tt.reply}
 			manager := NewManager(cfg, runner, tools.NewRegistry(cfg), state)
+			manager.SetIssueResolutionReviewer(&fakeIssueResolutionReviewer{decision: IssueResolutionDecision{Verdict: "approve"}})
 			beforeSweep := time.Now().UTC()
 
 			manager.RevisitSweep(ctx)
@@ -452,6 +453,52 @@ func TestRevisitSweepAppliesAgentScheduledDecisions(t *testing.T) {
 				t.Fatalf("run Posted = %v, want %v", run.Posted, tt.wantPosted)
 			}
 		})
+	}
+}
+
+func TestRevisitSweepPreservesReporterIdentityAcrossConsecutiveRevisits(t *testing.T) {
+	ctx := context.Background()
+	server, _ := newRevisitSeerrServer(t)
+	defer server.Close()
+	state := openRevisitStore(t, ctx)
+	defer state.Close()
+
+	due := time.Now().UTC().Add(-time.Minute)
+	payload := issuePayload("reported", "alice", "please fix this")
+	payload["issue"].(map[string]any)["reportedBy_id"] = "reporter-7"
+	payloadData, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedStoredRevisitThread(t, ctx, state, "42", "active", due, &due, "still pending", []ThreadEvent{{
+		Type: "reported", Key: "reported-1", Actor: "alice", Message: "please fix this", Payload: payloadData, At: due,
+	}})
+	stored := loadStoredRevisitThread(t, ctx, state, "42")
+	stored.LastPayloadJSON = string(payloadData)
+	if err := state.UpsertIssueThread(ctx, stored); err != nil {
+		t.Fatalf("store reporter payload: %v", err)
+	}
+
+	runner := &fakeRunner{reply: "RESOLVE_ISSUE: no\nREVISIT_IN: 30m\nREVISIT_REASON: still pending"}
+	manager := NewManager(revisitTestConfig(server.URL), runner, tools.NewRegistry(revisitTestConfig(server.URL)), state)
+	thread := manager.lookupThread(ctx, "42")
+	if thread == nil {
+		t.Fatal("load revisit thread")
+	}
+	// Event content is deliberately not persisted; it is available while this
+	// process handles its consecutive revisits.
+	thread.Events[0].Message = "please fix this"
+	manager.RevisitSweep(ctx)
+
+	manager.threads["42"].NextRevisitAt = &due
+	manager.RevisitSweep(ctx)
+
+	if len(runner.requests) != 2 {
+		t.Fatalf("runner requests = %d, want 2", len(runner.requests))
+	}
+	second := runner.requests[1]
+	if second.ActorID != "reporter-7" || second.MutationPolicy != "issue_report_and_reporter_comments" {
+		t.Fatalf("second revisit authority = actor=%q policy=%q", second.ActorID, second.MutationPolicy)
 	}
 }
 
@@ -582,6 +629,9 @@ func newRevisitSeerrServer(t *testing.T) (*httptest.Server, *revisitSeerrRecorde
 			recorder.mu.Unlock()
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"ok":true}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/issue/42":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":2}`))
 		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/issueComment/comment-1":
 			recorder.mu.Lock()
 			recorder.deleted++

@@ -41,7 +41,7 @@ let
 in
 {
   options.services.blitzcrank = {
-    enable = lib.mkEnableOption "Blitzcrank Seerr automation agent";
+    enable = lib.mkEnableOption "Blitzcrank media support and automation agent";
     package = lib.mkOption {
       type = lib.types.package;
       default = self.packages.${pkgs.system}.default;
@@ -107,7 +107,14 @@ in
     piModels = lib.mkOption {
       type = lib.types.attrsOf lib.types.str;
       default = { };
-      description = "Per-task Pi model map. Keys include default, seerr, and automation. Include thinking inline, for example anthropic/claude-sonnet-4-5:high.";
+      description = ''
+        Per-task Pi model map. Supported keys are default, seerr, automation,
+        discord, discord_triage, and review. discord_triage is required for
+        watched Discord channels. review must be set explicitly whenever an
+        enabled workflow has a non-zero mutation budget; it never inherits
+        default. Include thinking inline, for example
+        anthropic/claude-sonnet-4-5:high.
+      '';
     };
     discordAutomationChannelId = lib.mkOption {
       type = lib.types.str;
@@ -129,7 +136,7 @@ in
       "d ${cfg.dataDir}/cache 0750 ${cfg.user} ${cfg.group} - -"
     ];
     systemd.services.blitzcrank = {
-      description = "Blitzcrank Seerr automation agent";
+      description = "Blitzcrank media support and automation agent";
       wantedBy = [ "multi-user.target" ];
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];

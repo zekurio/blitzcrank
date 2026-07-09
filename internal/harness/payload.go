@@ -1,6 +1,10 @@
 package harness
 
-import "strings"
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+)
 
 func classify(payload map[string]any) string {
 	if _, ok := payload["issue"].(map[string]any); !ok {
@@ -43,6 +47,90 @@ func actor(payload map[string]any) string {
 		}
 	}
 	return "Seerr"
+}
+
+func actorID(payload map[string]any) string {
+	if _, isComment := payload["comment"].(map[string]any); isComment {
+		return identityFromSection(section(payload, "comment"), []string{"commentedBy_id", "commentedBy_userId", "user_id"})
+	}
+	for _, candidate := range []struct {
+		section string
+		keys    []string
+	}{
+		{"comment", []string{"commentedBy_id", "commentedBy_userId", "user_id"}},
+		{"issue", []string{"reportedBy_id", "reportedBy_userId", "user_id"}},
+		{"request", []string{"requestedBy_id", "requestedBy_userId", "user_id"}},
+	} {
+		if value := identityFromSection(section(payload, candidate.section), candidate.keys); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func identityFromSection(values map[string]any, keys []string) string {
+	for _, key := range keys {
+		if value := scalarString(values[key]); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func reporterName(payload map[string]any) string {
+	return stringValue(section(payload, "issue"), "reportedBy_username")
+}
+
+func reporterID(payload map[string]any) string {
+	issue := section(payload, "issue")
+	for _, key := range []string{"reportedBy_id", "reportedBy_userId", "user_id"} {
+		if value := scalarString(issue[key]); value != "" {
+			return value
+		}
+	}
+	return reporterName(payload)
+}
+
+func reporterAuthored(payload map[string]any) bool {
+	reporter := reporterName(payload)
+	if reporter == "" {
+		return false
+	}
+	reporterStableID := reporterID(payload)
+	currentStableID := actorID(payload)
+	if _, isComment := payload["comment"].(map[string]any); isComment {
+		// A comment must carry the commenter's stable identity. Seerr's issue
+		// section describes the reporter, not the author of this comment.
+		return reporterStableID == currentStableID
+	}
+	if reporterStableID != "" && currentStableID != "" {
+		return reporterStableID == currentStableID
+	}
+	return strings.EqualFold(reporter, actor(payload))
+}
+
+func currentAuthority(payload map[string]any) string {
+	if message := stringValue(section(payload, "comment"), "comment_message"); message != "" {
+		return message
+	}
+	return stringValue(payload, "message")
+}
+
+func scalarString(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case json.Number:
+		return typed.String()
+	case float64:
+		return strings.TrimSuffix(strings.TrimSuffix(fmt.Sprintf("%.0f", typed), ".0"), ".")
+	case int:
+		return fmt.Sprintf("%d", typed)
+	case int64:
+		return fmt.Sprintf("%d", typed)
+	default:
+		return ""
+	}
 }
 
 func section(payload map[string]any, name string) map[string]any {

@@ -2,6 +2,13 @@
 name: hourly-stale-import-handler
 description: Hourly Sonarr/Radarr handler for stale completed downloads that are safe to manually import, force import, or clean up after clear import rejection.
 schedule: "@hourly"
+capabilities:
+  - sonarr.manual_import
+  - radarr.manual_import
+  - sonarr.queue_rejection_cleanup
+  - radarr.queue_rejection_cleanup
+mutation_policy: narrow
+mutation_budget: 5
 ---
 
 Run the hourly stale import handler with `sonarr_request`, `radarr_request`, `sabnzbd_request`, `anvil_status`, and `thread_history_search`.

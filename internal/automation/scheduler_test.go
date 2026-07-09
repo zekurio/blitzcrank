@@ -22,13 +22,14 @@ func writeTask(t *testing.T, dir, name string) {
 }
 
 type fakeRunner struct {
-	mu      sync.Mutex
-	calls   int
-	reply   string
-	err     error
-	delay   time.Duration
-	started chan struct{}
-	release chan struct{}
+	mu       sync.Mutex
+	calls    int
+	requests []harness.Request
+	reply    string
+	err      error
+	delay    time.Duration
+	started  chan struct{}
+	release  chan struct{}
 	// blockOnCtx, when true, ignores delay/release and blocks until ctx is
 	// done, then returns ctx.Err().
 	blockOnCtx bool
@@ -40,6 +41,7 @@ type fakeRunner struct {
 func (f *fakeRunner) Respond(ctx context.Context, req harness.Request) (string, error) {
 	f.mu.Lock()
 	f.calls++
+	f.requests = append(f.requests, req)
 	f.mu.Unlock()
 	if f.started != nil {
 		close(f.started)
@@ -70,6 +72,52 @@ func (f *fakeRunner) Respond(ctx context.Context, req harness.Request) (string, 
 		}
 	}
 	return f.reply, f.err
+}
+
+func TestRunAutomationPassesTrustedManifestAuthorization(t *testing.T) {
+	dir := t.TempDir()
+	contents := `---
+name: authorized-task
+schedule: "@hourly"
+capabilities:
+  - sonarr.manual_import
+mutation_policy: narrow
+mutation_budget: 4
+---
+
+Inspect live state and import only an exact safe candidate.`
+	if err := os.WriteFile(filepath.Join(dir, "authorized-task.md"), []byte(contents), 0o600); err != nil {
+		t.Fatalf("write task: %v", err)
+	}
+	runner := &fakeRunner{reply: "ok"}
+	scheduler := NewScheduler(config.Config{
+		AutomationsDirectory:     dir,
+		AutomationsEnabled:       true,
+		AutomationMutationBudget: 5,
+		RunTimeout:               time.Second,
+	}, runner, nil)
+
+	if err := scheduler.RunAutomation(context.Background(), "authorized-task"); err != nil {
+		t.Fatalf("RunAutomation() error = %v", err)
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.requests) != 1 {
+		t.Fatalf("runner requests = %d, want 1", len(runner.requests))
+	}
+	request := runner.requests[0]
+	if request.ActorID != "scheduler" {
+		t.Errorf("ActorID = %q, want scheduler", request.ActorID)
+	}
+	if !strings.Contains(request.Authority, "Inspect live state") {
+		t.Errorf("Authority does not contain trusted task definition: %q", request.Authority)
+	}
+	if len(request.Capabilities) != 1 || request.Capabilities[0] != "sonarr.manual_import" {
+		t.Errorf("Capabilities = %#v", request.Capabilities)
+	}
+	if request.MutationPolicy != "narrow" || request.MutationBudget != 4 {
+		t.Errorf("mutation authorization = policy %q, budget %d", request.MutationPolicy, request.MutationBudget)
+	}
 }
 
 // fakeToolFailureStore is a minimal in-memory ToolFailureStore for tests.

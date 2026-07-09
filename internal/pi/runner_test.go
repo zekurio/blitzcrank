@@ -2,6 +2,8 @@ package pi
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -53,6 +55,126 @@ func TestArgsForIssueUsesSession(t *testing.T) {
 	if containsArg(args, "--no-session") {
 		t.Fatalf("did not expect --no-session for issue run, got %q", joined)
 	}
+}
+
+func TestSourceProfilesIsolateDiscordSessionsAndTools(t *testing.T) {
+	runner := NewRunner(config.Config{PiSessionsDir: "/tmp/blitzcrank-pi-sessions"})
+	tests := []struct {
+		name           string
+		req            harness.Request
+		wantSession    bool
+		wantNamespace  string
+		wantTools      []string
+		forbiddenTools []string
+	}{
+		{
+			name:           "triage has no tools or session",
+			req:            harness.Request{Source: "discord_triage", ThreadID: "channel:1"},
+			forbiddenTools: []string{"seerr_request", "web_search", "thread_history_search"},
+		},
+		{
+			name:           "direct is public web only",
+			req:            harness.Request{Source: "discord_direct", ThreadID: "channel:1"},
+			wantTools:      []string{"web_search", "web_fetch"},
+			forbiddenTools: []string{"seerr_request", "jellyfin_request", "thread_history_search"},
+		},
+		{
+			name:           "private thread has isolated durable session",
+			req:            harness.Request{Source: "discord_thread", ThreadID: "123456"},
+			wantSession:    true,
+			wantNamespace:  "discord",
+			wantTools:      []string{"seerr_request", "jellyfin_request", "sonarr_request", "radarr_request"},
+			forbiddenTools: []string{"thread_history_search"},
+		},
+		{
+			name:           "review has no tools or session",
+			req:            harness.Request{Source: "mutation_review", ThreadID: "run:1"},
+			forbiddenTools: []string{"seerr_request", "web_search", "thread_history_search"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args, err := runner.argsFor(tt.req)
+			if err != nil {
+				t.Fatalf("argsFor() error = %v", err)
+			}
+			if got := containsArg(args, "--session"); got != tt.wantSession {
+				t.Fatalf("--session present = %t, want %t: %q", got, tt.wantSession, args)
+			}
+			for _, tool := range tt.wantTools {
+				if !containsTool(args, tool) {
+					t.Errorf("expected tool %q in %q", tool, args)
+				}
+			}
+			for _, tool := range tt.forbiddenTools {
+				if containsTool(args, tool) {
+					t.Errorf("unexpected tool %q in %q", tool, args)
+				}
+			}
+			if tt.wantNamespace != "" {
+				path := runner.sessionPath(tt.req)
+				if filepath.Base(filepath.Dir(path)) != tt.wantNamespace {
+					t.Errorf("session namespace = %q, want %q (path %q)", filepath.Base(filepath.Dir(path)), tt.wantNamespace, path)
+				}
+			}
+		})
+	}
+}
+
+func TestSeerrAndDiscordSessionDirectoriesArePartitioned(t *testing.T) {
+	runner := NewRunner(config.Config{PiSessionsDir: "/tmp/sessions"})
+	seerr := runner.sessionPath(harness.Request{Source: "seerr_issue_comment", ThreadID: "issue:42"})
+	discord := runner.sessionPath(harness.Request{Source: "discord_thread", ThreadID: "42"})
+	if filepath.Dir(seerr) == filepath.Dir(discord) {
+		t.Fatalf("session directories overlap: seerr=%q discord=%q", seerr, discord)
+	}
+	if got := runner.sessionDirectoryFor(harness.Request{Source: "automation_cron"}); filepath.Base(got) != "seerr" {
+		t.Fatalf("automation history directory = %q, want seerr namespace", got)
+	}
+}
+
+func TestPrepareSessionStorageMigratesOnlyLegacyJSONLSessions(t *testing.T) {
+	base := t.TempDir()
+	legacy := filepath.Join(base, "issue-42.jsonl")
+	if err := os.WriteFile(legacy, []byte("legacy session"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	note := filepath.Join(base, "note.txt")
+	if err := os.WriteFile(note, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner := NewRunner(config.Config{PiSessionsDir: base})
+	if err := runner.PrepareSessionStorage(); err != nil {
+		t.Fatalf("PrepareSessionStorage() error = %v", err)
+	}
+	target := filepath.Join(base, "seerr", "issue-42.jsonl")
+	if data, err := os.ReadFile(target); err != nil || string(data) != "legacy session" {
+		t.Fatalf("migrated session data=%q error=%v", data, err)
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatalf("legacy session still exists, error=%v", err)
+	}
+	if _, err := os.Stat(note); err != nil {
+		t.Fatalf("non-session file was moved: %v", err)
+	}
+}
+
+func TestReviewerCapacityIsReservedFromOrdinaryRuns(t *testing.T) {
+	runner := NewRunner(config.Config{MaxConcurrentRuns: 1, ReviewCapacity: 1})
+	ordinary := harness.Request{Source: "discord_thread"}
+	reviewer := harness.Request{Source: "mutation_review"}
+	if err := runner.acquire(context.Background(), ordinary); err != nil {
+		t.Fatalf("acquire ordinary slot: %v", err)
+	}
+	defer runner.release(ordinary)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := runner.acquire(ctx, reviewer); err != nil {
+		t.Fatalf("reviewer should use reserved capacity: %v", err)
+	}
+	runner.release(reviewer)
 }
 
 func TestPromptForIssueUsesSystemPromptAndServiceSkills(t *testing.T) {
@@ -119,6 +241,42 @@ func TestPromptForAutomationUsesAutomationSystemPromptAndServiceSkills(t *testin
 	}
 	if strings.Contains(prompt, "/skill:seerr") || strings.Contains(prompt, "seerr-issue-solver") {
 		t.Fatalf("automation prompt loaded issue-only skill content:\n%s", prompt)
+	}
+}
+
+func TestDiscordPromptsUseDedicatedProfiles(t *testing.T) {
+	runner := NewRunner(config.Config{PiCWD: "../.."})
+	tests := []struct {
+		name   string
+		req    harness.Request
+		marker string
+	}{
+		{
+			name:   "triage",
+			req:    harness.Request{Source: "discord_triage", ThreadID: "channel:1", ActorID: "user:1", Content: "Wann kommt die Folge?"},
+			marker: "# Blitzcrank Discord Triage",
+		},
+		{
+			name:   "agent",
+			req:    harness.Request{Source: "discord_thread", ThreadID: "thread:1", ActorID: "user:1", Authority: "Bitte reparieren"},
+			marker: "# Blitzcrank Discord Agent",
+		},
+		{
+			name:   "review",
+			req:    harness.Request{Source: "mutation_review", Content: `{"service":"sonarr"}`},
+			marker: "# Blitzcrank Mutation Reviewer",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prompt, err := runner.prompt(tt.req)
+			if err != nil {
+				t.Fatalf("prompt() error = %v", err)
+			}
+			if !strings.Contains(prompt, tt.marker) {
+				t.Fatalf("prompt missing %q:\n%s", tt.marker, prompt)
+			}
+		})
 	}
 }
 

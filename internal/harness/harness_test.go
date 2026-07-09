@@ -154,6 +154,9 @@ func TestHandleWebhookResolveDirectivePostsCommentAndResolvesIssue(t *testing.T)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/issue/42/resolved":
 			resolved = true
 			resolvedBotUser = r.Header.Get("X-Api-User")
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/issue/42":
+			_, _ = w.Write([]byte(`{"status":2}`))
+			return
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
@@ -166,6 +169,7 @@ func TestHandleWebhookResolveDirectivePostsCommentAndResolvesIssue(t *testing.T)
 	cfg.SeerrBotUserID = "7"
 	runner := &fakeRunner{reply: "RESOLVE_ISSUE: yes\n\nDas Problem wurde behoben und erfolgreich geprüft."}
 	manager := NewManager(cfg, runner, tools.NewRegistry(cfg), nil)
+	manager.SetIssueResolutionReviewer(&fakeIssueResolutionReviewer{decision: IssueResolutionDecision{Verdict: "approve"}})
 
 	result, err := manager.HandleWebhook(context.Background(), issuePayload("Problem gemeldet", "alice", "file is fixed"))
 	if err != nil {
@@ -185,6 +189,104 @@ func TestHandleWebhookResolveDirectivePostsCommentAndResolvesIssue(t *testing.T)
 	}
 	if resolvedBotUser != "7" {
 		t.Fatalf("resolve X-Api-User = %q, want 7", resolvedBotUser)
+	}
+}
+
+func TestIssueResolutionReviewDenialKeepsIssueOpen(t *testing.T) {
+	var comments []string
+	var resolved int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/issue/42/comment":
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			comments = append(comments, body["message"])
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/issue/42/resolved":
+			resolved++
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/issue/42":
+			_, _ = w.Write([]byte(`{"status":2}`))
+			return
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	cfg := testConfig(server.URL, t.TempDir())
+	runner := &fakeRunner{reply: "RESOLVE_ISSUE: yes\n\nDie Reparatur wurde geprüft und ist abgeschlossen."}
+	reviewer := &fakeIssueResolutionReviewer{decision: IssueResolutionDecision{Verdict: "deny", Reason: "insufficient finalization evidence"}}
+	manager := NewManager(cfg, runner, tools.NewRegistry(cfg), nil)
+	manager.SetIssueResolutionReviewer(reviewer)
+
+	if _, err := manager.HandleWebhook(context.Background(), issuePayload("Problem gemeldet", "alice", "file is fixed")); err != nil {
+		t.Fatalf("HandleWebhook() error = %v", err)
+	}
+	if len(comments) != 1 || !strings.Contains(comments[0], "Reparatur") {
+		t.Fatalf("comments = %#v, want accurate final comment", comments)
+	}
+	if resolved != 0 {
+		t.Fatalf("resolved requests = %d, want 0", resolved)
+	}
+	if len(reviewer.reviews) != 1 || reviewer.reviews[0].IssueID != "42" {
+		t.Fatalf("resolution reviews = %#v", reviewer.reviews)
+	}
+}
+
+func TestIssueResolutionNeedsConfirmationAsksThenBindsOwnerReply(t *testing.T) {
+	var comments []string
+	var resolved int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/issue/42/comment":
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			comments = append(comments, body["message"])
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/issue/42/resolved":
+			resolved++
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/issue/42":
+			_, _ = w.Write([]byte(`{"status":2}`))
+			return
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	cfg := testConfig(server.URL, t.TempDir())
+	cfg.ConfirmationTTL = 15 * time.Minute
+	runner := &fakeRunner{reply: "RESOLVE_ISSUE: yes\n\nDie Reparatur wurde geprüft und ist abgeschlossen."}
+	reviewer := &fakeIssueResolutionReviewer{decision: IssueResolutionDecision{Verdict: "needs_confirmation", ConfirmationID: "confirm-1"}}
+	manager := NewManager(cfg, runner, tools.NewRegistry(cfg), nil)
+	manager.SetIssueResolutionReviewer(reviewer)
+
+	if _, err := manager.HandleWebhook(context.Background(), issuePayload("Problem gemeldet", "alice", "file is fixed")); err != nil {
+		t.Fatalf("first HandleWebhook() error = %v", err)
+	}
+	if len(comments) != 1 || !strings.Contains(comments[0], "als gelöst schließen") {
+		t.Fatalf("first comment = %#v, want concise confirmation question", comments)
+	}
+	if resolved != 0 {
+		t.Fatalf("resolved after first run = %d, want 0", resolved)
+	}
+
+	reviewer.decision = IssueResolutionDecision{Verdict: "approve"}
+	if _, err := manager.HandleWebhook(context.Background(), issuePayload("Kommentar", "alice", "ja")); err != nil {
+		t.Fatalf("second HandleWebhook() error = %v", err)
+	}
+	if len(reviewer.confirmations) != 1 || !strings.HasPrefix(reviewer.confirmations[0], "confirm-1:alice-id:issue:42") {
+		t.Fatalf("confirmations = %#v", reviewer.confirmations)
+	}
+	if len(runner.requests) != 2 || runner.requests[1].Confirmation {
+		t.Fatalf("second request confirmation=%t, want false after closure confirmation was consumed", runner.requests[1].Confirmation)
+	}
+	if resolved != 1 {
+		t.Fatalf("resolved after confirmation = %d, want 1", resolved)
 	}
 }
 
@@ -688,10 +790,29 @@ func issuePayload(notificationType, actor, message string) map[string]any {
 		"issue": map[string]any{
 			"issue_id":            "42",
 			"reportedBy_username": "alice",
+			"reportedBy_id":       "alice-id",
 		},
 		"comment": map[string]any{
 			"comment_message":      message,
 			"commentedBy_username": actor,
+			"commentedBy_id":       actor + "-id",
 		},
 	}
+}
+
+type fakeIssueResolutionReviewer struct {
+	decision      IssueResolutionDecision
+	err           error
+	reviews       []IssueResolutionReview
+	confirmations []string
+}
+
+func (r *fakeIssueResolutionReviewer) ReviewIssueResolution(_ context.Context, request IssueResolutionReview) (IssueResolutionDecision, error) {
+	r.reviews = append(r.reviews, request)
+	return r.decision, r.err
+}
+
+func (r *fakeIssueResolutionReviewer) ConfirmIssueResolution(_ context.Context, confirmationID, actorID, conversationID string) error {
+	r.confirmations = append(r.confirmations, confirmationID+":"+actorID+":"+conversationID)
+	return r.err
 }

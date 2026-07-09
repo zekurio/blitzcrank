@@ -83,7 +83,7 @@ func (m *Manager) revisitIssue(ctx context.Context, issueID string) error {
 	data, _ := json.Marshal(payload)
 	eventRecord := ThreadEvent{
 		Type:    "revisit",
-		Key:     fmt.Sprintf("revisit:%s:%d", thread.IssueID, now.Unix()),
+		Key:     fmt.Sprintf("revisit:%s:%d", thread.IssueID, now.UnixNano()),
 		Actor:   "blitzcrank",
 		Message: thread.RevisitReason,
 		Payload: data,
@@ -93,7 +93,7 @@ func (m *Manager) revisitIssue(ctx context.Context, issueID string) error {
 	promptThread.Events = append(promptThread.Events, eventRecord)
 
 	log.Printf("seerr issue revisit started: issue=%s reason=%q trailing_revisits=%d", thread.IssueID, thread.RevisitReason, trailingRevisitEvents(thread.Events))
-	record, err := m.run(ctx, promptThread, payload, "revisit")
+	record, err := m.run(ctx, promptThread, payload, "revisit", false)
 	if err != nil {
 		m.recordRun(ctx, thread, record, "revisit")
 		m.rescheduleRevisit(ctx, thread, revisitRetryDelay)
