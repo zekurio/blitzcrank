@@ -46,6 +46,21 @@ func TestEligibleHumanMessage(t *testing.T) {
 	}
 }
 
+func TestEligibleRecoveredHumanMessageAcceptsFetchedGuildMessage(t *testing.T) {
+	message := &discordgo.Message{
+		ID:        "message",
+		ChannelID: "channel",
+		Type:      discordgo.MessageTypeDefault,
+		Author:    &discordgo.User{ID: "human"},
+	}
+	if eligibleHumanMessage(message, "blitzcrank") {
+		t.Fatal("normal ingress accepted a message without GuildID")
+	}
+	if !eligibleRecoveredHumanMessage(message, "blitzcrank") {
+		t.Fatal("recovery rejected a fetched guild message without GuildID")
+	}
+}
+
 func TestMentionsUser(t *testing.T) {
 	tests := []struct {
 		name    string

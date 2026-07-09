@@ -253,6 +253,51 @@ func TestBrokerBudgetAndFreshReadGatePersistAcrossFollowup(t *testing.T) {
 	}
 }
 
+func TestBrokerConcurrentReviewsDoNotBypassFreshReadGate(t *testing.T) {
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	reviewer := ReviewerFunc(func(context.Context, ReviewRequest) (ReviewResponse, error) {
+		started <- struct{}{}
+		<-release
+		return ReviewResponse{Verdict: VerdictApprove, AuthorityBasis: AuthorityExplicitIntent, Reason: "reviewed"}, nil
+	})
+	broker := startTestBroker(t, reviewer, Options{ReviewerCapacity: 2})
+	authorization := authorizeTestRun(t, broker, discordRun(3))
+	proposals := []Proposal{
+		mutationProposal("sonarr", "POST", "/api/v3/command", map[string]any{"name": "EpisodeSearch", "episodeIds": []int{7}}),
+		mutationProposal("jellyfin", "POST", "/Items/abc/Refresh", nil),
+	}
+	decisions := make(chan Decision, len(proposals))
+	for _, proposal := range proposals {
+		go func(proposal Proposal) {
+			decision, err := broker.review(context.Background(), authorization.Token, proposal)
+			if err != nil {
+				t.Errorf("review() error = %v", err)
+				return
+			}
+			decisions <- decision
+		}(proposal)
+	}
+	<-started
+	<-started
+	close(release)
+
+	var approved, blocked int
+	for range proposals {
+		decision := <-decisions
+		if decision.Approved() {
+			approved++
+			continue
+		}
+		if decision.OutcomeCode == "validation_required" {
+			blocked++
+		}
+	}
+	if approved != 1 || blocked != 1 {
+		t.Fatalf("concurrent reviews approved=%d validation_required=%d, want 1 each", approved, blocked)
+	}
+}
+
 func TestBrokerExecutionFailureIsTrackedWithoutFalseValidation(t *testing.T) {
 	t.Parallel()
 

@@ -83,7 +83,7 @@ func (m *Manager) revisitIssue(ctx context.Context, issueID string) error {
 	data, _ := json.Marshal(payload)
 	eventRecord := ThreadEvent{
 		Type:    "revisit",
-		Key:     fmt.Sprintf("revisit:%s:%d", thread.IssueID, now.Unix()),
+		Key:     fmt.Sprintf("revisit:%s:%d", thread.IssueID, now.UnixNano()),
 		Actor:   "blitzcrank",
 		Message: thread.RevisitReason,
 		Payload: data,

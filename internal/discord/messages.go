@@ -10,10 +10,25 @@ import (
 const maxDiscordMessageRunes = 1900
 
 func eligibleHumanMessage(message *discordgo.Message, botUserID string) bool {
+	return eligibleDiscordMessage(message, botUserID, true)
+}
+
+// eligibleRecoveredHumanMessage permits an absent GuildID because Discord's
+// GET /channels/{channel.id}/messages/{message.id} response omits it. A
+// message reaches this path only after it was accepted and claimed from a
+// guild MESSAGE_CREATE event before the restart.
+func eligibleRecoveredHumanMessage(message *discordgo.Message, botUserID string) bool {
+	return eligibleDiscordMessage(message, botUserID, false)
+}
+
+func eligibleDiscordMessage(message *discordgo.Message, botUserID string, requireGuildID bool) bool {
 	if message == nil || message.Author == nil {
 		return false
 	}
-	if strings.TrimSpace(message.GuildID) == "" || strings.TrimSpace(message.ChannelID) == "" || strings.TrimSpace(message.ID) == "" {
+	if strings.TrimSpace(message.ChannelID) == "" || strings.TrimSpace(message.ID) == "" {
+		return false
+	}
+	if requireGuildID && strings.TrimSpace(message.GuildID) == "" {
 		return false
 	}
 	if message.Author.Bot || message.Author.System || strings.TrimSpace(message.WebhookID) != "" {

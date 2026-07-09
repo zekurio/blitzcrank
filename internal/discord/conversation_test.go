@@ -660,6 +660,8 @@ func TestConversationRecoveryRefetchesClaimedMessageWithoutPersistingContent(t *
 		Status: store.DiscordMessageClaimed, ReceivedAt: now.Add(-time.Minute),
 	}
 	source := testDiscordMessage("claimed", "public", "owner", "Nur allgemeines Gerede")
+	// discordgo's ChannelMessage response does not include GuildID.
+	source.GuildID = ""
 	api := &fakeDiscordAPI{
 		botUserID: "bot",
 		fetched:   map[string]*discordgo.Message{"public:claimed": source},

@@ -137,6 +137,22 @@ func TestSeerrMutationAuthorityIsReporterBound(t *testing.T) {
 	}
 }
 
+func TestSeerrCommentWithoutAuthorIDFailsClosed(t *testing.T) {
+	payload := issuePayload("Kommentar", "alice", "ja")
+	payload["issue"].(map[string]any)["reportedBy_id"] = "reporter-7"
+	delete(payload["comment"].(map[string]any), "commentedBy_id")
+
+	if actor := actorID(payload); actor != "" {
+		t.Fatalf("comment actor ID = %q, want empty without commenter identity", actor)
+	}
+	if reporterAuthored(payload) {
+		t.Fatal("comment without a commenter ID inherited reporter authority")
+	}
+	if policy := issueMutationPolicy(nil, payload, "comment"); policy != "read_only" {
+		t.Fatalf("comment mutation policy = %q, want read_only", policy)
+	}
+}
+
 func TestRevisitReusesReporterIdentityAndAuthority(t *testing.T) {
 	payload := issuePayload("Kommentar", "bob", "unrelated")
 	payload["issue"].(map[string]any)["reportedBy_id"] = "reporter-7"

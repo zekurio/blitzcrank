@@ -437,7 +437,11 @@ func (a *conversationAgent) handleMessage(ctx context.Context, message *discordg
 
 func (a *conversationAgent) handleMessageState(ctx context.Context, message *discordgo.Message, alreadyClaimed bool) error {
 	botUserID := a.api.BotUserID()
-	if !eligibleHumanMessage(message, botUserID) {
+	eligible := eligibleHumanMessage(message, botUserID)
+	if alreadyClaimed {
+		eligible = eligibleRecoveredHumanMessage(message, botUserID)
+	}
+	if !eligible {
 		if alreadyClaimed && message != nil {
 			return a.completeMessage(ctx, message.ID, "ignored", "")
 		}

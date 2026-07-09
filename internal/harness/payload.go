@@ -50,6 +50,9 @@ func actor(payload map[string]any) string {
 }
 
 func actorID(payload map[string]any) string {
+	if _, isComment := payload["comment"].(map[string]any); isComment {
+		return identityFromSection(section(payload, "comment"), []string{"commentedBy_id", "commentedBy_userId", "user_id"})
+	}
 	for _, candidate := range []struct {
 		section string
 		keys    []string
@@ -58,14 +61,20 @@ func actorID(payload map[string]any) string {
 		{"issue", []string{"reportedBy_id", "reportedBy_userId", "user_id"}},
 		{"request", []string{"requestedBy_id", "requestedBy_userId", "user_id"}},
 	} {
-		values := section(payload, candidate.section)
-		for _, key := range candidate.keys {
-			if value := scalarString(values[key]); value != "" {
-				return value
-			}
+		if value := identityFromSection(section(payload, candidate.section), candidate.keys); value != "" {
+			return value
 		}
 	}
-	return actor(payload)
+	return ""
+}
+
+func identityFromSection(values map[string]any, keys []string) string {
+	for _, key := range keys {
+		if value := scalarString(values[key]); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func reporterName(payload map[string]any) string {
@@ -89,7 +98,12 @@ func reporterAuthored(payload map[string]any) bool {
 	}
 	reporterStableID := reporterID(payload)
 	currentStableID := actorID(payload)
-	if reporterStableID != "" && reporterStableID != reporter && currentStableID != "" && currentStableID != actor(payload) {
+	if _, isComment := payload["comment"].(map[string]any); isComment {
+		// A comment must carry the commenter's stable identity. Seerr's issue
+		// section describes the reporter, not the author of this comment.
+		return reporterStableID == currentStableID
+	}
+	if reporterStableID != "" && currentStableID != "" {
 		return reporterStableID == currentStableID
 	}
 	return strings.EqualFold(reporter, actor(payload))

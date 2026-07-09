@@ -287,7 +287,11 @@ func (m *Manager) appendEventRecord(ctx context.Context, thread *IssueThread, ev
 	m.mu.Lock()
 	thread.Status = "active"
 	thread.UpdatedAt = time.Now().UTC()
-	thread.LastPayload, _ = json.Marshal(payload)
+	// A revisit payload is synthetic and does not contain reporter identity.
+	// Keep the last Seerr payload so later revisits retain that authority.
+	if eventRecord.Type != "revisit" {
+		thread.LastPayload, _ = json.Marshal(payload)
+	}
 	thread.Events = append(thread.Events, eventRecord)
 	m.upsertThread(ctx, thread)
 	m.insertEvent(ctx, thread.IssueID, thread.Events[len(thread.Events)-1])
@@ -680,7 +684,14 @@ func latestReporterAuthority(thread *IssueThread) string {
 		if !strings.EqualFold(strings.TrimSpace(event.Actor), reporter) {
 			continue
 		}
-		if message := strings.TrimSpace(event.Message); message != "" {
+		message := strings.TrimSpace(event.Message)
+		if message == "" && len(event.Payload) > 0 {
+			var payload map[string]any
+			if json.Unmarshal(event.Payload, &payload) == nil {
+				message = currentAuthority(payload)
+			}
+		}
+		if message != "" {
 			return message
 		}
 	}

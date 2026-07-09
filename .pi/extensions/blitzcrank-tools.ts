@@ -79,7 +79,17 @@ function assertMutationAllowed(service: string, method: string, path: string, bo
 function assertReadAllowed(service: string, method: string, path: string) {
   if (method !== "GET" || service !== "sabnzbd") return;
   const parsed = new URL(path, "http://127.0.0.1");
-  const mode = (parsed.searchParams.get("mode") || "").toLowerCase();
+  const permitted = new Set(["mode", "limit"]);
+  for (const [key] of parsed.searchParams) {
+    if (!permitted.has(key.toLowerCase())) {
+      throw new Error("SABnzbd is read-only; only mode and limit query parameters are allowed");
+    }
+  }
+  const modes = parsed.searchParams.getAll("mode");
+  if (modes.length !== 1) {
+    throw new Error("SABnzbd is read-only; exactly one mode query parameter is required");
+  }
+  const mode = modes[0].toLowerCase();
   if (parsed.pathname !== "/api" || (mode !== "queue" && mode !== "history")) {
     throw new Error("SABnzbd is read-only; only GET /api?mode=queue and GET /api?mode=history are allowed");
   }

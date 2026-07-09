@@ -513,15 +513,9 @@ func (b *Broker) review(ctx context.Context, runToken string, proposal Proposal)
 		b.mu.Unlock()
 		return b.policyDecisionKnown(ctx, runContext, normalized, proposalHash, classification, mutationIndex, startedAt, "budget_exhausted", ErrBudgetExceeded), nil
 	}
-	for _, previous := range run.ledger.prior {
-		if previous.Execution == ExecutionFailed {
-			continue
-		}
-		if previous.Execution != ExecutionSucceeded || previous.ValidatedAt.IsZero() {
-			b.mu.Unlock()
-			err := fmt.Errorf("fresh read required after prior mutation %s", previous.ProposalHash)
-			return b.policyDecisionKnown(ctx, runContext, normalized, proposalHash, classification, mutationIndex, startedAt, "validation_required", err), nil
-		}
+	if err := b.freshReadRequiredLocked(runToken, run); err != nil {
+		b.mu.Unlock()
+		return b.policyDecisionKnown(ctx, runContext, normalized, proposalHash, classification, mutationIndex, startedAt, "validation_required", err), nil
 	}
 	action := actionKey(classification, normalized)
 	grantKey := confirmationKey(runContext.Source, runContext.ActorID, runContext.ConversationID, action)
@@ -591,6 +585,13 @@ func (b *Broker) review(ctx context.Context, runToken string, proposal Proposal)
 			decision.Reason = "The mutation budget for this run is exhausted."
 			break
 		}
+		if err := b.freshReadRequiredLocked(runToken, current); err != nil {
+			b.mu.Unlock()
+			decision.Verdict = VerdictDeny
+			decision.OutcomeCode = "validation_required"
+			decision.Reason = "A fresh read is required after the prior mutation."
+			break
+		}
 		current.ledger.approved++
 		mutationIndex = current.ledger.approved
 		b.approvals[approvalToken] = approvalState{
@@ -645,6 +646,27 @@ func (b *Broker) review(ctx context.Context, runToken string, proposal Proposal)
 		decision.ApprovalToken = ""
 	}
 	return decision, nil
+}
+
+// freshReadRequiredLocked prevents a second mutation from being authorized
+// until every earlier mutation has been executed and validated. An approval
+// not yet consumed is also blocking: it may still become a mutation while the
+// independent reviewer is evaluating this proposal.
+func (b *Broker) freshReadRequiredLocked(runToken string, run *runState) error {
+	for _, approval := range b.approvals {
+		if approval.runToken == runToken {
+			return fmt.Errorf("fresh read required after outstanding approved mutation")
+		}
+	}
+	for _, previous := range run.ledger.prior {
+		if previous.Execution == ExecutionFailed {
+			continue
+		}
+		if previous.Execution != ExecutionSucceeded || previous.ValidatedAt.IsZero() {
+			return fmt.Errorf("fresh read required after prior mutation %s", previous.ProposalHash)
+		}
+	}
+	return nil
 }
 
 func hasCurrentServiceEvidence(proposal SanitizedProposal) bool {

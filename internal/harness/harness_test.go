@@ -279,7 +279,7 @@ func TestIssueResolutionNeedsConfirmationAsksThenBindsOwnerReply(t *testing.T) {
 	if _, err := manager.HandleWebhook(context.Background(), issuePayload("Kommentar", "alice", "ja")); err != nil {
 		t.Fatalf("second HandleWebhook() error = %v", err)
 	}
-	if len(reviewer.confirmations) != 1 || !strings.HasPrefix(reviewer.confirmations[0], "confirm-1:alice:issue:42") {
+	if len(reviewer.confirmations) != 1 || !strings.HasPrefix(reviewer.confirmations[0], "confirm-1:alice-id:issue:42") {
 		t.Fatalf("confirmations = %#v", reviewer.confirmations)
 	}
 	if len(runner.requests) != 2 || runner.requests[1].Confirmation {
@@ -790,10 +790,12 @@ func issuePayload(notificationType, actor, message string) map[string]any {
 		"issue": map[string]any{
 			"issue_id":            "42",
 			"reportedBy_username": "alice",
+			"reportedBy_id":       "alice-id",
 		},
 		"comment": map[string]any{
 			"comment_message":      message,
 			"commentedBy_username": actor,
+			"commentedBy_id":       actor + "-id",
 		},
 	}
 }
