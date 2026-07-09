@@ -652,7 +652,7 @@ func (a *conversationAgent) openPrivateConversation(ctx context.Context, message
 	threadCtx, cancel := context.WithTimeout(ctx, a.triageTimeout())
 	thread, err := a.api.CreatePrivateThread(threadCtx, privateThreadSpec{
 		ParentID:           message.ChannelID,
-		Name:               privateThreadName(message.ID),
+		Name:               privateThreadName(decision.ThreadName, decision.Category, decision.Language),
 		AutoArchiveMinutes: a.autoArchiveMinutes(),
 		Invitable:          false,
 	})
@@ -1144,15 +1144,29 @@ func ownerMessageFromDiscord(message *discordgo.Message) ownerMessage {
 	}
 }
 
-func privateThreadName(messageID string) string {
-	messageID = strings.TrimSpace(messageID)
-	if len(messageID) > 10 {
-		messageID = messageID[len(messageID)-10:]
+func privateThreadName(topic, category, language string) string {
+	topic = strings.Join(strings.Fields(topic), " ")
+	topic = strings.Trim(topic, " .·-_")
+	if topic != "" && !strings.Contains(topic, "@") && len([]rune(topic)) <= 60 {
+		return topic
 	}
-	if messageID == "" {
-		messageID = "support"
+	english := strings.HasPrefix(strings.ToLower(strings.TrimSpace(language)), "en")
+	labels := map[string][2]string{
+		"release":  {"Release & Verfügbarkeit", "Release & availability"},
+		"general":  {"Medienfrage", "Media question"},
+		"service":  {"Bibliothek & Status", "Library & status"},
+		"request":  {"Medienwunsch", "Media request"},
+		"playback": {"Wiedergabe", "Playback"},
+		"support":  {"Medien-Support", "Media support"},
 	}
-	return "blitzcrank-privat-" + messageID
+	label, ok := labels[strings.ToLower(strings.TrimSpace(category))]
+	if !ok {
+		label = [2]string{"Medien-Support", "Media support"}
+	}
+	if english {
+		return "Blitzcrank · " + label[1]
+	}
+	return "Blitzcrank · " + label[0]
 }
 
 func messageReference(message *discordgo.Message) *discordgo.MessageReference {

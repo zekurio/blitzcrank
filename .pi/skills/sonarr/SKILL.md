@@ -12,7 +12,8 @@ Use `sonarr_request` with relative `/api/v3/...` paths. Every request needs `pur
 - Lookup by TVDB id: `GET /api/v3/series?tvdbId={tvdbId}`
 - Search/lookup by title: `GET /api/v3/series/lookup?term={query}`
 - List series: `GET /api/v3/series`
-- Episodes by series: `GET /api/v3/episode?seriesId={seriesId}`
+- Episodes by series: `GET /api/v3/episode?seriesId={seriesId}`. Use episode `airDate`, `airDateUtc`, `hasFile`, and monitored state for release-date and availability questions.
+- Calendar window: `GET /api/v3/calendar?start={urlEncodedISODate}&end={urlEncodedISODate}&includeSeries=true&includeEpisodeFile=true` for upcoming or recent episodes across a date range.
 - Episode file: `GET /api/v3/episodefile/{episodeFileId}`
 - Episode files by series: `GET /api/v3/episodefile?seriesId={seriesId}`
 - History: `GET /api/v3/history?seriesId={seriesId}&page=1&pageSize=20&sortKey=date&sortDirection=descending`
@@ -38,7 +39,9 @@ Use `sonarr_request` with relative `/api/v3/...` paths. Every request needs `pur
 ## Diagnostic rules
 
 - For TV issues, identify the Sonarr series before queue/search/blocklist actions; TVDB id from Seerr is the safest link.
+- Treat Sonarr's TVDB id as the primary external identity for the monitored series and its episodes. Use IMDb or anime-database ids only as enrichment or cross-checks; they must not override a TVDB-backed Sonarr match. Verify links through web search rather than constructing unconfirmed URLs.
 - Fetch episodes by series id to find exact episode ids when needed.
+- For release-date questions, prefer Sonarr's matching episode/calendar data over generic web schedules, and state the timezone or date uncertainty when it matters.
 - For downloaded file metadata, use episode file data and `mediaInfo` when available.
 - For missing audio/subtitle/playback-track reports, verify actual streams with `jellyfin_request` first, then use Sonarr file/history/profile/custom-format evidence to explain how the file was selected or imported.
 - Before external/public availability reasoning, exhaust local Sonarr context: history, queue, blocklist, imported file metadata, quality/language/custom-format profiles, and narrow release/search evidence if needed.

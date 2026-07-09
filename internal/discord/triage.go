@@ -11,21 +11,23 @@ import (
 const maxTriageResponseBytes = 4096
 
 type triageDecision struct {
-	Relevant bool
-	Respond  bool
-	Route    string
-	Category string
-	Language string
-	Reason   string
+	Relevant   bool
+	Respond    bool
+	Route      string
+	Category   string
+	Language   string
+	ThreadName string
+	Reason     string
 }
 
 type triageWire struct {
-	Relevant *bool   `json:"relevant"`
-	Respond  *bool   `json:"respond"`
-	Route    *string `json:"route"`
-	Category *string `json:"category"`
-	Language *string `json:"language"`
-	Reason   *string `json:"reason"`
+	Relevant   *bool   `json:"relevant"`
+	Respond    *bool   `json:"respond"`
+	Route      *string `json:"route"`
+	Category   *string `json:"category"`
+	Language   *string `json:"language"`
+	ThreadName *string `json:"thread_name"`
+	Reason     *string `json:"reason"`
 }
 
 func parseTriageDecision(value string) (triageDecision, error) {
@@ -46,12 +48,13 @@ func parseTriageDecision(value string) (triageDecision, error) {
 	}
 
 	decision := triageDecision{
-		Relevant: *wire.Relevant,
-		Respond:  *wire.Respond,
-		Route:    strings.ToLower(strings.TrimSpace(*wire.Route)),
-		Category: strings.ToLower(strings.TrimSpace(*wire.Category)),
-		Language: strings.ToLower(strings.TrimSpace(*wire.Language)),
-		Reason:   strings.TrimSpace(*wire.Reason),
+		Relevant:   *wire.Relevant,
+		Respond:    *wire.Respond,
+		Route:      strings.ToLower(strings.TrimSpace(*wire.Route)),
+		Category:   strings.ToLower(strings.TrimSpace(*wire.Category)),
+		Language:   strings.ToLower(strings.TrimSpace(*wire.Language)),
+		ThreadName: strings.TrimSpace(valueOrEmpty(wire.ThreadName)),
+		Reason:     strings.TrimSpace(*wire.Reason),
 	}
 	if !oneOf(decision.Route, "direct", "private", "ignore") {
 		return triageDecision{}, fmt.Errorf("invalid triage route %q", decision.Route)
@@ -61,6 +64,9 @@ func parseTriageDecision(value string) (triageDecision, error) {
 	}
 	if decision.Language == "" || len(decision.Language) > 35 {
 		return triageDecision{}, fmt.Errorf("invalid triage language")
+	}
+	if len([]rune(decision.ThreadName)) > 60 {
+		return triageDecision{}, fmt.Errorf("invalid triage thread name")
 	}
 	if decision.Reason == "" || len([]rune(decision.Reason)) > 300 {
 		return triageDecision{}, fmt.Errorf("invalid triage reason")
@@ -75,6 +81,13 @@ func parseTriageDecision(value string) (triageDecision, error) {
 		decision.Route = "ignore"
 	}
 	return decision, nil
+}
+
+func valueOrEmpty(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func requireJSONEOF(decoder *json.Decoder) error {

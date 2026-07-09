@@ -12,6 +12,7 @@ Use `radarr_request` with relative `/api/v3/...` paths. Every request needs `pur
 - Lookup by TMDB id: `GET /api/v3/movie?tmdbId={tmdbId}`
 - Lookup by title/TMDB term: `GET /api/v3/movie/lookup?term={query}`
 - Movie by Radarr id: `GET /api/v3/movie/{movieId}`
+- Calendar window: `GET /api/v3/calendar?start={urlEncodedISODate}&end={urlEncodedISODate}` for upcoming or recent movie releases. Use `inCinemas`, `digitalRelease`, `physicalRelease`, and availability metadata to explain which kind of date Radarr knows.
 - Movie file: `GET /api/v3/moviefile/{movieFileId}`
 - History: `GET /api/v3/history?movieId={movieId}&page=1&pageSize=20&sortKey=date&sortDirection=descending`
 - Queue: `GET /api/v3/queue?page=1&pageSize=50&includeUnknownMovieItems=true`
@@ -33,6 +34,8 @@ Use `radarr_request` with relative `/api/v3/...` paths. Every request needs `pur
 ## Diagnostic rules
 
 - For movie issues, identify the Radarr movie before queue/search/blocklist actions; TMDB id from Seerr is the safest link.
+- Treat Radarr's TMDB id as the primary external identity for the monitored movie. Use IMDb or other database ids only as enrichment or cross-checks; they must not override a TMDB-backed Radarr match. Verify links through web search rather than constructing unconfirmed URLs.
+- For release-date questions, prefer the matching movie and Radarr calendar data over generic web schedules. Name the release type (cinema, digital, or physical) and state date uncertainty when it matters.
 - Fetch movie file metadata and `mediaInfo` when explaining imported quality, language, audio, subtitles, or custom formats.
 - For missing audio/subtitle/playback-track reports, verify actual streams with `jellyfin_request` first, then use Radarr file/history/profile/custom-format evidence to explain how the file was selected or imported.
 - Before external/public availability reasoning, exhaust local Radarr context: history, queue, blocklist, imported file metadata, quality/language/custom-format profiles, and narrow release/search evidence if needed.
