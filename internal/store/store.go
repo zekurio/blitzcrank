@@ -244,6 +244,85 @@ CREATE TABLE IF NOT EXISTS mutation_validations (
 CREATE INDEX IF NOT EXISTS idx_mutation_validations_proposal
 ON mutation_validations(proposal_hash, run_id, observed_at);
 
+CREATE TABLE IF NOT EXISTS digest_subscriptions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  identity_key TEXT NOT NULL,
+  topics_json TEXT NOT NULL,
+  release_kinds_json TEXT NOT NULL,
+  cadence TEXT NOT NULL,
+  schedule TEXT NOT NULL,
+  weekday INTEGER NOT NULL,
+  time_of_day TEXT NOT NULL,
+  region TEXT NOT NULL,
+  timezone TEXT NOT NULL,
+  locale TEXT NOT NULL,
+  interests_json TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  next_run_at TEXT,
+  last_run_at TEXT,
+  last_delivered_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_digest_subscriptions_subscriber
+ON digest_subscriptions(guild_id, user_id, created_at, id);
+
+CREATE INDEX IF NOT EXISTS idx_digest_subscriptions_due
+ON digest_subscriptions(next_run_at, id)
+WHERE enabled = 1 AND deleted_at IS NULL AND next_run_at IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS digest_deliveries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  subscription_id INTEGER NOT NULL,
+  scheduled_for TEXT NOT NULL,
+  window_start TEXT NOT NULL,
+  window_end TEXT NOT NULL,
+  claimed_next_run_at TEXT NOT NULL,
+  status TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  discord_channel_id TEXT,
+  discord_message_id TEXT,
+  item_count INTEGER NOT NULL DEFAULT 0,
+  error TEXT NOT NULL DEFAULT '',
+  FOREIGN KEY (subscription_id) REFERENCES digest_subscriptions(id) ON DELETE CASCADE,
+  UNIQUE (subscription_id, scheduled_for)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_digest_deliveries_active
+ON digest_deliveries(subscription_id)
+WHERE completed_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_digest_deliveries_status_started
+ON digest_deliveries(status, started_at);
+
+CREATE TABLE IF NOT EXISTS digest_delivery_items (
+  subscription_id INTEGER NOT NULL,
+  item_key TEXT NOT NULL,
+  first_delivery_id INTEGER NOT NULL,
+  reserved_at TEXT NOT NULL,
+  delivered_at TEXT,
+  PRIMARY KEY (subscription_id, item_key),
+  FOREIGN KEY (subscription_id) REFERENCES digest_subscriptions(id) ON DELETE CASCADE,
+  FOREIGN KEY (first_delivery_id) REFERENCES digest_deliveries(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_digest_delivery_items_delivery
+ON digest_delivery_items(first_delivery_id);
+
+CREATE TABLE IF NOT EXISTS jellyfin_user_links (
+  guild_id TEXT NOT NULL,
+  discord_user_id TEXT NOT NULL,
+  jellyfin_user_id TEXT NOT NULL,
+  linked_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (guild_id, discord_user_id)
+);
+
 	`)
 	if err != nil {
 		return fmt.Errorf("run base schema migration: %w", err)
@@ -252,6 +331,22 @@ ON mutation_validations(proposal_hash, run_id, observed_at);
 		return err
 	}
 	if err := s.ensureColumn(ctx, "issue_threads", "revisit_reason", "TEXT"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "digest_subscriptions", "identity_key", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "digest_deliveries", "claimed_next_run_at", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `
+UPDATE digest_deliveries
+SET claimed_next_run_at = window_end
+WHERE claimed_next_run_at = ''
+`); err != nil {
+		return fmt.Errorf("backfill digest delivery next-run claims: %w", err)
+	}
+	if err := s.migrateDigestSubscriptionIdentities(ctx); err != nil {
 		return err
 	}
 	return nil

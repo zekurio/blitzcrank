@@ -79,6 +79,51 @@ func TestConfigExampleParses(t *testing.T) {
 	if cfg.PiModels["discord_triage"] != "" {
 		t.Fatalf("example discord_triage model = %q, want empty placeholder", cfg.PiModels["discord_triage"])
 	}
+	if cfg.DigestMaxItems != 12 || cfg.DigestDispatchSchedule != "@every 1m" || cfg.DigestRetryDelay != 15*time.Minute {
+		t.Fatalf("example digest config = max %d, schedule %q, retry %v", cfg.DigestMaxItems, cfg.DigestDispatchSchedule, cfg.DigestRetryDelay)
+	}
+}
+
+func TestValidateDigestConfig(t *testing.T) {
+	valid := Config{
+		DigestsEnabled:         true,
+		DiscordToken:           "discord-token",
+		TMDBAPIToken:           "tmdb-token",
+		TMDBBaseURL:            "https://api.themoviedb.org",
+		AniListBaseURL:         "https://graphql.anilist.co",
+		DigestDefaultRegion:    "AT",
+		DigestDispatchSchedule: "@every 1m",
+		DigestMaxItems:         12,
+		DigestRetryDelay:       15 * time.Minute,
+		Timezone:               "Europe/Vienna",
+		ReviewCapacity:         1,
+	}
+	if err := validateStrictConfig(valid); err != nil {
+		t.Fatalf("validateStrictConfig(valid digests) error = %v", err)
+	}
+
+	tests := []struct {
+		name string
+		edit func(*Config)
+		want string
+	}{
+		{name: "Discord token", edit: func(cfg *Config) { cfg.DiscordToken = "" }, want: "DISCORD_TOKEN"},
+		{name: "TMDB token", edit: func(cfg *Config) { cfg.TMDBAPIToken = "" }, want: "TMDB_API_TOKEN"},
+		{name: "region", edit: func(cfg *Config) { cfg.DigestDefaultRegion = "de" }, want: "DIGEST_DEFAULT_REGION"},
+		{name: "item limit", edit: func(cfg *Config) { cfg.DigestMaxItems = 21 }, want: "DIGEST_MAX_ITEMS"},
+		{name: "schedule", edit: func(cfg *Config) { cfg.DigestDispatchSchedule = "not cron" }, want: "DIGEST_DISPATCH_SCHEDULE"},
+		{name: "timezone", edit: func(cfg *Config) { cfg.Timezone = "Mars/Olympus" }, want: "timezone"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := valid
+			tt.edit(&cfg)
+			err := validateStrictConfig(cfg)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("validateStrictConfig() error = %v, want %q", err, tt.want)
+			}
+		})
+	}
 }
 
 func TestLoadMissingTOMLIsNotAnError(t *testing.T) {

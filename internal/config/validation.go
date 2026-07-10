@@ -4,10 +4,40 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
+
+	"github.com/robfig/cron/v3"
 )
 
 func validateStrictConfig(cfg Config) error {
 	models := normalizePiModels(cfg.PiModels)
+	if cfg.DigestsEnabled {
+		if strings.TrimSpace(cfg.DiscordToken) == "" {
+			return errors.New("DISCORD_TOKEN is required when digests are enabled")
+		}
+		if strings.TrimSpace(cfg.TMDBAPIToken) == "" {
+			return errors.New("TMDB_API_TOKEN is required when digests are enabled")
+		}
+		if strings.TrimSpace(cfg.TMDBBaseURL) == "" || strings.TrimSpace(cfg.AniListBaseURL) == "" {
+			return errors.New("digest provider base URLs are required when digests are enabled")
+		}
+		region := strings.TrimSpace(cfg.DigestDefaultRegion)
+		if len(region) != 2 || region[0] < 'A' || region[0] > 'Z' || region[1] < 'A' || region[1] > 'Z' {
+			return errors.New("DIGEST_DEFAULT_REGION must be an uppercase ISO 3166-1 alpha-2 code")
+		}
+		if cfg.DigestMaxItems < 1 || cfg.DigestMaxItems > 20 {
+			return errors.New("DIGEST_MAX_ITEMS must be between 1 and 20")
+		}
+		if cfg.DigestRetryDelay <= 0 {
+			return errors.New("DIGEST_RETRY_DELAY must be positive")
+		}
+		if _, err := cron.ParseStandard(strings.TrimSpace(cfg.DigestDispatchSchedule)); err != nil {
+			return fmt.Errorf("parse DIGEST_DISPATCH_SCHEDULE: %w", err)
+		}
+		if _, err := time.LoadLocation(strings.TrimSpace(cfg.Timezone)); err != nil {
+			return fmt.Errorf("load digest runtime timezone: %w", err)
+		}
+	}
 	if len(cfg.DiscordWatchedChannelIDs) > 0 {
 		if strings.TrimSpace(cfg.DiscordToken) == "" {
 			return errors.New("DISCORD_TOKEN is required when watched Discord channels are configured")

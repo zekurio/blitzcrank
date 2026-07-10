@@ -21,15 +21,18 @@ type Scheduler interface {
 }
 
 type Bot struct {
-	cfg       config.Config
-	session   *discordgo.Session
-	scheduler Scheduler
-	ctx       context.Context
-	cancel    context.CancelFunc
-	agent     *conversationAgent
-	tasks     taskGroup
-	closeOnce sync.Once
-	closeErr  error
+	cfg           config.Config
+	session       *discordgo.Session
+	scheduler     Scheduler
+	digests       DigestService
+	jellyfinLinks JellyfinLinker
+	digestDrafts  *digestDraftStore
+	ctx           context.Context
+	cancel        context.CancelFunc
+	agent         *conversationAgent
+	tasks         taskGroup
+	closeOnce     sync.Once
+	closeErr      error
 }
 
 func New(cfg config.Config, scheduler Scheduler) (*Bot, error) {
@@ -43,8 +46,9 @@ func newBot(cfg config.Config, scheduler Scheduler, conversations bool) (*Bot, e
 	}
 	automationEnabled := strings.TrimSpace(cfg.DiscordAutomationChannelID) != ""
 	conversationEnabled := conversations && len(cfg.DiscordWatchedChannelIDs) > 0
-	if !automationEnabled && !conversationEnabled {
-		log.Printf("discord automation bot disabled: DISCORD_AUTOMATION_CHANNEL_ID is not set")
+	digestEnabled := cfg.DigestsEnabled
+	if !automationEnabled && !conversationEnabled && !digestEnabled {
+		log.Printf("discord bot disabled: no Discord workflows are configured")
 		return nil, nil
 	}
 	s, err := discordgo.New("Bot " + strings.TrimSpace(cfg.DiscordToken))
@@ -52,8 +56,8 @@ func newBot(cfg config.Config, scheduler Scheduler, conversations bool) (*Bot, e
 		return nil, err
 	}
 	s.Identify.Intents = discordgo.IntentsGuilds
-	bot := &Bot{cfg: cfg, session: s, scheduler: scheduler, ctx: context.Background()}
-	if automationEnabled {
+	bot := &Bot{cfg: cfg, session: s, scheduler: scheduler, digestDrafts: newDigestDraftStore(), ctx: context.Background()}
+	if automationEnabled || digestEnabled {
 		s.AddHandler(bot.onInteractionCreate)
 	}
 	return bot, nil
@@ -63,14 +67,15 @@ func (b *Bot) Start() error {
 	if b == nil {
 		return nil
 	}
+	if b.cfg.DigestsEnabled && !digestServiceAvailable(b.digests) {
+		return fmt.Errorf("digest service is required when digests are enabled")
+	}
 	if err := b.session.Open(); err != nil {
 		return err
 	}
-	if strings.TrimSpace(b.cfg.DiscordAutomationChannelID) != "" {
-		if err := b.registerCommands(); err != nil {
-			_ = b.session.Close()
-			return err
-		}
+	if err := b.registerCommands(); err != nil {
+		_ = b.session.Close()
+		return err
 	}
 	if b.agent != nil {
 		if err := b.agent.recover(b.ctx); err != nil {
@@ -82,7 +87,7 @@ func (b *Bot) Start() error {
 		// from an unknown, unwatched channel and be dropped.
 		b.agent.start(b.ctx, defaultDiscordIngressWorkers, defaultDiscordIngressCapacity)
 	}
-	log.Printf("discord bot started: automation_channel=%s watched_channels=%d", b.cfg.DiscordAutomationChannelID, len(b.cfg.DiscordWatchedChannelIDs))
+	log.Printf("discord bot started: automation_channel=%s watched_channels=%d digests=%t", b.cfg.DiscordAutomationChannelID, len(b.cfg.DiscordWatchedChannelIDs), b.digests != nil)
 	return nil
 }
 
@@ -98,16 +103,67 @@ func (b *Bot) Close() error {
 		if b.cancel != nil {
 			b.cancel()
 		}
-		b.closeErr = b.session.Close()
 		b.tasks.wait()
 		if b.agent != nil {
 			b.agent.wait()
 		}
+		b.closeErr = b.session.Close()
 	})
 	return b.closeErr
 }
 
 func (b *Bot) registerCommands() error {
+	applicationID := b.session.State.User.ID
+	guildID := strings.TrimSpace(b.cfg.DiscordGuildID)
+	_, err := b.session.ApplicationCommandBulkOverwrite(applicationID, guildID, b.desiredApplicationCommands())
+	return err
+}
+
+func (b *Bot) desiredApplicationCommands() []*discordgo.ApplicationCommand {
+	commands := make([]*discordgo.ApplicationCommand, 0, 2)
+	digestsEnabled := digestServiceAvailable(b.digests)
+	automationEnabled := strings.TrimSpace(b.cfg.DiscordAutomationChannelID) != "" || (digestsEnabled && b.scheduler != nil)
+	if automationEnabled {
+		commands = append(commands, b.automationApplicationCommand())
+	}
+	if digestsEnabled {
+		commands = append(commands, digestApplicationCommand())
+	}
+	return commands
+}
+
+func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	if b.handleDigestInteraction(s, i) {
+		return
+	}
+	if i.Type != discordgo.InteractionApplicationCommand || i.ApplicationCommandData().Name != "automatisierung" {
+		return
+	}
+	name := ""
+	for _, option := range i.ApplicationCommandData().Options {
+		if option.Name == "name" {
+			name = option.StringValue()
+		}
+	}
+	if strings.TrimSpace(name) == "" {
+		_ = s.InteractionRespond(i.Interaction, ephemeral(localizedAutomationInteraction(i.Locale, "missing", name)))
+		return
+	}
+	if b.scheduler == nil {
+		_ = s.InteractionRespond(i.Interaction, ephemeral(localizedAutomationInteraction(i.Locale, "unavailable", name)))
+		return
+	}
+	_ = s.InteractionRespond(i.Interaction, ephemeral(localizedAutomationInteraction(i.Locale, "started", name)))
+	b.tasks.goRun(func() {
+		ctx, cancel := context.WithTimeout(b.ctx, b.cfg.RunTimeout)
+		defer cancel()
+		if err := b.scheduler.RunAutomation(ctx, name); err != nil {
+			log.Printf("discord-triggered automation failed: name=%s error=%v", name, err)
+		}
+	})
+}
+
+func (b *Bot) automationApplicationCommand() *discordgo.ApplicationCommand {
 	permissions := int64(discordgo.PermissionManageThreads)
 	choices := make([]*discordgo.ApplicationCommandOptionChoice, 0)
 	if b.scheduler != nil {
@@ -123,48 +179,51 @@ func (b *Bot) registerCommands() error {
 			}
 		}
 	}
-	cmd := &discordgo.ApplicationCommand{
-		Name:                     "automatisierung",
-		Description:              "Startet eine geladene Blitzcrank-Automatisierung.",
+	return &discordgo.ApplicationCommand{
+		Name:        "automatisierung",
+		Description: "Startet eine geladene Blitzcrank-Automatisierung.",
+		NameLocalizations: &map[discordgo.Locale]string{
+			discordgo.EnglishUS: "automation",
+			discordgo.EnglishGB: "automation",
+		},
+		DescriptionLocalizations: &map[discordgo.Locale]string{
+			discordgo.EnglishUS: "Starts a loaded Blitzcrank automation.",
+			discordgo.EnglishGB: "Starts a loaded Blitzcrank automation.",
+		},
 		DefaultMemberPermissions: &permissions,
 		Options: []*discordgo.ApplicationCommandOption{{
 			Type:        discordgo.ApplicationCommandOptionString,
 			Name:        "name",
 			Description: "Name der Automatisierung",
-			Required:    true,
-			Choices:     choices,
+			DescriptionLocalizations: map[discordgo.Locale]string{
+				discordgo.EnglishUS: "Automation name",
+				discordgo.EnglishGB: "Automation name",
+			},
+			Required: true,
+			Choices:  choices,
 		}},
 	}
-	_, err := b.session.ApplicationCommandCreate(b.session.State.User.ID, strings.TrimSpace(b.cfg.DiscordGuildID), cmd)
-	return err
 }
 
-func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	if i.Type != discordgo.InteractionApplicationCommand || i.ApplicationCommandData().Name != "automatisierung" {
-		return
-	}
-	name := ""
-	for _, option := range i.ApplicationCommandData().Options {
-		if option.Name == "name" {
-			name = option.StringValue()
+func localizedAutomationInteraction(locale discordgo.Locale, kind, name string) string {
+	english := locale != discordgo.German
+	switch kind {
+	case "missing":
+		if english {
+			return "The automation name is missing."
 		}
-	}
-	if strings.TrimSpace(name) == "" {
-		_ = s.InteractionRespond(i.Interaction, ephemeral("Name fehlt."))
-		return
-	}
-	if b.scheduler == nil {
-		_ = s.InteractionRespond(i.Interaction, ephemeral("Automatisierungen sind nicht verfügbar."))
-		return
-	}
-	_ = s.InteractionRespond(i.Interaction, ephemeral(fmt.Sprintf("Automatisierung `%s` wurde gestartet.", name)))
-	b.tasks.goRun(func() {
-		ctx, cancel := context.WithTimeout(b.ctx, b.cfg.RunTimeout)
-		defer cancel()
-		if err := b.scheduler.RunAutomation(ctx, name); err != nil {
-			log.Printf("discord-triggered automation failed: name=%s error=%v", name, err)
+		return "Name fehlt."
+	case "unavailable":
+		if english {
+			return "Automations are unavailable."
 		}
-	})
+		return "Automatisierungen sind nicht verfügbar."
+	default:
+		if english {
+			return fmt.Sprintf("Automation `%s` was started.", name)
+		}
+		return fmt.Sprintf("Automatisierung `%s` wurde gestartet.", name)
+	}
 }
 
 func ephemeral(content string) *discordgo.InteractionResponse {

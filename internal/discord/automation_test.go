@@ -1,14 +1,71 @@
 package discord
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
 
 	"blitzcrank/internal/automation"
+	"blitzcrank/internal/config"
+	"blitzcrank/internal/digest"
 
 	"github.com/bwmarrin/discordgo"
 )
+
+type commandScheduler struct{}
+
+func (commandScheduler) RunAutomation(context.Context, string) error { return nil }
+func (commandScheduler) AutomationNames() []string                   { return []string{"digest-dispatch"} }
+
+func TestAutomationCommandHasEnglishLocalization(t *testing.T) {
+	command := (&Bot{}).automationApplicationCommand()
+	if command.Name != "automatisierung" || command.NameLocalizations == nil {
+		t.Fatalf("command = %#v", command)
+	}
+	if got := (*command.NameLocalizations)[discordgo.EnglishUS]; got != "automation" {
+		t.Fatalf("English command name = %q", got)
+	}
+	if command.DescriptionLocalizations == nil || (*command.DescriptionLocalizations)[discordgo.EnglishGB] == "" {
+		t.Fatal("English command description is missing")
+	}
+	if len(command.Options) != 1 || command.Options[0].DescriptionLocalizations[discordgo.EnglishUS] != "Automation name" {
+		t.Fatalf("localized option = %#v", command.Options)
+	}
+}
+
+func TestDigestOnlyBotIsEnabledAndFailsClosedWithoutService(t *testing.T) {
+	bot, err := newBot(config.Config{DiscordToken: "test-token", DigestsEnabled: true}, nil, false)
+	if err != nil {
+		t.Fatalf("newBot() error = %v", err)
+	}
+	if bot == nil || bot.digestDrafts == nil {
+		t.Fatalf("digest-only bot = %#v", bot)
+	}
+	if err := bot.Start(); err == nil || !strings.Contains(err.Error(), "digest service") {
+		t.Fatalf("Start() error = %v", err)
+	}
+}
+
+func TestDigestOnlyBotRegistersDigestAndAutomationCommands(t *testing.T) {
+	bot := &Bot{
+		cfg:       config.Config{DigestsEnabled: true},
+		digests:   &digest.Service{},
+		scheduler: commandScheduler{},
+	}
+	commands := bot.desiredApplicationCommands()
+	if len(commands) != 2 || commands[0].Name != "automatisierung" || commands[1].Name != "digest" {
+		t.Fatalf("desiredApplicationCommands() = %#v", commands)
+	}
+}
+
+func TestDesiredApplicationCommandsRejectTypedNilDigestService(t *testing.T) {
+	var concrete *digest.Service
+	bot := &Bot{cfg: config.Config{DigestsEnabled: true}, digests: concrete, scheduler: commandScheduler{}}
+	if commands := bot.desiredApplicationCommands(); len(commands) != 0 {
+		t.Fatalf("desiredApplicationCommands() = %#v, want none", commands)
+	}
+}
 
 func TestClassifyAutomationResponse(t *testing.T) {
 	tests := []struct {

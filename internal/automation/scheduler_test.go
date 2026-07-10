@@ -223,6 +223,150 @@ func TestRunAutomationRejectsOverlap(t *testing.T) {
 	}
 }
 
+func TestRegisteredJobRunsWithoutOperatorAutomations(t *testing.T) {
+	cfg := config.Config{AutomationsEnabled: false, RunTimeout: time.Second, Timezone: "UTC"}
+	scheduler := NewScheduler(cfg, nil, nil)
+	var calls int
+	if err := scheduler.RegisterJob(Job{
+		Name:        "digest-dispatch",
+		Description: "Deliver due media digests",
+		Schedule:    "@every 1m",
+		Run: func(context.Context) (string, error) {
+			calls++
+			return "delivered=2", nil
+		},
+	}); err != nil {
+		t.Fatalf("RegisterJob() error = %v", err)
+	}
+	if err := scheduler.RunAutomation(context.Background(), "digest-dispatch"); err != nil {
+		t.Fatalf("RunAutomation(job) error = %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("job calls = %d, want 1", calls)
+	}
+	if names := scheduler.AutomationNames(); len(names) != 1 || names[0] != "digest-dispatch" {
+		t.Fatalf("AutomationNames() = %#v", names)
+	}
+}
+
+func TestDisabledOperatorAutomationsAreNotScheduledAfterNameReload(t *testing.T) {
+	dir := t.TempDir()
+	writeTask(t, dir, "must-not-schedule")
+	scheduler := NewScheduler(config.Config{
+		AutomationsDirectory: dir,
+		AutomationsEnabled:   false,
+		Timezone:             "UTC",
+	}, &fakeRunner{}, nil)
+	if err := scheduler.RegisterJob(Job{Name: "built-in", Schedule: "@every 1m", Run: func(context.Context) (string, error) {
+		return "", nil
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if names := scheduler.AutomationNames(); len(names) != 1 || names[0] != "built-in" {
+		t.Fatalf("AutomationNames() = %#v, want only the built-in job", names)
+	}
+	if tasks := scheduler.operatorTasksForStart(); len(tasks) != 0 {
+		t.Fatalf("operatorTasksForStart() = %#v, want none while disabled", tasks)
+	}
+	if err := scheduler.RunAutomation(context.Background(), "must-not-schedule"); err == nil || !strings.Contains(err.Error(), "disabled") {
+		t.Fatalf("RunAutomation(disabled task) error = %v", err)
+	}
+}
+
+func TestJobAndOperatorAutomationNamesCannotCollide(t *testing.T) {
+	dir := t.TempDir()
+	writeTask(t, dir, "digest-dispatch")
+	scheduler := NewScheduler(config.Config{
+		AutomationsDirectory: dir,
+		AutomationsEnabled:   true,
+		Timezone:             "UTC",
+	}, &fakeRunner{}, nil)
+	if err := scheduler.RegisterJob(Job{Name: "digest-dispatch", Schedule: "@every 1m", Run: func(context.Context) (string, error) {
+		return "", nil
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := scheduler.reload(); err == nil || !strings.Contains(err.Error(), "conflicts") {
+		t.Fatalf("reload() error = %v, want a name conflict", err)
+	}
+	if names := scheduler.AutomationNames(); len(names) != 1 || names[0] != "digest-dispatch" {
+		t.Fatalf("AutomationNames() = %#v, want only the built-in job", names)
+	}
+}
+
+type immediateSchedule struct{}
+
+func (immediateSchedule) Next(time.Time) time.Time {
+	return time.Now().Add(time.Millisecond)
+}
+
+func TestWaitJoinsScheduledJobAfterCancellation(t *testing.T) {
+	scheduler := NewScheduler(config.Config{RunTimeout: time.Minute, Timezone: "UTC"}, nil, nil)
+	started := make(chan struct{})
+	finished := make(chan struct{})
+	if err := scheduler.RegisterJob(Job{Name: "joined", Schedule: "@every 1m", Run: func(ctx context.Context) (string, error) {
+		close(started)
+		<-ctx.Done()
+		close(finished)
+		return "", ctx.Err()
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	scheduler.launchScheduled(ctx, "joined", immediateSchedule{})
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("scheduled job did not start")
+	}
+	cancel()
+	scheduler.Wait()
+	select {
+	case <-finished:
+	default:
+		t.Fatal("Wait returned before the job finished")
+	}
+}
+
+func TestRegisteredJobRejectsDuplicateAndOverlap(t *testing.T) {
+	scheduler := NewScheduler(config.Config{RunTimeout: time.Second, Timezone: "UTC"}, nil, nil)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	job := Job{
+		Name:     "digest-dispatch",
+		Schedule: "@every 1m",
+		Run: func(ctx context.Context) (string, error) {
+			close(started)
+			select {
+			case <-release:
+				return "", nil
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		},
+	}
+	if err := scheduler.RegisterJob(job); err != nil {
+		t.Fatalf("RegisterJob() error = %v", err)
+	}
+	if err := scheduler.RegisterJob(job); err == nil {
+		t.Fatal("duplicate RegisterJob() error = nil")
+	}
+	done := make(chan error, 1)
+	go func() { done <- scheduler.RunAutomation(context.Background(), job.Name) }()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("registered job did not start")
+	}
+	if err := scheduler.RunAutomation(context.Background(), job.Name); err == nil || !strings.Contains(err.Error(), "already running") {
+		t.Fatalf("overlap error = %v", err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("first job error = %v", err)
+	}
+}
+
 func TestRunAutomationTimesOut(t *testing.T) {
 	runner := &fakeRunner{blockOnCtx: true}
 	s := newTestScheduler(t, runner, 50*time.Millisecond)

@@ -39,6 +39,17 @@ type ToolFailureStore interface {
 	RecordToolFailure(threadID string, failure ToolFailure)
 }
 
+// Job is a deterministic built-in automation. Unlike Markdown tasks it does
+// not invoke Pi: the owning subsystem supplies a typed, read-only operation.
+// Jobs share scheduling, overlap protection, manual triggering, and shutdown
+// with operator automations without crossing the LLM boundary.
+type Job struct {
+	Name        string
+	Description string
+	Schedule    string
+	Run         func(context.Context) (string, error)
+}
+
 type Scheduler struct {
 	cfg          config.Config
 	runner       Runner
@@ -46,8 +57,10 @@ type Scheduler struct {
 	toolFailures ToolFailureStore
 	mu           sync.RWMutex
 	tasks        map[string]Task
+	jobs         map[string]Job
 	running      map[string]bool
 	loc          *time.Location
+	wg           sync.WaitGroup
 }
 
 func NewScheduler(cfg config.Config, runner Runner, reporter Reporter) *Scheduler {
@@ -56,7 +69,32 @@ func NewScheduler(cfg config.Config, runner Runner, reporter Reporter) *Schedule
 		log.Printf("invalid runtime.timezone %q, falling back to UTC: %v", cfg.Timezone, err)
 		loc = time.UTC
 	}
-	return &Scheduler{cfg: cfg, runner: runner, reporter: reporter, tasks: map[string]Task{}, running: map[string]bool{}, loc: loc}
+	return &Scheduler{cfg: cfg, runner: runner, reporter: reporter, tasks: map[string]Task{}, jobs: map[string]Job{}, running: map[string]bool{}, loc: loc}
+}
+
+func (s *Scheduler) RegisterJob(job Job) error {
+	job.Name = strings.TrimSpace(job.Name)
+	job.Description = strings.TrimSpace(job.Description)
+	job.Schedule = strings.TrimSpace(job.Schedule)
+	if job.Name == "" {
+		return fmt.Errorf("automation job name is required")
+	}
+	if job.Run == nil {
+		return fmt.Errorf("automation job %q runner is required", job.Name)
+	}
+	if _, err := parseSchedule(job.Schedule); err != nil {
+		return fmt.Errorf("parse automation job %q schedule: %w", job.Name, err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.jobs[job.Name]; exists {
+		return fmt.Errorf("automation job %q is already registered", job.Name)
+	}
+	if _, exists := s.tasks[job.Name]; exists {
+		return fmt.Errorf("automation job %q conflicts with an operator automation", job.Name)
+	}
+	s.jobs[job.Name] = job
+	return nil
 }
 
 func (s *Scheduler) SetReporter(reporter Reporter) {
@@ -72,23 +110,54 @@ func (s *Scheduler) SetToolFailureStore(store ToolFailureStore) {
 }
 
 func (s *Scheduler) Start(ctx context.Context) {
-	if !s.cfg.AutomationsEnabled {
-		log.Printf("automation scheduler disabled")
-		return
+	var tasks []Task
+	if s.cfg.AutomationsEnabled {
+		if err := s.reload(); err != nil {
+			log.Printf("load automations: %v", err)
+		} else {
+			tasks = s.operatorTasksForStart()
+		}
+	} else {
+		log.Printf("operator automations disabled")
 	}
-	if err := s.reload(); err != nil {
-		log.Printf("load automations: %v", err)
-		return
-	}
-	for _, task := range s.snapshot() {
+	for _, task := range tasks {
 		sched, err := parseSchedule(task.Schedule)
 		if err != nil {
 			log.Printf("automation has invalid schedule, skipping: name=%s schedule=%q error=%v", task.Name, task.Schedule, err)
 			continue
 		}
-		go s.runScheduled(ctx, task.Name, sched)
+		s.launchScheduled(ctx, task.Name, sched)
 	}
-	log.Printf("automation scheduler started: tasks=%d", len(s.snapshot()))
+	for _, job := range s.jobSnapshot() {
+		sched, err := parseSchedule(job.Schedule)
+		if err != nil {
+			log.Printf("built-in automation has invalid schedule, skipping: name=%s schedule=%q error=%v", job.Name, job.Schedule, err)
+			continue
+		}
+		s.launchScheduled(ctx, job.Name, sched)
+	}
+	log.Printf("automation scheduler started: tasks=%d jobs=%d", len(tasks), len(s.jobSnapshot()))
+}
+
+func (s *Scheduler) launchScheduled(ctx context.Context, name string, sched cron.Schedule) {
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.runScheduled(ctx, name, sched)
+	}()
+}
+
+// Wait joins scheduled loops and any built-in/operator run active inside them.
+// The context passed to Start must be canceled before calling Wait.
+func (s *Scheduler) Wait() {
+	s.wg.Wait()
+}
+
+func (s *Scheduler) operatorTasksForStart() []Task {
+	if !s.cfg.AutomationsEnabled {
+		return nil
+	}
+	return s.snapshot()
 }
 
 func parseSchedule(spec string) (cron.Schedule, error) {
@@ -119,6 +188,12 @@ func (s *Scheduler) runScheduled(ctx context.Context, name string, sched cron.Sc
 }
 
 func (s *Scheduler) RunAutomation(ctx context.Context, name string) error {
+	if job, ok := s.registeredJob(name); ok {
+		return s.runJob(ctx, job)
+	}
+	if !s.cfg.AutomationsEnabled {
+		return fmt.Errorf("operator automations are disabled")
+	}
 	if err := s.reload(); err != nil {
 		return err
 	}
@@ -201,6 +276,43 @@ func (s *Scheduler) RunAutomation(ctx context.Context, name string) error {
 	return nil
 }
 
+func (s *Scheduler) runJob(ctx context.Context, job Job) error {
+	if err := s.beginRun(job.Name); err != nil {
+		return err
+	}
+	defer s.endRun(job.Name)
+	runCtx := ctx
+	if s.cfg.RunTimeout > 0 {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(ctx, s.cfg.RunTimeout)
+		defer cancel()
+	}
+	response, err := job.Run(runCtx)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(response) != "" {
+		log.Printf("built-in automation completed: name=%s response=%s", job.Name, strings.TrimSpace(response))
+	}
+	return nil
+}
+
+func (s *Scheduler) beginRun(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.running[name] {
+		return fmt.Errorf("automation %q is already running", name)
+	}
+	s.running[name] = true
+	return nil
+}
+
+func (s *Scheduler) endRun(name string) {
+	s.mu.Lock()
+	delete(s.running, name)
+	s.mu.Unlock()
+}
+
 func automationMutationBudget(taskBudget, configuredMaximum int) int {
 	if configuredMaximum >= 0 && configuredMaximum < taskBudget {
 		return configuredMaximum
@@ -209,14 +321,26 @@ func automationMutationBudget(taskBudget, configuredMaximum int) int {
 }
 
 func (s *Scheduler) AutomationNames() []string {
-	_ = s.reload()
+	if s.cfg.AutomationsEnabled {
+		_ = s.reload()
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	names := make([]string, 0, len(s.tasks))
+	names := make([]string, 0, len(s.tasks)+len(s.jobs))
 	for name := range s.tasks {
 		names = append(names, name)
 	}
+	for name := range s.jobs {
+		names = append(names, name)
+	}
 	return names
+}
+
+func (s *Scheduler) registeredJob(name string) (Job, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	job, ok := s.jobs[strings.TrimSpace(name)]
+	return job, ok
 }
 
 func (s *Scheduler) reload() error {
@@ -229,8 +353,13 @@ func (s *Scheduler) reload() error {
 		byName[task.Name] = task
 	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	for name := range byName {
+		if _, exists := s.jobs[name]; exists {
+			return fmt.Errorf("operator automation %q conflicts with a built-in automation", name)
+		}
+	}
 	s.tasks = byName
-	s.mu.Unlock()
 	return nil
 }
 
@@ -252,6 +381,16 @@ func (s *Scheduler) snapshot() []Task {
 	out := make([]Task, 0, len(s.tasks))
 	for _, task := range s.tasks {
 		out = append(out, task)
+	}
+	return out
+}
+
+func (s *Scheduler) jobSnapshot() []Job {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]Job, 0, len(s.jobs))
+	for _, job := range s.jobs {
+		out = append(out, job)
 	}
 	return out
 }
