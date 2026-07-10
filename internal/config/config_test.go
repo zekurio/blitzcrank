@@ -88,10 +88,10 @@ func TestValidateDigestConfig(t *testing.T) {
 	valid := Config{
 		DigestsEnabled:         true,
 		DiscordToken:           "discord-token",
-		TMDBAPIToken:           "tmdb-token",
-		TMDBBaseURL:            "https://api.themoviedb.org",
-		AniListBaseURL:         "https://graphql.anilist.co",
-		DigestDefaultRegion:    "AT",
+		SonarrBaseURL:          "https://sonarr.example",
+		SonarrAPIKey:           "sonarr-token",
+		RadarrBaseURL:          "https://radarr.example",
+		RadarrAPIKey:           "radarr-token",
 		DigestDispatchSchedule: "@every 1m",
 		DigestMaxItems:         12,
 		DigestRetryDelay:       15 * time.Minute,
@@ -108,8 +108,8 @@ func TestValidateDigestConfig(t *testing.T) {
 		want string
 	}{
 		{name: "Discord token", edit: func(cfg *Config) { cfg.DiscordToken = "" }, want: "DISCORD_TOKEN"},
-		{name: "TMDB token", edit: func(cfg *Config) { cfg.TMDBAPIToken = "" }, want: "TMDB_API_TOKEN"},
-		{name: "region", edit: func(cfg *Config) { cfg.DigestDefaultRegion = "de" }, want: "DIGEST_DEFAULT_REGION"},
+		{name: "Sonarr token", edit: func(cfg *Config) { cfg.SonarrAPIKey = "" }, want: "SONARR_API_KEY"},
+		{name: "Radarr URL", edit: func(cfg *Config) { cfg.RadarrBaseURL = "" }, want: "RADARR_BASE_URL"},
 		{name: "item limit", edit: func(cfg *Config) { cfg.DigestMaxItems = 21 }, want: "DIGEST_MAX_ITEMS"},
 		{name: "schedule", edit: func(cfg *Config) { cfg.DigestDispatchSchedule = "not cron" }, want: "DIGEST_DISPATCH_SCHEDULE"},
 		{name: "timezone", edit: func(cfg *Config) { cfg.Timezone = "Mars/Olympus" }, want: "timezone"},

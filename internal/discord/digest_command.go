@@ -7,16 +7,16 @@ func digestApplicationCommand() *discordgo.ApplicationCommand {
 	minimumID := float64(1)
 	return &discordgo.ApplicationCommand{
 		Name:        "digest",
-		Description: "Private media release digests and recommendations.",
+		Description: "Private Sonarr and Radarr calendar newsletters.",
 		DescriptionLocalizations: &map[discordgo.Locale]string{
-			discordgo.German: "Private Medien-Digests und Empfehlungen.",
+			discordgo.German: "Private Sonarr- und Radarr-Kalendernewsletter.",
 		},
 		Contexts: &contexts,
 		Options: []*discordgo.ApplicationCommandOption{
 			{
 				Type:        discordgo.ApplicationCommandOptionSubCommand,
 				Name:        "subscribe",
-				Description: "Create a personalized DM digest.",
+				Description: "Create a weekly or monthly DM newsletter.",
 				NameLocalizations: map[discordgo.Locale]string{
 					discordgo.German: "abonnieren",
 				},
@@ -38,7 +38,7 @@ func digestApplicationCommand() *discordgo.ApplicationCommand {
 			{
 				Type:        discordgo.ApplicationCommandOptionSubCommand,
 				Name:        "preview",
-				Description: "Preview one of your recommendation digests.",
+				Description: "Preview one of your calendar newsletters.",
 				NameLocalizations: map[discordgo.Locale]string{
 					discordgo.German: "vorschau",
 				},
@@ -57,28 +57,6 @@ func digestApplicationCommand() *discordgo.ApplicationCommand {
 					},
 					MinValue: &minimumID,
 				}},
-			},
-			{
-				Type:        discordgo.ApplicationCommandOptionSubCommand,
-				Name:        "link",
-				Description: "Link Jellyfin to personalize recommendations.",
-				NameLocalizations: map[discordgo.Locale]string{
-					discordgo.German: "verknüpfen",
-				},
-				DescriptionLocalizations: map[discordgo.Locale]string{
-					discordgo.German: "Jellyfin für persönliche Empfehlungen verknüpfen.",
-				},
-			},
-			{
-				Type:        discordgo.ApplicationCommandOptionSubCommand,
-				Name:        "unlink",
-				Description: "Remove your Jellyfin account link.",
-				NameLocalizations: map[discordgo.Locale]string{
-					discordgo.German: "trennen",
-				},
-				DescriptionLocalizations: map[discordgo.Locale]string{
-					discordgo.German: "Die Jellyfin-Verknüpfung entfernen.",
-				},
 			},
 		},
 	}

@@ -12,15 +12,14 @@ import (
 	"syscall"
 	"time"
 
+	"blitzcrank/internal/arrcalendar"
 	"blitzcrank/internal/automation"
 	"blitzcrank/internal/config"
 	"blitzcrank/internal/digest"
 	"blitzcrank/internal/discord"
 	"blitzcrank/internal/harness"
-	"blitzcrank/internal/jellyfin"
 	"blitzcrank/internal/logging"
 	"blitzcrank/internal/pi"
-	"blitzcrank/internal/recommendation"
 	"blitzcrank/internal/review"
 	"blitzcrank/internal/store"
 	"blitzcrank/internal/tools"
@@ -164,7 +163,7 @@ func runBot() error {
 	finishStep(nil)
 
 	finishStep = startup.start("create_digest_services")
-	digestService, jellyfinLinks, err := createDigestServices(ctx, cfg, state)
+	digestService, err := createDigestService(ctx, cfg, state)
 	finishStep(err)
 	if err != nil {
 		return fmt.Errorf("create digest services: %w", err)
@@ -178,9 +177,6 @@ func runBot() error {
 	}
 	if digestService != nil {
 		discordOptions.Digests = digestService
-	}
-	if jellyfinLinks != nil {
-		discordOptions.JellyfinLinks = jellyfinLinks
 	}
 	discordBot, err := discord.NewWithConversation(cfg, scheduler, discordOptions)
 	if err != nil {
@@ -231,70 +227,25 @@ func runBot() error {
 	return nil
 }
 
-func createDigestServices(ctx context.Context, cfg config.Config, state *store.Store) (*digest.Service, *jellyfin.LinkService, error) {
+func createDigestService(ctx context.Context, cfg config.Config, state *store.Store) (*digest.Service, error) {
 	if !cfg.DigestsEnabled {
-		return nil, nil, nil
+		return nil, nil
 	}
-	tmdbCatalog, err := recommendation.NewTMDBCatalog(recommendation.TMDBCatalogOptions{
-		BaseURL:     cfg.TMDBBaseURL,
-		BearerToken: cfg.TMDBAPIToken,
-	})
+	calendar, err := arrcalendar.New(cfg.SonarrBaseURL, cfg.SonarrAPIKey, cfg.RadarrBaseURL, cfg.RadarrAPIKey, nil)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	cachedTMDB, err := recommendation.NewCachedCatalog(tmdbCatalog, recommendation.CacheOptions{})
+	service, err := digest.NewService(state, cfg.Timezone)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	aniListCatalog, err := recommendation.NewAniListCatalog(recommendation.AniListCatalogOptions{Endpoint: cfg.AniListBaseURL})
-	if err != nil {
-		return nil, nil, err
-	}
-	cachedAniList, err := recommendation.NewCachedCatalog(aniListCatalog, recommendation.CacheOptions{})
-	if err != nil {
-		return nil, nil, err
-	}
-
-	var profileSource recommendation.ProfileSource
-	var jellyfinLinks *jellyfin.LinkService
-	if strings.TrimSpace(cfg.JellyfinBaseURL) != "" && strings.TrimSpace(cfg.JellyfinAPIKey) != "" {
-		jellyfinClient, err := jellyfin.NewClient(cfg.JellyfinBaseURL, cfg.JellyfinAPIKey, nil)
-		if errors.Is(err, jellyfin.ErrInsecureTransport) {
-			log.Printf("Jellyfin digest personalization and linking disabled: %v", err)
-		} else if err != nil {
-			return nil, nil, err
-		} else {
-			rawProfileSource, err := jellyfin.NewProfileSource(jellyfinClient, state, 200)
-			if err != nil {
-				return nil, nil, err
-			}
-			cachedProfileSource, err := recommendation.NewCachedProfileSource(rawProfileSource, recommendation.CacheOptions{})
-			if err != nil {
-				return nil, nil, err
-			}
-			profileSource = cachedProfileSource
-			jellyfinLinks, err = jellyfin.NewLinkService(jellyfinClient, state)
-			if err != nil {
-				return nil, nil, err
-			}
-			jellyfinLinks.SetProfileInvalidator(cachedProfileSource.Invalidate)
-		}
-	} else {
-		log.Printf("Jellyfin digest personalization disabled: JELLYFIN_BASE_URL or JELLYFIN_API_KEY is not set")
-	}
-
-	engine := recommendation.NewEngine([]recommendation.Catalog{cachedTMDB, cachedAniList}, profileSource, nil)
-	service, err := digest.NewService(state, cfg.DigestDefaultRegion, cfg.Timezone)
-	if err != nil {
-		return nil, nil, err
-	}
-	if err := service.ConfigureRecommendations(engine, cfg.DigestMaxItems, cfg.DigestRetryDelay); err != nil {
-		return nil, nil, err
+	if err := service.ConfigureNewsletter(calendar, cfg.DigestMaxItems, cfg.DigestRetryDelay); err != nil {
+		return nil, err
 	}
 	if err := service.RecoverDeliveries(ctx); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return service, jellyfinLinks, nil
+	return service, nil
 }
 
 func reviewRunTokenTTL(cfg config.Config) time.Duration {

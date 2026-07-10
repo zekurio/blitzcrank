@@ -5,25 +5,15 @@ import "time"
 type Topic string
 
 const (
-	TopicAnimeSeasons  Topic = "anime_seasons"
-	TopicShowPremieres Topic = "show_premieres"
-	TopicMovieReleases Topic = "movie_releases"
-)
-
-type ReleaseKind string
-
-const (
-	ReleaseKindOnline   ReleaseKind = "online"
-	ReleaseKindPhysical ReleaseKind = "physical"
-	ReleaseKindCinema   ReleaseKind = "cinema"
+	TopicShows  Topic = "shows"
+	TopicMovies Topic = "movies"
 )
 
 type Cadence string
 
 const (
-	CadenceDaily    Cadence = "daily"
-	CadenceWeekly   Cadence = "weekly"
-	CadenceSeasonal Cadence = "seasonal"
+	CadenceWeekly  Cadence = "weekly"
+	CadenceMonthly Cadence = "monthly"
 )
 
 type Subscriber struct {
@@ -35,15 +25,12 @@ type Subscription struct {
 	ID              int64
 	Subscriber      Subscriber
 	Topics          []Topic
-	ReleaseKinds    []ReleaseKind
 	Cadence         Cadence
 	Schedule        string
 	Weekday         time.Weekday
 	TimeOfDay       string
-	Region          string
 	Timezone        string
 	Locale          string
-	Interests       []string
 	Enabled         bool
 	NextRunAt       *time.Time
 	LastRunAt       *time.Time

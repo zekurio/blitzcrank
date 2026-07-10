@@ -250,15 +250,12 @@ CREATE TABLE IF NOT EXISTS digest_subscriptions (
   user_id TEXT NOT NULL,
   identity_key TEXT NOT NULL,
   topics_json TEXT NOT NULL,
-  release_kinds_json TEXT NOT NULL,
   cadence TEXT NOT NULL,
   schedule TEXT NOT NULL,
   weekday INTEGER NOT NULL,
   time_of_day TEXT NOT NULL,
-  region TEXT NOT NULL,
   timezone TEXT NOT NULL,
   locale TEXT NOT NULL,
-  interests_json TEXT NOT NULL,
   enabled INTEGER NOT NULL DEFAULT 1,
   next_run_at TEXT,
   last_run_at TEXT,
@@ -313,15 +310,6 @@ CREATE TABLE IF NOT EXISTS digest_delivery_items (
 
 CREATE INDEX IF NOT EXISTS idx_digest_delivery_items_delivery
 ON digest_delivery_items(first_delivery_id);
-
-CREATE TABLE IF NOT EXISTS jellyfin_user_links (
-  guild_id TEXT NOT NULL,
-  discord_user_id TEXT NOT NULL,
-  jellyfin_user_id TEXT NOT NULL,
-  linked_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  PRIMARY KEY (guild_id, discord_user_id)
-);
 
 	`)
 	if err != nil {

@@ -54,11 +54,10 @@ type ConversationStore interface {
 const interruptedByRestart = "process restarted"
 
 type ConversationOptions struct {
-	Context       context.Context
-	Runner        ConversationRunner
-	Store         ConversationStore
-	Digests       DigestService
-	JellyfinLinks JellyfinLinker
+	Context context.Context
+	Runner  ConversationRunner
+	Store   ConversationStore
+	Digests DigestService
 }
 
 type conversationAgent struct {
@@ -117,7 +116,6 @@ func NewWithConversation(cfg config.Config, scheduler Scheduler, options Convers
 			return nil, fmt.Errorf("discord digest service is required")
 		}
 		bot.digests = options.Digests
-		bot.jellyfinLinks = options.JellyfinLinks
 	}
 	if len(cfg.DiscordWatchedChannelIDs) == 0 {
 		return bot, nil

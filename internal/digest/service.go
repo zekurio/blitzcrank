@@ -11,8 +11,8 @@ import (
 const MaxSubscriptionsPerUser = 10
 
 var (
-	ErrSubscriptionAlreadyExists = errors.New("an identical digest subscription already exists")
-	ErrSubscriptionLimit         = errors.New("digest subscription limit reached")
+	ErrSubscriptionAlreadyExists = errors.New("an identical newsletter subscription already exists")
+	ErrSubscriptionLimit         = errors.New("newsletter subscription limit reached")
 )
 
 type Repository interface {
@@ -31,47 +31,55 @@ type Repository interface {
 }
 
 type Service struct {
-	repository    Repository
-	now           func() time.Time
-	defaultRegion string
-	defaultZone   string
-	recommender   Recommender
-	maxItems      int
-	retryDelay    time.Duration
+	repository  Repository
+	now         func() time.Time
+	defaultZone string
+	calendar    CalendarSource
+	maxItems    int
+	retryDelay  time.Duration
 }
 
-func NewService(repository Repository, defaultRegion, defaultTimezone string) (*Service, error) {
+func NewService(repository Repository, defaultTimezone string) (*Service, error) {
 	if repository == nil {
-		return nil, errors.New("digest repository is required")
-	}
-	defaultRegion = strings.ToUpper(strings.TrimSpace(defaultRegion))
-	if len(defaultRegion) != 2 {
-		return nil, errors.New("digest default region is invalid")
+		return nil, errors.New("newsletter repository is required")
 	}
 	defaultTimezone = strings.TrimSpace(defaultTimezone)
 	if _, err := time.LoadLocation(defaultTimezone); err != nil {
-		return nil, fmt.Errorf("load digest default timezone: %w", err)
+		return nil, fmt.Errorf("load newsletter default timezone: %w", err)
 	}
 	return &Service{
-		repository:    repository,
-		now:           time.Now,
-		defaultRegion: defaultRegion,
-		defaultZone:   defaultTimezone,
-		maxItems:      12,
-		retryDelay:    15 * time.Minute,
+		repository:  repository,
+		now:         time.Now,
+		defaultZone: defaultTimezone,
+		maxItems:    12,
+		retryDelay:  15 * time.Minute,
 	}, nil
+}
+
+func (s *Service) ConfigureNewsletter(calendar CalendarSource, maxItems int, retryDelay time.Duration) error {
+	if calendar == nil {
+		return errors.New("newsletter calendar source is required")
+	}
+	if maxItems < 1 || maxItems > 20 {
+		return errors.New("newsletter max items must be between 1 and 20")
+	}
+	if retryDelay <= 0 {
+		return errors.New("newsletter retry delay must be positive")
+	}
+	s.calendar = calendar
+	s.maxItems = maxItems
+	s.retryDelay = retryDelay
+	return nil
 }
 
 func (s *Service) DefaultInput(locale string) SubscriptionInput {
 	return SubscriptionInput{
-		Topics:       []Topic{TopicAnimeSeasons, TopicShowPremieres, TopicMovieReleases},
-		ReleaseKinds: []ReleaseKind{ReleaseKindOnline, ReleaseKindPhysical, ReleaseKindCinema},
-		Cadence:      CadenceWeekly,
-		Weekday:      time.Friday,
-		TimeOfDay:    "18:00",
-		Region:       s.defaultRegion,
-		Timezone:     s.defaultZone,
-		Locale:       strings.TrimSpace(locale),
+		Topics:    []Topic{TopicShows, TopicMovies},
+		Cadence:   CadenceWeekly,
+		Weekday:   time.Friday,
+		TimeOfDay: "18:00",
+		Timezone:  s.defaultZone,
+		Locale:    strings.TrimSpace(locale),
 	}
 }
 
@@ -91,7 +99,7 @@ func (s *Service) CreateSubscription(ctx context.Context, subscriber Subscriber,
 	subscription.UpdatedAt = now
 	created, err := s.repository.CreateDigestSubscription(ctx, subscription)
 	if err != nil {
-		return Subscription{}, fmt.Errorf("create digest subscription: %w", err)
+		return Subscription{}, fmt.Errorf("create newsletter subscription: %w", err)
 	}
 	return created, nil
 }
@@ -99,10 +107,10 @@ func (s *Service) CreateSubscription(ctx context.Context, subscriber Subscriber,
 func (s *Service) UpdateSubscription(ctx context.Context, subscriber Subscriber, subscriptionID int64, input SubscriptionInput) (Subscription, error) {
 	current, ok, err := s.repository.LoadDigestSubscription(ctx, subscriber, subscriptionID)
 	if err != nil {
-		return Subscription{}, fmt.Errorf("load digest subscription: %w", err)
+		return Subscription{}, fmt.Errorf("load newsletter subscription: %w", err)
 	}
 	if !ok {
-		return Subscription{}, errors.New("digest subscription was not found")
+		return Subscription{}, errors.New("newsletter subscription was not found")
 	}
 	normalized, schedule, nextRunAt, err := s.prepareInput(input, s.now())
 	if err != nil {
@@ -119,7 +127,7 @@ func (s *Service) UpdateSubscription(ctx context.Context, subscriber Subscriber,
 		updated.NextRunAt = &nextRunAt
 	}
 	if err := s.repository.UpdateDigestSubscription(ctx, subscriber, updated); err != nil {
-		return Subscription{}, fmt.Errorf("update digest subscription: %w", err)
+		return Subscription{}, fmt.Errorf("update newsletter subscription: %w", err)
 	}
 	return updated, nil
 }
@@ -138,10 +146,10 @@ func (s *Service) ListSubscriptions(ctx context.Context, subscriber Subscriber) 
 func (s *Service) SetSubscriptionEnabled(ctx context.Context, subscriber Subscriber, subscriptionID int64, enabled bool) error {
 	current, ok, err := s.repository.LoadDigestSubscription(ctx, subscriber, subscriptionID)
 	if err != nil {
-		return fmt.Errorf("load digest subscription: %w", err)
+		return fmt.Errorf("load newsletter subscription: %w", err)
 	}
 	if !ok {
-		return errors.New("digest subscription was not found")
+		return errors.New("newsletter subscription was not found")
 	}
 	now := s.now().UTC()
 	var nextRunAt *time.Time
@@ -153,22 +161,19 @@ func (s *Service) SetSubscriptionEnabled(ctx context.Context, subscriber Subscri
 		nextRunAt = &next
 	}
 	if err := s.repository.SetDigestSubscriptionEnabled(ctx, subscriber, subscriptionID, enabled, nextRunAt, now); err != nil {
-		return fmt.Errorf("set digest subscription state: %w", err)
+		return fmt.Errorf("set newsletter subscription state: %w", err)
 	}
 	return nil
 }
 
 func (s *Service) DeleteSubscription(ctx context.Context, subscriber Subscriber, subscriptionID int64) error {
 	if err := s.repository.DeleteDigestSubscription(ctx, subscriber, subscriptionID, s.now().UTC()); err != nil {
-		return fmt.Errorf("delete digest subscription: %w", err)
+		return fmt.Errorf("delete newsletter subscription: %w", err)
 	}
 	return nil
 }
 
 func (s *Service) prepareInput(input SubscriptionInput, after time.Time) (SubscriptionInput, string, time.Time, error) {
-	if strings.TrimSpace(input.Region) == "" {
-		input.Region = s.defaultRegion
-	}
 	if strings.TrimSpace(input.Timezone) == "" {
 		input.Timezone = s.defaultZone
 	}
@@ -189,23 +194,20 @@ func (s *Service) prepareInput(input SubscriptionInput, after time.Time) (Subscr
 
 func subscriptionFromInput(subscriber Subscriber, input SubscriptionInput, schedule string) Subscription {
 	return Subscription{
-		Subscriber:   subscriber,
-		Topics:       append([]Topic(nil), input.Topics...),
-		ReleaseKinds: append([]ReleaseKind(nil), input.ReleaseKinds...),
-		Cadence:      input.Cadence,
-		Schedule:     schedule,
-		Weekday:      input.Weekday,
-		TimeOfDay:    input.TimeOfDay,
-		Region:       input.Region,
-		Timezone:     input.Timezone,
-		Locale:       input.Locale,
-		Interests:    append([]string(nil), input.Interests...),
+		Subscriber: subscriber,
+		Topics:     append([]Topic(nil), input.Topics...),
+		Cadence:    input.Cadence,
+		Schedule:   schedule,
+		Weekday:    input.Weekday,
+		TimeOfDay:  input.TimeOfDay,
+		Timezone:   input.Timezone,
+		Locale:     input.Locale,
 	}
 }
 
 func validateSubscriber(subscriber Subscriber) error {
 	if strings.TrimSpace(subscriber.GuildID) == "" || strings.TrimSpace(subscriber.UserID) == "" {
-		return errors.New("digest subscriber guild and user IDs are required")
+		return errors.New("newsletter subscriber guild and user IDs are required")
 	}
 	return nil
 }

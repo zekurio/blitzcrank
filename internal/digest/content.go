@@ -3,21 +3,55 @@ package digest
 import (
 	"context"
 	"time"
-
-	"blitzcrank/internal/recommendation"
 )
 
-// Content is the provider-neutral result used by both Discord previews and
-// scheduled DM delivery. Partial is true when at least one release/profile
-// source failed. ReleaseSourcesPartial excludes optional profile failures so an
-// otherwise successful empty catalog result is not retried.
+type EntryKind string
+
+const (
+	EntryKindEpisode  EntryKind = "episode"
+	EntryKindCinema   EntryKind = "cinema"
+	EntryKindDigital  EntryKind = "digital"
+	EntryKindPhysical EntryKind = "physical"
+)
+
+// Entry is one calendar event from Sonarr or Radarr. EventKey is stable across
+// runs and is hashed before persistence.
+type Entry struct {
+	EventKey string
+	Topic    Topic
+	Kind     EntryKind
+	Title    string
+	Subtitle string
+	Overview string
+	OccursAt time.Time
+	HasFile  bool
+	Source   string
+}
+
+type CalendarQuery struct {
+	Topics []Topic
+	Start  time.Time
+	End    time.Time
+	Limit  int
+}
+
+type CalendarResult struct {
+	Items    []Entry
+	Warnings []string
+}
+
+type CalendarSource interface {
+	Fetch(context.Context, CalendarQuery) (CalendarResult, error)
+}
+
+// Content is the calendar-neutral result used by both Discord previews and
+// scheduled DM delivery.
 type Content struct {
-	Subscription          Subscription
-	WindowStart           time.Time
-	WindowEnd             time.Time
-	Items                 []recommendation.Candidate
-	Partial               bool
-	ReleaseSourcesPartial bool
+	Subscription Subscription
+	WindowStart  time.Time
+	WindowEnd    time.Time
+	Items        []Entry
+	Partial      bool
 }
 
 type SendResult struct {

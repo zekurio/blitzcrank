@@ -15,15 +15,11 @@ func validateStrictConfig(cfg Config) error {
 		if strings.TrimSpace(cfg.DiscordToken) == "" {
 			return errors.New("DISCORD_TOKEN is required when digests are enabled")
 		}
-		if strings.TrimSpace(cfg.TMDBAPIToken) == "" {
-			return errors.New("TMDB_API_TOKEN is required when digests are enabled")
+		if strings.TrimSpace(cfg.SonarrBaseURL) == "" || strings.TrimSpace(cfg.SonarrAPIKey) == "" {
+			return errors.New("SONARR_BASE_URL and SONARR_API_KEY are required when digests are enabled")
 		}
-		if strings.TrimSpace(cfg.TMDBBaseURL) == "" || strings.TrimSpace(cfg.AniListBaseURL) == "" {
-			return errors.New("digest provider base URLs are required when digests are enabled")
-		}
-		region := strings.TrimSpace(cfg.DigestDefaultRegion)
-		if len(region) != 2 || region[0] < 'A' || region[0] > 'Z' || region[1] < 'A' || region[1] > 'Z' {
-			return errors.New("DIGEST_DEFAULT_REGION must be an uppercase ISO 3166-1 alpha-2 code")
+		if strings.TrimSpace(cfg.RadarrBaseURL) == "" || strings.TrimSpace(cfg.RadarrAPIKey) == "" {
+			return errors.New("RADARR_BASE_URL and RADARR_API_KEY are required when digests are enabled")
 		}
 		if cfg.DigestMaxItems < 1 || cfg.DigestMaxItems > 20 {
 			return errors.New("DIGEST_MAX_ITEMS must be between 1 and 20")

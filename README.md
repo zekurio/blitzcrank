@@ -9,9 +9,8 @@ Pi owns the agent runtime, provider/auth setup, skills, model selection, durable
 - Seerr issue webhooks
 - Markdown scheduled automations
 - Optional Discord conversational support agent, automation reporting, and `/automatisierung` trigger command
-- Localized Discord `/digest` subscriptions with private recommendation previews and scheduled DMs
-- Regional anime, show, and movie release discovery with distinct online/home, physical, and cinema lanes
-- Jellyfin-linked recommendation profiles without persisted user passwords or access tokens
+- Localized Discord `/digest` subscriptions with private Sonarr/Radarr calendar previews and scheduled DMs
+- Weekly or monthly newsletters for monitored shows, anime, and movie cinema/digital/physical releases
 - Pi RPC runner with source-isolated persistent sessions
 - Typed Pi service request tools for Seerr, Jellyfin, Sonarr, Radarr, SABnzBD, and Anvil systemd status
 - Independent mutation review for every agent-initiated operational non-GET request
@@ -61,7 +60,6 @@ DISCORD_AUTOMATION_CHANNEL_ID=...
 DISCORD_WATCHED_CHANNEL_IDS=123456789012345678,234567890123456789
 SEERR_API_KEY=...
 JELLYFIN_API_KEY=...
-TMDB_API_TOKEN=... # TMDB API read-access token; required when digests are enabled
 SONARR_API_KEY=...
 RADARR_API_KEY=...
 SABNZBD_API_KEY=...
@@ -147,9 +145,6 @@ base_url = "https://jellyfin.example"
 
 [digests]
 enabled = false
-# Prefer the TMDB_API_TOKEN secret environment variable in deployments.
-tmdb_api_token = ""
-default_region = "AT"
 dispatch_schedule = "@every 1m"
 max_items = 12
 retry_delay = "15m"
@@ -257,43 +252,22 @@ Automations cannot interactively confirm a proposal. A reviewer verdict of `need
 
 When `DISCORD_TOKEN` and `discord.automation_channel_id` are configured, each automation has a Discord thread titled `automation: {automation name}`. Blitzcrank keeps one transient bot report in that thread, editing it for each run so it reflects the current outstanding automation state, and locks the thread by default. The `/automatisierung` slash command can trigger one of the currently loaded automations manually.
 
-## Digests and Recommendations
+## Calendar Newsletters
 
-Enable private release digests with `digests.enabled = true`, a Discord token,
-and `TMDB_API_TOKEN`. The localized `/digest` command supports subscribing,
-managing, previewing, linking Jellyfin, and unlinking Jellyfin. Subscriptions are
-delivered by DM; the originating guild and Discord user always scope reads,
-updates, pauses, previews, and deletes.
+Enable private newsletters with `digests.enabled = true`, a Discord token, and
+configured Sonarr and Radarr URLs/API keys. The localized `/digest` command lets
+users subscribe, manage, pause, delete, and preview newsletters. Delivery is by
+DM; the originating guild and Discord user scope every subscription operation.
 
-Digest choices are deliberately release-oriented:
+Users choose weekly or monthly delivery and one or both calendar sources:
 
-- Anime seasons come from AniList start dates.
-- New shows use first-air dates.
-- Movies keep digital/home, physical/home, and theatrical release events separate and region-specific.
+- Shows and anime use monitored Sonarr episode air dates. Sonarr's TVDB-backed metadata remains canonical.
+- Movies use monitored Radarr cinema, digital, and physical release dates. Radarr's TMDB-backed metadata remains canonical.
 
-TMDB digital or physical dates are home-release candidates, not proof that an
-item is already playable in Jellyfin. Only Jellyfin library state can establish
-that. The DM footer preserves this distinction. Release discovery follows
-[TMDB's release taxonomy](https://developer.themoviedb.org/reference/movie-release-dates)
-and uses [AniList's public media data](https://docs.anilist.co/reference/object/media).
-Blitzcrank identifies both providers in delivered recommendations; deployments
-must also follow their applicable attribution and usage terms.
-
-The recommendation engine is independent from Discord delivery. It merges and
-deduplicates provider candidates, mixes release groups fairly, weights explicit
-genre interests, and accepts profile sources. The first profile source is
-Jellyfin: `/digest link` asks for a username and optional password in a private
-modal. Discord does not mask modal text fields, so the bot warns about that
-before opening it; an empty password supports passwordless accounts. Blitzcrank
-permits Jellyfin credentials only over HTTPS or a loopback URL and throttles
-failed linking attempts; linking and profile reads remain disabled otherwise.
-It uses `AuthenticateUserByName` once, immediately
-logs out the temporary Jellyfin session, and persists only the
-Discord-to-Jellyfin user-ID mapping. Its configured Jellyfin service key reads
-that user's watched Movie/Series metadata to suppress already-watched TMDB
-titles and derive genre weights. Profiles are cached briefly in memory and
-invalidated immediately on link or unlink. Passwords, user access tokens,
-titles, synopses, and rendered digests are never stored in SQLite.
+Weekly newsletters cover the next seven local calendar days. Monthly scheduled
+newsletters cover the calendar month beginning on the first; a mid-month preview
+shows the next full calendar month. These are library-manager calendar entries,
+not ranked recommendations or proof of streaming availability.
 
 Dispatch is a deterministic built-in automation job named `digest-dispatch`.
 It shares scheduling, overlap protection, manual triggering, and shutdown with
@@ -319,7 +293,6 @@ sending a catch-up burst.
   - `digest_subscriptions`
   - `digest_deliveries`
   - `digest_delivery_items`
-  - `jellyfin_user_links`
 - Pi sessions: `pi.sessions_dir`, partitioned by source and conversation
 
 After upgrading from an earlier build, Blitzcrank moves legacy root-level `.jsonl` issue sessions into the new `seerr/` namespace before starting any agents. New private Discord sessions live under `discord/`; an existing partitioned target is never overwritten.

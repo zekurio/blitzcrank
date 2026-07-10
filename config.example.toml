@@ -74,21 +74,10 @@ discord = ""
 # mutation budget. This must be an explicit entry and never inherits default.
 review = ""
 
-[jellyfin]
-# Digest linking and personalized profile reads require HTTPS or a loopback URL.
-base_url = "https://jellyfin.example"
-api_key = "change-me"
-
 [digests]
-# Personalized release recommendations delivered to subscribers by Discord DM.
-# The TMDB read-access token is a secret; prefer TMDB_API_TOKEN via the
-# environment or your secret manager instead of committing it here.
+# Weekly or monthly Sonarr/Radarr calendar newsletters delivered by Discord DM.
+# The existing Sonarr and Radarr configuration below supplies calendar data.
 enabled = false
-tmdb_api_token = ""
-tmdb_base_url = "https://api.themoviedb.org"
-anilist_base_url = "https://graphql.anilist.co"
-# Regional release dates are independent from the Discord UI language.
-default_region = "US"
 # The built-in automation job checks for due subscriptions on this schedule.
 dispatch_schedule = "@every 1m"
 max_items = 12

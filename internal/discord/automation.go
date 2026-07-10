@@ -21,18 +21,17 @@ type Scheduler interface {
 }
 
 type Bot struct {
-	cfg           config.Config
-	session       *discordgo.Session
-	scheduler     Scheduler
-	digests       DigestService
-	jellyfinLinks JellyfinLinker
-	digestDrafts  *digestDraftStore
-	ctx           context.Context
-	cancel        context.CancelFunc
-	agent         *conversationAgent
-	tasks         taskGroup
-	closeOnce     sync.Once
-	closeErr      error
+	cfg          config.Config
+	session      *discordgo.Session
+	scheduler    Scheduler
+	digests      DigestService
+	digestDrafts *digestDraftStore
+	ctx          context.Context
+	cancel       context.CancelFunc
+	agent        *conversationAgent
+	tasks        taskGroup
+	closeOnce    sync.Once
+	closeErr     error
 }
 
 func New(cfg config.Config, scheduler Scheduler) (*Bot, error) {

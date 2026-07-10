@@ -31,12 +31,6 @@ type DigestService interface {
 	Preview(context.Context, digest.Subscriber, int64) (digest.Content, error)
 }
 
-type JellyfinLinker interface {
-	Link(context.Context, digest.Subscriber, string, string) error
-	Unlink(context.Context, digest.Subscriber) error
-	LinkStatus(context.Context, digest.Subscriber) (bool, error)
-}
-
 // handleDigestInteraction returns true when the interaction belongs to the
 // digest command surface. The caller can use this as one branch in the shared
 // Discord interaction router.
@@ -101,10 +95,6 @@ func (b *Bot) handleDigestCommand(s *discordgo.Session, event *discordgo.Interac
 			return
 		}
 		b.openDigestPreview(s, event, subscriber, locale, subscriptionID)
-	case "link":
-		b.openJellyfinLinkWarning(s, event, subscriber, locale)
-	case "unlink":
-		b.startJellyfinUnlink(s, event, subscriber, locale)
 	default:
 		_ = respondDigestEphemeral(s, event, copy.InvalidAction, nil, nil)
 	}
@@ -128,7 +118,7 @@ func (b *Bot) handleDigestComponent(s *discordgo.Session, event *discordgo.Inter
 		copy = digestCopyForLocaleString(locale)
 	}
 	switch action {
-	case "topics", "releases", "cadence":
+	case "topics", "cadence":
 		b.updateDigestWizardSelection(s, event, subscriber, nonce, action, data.Values, copy)
 	case "continue", "settings":
 		b.openDigestSettingsModal(s, event, subscriber, nonce, copy)
@@ -154,8 +144,6 @@ func (b *Bot) handleDigestComponent(s *discordgo.Session, event *discordgo.Inter
 		b.deleteManagedDigest(s, event, subscriber, nonce, copy)
 	case "back":
 		b.backToDigestManager(s, event, subscriber, nonce, copy)
-	case "link-open":
-		b.openJellyfinCredentialModal(s, event, subscriber, nonce, copy)
 	default:
 		_ = respondDigestEphemeral(s, event, copy.InvalidAction, nil, nil)
 	}
@@ -184,8 +172,6 @@ func (b *Bot) handleDigestModal(s *discordgo.Session, event *discordgo.Interacti
 	switch action {
 	case "settings-modal":
 		b.saveDigestSettings(s, event, subscriber, nonce, draft, data, copy)
-	case "link-modal":
-		b.submitJellyfinLink(s, event, subscriber, nonce, draft, data, copy)
 	default:
 		_ = respondDigestEphemeral(s, event, copy.InvalidAction, nil, nil)
 	}
@@ -256,12 +242,6 @@ func (b *Bot) updateDigestWizardSelection(s *discordgo.Session, event *discordgo
 				return false
 			}
 			draft.Input.Topics = selected
-		case "releases":
-			selected := parseDigestReleaseKinds(values)
-			if len(selected) == 0 {
-				return false
-			}
-			draft.Input.ReleaseKinds = selected
 		case "cadence":
 			cadence, valid := parseDigestCadence(values)
 			if !valid {
@@ -287,7 +267,7 @@ func (b *Bot) openDigestSettingsModal(s *discordgo.Session, event *discordgo.Int
 		_ = respondDigestEphemeral(s, event, copy.InvalidAction, nil, nil)
 		return
 	}
-	if len(draft.Input.Topics) == 0 || len(draft.Input.ReleaseKinds) == 0 || draft.Input.Cadence == "" {
+	if len(draft.Input.Topics) == 0 || draft.Input.Cadence == "" {
 		content, embeds, components := digestWizardMessage(copy, nonce, draft.Input, copy.ChooseAll)
 		_ = respondDigestMessageUpdate(s, event, content, embeds, components)
 		return
@@ -305,9 +285,7 @@ func (b *Bot) saveDigestSettings(s *discordgo.Session, event *discordgo.Interact
 		_ = respondDigestEphemeral(s, event, copy.InvalidAction, nil, nil)
 		return
 	}
-	values, ok := safeDigestModalValues(data.Components, map[string]bool{
-		"region": true, "timezone": true, "time": true, "weekday": true, "interests": true,
-	})
+	values, ok := safeDigestModalValues(data.Components, map[string]bool{"timezone": true, "time": true, "weekday": true})
 	if !ok {
 		_ = respondDigestEphemeral(s, event, copy.InvalidSettings, nil, digestSettingsRetryComponents(nonce, copy))
 		return
@@ -543,112 +521,6 @@ func (b *Bot) startDigestPreview(s *discordgo.Session, event *discordgo.Interact
 	}
 }
 
-func (b *Bot) openJellyfinLinkWarning(s *discordgo.Session, event *discordgo.InteractionCreate, subscriber digest.Subscriber, locale string) {
-	copy := digestCopyForLocaleString(locale)
-	if !jellyfinLinkerAvailable(b.jellyfinLinks) || b.digestDrafts == nil {
-		_ = respondDigestEphemeral(s, event, copy.LinkUnavailable, nil, nil)
-		return
-	}
-	ctx, cancel := context.WithTimeout(b.digestBaseContext(), 2*time.Second)
-	linked, err := b.jellyfinLinks.LinkStatus(ctx, subscriber)
-	cancel()
-	if err != nil {
-		_ = respondDigestEphemeral(s, event, copy.InternalError, nil, nil)
-		return
-	}
-	nonce, created := b.digestDrafts.create(digestDraft{Kind: digestDraftLink, Subscriber: subscriber, Locale: locale})
-	if !created {
-		_ = respondDigestEphemeral(s, event, copy.InternalError, nil, nil)
-		return
-	}
-	message := copy.LinkWarning
-	label := copy.Link
-	if linked {
-		message = copy.LinkedStatus + "\n\n" + message
-		label = copy.Relink
-	}
-	components := []discordgo.MessageComponent{discordgo.ActionsRow{Components: []discordgo.MessageComponent{
-		discordgo.Button{CustomID: digestCustomID("link-open", nonce), Label: label, Style: discordgo.PrimaryButton},
-		discordgo.Button{CustomID: digestCustomID("cancel", nonce), Label: copy.Cancel, Style: discordgo.SecondaryButton},
-	}}}
-	_ = respondDigestEphemeral(s, event, "**"+copy.LinkTitle+"**\n\n"+message, nil, components)
-}
-
-func (b *Bot) openJellyfinCredentialModal(s *discordgo.Session, event *discordgo.InteractionCreate, subscriber digest.Subscriber, nonce string, copy digestCopy) {
-	draft, ok := b.digestDrafts.update(nonce, subscriber, func(draft *digestDraft) bool {
-		return draft.Kind == digestDraftLink
-	})
-	if !ok || draft.Kind != digestDraftLink || !jellyfinLinkerAvailable(b.jellyfinLinks) {
-		_ = respondDigestEphemeral(s, event, copy.InvalidAction, nil, nil)
-		return
-	}
-	_ = s.InteractionRespond(event.Interaction, jellyfinCredentialModal(nonce, copy))
-}
-
-func (b *Bot) submitJellyfinLink(s *discordgo.Session, event *discordgo.InteractionCreate, subscriber digest.Subscriber, nonce string, draft digestDraft, data discordgo.ModalSubmitInteractionData, copy digestCopy) {
-	if draft.Kind != digestDraftLink || !jellyfinLinkerAvailable(b.jellyfinLinks) {
-		_ = respondDigestEphemeral(s, event, copy.InvalidAction, nil, nil)
-		return
-	}
-	values, ok := safeDigestModalValues(data.Components, map[string]bool{"username": true, "password": true})
-	username := strings.TrimSpace(values["username"])
-	// Credentials live only in this interaction handler and the single linking
-	// call below. They are never copied into a draft, persisted, or logged.
-	password := values["password"]
-	if !ok || username == "" {
-		_ = respondDigestEphemeral(s, event, copy.LinkFailed, nil, nil)
-		return
-	}
-	b.digestDrafts.delete(nonce, subscriber)
-	if err := respondDigestDeferred(s, event); err != nil {
-		return
-	}
-	started := b.tasks.goRun(func() {
-		ctx, cancel := context.WithTimeout(b.digestBaseContext(), digestExternalTimeout)
-		defer cancel()
-		if err := b.jellyfinLinks.Link(ctx, subscriber, username, password); err != nil {
-			_ = editDigestResponse(s, event, copy.LinkFailed, nil)
-			return
-		}
-		_ = editDigestResponse(s, event, copy.LinkSuccess, nil)
-	})
-	if !started {
-		_ = editDigestResponse(s, event, copy.InternalError, nil)
-	}
-}
-
-func (b *Bot) startJellyfinUnlink(s *discordgo.Session, event *discordgo.InteractionCreate, subscriber digest.Subscriber, locale string) {
-	copy := digestCopyForLocaleString(locale)
-	if !jellyfinLinkerAvailable(b.jellyfinLinks) {
-		_ = respondDigestEphemeral(s, event, copy.LinkUnavailable, nil, nil)
-		return
-	}
-	if err := respondDigestDeferred(s, event); err != nil {
-		return
-	}
-	started := b.tasks.goRun(func() {
-		ctx, cancel := context.WithTimeout(b.digestBaseContext(), digestExternalTimeout)
-		defer cancel()
-		linked, err := b.jellyfinLinks.LinkStatus(ctx, subscriber)
-		if err != nil {
-			_ = editDigestResponse(s, event, copy.InternalError, nil)
-			return
-		}
-		if !linked {
-			_ = editDigestResponse(s, event, copy.NotLinked, nil)
-			return
-		}
-		if err := b.jellyfinLinks.Unlink(ctx, subscriber); err != nil {
-			_ = editDigestResponse(s, event, copy.InternalError, nil)
-			return
-		}
-		_ = editDigestResponse(s, event, copy.UnlinkSuccess, nil)
-	})
-	if !started {
-		_ = editDigestResponse(s, event, copy.InternalError, nil)
-	}
-}
-
 func (b *Bot) listDigestSubscriptions(subscriber digest.Subscriber) ([]digest.Subscription, error) {
 	if !digestServiceAvailable(b.digests) {
 		return nil, fmt.Errorf("digest service is unavailable")
@@ -672,10 +544,6 @@ func (b *Bot) digestBaseContext() context.Context {
 		return b.ctx
 	}
 	return context.Background()
-}
-
-func jellyfinLinkerAvailable(linker JellyfinLinker) bool {
-	return nonNilInterface(linker)
 }
 
 func digestServiceAvailable(service DigestService) bool {
@@ -760,11 +628,11 @@ func parseDigestTopics(values []string) []digest.Topic {
 	seen := make(map[digest.Topic]struct{}, len(values))
 	for _, value := range values {
 		switch digest.Topic(value) {
-		case digest.TopicAnimeSeasons, digest.TopicShowPremieres, digest.TopicMovieReleases:
+		case digest.TopicShows, digest.TopicMovies:
 			seen[digest.Topic(value)] = struct{}{}
 		}
 	}
-	order := []digest.Topic{digest.TopicAnimeSeasons, digest.TopicShowPremieres, digest.TopicMovieReleases}
+	order := []digest.Topic{digest.TopicShows, digest.TopicMovies}
 	return selectedDigestTopics(order, seen)
 }
 
@@ -778,30 +646,12 @@ func selectedDigestTopics(order []digest.Topic, seen map[digest.Topic]struct{}) 
 	return result
 }
 
-func parseDigestReleaseKinds(values []string) []digest.ReleaseKind {
-	seen := make(map[digest.ReleaseKind]struct{}, len(values))
-	for _, value := range values {
-		switch digest.ReleaseKind(value) {
-		case digest.ReleaseKindOnline, digest.ReleaseKindPhysical, digest.ReleaseKindCinema:
-			seen[digest.ReleaseKind(value)] = struct{}{}
-		}
-	}
-	order := []digest.ReleaseKind{digest.ReleaseKindOnline, digest.ReleaseKindPhysical, digest.ReleaseKindCinema}
-	result := make([]digest.ReleaseKind, 0, len(seen))
-	for _, value := range order {
-		if _, ok := seen[value]; ok {
-			result = append(result, value)
-		}
-	}
-	return result
-}
-
 func parseDigestCadence(values []string) (digest.Cadence, bool) {
 	if len(values) != 1 {
 		return "", false
 	}
 	value := digest.Cadence(values[0])
-	return value, value == digest.CadenceDaily || value == digest.CadenceWeekly || value == digest.CadenceSeasonal
+	return value, value == digest.CadenceWeekly || value == digest.CadenceMonthly
 }
 
 func digestSubscriptionID(values []string) (int64, bool) {
@@ -814,15 +664,8 @@ func digestSubscriptionID(values []string) (int64, bool) {
 
 func digestInputFromSubscription(subscription digest.Subscription) digest.SubscriptionInput {
 	return digest.SubscriptionInput{
-		Topics:       append([]digest.Topic(nil), subscription.Topics...),
-		ReleaseKinds: append([]digest.ReleaseKind(nil), subscription.ReleaseKinds...),
-		Cadence:      subscription.Cadence,
-		Weekday:      subscription.Weekday,
-		TimeOfDay:    subscription.TimeOfDay,
-		Region:       subscription.Region,
-		Timezone:     subscription.Timezone,
-		Locale:       subscription.Locale,
-		Interests:    append([]string(nil), subscription.Interests...),
+		Topics: append([]digest.Topic(nil), subscription.Topics...), Cadence: subscription.Cadence,
+		Weekday: subscription.Weekday, TimeOfDay: subscription.TimeOfDay, Timezone: subscription.Timezone, Locale: subscription.Locale,
 	}
 }
 
@@ -831,20 +674,12 @@ func digestInputFromSettings(input digest.SubscriptionInput, locale string, valu
 	if !ok {
 		return digest.SubscriptionInput{}, false
 	}
-	input.Region = values["region"]
 	input.Timezone = values["timezone"]
 	input.TimeOfDay = values["time"]
 	input.Weekday = weekday
 	input.Locale = locale
-	input.Interests = splitDigestInterests(values["interests"])
 	normalized, err := digest.NormalizeSubscriptionInput(input)
 	return normalized, err == nil
-}
-
-func splitDigestInterests(value string) []string {
-	return strings.FieldsFunc(value, func(r rune) bool {
-		return r == ',' || r == ';' || r == '\n'
-	})
 }
 
 func parseDigestWeekday(value string) (time.Weekday, bool) {
@@ -932,27 +767,17 @@ func digestWizardMessage(copy digestCopy, nonce string, input digest.Subscriptio
 	minimum := 1
 	components := []discordgo.MessageComponent{
 		discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.SelectMenu{
-			CustomID: digestCustomID("topics", nonce), Placeholder: copy.TopicsPlaceholder, MinValues: &minimum, MaxValues: 3,
+			CustomID: digestCustomID("topics", nonce), Placeholder: copy.TopicsPlaceholder, MinValues: &minimum, MaxValues: 2,
 			Options: []discordgo.SelectMenuOption{
-				{Label: copy.AnimeSeasons, Description: copy.AnimeDescription, Value: string(digest.TopicAnimeSeasons), Default: containsDigestTopic(input.Topics, digest.TopicAnimeSeasons)},
-				{Label: copy.ShowPremieres, Description: copy.ShowDescription, Value: string(digest.TopicShowPremieres), Default: containsDigestTopic(input.Topics, digest.TopicShowPremieres)},
-				{Label: copy.MovieReleases, Description: copy.MovieDescription, Value: string(digest.TopicMovieReleases), Default: containsDigestTopic(input.Topics, digest.TopicMovieReleases)},
-			},
-		}}},
-		discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.SelectMenu{
-			CustomID: digestCustomID("releases", nonce), Placeholder: copy.ReleasesPlaceholder, MinValues: &minimum, MaxValues: 3,
-			Options: []discordgo.SelectMenuOption{
-				{Label: copy.Online, Description: copy.OnlineDescription, Value: string(digest.ReleaseKindOnline), Default: containsDigestRelease(input.ReleaseKinds, digest.ReleaseKindOnline)},
-				{Label: copy.Physical, Description: copy.PhysicalDescription, Value: string(digest.ReleaseKindPhysical), Default: containsDigestRelease(input.ReleaseKinds, digest.ReleaseKindPhysical)},
-				{Label: copy.Cinema, Description: copy.CinemaDescription, Value: string(digest.ReleaseKindCinema), Default: containsDigestRelease(input.ReleaseKinds, digest.ReleaseKindCinema)},
+				{Label: copy.ShowPremieres, Description: copy.ShowDescription, Value: string(digest.TopicShows), Default: containsDigestTopic(input.Topics, digest.TopicShows)},
+				{Label: copy.MovieReleases, Description: copy.MovieDescription, Value: string(digest.TopicMovies), Default: containsDigestTopic(input.Topics, digest.TopicMovies)},
 			},
 		}}},
 		discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.SelectMenu{
 			CustomID: digestCustomID("cadence", nonce), Placeholder: copy.CadencePlaceholder, MinValues: &minimum, MaxValues: 1,
 			Options: []discordgo.SelectMenuOption{
-				{Label: copy.Daily, Value: string(digest.CadenceDaily), Default: input.Cadence == digest.CadenceDaily},
 				{Label: copy.Weekly, Value: string(digest.CadenceWeekly), Default: input.Cadence == digest.CadenceWeekly},
-				{Label: copy.Seasonal, Value: string(digest.CadenceSeasonal), Default: input.Cadence == digest.CadenceSeasonal},
+				{Label: copy.Seasonal, Value: string(digest.CadenceMonthly), Default: input.Cadence == digest.CadenceMonthly},
 			},
 		}}},
 		discordgo.ActionsRow{Components: []discordgo.MessageComponent{
@@ -972,15 +797,6 @@ func containsDigestTopic(values []digest.Topic, wanted digest.Topic) bool {
 	return false
 }
 
-func containsDigestRelease(values []digest.ReleaseKind, wanted digest.ReleaseKind) bool {
-	for _, value := range values {
-		if value == wanted {
-			return true
-		}
-	}
-	return false
-}
-
 func digestSettingsModal(nonce string, input digest.SubscriptionInput, copy digestCopy) *discordgo.InteractionResponse {
 	return &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseModal,
@@ -988,25 +804,9 @@ func digestSettingsModal(nonce string, input digest.SubscriptionInput, copy dige
 			CustomID: digestCustomID("settings-modal", nonce),
 			Title:    truncateDigestText(copy.SettingsTitle, 45),
 			Components: []discordgo.MessageComponent{
-				digestTextInputRow("region", copy.RegionLabel, copy.RegionPlaceholder, input.Region, true, 2, 2),
 				digestTextInputRow("timezone", copy.TimezoneLabel, copy.TimezonePlaceholder, input.Timezone, true, 1, 64),
 				digestTextInputRow("time", copy.TimeLabel, copy.TimePlaceholder, input.TimeOfDay, true, 5, 5),
 				digestTextInputRow("weekday", copy.WeekdayLabel, copy.WeekdayPlaceholder, formatDigestWeekday(input.Weekday, input.Locale), true, 1, 12),
-				digestTextInputRow("interests", copy.InterestsLabel, copy.InterestsPlaceholder, strings.Join(input.Interests, ", "), false, 0, 400),
-			},
-		},
-	}
-}
-
-func jellyfinCredentialModal(nonce string, copy digestCopy) *discordgo.InteractionResponse {
-	return &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseModal,
-		Data: &discordgo.InteractionResponseData{
-			CustomID: digestCustomID("link-modal", nonce),
-			Title:    truncateDigestText(copy.LinkTitle, 45),
-			Components: []discordgo.MessageComponent{
-				digestTextInputRow("username", copy.JellyfinUsername, "", "", true, 1, 128),
-				digestTextInputRow("password", copy.JellyfinPassword, "", "", false, 0, 256),
 			},
 		},
 	}
@@ -1037,7 +837,7 @@ func digestSubscriptionPicker(copy digestCopy, nonce string, subscriptions []dig
 		options = append(options, discordgo.SelectMenuOption{
 			Label:       digestSubscriptionLabel(subscription, copy),
 			Value:       strconv.FormatInt(subscription.ID, 10),
-			Description: truncateDigestText(state+" · "+digestCadenceLabel(subscription.Cadence, copy)+" · "+subscription.Region, 100),
+			Description: truncateDigestText(state+" · "+digestCadenceLabel(subscription.Cadence, copy)+" · "+subscription.Timezone, 100),
 		})
 	}
 	return "**" + copy.ManageTitle + "**", []discordgo.MessageComponent{discordgo.ActionsRow{Components: []discordgo.MessageComponent{

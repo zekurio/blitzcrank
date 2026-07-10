@@ -4,10 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
-
-	"blitzcrank/internal/recommendation"
 )
 
 const (
@@ -19,42 +16,17 @@ const (
 	deliveryCleanupTimeout    = 10 * time.Second
 )
 
-type Recommender interface {
-	Recommend(context.Context, recommendation.Query) (recommendation.Result, error)
-}
-
 type DispatchStats struct {
-	Due     int
-	Claimed int
-	Sent    int
-	Empty   int
-	Failed  int
-	Skipped int
+	Due, Claimed, Sent, Empty, Failed, Skipped int
 }
 
 func (s DispatchStats) String() string {
 	return fmt.Sprintf("due=%d claimed=%d sent=%d empty=%d failed=%d skipped=%d", s.Due, s.Claimed, s.Sent, s.Empty, s.Failed, s.Skipped)
 }
 
-func (s *Service) ConfigureRecommendations(recommender Recommender, maxItems int, retryDelay time.Duration) error {
-	if recommender == nil {
-		return errors.New("digest recommender is required")
-	}
-	if maxItems < 1 || maxItems > 20 {
-		return errors.New("digest max items must be between 1 and 20")
-	}
-	if retryDelay <= 0 {
-		return errors.New("digest retry delay must be positive")
-	}
-	s.recommender = recommender
-	s.maxItems = maxItems
-	s.retryDelay = retryDelay
-	return nil
-}
-
 func (s *Service) RecoverDeliveries(ctx context.Context) error {
-	if err := s.repository.MarkInterruptedDigestDeliveries(ctx, "process restarted during digest delivery", s.now().UTC()); err != nil {
-		return fmt.Errorf("mark interrupted digest deliveries: %w", err)
+	if err := s.repository.MarkInterruptedDigestDeliveries(ctx, "process restarted during newsletter delivery", s.now().UTC()); err != nil {
+		return fmt.Errorf("mark interrupted newsletter deliveries: %w", err)
 	}
 	return nil
 }
@@ -62,45 +34,38 @@ func (s *Service) RecoverDeliveries(ctx context.Context) error {
 func (s *Service) Preview(ctx context.Context, subscriber Subscriber, subscriptionID int64) (Content, error) {
 	subscription, ok, err := s.repository.LoadDigestSubscription(ctx, subscriber, subscriptionID)
 	if err != nil {
-		return Content{}, fmt.Errorf("load digest subscription: %w", err)
+		return Content{}, fmt.Errorf("load newsletter subscription: %w", err)
 	}
 	if !ok {
-		return Content{}, errors.New("digest subscription was not found")
+		return Content{}, errors.New("newsletter subscription was not found")
 	}
-	windowStart := s.now().UTC()
-	var windowEnd time.Time
-	switch subscription.Cadence {
-	case CadenceDaily:
-		windowEnd = windowStart.AddDate(0, 0, 1)
-	case CadenceSeasonal:
-		windowEnd = windowStart.AddDate(0, 3, 0)
-	default:
-		windowEnd = windowStart.AddDate(0, 0, 7)
+	start, end, err := newsletterWindow(subscription, s.now(), true)
+	if err != nil {
+		return Content{}, err
 	}
-	return s.recommend(ctx, subscription, windowStart, windowEnd)
+	return s.fetch(ctx, subscription, start, end)
 }
 
 func (s *Service) DispatchDue(ctx context.Context, sender Sender, limit int) (DispatchStats, error) {
-	if s.recommender == nil {
-		return DispatchStats{}, errors.New("digest recommender is not configured")
+	if s.calendar == nil {
+		return DispatchStats{}, errors.New("newsletter calendar source is not configured")
 	}
 	if sender == nil {
-		return DispatchStats{}, errors.New("digest sender is required")
+		return DispatchStats{}, errors.New("newsletter sender is required")
 	}
 	if limit <= 0 {
 		limit = 100
 	}
-	now := s.now().UTC()
-	subscriptions, err := s.repository.ListDueDigestSubscriptions(ctx, now, limit)
+	subscriptions, err := s.repository.ListDueDigestSubscriptions(ctx, s.now().UTC(), limit)
 	if err != nil {
-		return DispatchStats{}, fmt.Errorf("list due digest subscriptions: %w", err)
+		return DispatchStats{}, fmt.Errorf("list due newsletter subscriptions: %w", err)
 	}
 	stats := DispatchStats{Due: len(subscriptions)}
 	var dispatchErrors []error
 	for index, subscription := range subscriptions {
-		if ctxErr := ctx.Err(); ctxErr != nil {
+		if err := ctx.Err(); err != nil {
 			stats.Skipped += len(subscriptions) - index
-			dispatchErrors = append(dispatchErrors, ctxErr)
+			dispatchErrors = append(dispatchErrors, err)
 			break
 		}
 		outcome, err := s.dispatchSubscription(ctx, sender, subscription, s.now().UTC())
@@ -131,48 +96,42 @@ func (s *Service) dispatchSubscription(ctx context.Context, sender Sender, subsc
 	if subscription.NextRunAt == nil {
 		return "", nil
 	}
-	scheduledFor := subscription.NextRunAt.UTC()
-	// A bot that was offline should not replay every missed daily/weekly
-	// occurrence. Claim the persisted occurrence for idempotency, but build one
-	// current forward-looking window and advance directly to the next future
-	// schedule.
-	windowStart := startedAt.UTC()
-	nextRunAt, err := NextScheduledAt(subscription.Schedule, subscription.Timezone, windowStart)
+	nextRunAt, err := NextScheduledAt(subscription.Schedule, subscription.Timezone, startedAt)
 	if err != nil {
-		return "", fmt.Errorf("compute next digest run: %w", err)
+		return "", fmt.Errorf("compute next newsletter run: %w", err)
+	}
+	windowStart, windowEnd, err := newsletterWindow(subscription, startedAt, false)
+	if err != nil {
+		return "", err
 	}
 	delivery, claimed, err := s.repository.ClaimDigestDelivery(ctx, DeliveryClaim{
 		SubscriptionID: subscription.ID,
-		ScheduledFor:   scheduledFor,
+		ScheduledFor:   subscription.NextRunAt.UTC(),
 		NextRunAt:      nextRunAt,
 		WindowStart:    windowStart,
-		WindowEnd:      nextRunAt,
+		WindowEnd:      windowEnd,
 		StartedAt:      startedAt,
 	})
 	if err != nil {
-		return "", fmt.Errorf("claim digest delivery: %w", err)
+		return "", fmt.Errorf("claim newsletter delivery: %w", err)
 	}
 	if !claimed {
 		return "", nil
 	}
 
-	content, recommendErr := s.recommend(ctx, subscription, windowStart, nextRunAt)
-	providerUnavailable := recommendErr != nil || (content.ReleaseSourcesPartial && len(content.Items) == 0)
-	if providerUnavailable {
+	content, fetchErr := s.fetch(ctx, subscription, windowStart, windowEnd)
+	if fetchErr != nil || (content.Partial && len(content.Items) == 0) {
 		completedAt := s.now().UTC()
 		retryAt := completedAt.Add(s.retryDelay)
-		completeErr := s.completeDigestDelivery(ctx, delivery.ID, DeliveryStatusFailed, "", "", "release sources unavailable", completedAt, &retryAt)
-		if completeErr != nil {
-			return DeliveryStatusFailed, errors.Join(recommendErr, fmt.Errorf("complete failed digest delivery: %w", completeErr))
+		completeErr := s.completeDigestDelivery(ctx, delivery.ID, DeliveryStatusFailed, "", "", "calendar sources unavailable", completedAt, &retryAt)
+		if fetchErr == nil {
+			fetchErr = errors.New("calendar sources returned only failures")
 		}
-		if recommendErr == nil {
-			recommendErr = errors.New("release sources returned only partial failures")
-		}
-		return DeliveryStatusFailed, recommendErr
+		return DeliveryStatusFailed, errors.Join(fetchErr, completeErr)
 	}
 	if len(content.Items) == 0 {
 		if err := s.completeDigestDelivery(ctx, delivery.ID, DeliveryStatusEmpty, "", "", "", s.now().UTC(), nil); err != nil {
-			return DeliveryStatusEmpty, fmt.Errorf("complete empty digest delivery: %w", err)
+			return DeliveryStatusEmpty, fmt.Errorf("complete empty newsletter delivery: %w", err)
 		}
 		return DeliveryStatusEmpty, nil
 	}
@@ -185,85 +144,75 @@ func (s *Service) dispatchSubscription(ctx context.Context, sender Sender, subsc
 	if err != nil {
 		completedAt := s.now().UTC()
 		retryAt := completedAt.Add(s.retryDelay)
-		completeErr := s.completeDigestDelivery(ctx, delivery.ID, DeliveryStatusFailed, "", "", "digest item reservation failed", completedAt, &retryAt)
-		return DeliveryStatusFailed, errors.Join(fmt.Errorf("reserve digest items: %w", err), completeErr)
+		completeErr := s.completeDigestDelivery(ctx, delivery.ID, DeliveryStatusFailed, "", "", "newsletter item reservation failed", completedAt, &retryAt)
+		return DeliveryStatusFailed, errors.Join(fmt.Errorf("reserve newsletter items: %w", err), completeErr)
 	}
-	content.Items = filterReservedRecommendations(content.Items, reserved)
+	content.Items = filterReservedEntries(content.Items, reserved)
 	if len(content.Items) == 0 {
 		if err := s.completeDigestDelivery(ctx, delivery.ID, DeliveryStatusEmpty, "", "", "", s.now().UTC(), nil); err != nil {
-			return DeliveryStatusEmpty, fmt.Errorf("complete deduplicated digest delivery: %w", err)
+			return DeliveryStatusEmpty, fmt.Errorf("complete deduplicated newsletter delivery: %w", err)
 		}
 		return DeliveryStatusEmpty, nil
 	}
 
-	current, stillExists, stateErr := s.repository.LoadDigestSubscription(ctx, subscription.Subscriber, subscription.ID)
-	stillCurrent := stateErr == nil && stillExists && current.Enabled && current.NextRunAt != nil &&
+	current, exists, stateErr := s.repository.LoadDigestSubscription(ctx, subscription.Subscriber, subscription.ID)
+	stillCurrent := stateErr == nil && exists && current.Enabled && current.NextRunAt != nil &&
 		current.NextRunAt.Equal(nextRunAt) && current.UpdatedAt.Equal(startedAt)
 	if !stillCurrent {
-		abandonErr := s.abandonDigestDelivery(ctx, delivery.ID, "subscription changed during digest delivery", s.now().UTC())
+		abandonErr := s.abandonDigestDelivery(ctx, delivery.ID, "subscription changed during newsletter delivery", s.now().UTC())
 		if stateErr != nil {
-			return DeliveryStatusInterrupted, errors.Join(fmt.Errorf("recheck digest subscription: %w", stateErr), abandonErr)
+			return DeliveryStatusInterrupted, errors.Join(fmt.Errorf("recheck newsletter subscription: %w", stateErr), abandonErr)
 		}
-		if abandonErr != nil {
-			return DeliveryStatusInterrupted, fmt.Errorf("abandon changed digest delivery: %w", abandonErr)
-		}
-		return DeliveryStatusInterrupted, nil
+		return DeliveryStatusInterrupted, abandonErr
 	}
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		abandonErr := s.abandonDigestDelivery(ctx, delivery.ID, "digest canceled before Discord request", s.now().UTC())
-		return DeliveryStatusInterrupted, errors.Join(ctxErr, abandonErr)
+	if err := ctx.Err(); err != nil {
+		return DeliveryStatusInterrupted, errors.Join(err, s.abandonDigestDelivery(ctx, delivery.ID, "newsletter canceled before Discord request", s.now().UTC()))
 	}
 
 	sent, err := sender.SendDigest(ctx, subscription, content)
 	if err != nil {
-		// A failed Discord request can be ambiguous after bytes leave the
-		// process. Keep item reservations and do not retry automatically: a
-		// rare missed digest is preferable to duplicate private notifications.
 		completeErr := s.completeDigestDelivery(ctx, delivery.ID, DeliveryStatusFailed, "", "", "Discord DM failed", s.now().UTC(), nil)
-		return DeliveryStatusFailed, errors.Join(fmt.Errorf("send digest DM: %w", err), completeErr)
+		return DeliveryStatusFailed, errors.Join(fmt.Errorf("send newsletter DM: %w", err), completeErr)
 	}
 	if err := s.completeDigestDelivery(ctx, delivery.ID, DeliveryStatusSent, sent.DiscordChannelID, sent.DiscordMessageID, "", s.now().UTC(), nil); err != nil {
-		return DeliveryStatusSent, fmt.Errorf("complete sent digest delivery: %w", err)
+		return DeliveryStatusSent, fmt.Errorf("complete sent newsletter delivery: %w", err)
 	}
 	return DeliveryStatusSent, nil
 }
 
-func (s *Service) recommend(ctx context.Context, subscription Subscription, windowStart, windowEnd time.Time) (Content, error) {
-	if s.recommender == nil {
-		return Content{}, errors.New("digest recommender is not configured")
-	}
-	releaseWindowStart, releaseWindowEnd, err := releaseDateWindow(subscription.Timezone, windowStart, windowEnd)
+func newsletterWindow(subscription Subscription, at time.Time, preview bool) (time.Time, time.Time, error) {
+	location, err := time.LoadLocation(subscription.Timezone)
 	if err != nil {
-		return Content{}, err
+		return time.Time{}, time.Time{}, fmt.Errorf("load newsletter timezone: %w", err)
 	}
-	result, err := s.recommender.Recommend(ctx, recommendation.Query{
-		SubjectID:    subscription.Subscriber.RecommendationSubjectID(),
-		MediaTypes:   recommendationMediaTypes(subscription.Topics),
-		ReleaseKinds: recommendationReleaseKinds(subscription.ReleaseKinds),
-		Region:       subscription.Region,
-		Locale:       recommendationLocale(subscription.Locale, subscription.Region),
-		Window:       recommendation.Window{Start: releaseWindowStart, End: releaseWindowEnd},
-		Interests:    recommendationInterests(subscription.Interests),
-		MaxItems:     s.maxItems,
-	})
-	content := Content{
-		Subscription:          subscription,
-		WindowStart:           releaseWindowStart,
-		WindowEnd:             releaseWindowEnd,
-		Items:                 result.Items,
-		Partial:               len(result.Warnings) > 0,
-		ReleaseSourcesPartial: hasReleaseSourceWarning(result.Warnings),
+	local := at.In(location)
+	start := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, location)
+	if subscription.Cadence == CadenceMonthly {
+		start = time.Date(local.Year(), local.Month(), 1, 0, 0, 0, 0, location)
+		if preview && local.Day() != 1 {
+			start = start.AddDate(0, 1, 0)
+		}
+		return start.UTC(), start.AddDate(0, 1, 0).UTC(), nil
 	}
+	return start.UTC(), start.AddDate(0, 0, 7).UTC(), nil
+}
+
+func (s *Service) fetch(ctx context.Context, subscription Subscription, start, end time.Time) (Content, error) {
+	if s.calendar == nil {
+		return Content{}, errors.New("newsletter calendar source is not configured")
+	}
+	result, err := s.calendar.Fetch(ctx, CalendarQuery{Topics: subscription.Topics, Start: start, End: end, Limit: s.maxItems})
+	content := Content{Subscription: subscription, WindowStart: start, WindowEnd: end, Items: result.Items, Partial: len(result.Warnings) > 0}
 	if err != nil {
-		return content, fmt.Errorf("build digest recommendations: %w", err)
+		return content, fmt.Errorf("fetch newsletter calendars: %w", err)
 	}
 	return content, nil
 }
 
-func (s *Service) completeDigestDelivery(ctx context.Context, deliveryID int64, status, discordChannelID, discordMessageID, sanitizedError string, completedAt time.Time, retryAt *time.Time) error {
+func (s *Service) completeDigestDelivery(ctx context.Context, deliveryID int64, status, channelID, messageID, sanitizedError string, completedAt time.Time, retryAt *time.Time) error {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), deliveryCleanupTimeout)
 	defer cancel()
-	return s.repository.CompleteDigestDelivery(cleanupCtx, deliveryID, status, discordChannelID, discordMessageID, sanitizedError, completedAt, retryAt)
+	return s.repository.CompleteDigestDelivery(cleanupCtx, deliveryID, status, channelID, messageID, sanitizedError, completedAt, retryAt)
 }
 
 func (s *Service) abandonDigestDelivery(ctx context.Context, deliveryID int64, sanitizedError string, completedAt time.Time) error {
@@ -272,112 +221,16 @@ func (s *Service) abandonDigestDelivery(ctx context.Context, deliveryID int64, s
 	return s.repository.AbandonDigestDelivery(cleanupCtx, deliveryID, sanitizedError, completedAt)
 }
 
-func hasReleaseSourceWarning(warnings []recommendation.Warning) bool {
-	for _, warning := range warnings {
-		if !strings.EqualFold(strings.TrimSpace(warning.Source), "profile") {
-			return true
-		}
-	}
-	return false
-}
-
-func releaseDateWindow(timezone string, start, end time.Time) (time.Time, time.Time, error) {
-	location, err := time.LoadLocation(strings.TrimSpace(timezone))
-	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf("load digest release timezone: %w", err)
-	}
-	localStart := start.In(location)
-	localEnd := end.In(location)
-	windowStart := time.Date(localStart.Year(), localStart.Month(), localStart.Day(), 0, 0, 0, 0, time.UTC)
-	// Providers expose civil dates without a release time. Include the local
-	// end date and rely on durable event-key dedupe at the next boundary.
-	windowEnd := time.Date(localEnd.Year(), localEnd.Month(), localEnd.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, 1)
-	if !windowEnd.After(windowStart) {
-		windowEnd = windowStart.AddDate(0, 0, 1)
-	}
-	return windowStart, windowEnd, nil
-}
-
-func recommendationMediaTypes(topics []Topic) []recommendation.MediaType {
-	values := make([]recommendation.MediaType, 0, len(topics))
-	for _, topic := range topics {
-		switch topic {
-		case TopicAnimeSeasons:
-			values = append(values, recommendation.MediaTypeAnime)
-		case TopicShowPremieres:
-			values = append(values, recommendation.MediaTypeShow)
-		case TopicMovieReleases:
-			values = append(values, recommendation.MediaTypeMovie)
-		}
-	}
-	return values
-}
-
-func recommendationReleaseKinds(kinds []ReleaseKind) []recommendation.ReleaseKind {
-	seen := make(map[recommendation.ReleaseKind]struct{}, len(kinds)+1)
-	for _, kind := range kinds {
-		switch kind {
-		case ReleaseKindOnline:
-			seen[recommendation.ReleaseKindAiring] = struct{}{}
-			seen[recommendation.ReleaseKindDigital] = struct{}{}
-		case ReleaseKindPhysical:
-			seen[recommendation.ReleaseKindPhysical] = struct{}{}
-		case ReleaseKindCinema:
-			seen[recommendation.ReleaseKindTheatrical] = struct{}{}
-		}
-	}
-	order := []recommendation.ReleaseKind{
-		recommendation.ReleaseKindAiring,
-		recommendation.ReleaseKindDigital,
-		recommendation.ReleaseKindPhysical,
-		recommendation.ReleaseKindTheatrical,
-	}
-	values := make([]recommendation.ReleaseKind, 0, len(seen))
-	for _, value := range order {
-		if _, ok := seen[value]; ok {
-			values = append(values, value)
-		}
-	}
-	return values
-}
-
-func recommendationInterests(interests []string) map[string]float64 {
-	if len(interests) == 0 {
-		return nil
-	}
-	weights := make(map[string]float64, len(interests))
-	for _, interest := range interests {
-		if interest = strings.TrimSpace(interest); interest != "" {
-			weights[interest] = 3
-		}
-	}
-	return weights
-}
-
-func recommendationLocale(locale, region string) string {
-	locale = strings.TrimSpace(locale)
-	if locale == "" {
-		return "en-US"
-	}
-	if strings.Contains(locale, "-") {
-		return locale
-	}
-	return locale + "-" + strings.ToUpper(strings.TrimSpace(region))
-}
-
-func filterReservedRecommendations(items []recommendation.Candidate, keys []string) []recommendation.Candidate {
-	if len(keys) == 0 {
-		return nil
-	}
+func filterReservedEntries(items []Entry, keys []string) []Entry {
 	reserved := make(map[string]struct{}, len(keys))
 	for _, key := range keys {
 		reserved[key] = struct{}{}
 	}
-	filtered := make([]recommendation.Candidate, 0, len(keys))
+	result := make([]Entry, 0, len(keys))
 	for _, item := range items {
 		if _, ok := reserved[item.EventKey]; ok {
-			filtered = append(filtered, item)
+			result = append(result, item)
 		}
 	}
-	return filtered
+	return result
 }

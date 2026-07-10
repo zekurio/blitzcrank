@@ -21,8 +21,6 @@ func TestDigestApplicationCommandIsLocalizedAndGuildOnly(t *testing.T) {
 		"subscribe": "abonnieren",
 		"manage":    "verwalten",
 		"preview":   "vorschau",
-		"link":      "verknüpfen",
-		"unlink":    "trennen",
 	}
 	for _, option := range command.Options {
 		if got := option.NameLocalizations[discordgo.German]; got != wantNames[option.Name] {

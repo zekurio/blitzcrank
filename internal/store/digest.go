@@ -27,7 +27,7 @@ const (
 var _ digest.Repository = (*Store)(nil)
 
 const digestSubscriptionColumns = `
-id,guild_id,user_id,topics_json,release_kinds_json,cadence,schedule,weekday,time_of_day,region,timezone,locale,interests_json,enabled,next_run_at,last_run_at,last_delivered_at,created_at,updated_at,deleted_at`
+id,guild_id,user_id,topics_json,cadence,schedule,weekday,time_of_day,timezone,locale,enabled,next_run_at,last_run_at,last_delivered_at,created_at,updated_at,deleted_at`
 
 // CreateDigestSubscription atomically enforces per-user identity uniqueness and
 // the subscription limit. An identical non-deleted subscription is returned as
@@ -45,7 +45,7 @@ func (s *Store) CreateDigestSubscription(ctx context.Context, subscription diges
 	if subscription.DeletedAt != nil {
 		return digest.Subscription{}, errors.New("new digest subscription cannot be deleted")
 	}
-	canonical, topicsJSON, releaseKindsJSON, interestsJSON, err := canonicalDigestSubscription(subscription)
+	canonical, topicsJSON, err := canonicalDigestSubscription(subscription)
 	if err != nil {
 		return digest.Subscription{}, err
 	}
@@ -59,15 +59,15 @@ func (s *Store) CreateDigestSubscription(ctx context.Context, subscription diges
 	}
 	result, err := s.db.ExecContext(ctx, `
 INSERT OR IGNORE INTO digest_subscriptions(
-  guild_id,user_id,identity_key,topics_json,release_kinds_json,cadence,schedule,weekday,time_of_day,region,timezone,locale,interests_json,enabled,next_run_at,last_run_at,last_delivered_at,created_at,updated_at
+  guild_id,user_id,identity_key,topics_json,cadence,schedule,weekday,time_of_day,timezone,locale,enabled,next_run_at,last_run_at,last_delivered_at,created_at,updated_at
 )
-SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
+SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
 WHERE (
   SELECT COUNT(*)
   FROM digest_subscriptions
   WHERE guild_id = ? AND user_id = ? AND deleted_at IS NULL
 ) < ?
-`, canonical.Subscriber.GuildID, canonical.Subscriber.UserID, identityKey, topicsJSON, releaseKindsJSON, canonical.Cadence, canonical.Schedule, int(canonical.Weekday), canonical.TimeOfDay, canonical.Region, canonical.Timezone, canonical.Locale, interestsJSON, enabled, formatTimePtr(canonical.NextRunAt), formatTimePtr(canonical.LastRunAt), formatTimePtr(canonical.LastDeliveredAt), formatTime(canonical.CreatedAt), formatTime(canonical.UpdatedAt), canonical.Subscriber.GuildID, canonical.Subscriber.UserID, digest.MaxSubscriptionsPerUser)
+`, canonical.Subscriber.GuildID, canonical.Subscriber.UserID, identityKey, topicsJSON, canonical.Cadence, canonical.Schedule, int(canonical.Weekday), canonical.TimeOfDay, canonical.Timezone, canonical.Locale, enabled, formatTimePtr(canonical.NextRunAt), formatTimePtr(canonical.LastRunAt), formatTimePtr(canonical.LastDeliveredAt), formatTime(canonical.CreatedAt), formatTime(canonical.UpdatedAt), canonical.Subscriber.GuildID, canonical.Subscriber.UserID, digest.MaxSubscriptionsPerUser)
 	if err != nil {
 		return digest.Subscription{}, err
 	}
@@ -119,7 +119,7 @@ func (s *Store) UpdateDigestSubscription(ctx context.Context, subscriber digest.
 		return errors.New("digest subscription updated time is required")
 	}
 	subscription.Subscriber = subscriber
-	canonical, topicsJSON, releaseKindsJSON, interestsJSON, err := canonicalDigestSubscription(subscription)
+	canonical, topicsJSON, err := canonicalDigestSubscription(subscription)
 	if err != nil {
 		return err
 	}
@@ -133,9 +133,9 @@ func (s *Store) UpdateDigestSubscription(ctx context.Context, subscriber digest.
 	}
 	result, err := s.db.ExecContext(ctx, `
 UPDATE OR IGNORE digest_subscriptions
-SET identity_key = ?, topics_json = ?, release_kinds_json = ?, cadence = ?, schedule = ?, weekday = ?, time_of_day = ?, region = ?, timezone = ?, locale = ?, interests_json = ?, enabled = ?, next_run_at = ?, updated_at = ?
+SET identity_key = ?, topics_json = ?, cadence = ?, schedule = ?, weekday = ?, time_of_day = ?, timezone = ?, locale = ?, enabled = ?, next_run_at = ?, updated_at = ?
 WHERE id = ? AND guild_id = ? AND user_id = ? AND deleted_at IS NULL
-`, identityKey, topicsJSON, releaseKindsJSON, canonical.Cadence, canonical.Schedule, int(canonical.Weekday), canonical.TimeOfDay, canonical.Region, canonical.Timezone, canonical.Locale, interestsJSON, enabled, formatTimePtr(canonical.NextRunAt), formatTime(canonical.UpdatedAt), canonical.ID, canonical.Subscriber.GuildID, canonical.Subscriber.UserID)
+`, identityKey, topicsJSON, canonical.Cadence, canonical.Schedule, int(canonical.Weekday), canonical.TimeOfDay, canonical.Timezone, canonical.Locale, enabled, formatTimePtr(canonical.NextRunAt), formatTime(canonical.UpdatedAt), canonical.ID, canonical.Subscriber.GuildID, canonical.Subscriber.UserID)
 	if err != nil {
 		return err
 	}
@@ -498,7 +498,7 @@ WHERE id = ? AND enabled = 1 AND deleted_at IS NULL AND next_run_at = ?
 // AbandonDigestDelivery finalizes a claim that is known not to have reached
 // Discord, releases its item reservations, and leaves the subscription's
 // current schedule untouched. It is used when the subscriber edits, pauses, or
-// deletes the subscription while recommendations are being built.
+// deletes the subscription while calendar entries are being fetched.
 func (s *Store) AbandonDigestDelivery(ctx context.Context, deliveryID int64, sanitizedError string, completedAt time.Time) error {
 	if deliveryID <= 0 {
 		return errors.New("digest delivery id is required")
@@ -632,7 +632,7 @@ type digestSubscriptionScanner interface {
 
 func scanDigestSubscription(scanner digestSubscriptionScanner) (digest.Subscription, error) {
 	var subscription digest.Subscription
-	var topicsJSON, releaseKindsJSON, interestsJSON string
+	var topicsJSON string
 	var enabled, weekday int
 	var nextRunAt, lastRunAt, lastDeliveredAt, deletedAt sql.NullString
 	err := scanner.Scan(
@@ -640,15 +640,12 @@ func scanDigestSubscription(scanner digestSubscriptionScanner) (digest.Subscript
 		&subscription.Subscriber.GuildID,
 		&subscription.Subscriber.UserID,
 		&topicsJSON,
-		&releaseKindsJSON,
 		&subscription.Cadence,
 		&subscription.Schedule,
 		&weekday,
 		&subscription.TimeOfDay,
-		&subscription.Region,
 		&subscription.Timezone,
 		&subscription.Locale,
-		&interestsJSON,
 		&enabled,
 		&nextRunAt,
 		&lastRunAt,
@@ -664,12 +661,6 @@ func scanDigestSubscription(scanner digestSubscriptionScanner) (digest.Subscript
 	subscription.Enabled = enabled == 1
 	if err := json.Unmarshal([]byte(topicsJSON), &subscription.Topics); err != nil {
 		return digest.Subscription{}, fmt.Errorf("decode digest topics: %w", err)
-	}
-	if err := json.Unmarshal([]byte(releaseKindsJSON), &subscription.ReleaseKinds); err != nil {
-		return digest.Subscription{}, fmt.Errorf("decode digest release kinds: %w", err)
-	}
-	if err := json.Unmarshal([]byte(interestsJSON), &subscription.Interests); err != nil {
-		return digest.Subscription{}, fmt.Errorf("decode digest interests: %w", err)
 	}
 	subscription.NextRunAt, err = parseNullTime(nextRunAt)
 	if err != nil {
@@ -690,71 +681,55 @@ func scanDigestSubscription(scanner digestSubscriptionScanner) (digest.Subscript
 	return subscription, nil
 }
 
-func canonicalDigestSubscription(subscription digest.Subscription) (digest.Subscription, string, string, string, error) {
+func canonicalDigestSubscription(subscription digest.Subscription) (digest.Subscription, string, error) {
 	subscriber, err := canonicalDigestSubscriber(subscription.Subscriber)
 	if err != nil {
-		return digest.Subscription{}, "", "", "", err
+		return digest.Subscription{}, "", err
 	}
 	subscription.Subscriber = subscriber
 	subscription.Schedule = strings.TrimSpace(subscription.Schedule)
 	subscription.TimeOfDay = strings.TrimSpace(subscription.TimeOfDay)
-	subscription.Region = strings.ToUpper(strings.TrimSpace(subscription.Region))
 	subscription.Timezone = strings.TrimSpace(subscription.Timezone)
 	subscription.Locale = strings.ReplaceAll(strings.TrimSpace(subscription.Locale), "_", "-")
 	if subscription.Schedule == "" {
-		return digest.Subscription{}, "", "", "", errors.New("digest schedule is required")
+		return digest.Subscription{}, "", errors.New("digest schedule is required")
 	}
 	if subscription.Weekday < time.Sunday || subscription.Weekday > time.Saturday {
-		return digest.Subscription{}, "", "", "", fmt.Errorf("invalid digest weekday %d", subscription.Weekday)
+		return digest.Subscription{}, "", fmt.Errorf("invalid digest weekday %d", subscription.Weekday)
 	}
 	if _, err := time.Parse("15:04", subscription.TimeOfDay); err != nil {
-		return digest.Subscription{}, "", "", "", fmt.Errorf("invalid digest time of day %q: %w", subscription.TimeOfDay, err)
+		return digest.Subscription{}, "", fmt.Errorf("invalid digest time of day %q: %w", subscription.TimeOfDay, err)
 	}
 	if subscription.Timezone == "" {
-		return digest.Subscription{}, "", "", "", errors.New("digest timezone is required")
+		return digest.Subscription{}, "", errors.New("digest timezone is required")
 	}
 	if _, err := time.LoadLocation(subscription.Timezone); err != nil {
-		return digest.Subscription{}, "", "", "", fmt.Errorf("invalid digest timezone %q: %w", subscription.Timezone, err)
+		return digest.Subscription{}, "", fmt.Errorf("invalid digest timezone %q: %w", subscription.Timezone, err)
 	}
 	if subscription.Locale == "" {
-		return digest.Subscription{}, "", "", "", errors.New("digest locale is required")
+		return digest.Subscription{}, "", errors.New("digest locale is required")
 	}
 	switch subscription.Cadence {
-	case digest.CadenceDaily, digest.CadenceWeekly, digest.CadenceSeasonal:
+	case digest.CadenceWeekly, digest.CadenceMonthly:
 	default:
-		return digest.Subscription{}, "", "", "", fmt.Errorf("invalid digest cadence %q", subscription.Cadence)
+		return digest.Subscription{}, "", fmt.Errorf("invalid digest cadence %q", subscription.Cadence)
 	}
 	topics, err := canonicalDigestTopics(subscription.Topics)
 	if err != nil {
-		return digest.Subscription{}, "", "", "", err
+		return digest.Subscription{}, "", err
 	}
-	releaseKinds, err := canonicalDigestReleaseKinds(subscription.ReleaseKinds)
-	if err != nil {
-		return digest.Subscription{}, "", "", "", err
-	}
-	interests := canonicalDigestInterests(subscription.Interests)
 	if subscription.Enabled && (subscription.NextRunAt == nil || subscription.NextRunAt.IsZero()) {
-		return digest.Subscription{}, "", "", "", errors.New("enabled digest subscription requires a next run time")
+		return digest.Subscription{}, "", errors.New("enabled digest subscription requires a next run time")
 	}
 	if !subscription.Enabled {
 		subscription.NextRunAt = nil
 	}
 	subscription.Topics = topics
-	subscription.ReleaseKinds = releaseKinds
-	subscription.Interests = interests
 	topicsJSON, err := json.Marshal(topics)
 	if err != nil {
-		return digest.Subscription{}, "", "", "", fmt.Errorf("encode digest topics: %w", err)
+		return digest.Subscription{}, "", fmt.Errorf("encode digest topics: %w", err)
 	}
-	releaseKindsJSON, err := json.Marshal(releaseKinds)
-	if err != nil {
-		return digest.Subscription{}, "", "", "", fmt.Errorf("encode digest release kinds: %w", err)
-	}
-	interestsJSON, err := json.Marshal(interests)
-	if err != nil {
-		return digest.Subscription{}, "", "", "", fmt.Errorf("encode digest interests: %w", err)
-	}
-	return subscription, string(topicsJSON), string(releaseKindsJSON), string(interestsJSON), nil
+	return subscription, string(topicsJSON), nil
 }
 
 func canonicalDigestSubscriber(subscriber digest.Subscriber) (digest.Subscriber, error) {
@@ -773,7 +748,7 @@ func canonicalDigestTopics(values []digest.Topic) ([]digest.Topic, error) {
 	seen := make(map[digest.Topic]struct{}, len(values))
 	for _, value := range values {
 		switch value {
-		case digest.TopicAnimeSeasons, digest.TopicShowPremieres, digest.TopicMovieReleases:
+		case digest.TopicShows, digest.TopicMovies:
 			seen[value] = struct{}{}
 		default:
 			return nil, fmt.Errorf("invalid digest topic %q", value)
@@ -790,79 +765,18 @@ func canonicalDigestTopics(values []digest.Topic) ([]digest.Topic, error) {
 	return out, nil
 }
 
-func canonicalDigestReleaseKinds(values []digest.ReleaseKind) ([]digest.ReleaseKind, error) {
-	seen := make(map[digest.ReleaseKind]struct{}, len(values))
-	for _, value := range values {
-		switch value {
-		case digest.ReleaseKindOnline, digest.ReleaseKindPhysical, digest.ReleaseKindCinema:
-			seen[value] = struct{}{}
-		default:
-			return nil, fmt.Errorf("invalid digest release kind %q", value)
-		}
-	}
-	if len(seen) == 0 {
-		return nil, errors.New("digest subscription requires at least one release kind")
-	}
-	out := make([]digest.ReleaseKind, 0, len(seen))
-	for value := range seen {
-		out = append(out, value)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	return out, nil
-}
-
-func canonicalDigestInterests(values []string) []string {
-	seen := make(map[string]string, len(values))
-	for _, value := range values {
-		value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
-		if value == "" {
-			continue
-		}
-		key := strings.ToLower(value)
-		if _, ok := seen[key]; !ok {
-			seen[key] = value
-		}
-	}
-	keys := make([]string, 0, len(seen))
-	for key := range seen {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	out := make([]string, 0, len(keys))
-	for _, key := range keys {
-		out = append(out, seen[key])
-	}
-	return out
-}
-
 func digestSubscriptionIdentity(subscription digest.Subscription) (string, error) {
-	interests := make([]string, 0, len(subscription.Interests))
-	for _, interest := range subscription.Interests {
-		interests = append(interests, strings.ToLower(strings.Join(strings.Fields(interest), " ")))
-	}
-	sort.Strings(interests)
 	identity := struct {
-		Topics       []digest.Topic
-		ReleaseKinds []digest.ReleaseKind
-		Cadence      digest.Cadence
-		Schedule     string
-		Weekday      time.Weekday
-		TimeOfDay    string
-		Region       string
-		Timezone     string
-		Locale       string
-		Interests    []string
+		Topics    []digest.Topic
+		Cadence   digest.Cadence
+		Schedule  string
+		Weekday   time.Weekday
+		TimeOfDay string
+		Timezone  string
+		Locale    string
 	}{
-		Topics:       subscription.Topics,
-		ReleaseKinds: subscription.ReleaseKinds,
-		Cadence:      subscription.Cadence,
-		Schedule:     subscription.Schedule,
-		Weekday:      subscription.Weekday,
-		TimeOfDay:    subscription.TimeOfDay,
-		Region:       subscription.Region,
-		Timezone:     subscription.Timezone,
-		Locale:       subscription.Locale,
-		Interests:    interests,
+		Topics: subscription.Topics, Cadence: subscription.Cadence, Schedule: subscription.Schedule,
+		Weekday: subscription.Weekday, TimeOfDay: subscription.TimeOfDay, Timezone: subscription.Timezone, Locale: subscription.Locale,
 	}
 	encoded, err := json.Marshal(identity)
 	if err != nil {
@@ -905,7 +819,7 @@ ORDER BY id
 	}
 
 	for _, subscription := range subscriptions {
-		canonical, _, _, _, err := canonicalDigestSubscription(subscription)
+		canonical, _, err := canonicalDigestSubscription(subscription)
 		if err != nil {
 			return fmt.Errorf("canonicalize digest subscription %d for identity migration: %w", subscription.ID, err)
 		}

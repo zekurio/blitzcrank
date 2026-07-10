@@ -23,7 +23,6 @@ const (
 	digestDraftEdit
 	digestDraftManage
 	digestDraftPreview
-	digestDraftLink
 )
 
 type digestDraft struct {
@@ -171,7 +170,5 @@ func sameDigestSubscriber(left, right digest.Subscriber) bool {
 
 func cloneDigestInput(input digest.SubscriptionInput) digest.SubscriptionInput {
 	input.Topics = append([]digest.Topic(nil), input.Topics...)
-	input.ReleaseKinds = append([]digest.ReleaseKind(nil), input.ReleaseKinds...)
-	input.Interests = append([]string(nil), input.Interests...)
 	return input
 }

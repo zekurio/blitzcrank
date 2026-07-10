@@ -28,9 +28,6 @@ type Config struct {
 
 	JellyfinBaseURL  string `env:"JELLYFIN_BASE_URL" toml:"jellyfin.base_url"`
 	JellyfinAPIKey   string `env:"JELLYFIN_API_KEY" toml:"jellyfin.api_key"`
-	TMDBAPIToken     string `env:"TMDB_API_TOKEN" toml:"digests.tmdb_api_token"`
-	TMDBBaseURL      string `env:"TMDB_BASE_URL" toml:"digests.tmdb_base_url" default:"https://api.themoviedb.org"`
-	AniListBaseURL   string `env:"ANILIST_BASE_URL" toml:"digests.anilist_base_url" default:"https://graphql.anilist.co"`
 	SonarrBaseURL    string `env:"SONARR_BASE_URL" toml:"sonarr.base_url"`
 	SonarrAPIKey     string `env:"SONARR_API_KEY" toml:"sonarr.api_key"`
 	RadarrBaseURL    string `env:"RADARR_BASE_URL" toml:"radarr.base_url"`
@@ -68,7 +65,6 @@ type Config struct {
 	AutomationMutationBudget int           `env:"AUTOMATION_MUTATION_BUDGET" toml:"runtime.automation_mutation_budget" default:"5"`
 
 	DigestsEnabled         bool          `env:"DIGESTS_ENABLED" toml:"digests.enabled"`
-	DigestDefaultRegion    string        `env:"DIGEST_DEFAULT_REGION" toml:"digests.default_region" default:"US"`
 	DigestDispatchSchedule string        `env:"DIGEST_DISPATCH_SCHEDULE" toml:"digests.dispatch_schedule" default:"@every 1m"`
 	DigestMaxItems         int           `env:"DIGEST_MAX_ITEMS" toml:"digests.max_items" default:"12"`
 	DigestRetryDelay       time.Duration `env:"DIGEST_RETRY_DELAY" toml:"digests.retry_delay" default:"15m"`
