@@ -95,6 +95,51 @@ function assertReadAllowed(service: string, method: string, path: string) {
   }
 }
 
+function assertDiscordDirectReadAllowed(service: string, method: string, path: string) {
+  if (!env("BLITZCRANK_RUN_SOURCE").toLowerCase().startsWith("discord_direct")) return;
+  if (method !== "GET") throw new Error("public Discord service requests are read-only");
+
+  const parsed = new URL(path, "http://127.0.0.1");
+  const hasValue = (name: string) => Boolean(parsed.searchParams.get(name)?.trim());
+  const hasOnlyParams = (...names: string[]) => {
+    const permitted = new Set(names.map((name) => name.toLowerCase()));
+    for (const [name] of parsed.searchParams) {
+      if (!permitted.has(name.toLowerCase())) return false;
+    }
+    return true;
+  };
+  const isSmallLimit = () => {
+    const value = parsed.searchParams.get("limit");
+    if (!value) return true;
+    const limit = Number(value);
+    return Number.isInteger(limit) && limit > 0 && limit <= 10;
+  };
+  let allowed = false;
+  switch (service) {
+    case "jellyfin":
+      allowed = (/^\/System\/(Info\/Public|Ping)\/?$/i.test(parsed.pathname) && hasOnlyParams())
+        || (/^\/Items\/?$/i.test(parsed.pathname)
+          && hasValue("searchTerm")
+          && hasOnlyParams("searchTerm", "recursive", "limit", "includeItemTypes")
+          && isSmallLimit());
+      break;
+    case "sonarr":
+      allowed = (/^\/api\/v3\/system\/status\/?$/i.test(parsed.pathname) && hasOnlyParams())
+        || (/^\/api\/v3\/series\/lookup\/?$/i.test(parsed.pathname) && hasValue("term") && hasOnlyParams("term"))
+        || (/^\/api\/v3\/series\/?$/i.test(parsed.pathname) && hasValue("tvdbId") && hasOnlyParams("tvdbId"))
+        || (/^\/api\/v3\/episode\/?$/i.test(parsed.pathname) && hasValue("seriesId") && hasOnlyParams("seriesId"));
+      break;
+    case "radarr":
+      allowed = (/^\/api\/v3\/system\/status\/?$/i.test(parsed.pathname) && hasOnlyParams())
+        || (/^\/api\/v3\/movie\/lookup\/?$/i.test(parsed.pathname) && hasValue("term") && hasOnlyParams("term"))
+        || (/^\/api\/v3\/movie\/?$/i.test(parsed.pathname) && hasValue("tmdbId") && hasOnlyParams("tmdbId"));
+      break;
+  }
+  if (!allowed) {
+    throw new Error(`${service} path is not available to a public Discord run; use a private thread for detailed or sensitive reads`);
+  }
+}
+
 class ServiceHTTPError extends Error {
   constructor(readonly status: number, readonly statusText: string, readonly responseBody: unknown) {
     const body = typeof responseBody === "string" ? responseBody : JSON.stringify(responseBody);
@@ -333,6 +378,7 @@ async function callService(service: string, input: ServiceRequest, signal: Abort
   const path = input.path;
   if (!input.purpose?.trim()) throw new Error("purpose is required");
   assertServicePath(path);
+  assertDiscordDirectReadAllowed(service, method, path);
   assertReadAllowed(service, method, path);
   assertMutationSafety(method, input);
   if (service === "seerr" && (/\/comment\b/i.test(path) || /\/resolved\b/i.test(path))) {

@@ -307,7 +307,8 @@ func profileFor(source string) runProfile {
 	case strings.HasPrefix(source, "discord_direct"):
 		return runProfile{
 			systemPrompt: "discord-agent",
-			tools:        []string{"web_search", "web_fetch"},
+			tools:        []string{"jellyfin_request", "sonarr_request", "radarr_request", "web_search", "web_fetch"},
+			skills:       []string{"jellyfin", "sonarr", "radarr"},
 		}
 	case strings.HasPrefix(source, "discord"):
 		return runProfile{

@@ -81,7 +81,7 @@ Enable only the Discord Gateway `Guilds`, `Guild Messages`, and `Message Content
 - Manage Threads, so it can maintain and archive bot-owned support threads
 - Use Application Commands, when `/automatisierung` is enabled
 
-Local lookups, user/server-specific data, mutations, diagnostics, clarifications, and likely follow-ups are moved to a non-invitable private thread. Blitzcrank adds only the triggering user, keeps one owner per conversation, suppresses generated mentions, and archives the thread after 24 hours of inactivity by default. Discord members with Manage Threads remain an unavoidable moderator-level exception to thread privacy. If private-thread creation fails, Blitzcrank never falls back to publishing sensitive results in the public channel.
+Public-safe facts and simple read-only questions reply directly, including title-specific release dates, exact-title Jellyfin availability, and basic Jellyfin/Sonarr/Radarr reachability. Direct runs are sessionless, deterministically read-only, and limited to narrowly scoped service reads; they must not expose users, viewing activity, paths, configuration, queues, history, downloads, or unrelated library contents. User-specific data, operational detail, mutations, diagnostics, and genuine multi-turn investigations move to a non-invitable private thread. Blitzcrank adds only the triggering user, keeps one owner per conversation, suppresses generated mentions, and archives the thread after 24 hours of inactivity by default. Discord members with Manage Threads remain an unavoidable moderator-level exception to thread privacy. If private-thread creation fails, Blitzcrank never falls back to publishing sensitive results in the public channel.
 
 ## Configuration
 

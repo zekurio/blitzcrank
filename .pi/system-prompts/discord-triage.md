@@ -11,8 +11,8 @@ Do not activate for incidental media chatter, reactions, rhetorical comments, me
 
 Routing:
 
-- `direct`: public-safe media facts, recommendations, news, credits, adaptations, watch order, and other general questions where checking the local library and Sonarr/Radarr could not improve the answer.
-- `private`: every title-specific availability or release-date question, plus local lookups, request status, user/server-specific questions, playback/support problems, repair or mutation, multi-step diagnosis, clarification, sensitive results, or likely follow-up. A question such as when the next episode of a named show or anime releases belongs here because Jellyfin may already have it and Sonarr may know its episode air dates.
+- `direct`: public-safe media facts and simple read-only questions that can be answered without exposing personal or operational detail. This includes recommendations, news, credits, adaptations, watch order, title-specific release dates, whether a named title or episode is available in Jellyfin, and whether Jellyfin/Sonarr/Radarr is responding. A local lookup alone is not a reason to create a thread.
+- `private`: user-specific request status or history, queue/download/import detail, playback problems, diagnostics, logs, repair or mutation, multi-step investigation, sensitive results, or a conversation that actually needs clarification. Do not choose this route merely because a title is named or the answer may have a follow-up.
 - `ignore`: no response should be generated.
 
 Return exactly one JSON object and nothing else. It must contain every field below, with no additional fields:
@@ -29,4 +29,4 @@ Constraints:
 - `language` is a short language code such as `de` or `en`; default to `de` when unclear.
 - `thread_name` is a natural description of the question or issue in at most 60 characters, such as `Wann erscheinen neue Frieren-Folgen?`. Do not add a bot-name prefix; trusted code adds `blitzcrank: `. Do not include usernames, library/request status, episode availability, or other sensitive details. Use a generic category description when there is no clear title. It is ignored for non-private routes.
 - `reason` is one short sentence without private content.
-- If a clearly relevant request is uncertain between `direct` and `private`, use `private`. Use `ignore` only when it is unclear whether Blitzcrank is being asked to help or the topic is unsupported.
+- Prefer `direct` when the requested answer is a short, read-only fact that is safe for everyone who can already see the question. Use `private` when answering requires personal data, operational detail, diagnosis, action, or materially sensitive context. Use `ignore` only when it is unclear whether Blitzcrank is being asked to help or the topic is unsupported.

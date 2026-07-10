@@ -18,8 +18,13 @@ func TestParseTriageDecision(t *testing.T) {
 			wantRoute: "direct",
 		},
 		{
-			name:      "service lookup cannot remain public",
+			name:      "simple service lookup can remain public",
 			response:  `{"relevant":true,"respond":true,"route":"direct","category":"service","language":"de","reason":"Lokaler Status."}`,
+			wantRoute: "direct",
+		},
+		{
+			name:      "playback diagnosis cannot remain public",
+			response:  `{"relevant":true,"respond":true,"route":"direct","category":"playback","language":"de","reason":"Wiedergabeproblem."}`,
 			wantRoute: "private",
 		},
 		{

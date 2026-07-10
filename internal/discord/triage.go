@@ -74,7 +74,7 @@ func parseTriageDecision(value string) (triageDecision, error) {
 	if decision.Route != "ignore" && (!decision.Relevant || !decision.Respond) {
 		return triageDecision{}, fmt.Errorf("active route requires relevance and response intent")
 	}
-	if decision.Route == "direct" && decision.Category != "release" && decision.Category != "general" {
+	if decision.Route == "direct" && !oneOf(decision.Category, "release", "general", "service") {
 		decision.Route = "private"
 	}
 	if decision.Category == "unsupported" {

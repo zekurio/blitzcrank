@@ -73,10 +73,10 @@ func TestSourceProfilesIsolateDiscordSessionsAndTools(t *testing.T) {
 			forbiddenTools: []string{"seerr_request", "web_search", "thread_history_search"},
 		},
 		{
-			name:           "direct is public web only",
+			name:           "direct has scoped read tools without a session",
 			req:            harness.Request{Source: "discord_direct", ThreadID: "channel:1"},
-			wantTools:      []string{"web_search", "web_fetch"},
-			forbiddenTools: []string{"seerr_request", "jellyfin_request", "thread_history_search"},
+			wantTools:      []string{"jellyfin_request", "sonarr_request", "radarr_request", "web_search", "web_fetch"},
+			forbiddenTools: []string{"seerr_request", "sabnzbd_request", "anvil_status", "thread_history_search"},
 		},
 		{
 			name:           "private thread has isolated durable session",
