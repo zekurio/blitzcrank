@@ -424,7 +424,7 @@ func TestConversationPrivateRoute(t *testing.T) {
 	api := &fakeDiscordAPI{
 		botUserID:  "bot",
 		thread:     &discordgo.Channel{ID: "private-thread"},
-		sentNotify: make(chan struct{}, 2),
+		sentNotify: make(chan struct{}, 3),
 	}
 	runner := &recordingConversationRunner{respond: func(_ context.Context, request harness.Request) (string, error) {
 		if request.Source == "discord_triage" {
@@ -438,6 +438,8 @@ func TestConversationPrivateRoute(t *testing.T) {
 	if err := agent.handleMessage(context.Background(), message); err != nil {
 		t.Fatalf("handleMessage() error = %v", err)
 	}
+	waitForSignal(t, api.sentNotify)
+	waitForSignal(t, api.sentNotify)
 	waitForSignal(t, api.sentNotify)
 	api.mu.Lock()
 	spec := api.createSpec
@@ -453,8 +455,23 @@ func TestConversationPrivateRoute(t *testing.T) {
 		t.Errorf("added members = %+v, want only owner", added)
 	}
 	sent := api.snapshotSent()
-	if len(sent) != 1 || sent[0].channelID != "private-thread" {
-		t.Fatalf("sent = %+v, sensitive result must only go to private thread", sent)
+	if len(sent) != 3 {
+		t.Fatalf("sent = %+v, want origin, public thread link, and private result", sent)
+	}
+	if sent[0].channelID != "private-thread" || sent[0].message.Reference == nil || sent[0].message.Reference.Type != discordgo.MessageReferenceTypeForward {
+		t.Fatalf("origin message = %+v, want source message forwarded into private thread", sent[0])
+	}
+	if reference := sent[0].message.Reference; reference.MessageID != message.ID || reference.ChannelID != message.ChannelID || reference.GuildID != message.GuildID {
+		t.Errorf("forward reference = %+v, want original public message", reference)
+	}
+	if sent[1].channelID != "public" || sent[1].message.Reference == nil || sent[1].message.Reference.MessageID != message.ID {
+		t.Errorf("public continuity message = %+v, want reply to triggering message", sent[1])
+	}
+	if !strings.Contains(sent[1].message.Content, "<#private-thread>") || strings.Contains(sent[1].message.Content, message.Content) {
+		t.Errorf("public continuity content = %q, want only private thread link", sent[1].message.Content)
+	}
+	if sent[2].channelID != "private-thread" || sent[2].message.Content != "Private service result" {
+		t.Errorf("private result = %+v, want sensitive result only in private thread", sent[2])
 	}
 	requests := runner.snapshot()
 	if len(requests) != 2 || requests[1].Source != "discord_thread" || requests[1].ThreadID != "private-thread" {

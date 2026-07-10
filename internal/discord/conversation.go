@@ -687,7 +687,22 @@ func (a *conversationAgent) openPrivateConversation(ctx context.Context, message
 	a.mu.Lock()
 	a.conversations[thread.ID] = conversation
 	a.mu.Unlock()
+	a.sendConversationContinuity(ctx, thread.ID, message, decision.Language)
 	return a.enqueue(ctx, conversation, ownerMessageFromDiscord(message))
+}
+
+func (a *conversationAgent) sendConversationContinuity(ctx context.Context, threadID string, message *discordgo.Message, language string) {
+	if _, err := a.api.SendMessage(ctx, threadID, safeDiscordMessage("", message.Forward())); err != nil {
+		fallback := originalMessageFallback(language, message.Content)
+		if _, fallbackErr := a.api.SendMessage(ctx, threadID, safeDiscordMessage(fallback, nil)); fallbackErr != nil {
+			slog.Warn("discord conversation origin failed", "message_id", message.ID, "thread_id", threadID, "error_kind", sanitizedDiscordError(errors.Join(err, fallbackErr)))
+		}
+	}
+
+	content := privateThreadOpenedMessage(language, threadID)
+	if _, err := a.api.SendMessage(ctx, message.ChannelID, safeDiscordMessage(content, messageReference(message))); err != nil {
+		slog.Warn("discord conversation link failed", "message_id", message.ID, "thread_id", threadID, "error_kind", sanitizedDiscordError(err))
+	}
 }
 
 func (a *conversationAgent) enqueue(ctx context.Context, conversation store.DiscordConversation, message ownerMessage) error {
@@ -1227,6 +1242,27 @@ func localizedDiscordMessage(language, kind string) string {
 	default:
 		return "Ich konnte das gerade nicht sicher bearbeiten. Bitte versuche es später erneut."
 	}
+}
+
+func privateThreadOpenedMessage(language, threadID string) string {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(language)), "en") {
+		return fmt.Sprintf("↪ I’m answering this in a private thread: <#%s>", threadID)
+	}
+	return fmt.Sprintf("↪ Ich beantworte das in einem privaten Thread: <#%s>", threadID)
+}
+
+func originalMessageFallback(language, content string) string {
+	const maxContentRunes = 1600
+	content = strings.TrimSpace(content)
+	runes := []rune(content)
+	if len(runes) > maxContentRunes {
+		content = strings.TrimSpace(string(runes[:maxContentRunes])) + "…"
+	}
+	content = strings.ReplaceAll(content, "\n", "\n> ")
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(language)), "en") {
+		return "Original message:\n> " + content
+	}
+	return "Ausgangsnachricht:\n> " + content
 }
 
 func inferredLanguage(content string) string {
