@@ -135,7 +135,11 @@ func (b *Bot) registerCommands() error {
 			Choices:     choices,
 		}},
 	}
-	_, err := b.session.ApplicationCommandCreate(b.session.State.User.ID, strings.TrimSpace(b.cfg.DiscordGuildID), cmd)
+	_, err := b.session.ApplicationCommandBulkOverwrite(
+		b.session.State.User.ID,
+		strings.TrimSpace(b.cfg.DiscordGuildID),
+		[]*discordgo.ApplicationCommand{cmd},
+	)
 	return err
 }
 
