@@ -62,12 +62,14 @@ SONARR_API_KEY=...
 RADARR_API_KEY=...
 SABNZBD_API_KEY=...
 ANVIL_SYSTEMD_UNIT=anvil.service # optional; defaults to anvil.service
-KAGI_API_KEY=... # optional, enables web_search/web_fetch Pi tools
+FIRECRAWL_API_KEY=... # optional, enables Firecrawl web search/scraping tools
 # Optional incoming webhook secret:
 SEERR_WEBHOOK_SECRET=...
 ```
 
 Blitzcrank passes configured service environment to the spawned Pi process so the project-local Pi tools can call Seerr/Jellyfin/Sonarr/Radarr/SABnzBD directly.
+
+The checked-in `.pi/settings.json` installs Firecrawl's official Pi plugin from a pinned Git commit when the project is trusted. The scoped npm package is not currently published, so the Git source keeps local installs reproducible.
 
 ### Discord bot setup
 
@@ -169,7 +171,8 @@ Project-local Pi resources live in `.pi/`:
 
 - `.pi/system-prompts/`: source-specific Pi contracts for Seerr, automations, Discord triage/working runs, and mutation review.
 - `.pi/skills/`: Pi-discoverable service/domain cookbooks for Seerr, Jellyfin, Sonarr, Radarr, SABnzBD, Anvil, and filesystem limitations.
-- `.pi/extensions/blitzcrank-tools.ts`: registers direct TypeScript tools for media services, Pi session history, and Kagi web search/fetch.
+- `.pi/extensions/blitzcrank-tools.ts`: registers direct TypeScript tools for media services and Pi session history.
+- `.pi/settings.json`: installs the official Firecrawl Pi plugin for web search and scraping.
 
 Pi-visible tools:
 
@@ -180,8 +183,8 @@ Pi-visible tools:
 - `sabnzbd_request`
 - `anvil_status`
 - `thread_history_search`
-- `web_search`
-- `web_fetch`
+- `firecrawl_search`
+- `firecrawl_scrape`
 
 All service request tools and `anvil_status` require a `purpose`. Paths must be service-relative and must not contain full URLs or credentials. Non-GET requests require `safety_level = "narrow_mutation"` and `safety_reason`. Non-GET requests must additionally match the fixed per-service allowlist enforced in `.pi/extensions/blitzcrank-tools.ts`; SABnzbd is read-only. `anvil_status` reads only the configured systemd unit and cannot control services.
 
@@ -258,7 +261,7 @@ SQLite Discord records contain IDs, owner/route/category/status, timing, and san
 
 ## Nix / NixOS
 
-`nix build` packages the complete `.pi` directory, including all source-specific prompts and the TypeScript extension. Its check phase also starts Pi offline in RPC mode with the packaged extension explicitly loaded and verifies a successful `get_state` response. This catches TypeScript/import/registration failures without provider credentials or a model call; end-to-end tool execution and reviewer-model behavior still require a configured Pi installation and live integration environment.
+`nix build` packages the complete `.pi` directory and the pinned Firecrawl extension with its runtime dependencies. Its check phase starts Pi offline in RPC mode with both extensions explicitly loaded and verifies a successful `get_state` response. This catches TypeScript/import/registration failures without provider credentials or a model call; end-to-end tool execution and reviewer-model behavior still require configured Pi and Firecrawl credentials.
 
 Build:
 
@@ -266,6 +269,6 @@ Build:
 nix build
 ```
 
-The Nix package includes `automations/` and `.pi/`. Do not put secrets in Nix-store-generated config. Use `services.blitzcrank.environmentFile` or a secret manager for service API keys.
+The Nix package includes `automations/`, `.pi/`, and the Firecrawl plugin. It removes the project package manifest from the immutable output and loads the packaged plugin explicitly. Do not put secrets in Nix-store-generated config. Use `services.blitzcrank.environmentFile` or a secret manager for service API keys.
 
 Keep secrets out of commits; `.env*`, local TOML, SQLite files, and Pi session data are ignored.

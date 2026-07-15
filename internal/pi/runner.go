@@ -246,6 +246,9 @@ func (r *Runner) argsFor(req harness.Request) ([]string, error) {
 	}
 	if len(profile.tools) > 0 {
 		args = append(args, "--extension", filepath.Join(r.cwd(), ".pi", "extensions", "blitzcrank-tools.ts"))
+		if extension := strings.TrimSpace(r.cfg.PiFirecrawlExtension); extension != "" {
+			args = append(args, "--extension", extension)
+		}
 	}
 	args = append(args, "--tools", strings.Join(profile.tools, ","))
 	if sessionPath := r.sessionPath(req); sessionPath != "" {
@@ -299,6 +302,11 @@ var serviceTools = []string{
 	"anvil_status",
 }
 
+var webTools = []string{
+	"firecrawl_search",
+	"firecrawl_scrape",
+}
+
 func profileFor(source string) runProfile {
 	source = strings.ToLower(strings.TrimSpace(source))
 	switch {
@@ -307,13 +315,13 @@ func profileFor(source string) runProfile {
 	case strings.HasPrefix(source, "discord_direct"):
 		return runProfile{
 			systemPrompt: "discord-agent",
-			tools:        []string{"jellyfin_request", "sonarr_request", "radarr_request", "web_search", "web_fetch"},
+			tools:        append([]string{"jellyfin_request", "sonarr_request", "radarr_request"}, webTools...),
 			skills:       []string{"jellyfin", "sonarr", "radarr"},
 		}
 	case strings.HasPrefix(source, "discord"):
 		return runProfile{
 			systemPrompt:     "discord-agent",
-			tools:            append(append([]string{}, serviceTools...), "web_search", "web_fetch"),
+			tools:            append(append([]string{}, serviceTools...), webTools...),
 			skills:           []string{"seerr", "jellyfin", "sonarr", "radarr", "sabnzbd", "anvil", "filesystem"},
 			durableSession:   true,
 			sessionNamespace: "discord",
@@ -324,14 +332,14 @@ func profileFor(source string) runProfile {
 	case strings.HasPrefix(source, "automation"):
 		return runProfile{
 			systemPrompt:    "automation",
-			tools:           append(append([]string{}, serviceTools[1:]...), "thread_history_search", "web_search", "web_fetch"),
+			tools:           append(append(append([]string{}, serviceTools[1:]...), "thread_history_search"), webTools...),
 			skills:          automationSkillDirectives(),
 			reviewMutations: true,
 		}
 	default:
 		return runProfile{
 			systemPrompt:     "seerr-issue",
-			tools:            append(append([]string{}, serviceTools...), "thread_history_search", "web_search", "web_fetch"),
+			tools:            append(append(append([]string{}, serviceTools...), "thread_history_search"), webTools...),
 			skills:           seerrIssueSkillDirectives(),
 			durableSession:   true,
 			sessionNamespace: "seerr",

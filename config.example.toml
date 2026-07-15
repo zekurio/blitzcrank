@@ -56,6 +56,8 @@ mutation_budget = 5
 # Pi is the only agent runtime. Blitzcrank invokes `pi --mode rpc`.
 command = "pi"
 cwd = "."
+# Optional explicit Firecrawl Pi extension path. The Nix package sets this automatically.
+firecrawl_extension = ""
 # Optional Pi config/auth directory. Seed this with auth.json/settings.json for service deployments.
 agent_dir = ""
 # Persistent Pi sessions, partitioned into Seerr and private-Discord namespaces.

@@ -15,7 +15,10 @@ import (
 )
 
 func TestArgsForAutomationUsesNoSession(t *testing.T) {
-	runner := NewRunner(config.Config{PiSessionsDir: "/tmp/blitzcrank-pi-sessions"})
+	runner := NewRunner(config.Config{
+		PiSessionsDir:        "/tmp/blitzcrank-pi-sessions",
+		PiFirecrawlExtension: "/nix/store/firecrawl/pi-firecrawl",
+	})
 
 	args, err := runner.argsFor(harness.Request{Source: "automation_cron", ThreadID: "automation:hourly-stale-import-handler"})
 	if err != nil {
@@ -28,6 +31,9 @@ func TestArgsForAutomationUsesNoSession(t *testing.T) {
 	}
 	if !containsArg(args, "--extension") || !containsArgSuffix(args, ".pi/extensions/blitzcrank-tools.ts") {
 		t.Fatalf("expected explicit Blitzcrank extension so Pi loads service tools in rpc mode, got %q", joined)
+	}
+	if !containsArgSuffix(args, "/pi-firecrawl") {
+		t.Fatalf("expected explicit Firecrawl extension for packaged runs, got %q", joined)
 	}
 	if !containsTool(args, "anvil_status") {
 		t.Fatalf("expected anvil_status tool for automation run, got %q", joined)
@@ -70,12 +76,12 @@ func TestSourceProfilesIsolateDiscordSessionsAndTools(t *testing.T) {
 		{
 			name:           "triage has no tools or session",
 			req:            harness.Request{Source: "discord_triage", ThreadID: "channel:1"},
-			forbiddenTools: []string{"seerr_request", "web_search", "thread_history_search"},
+			forbiddenTools: []string{"seerr_request", "firecrawl_search", "thread_history_search"},
 		},
 		{
 			name:           "direct has scoped read tools without a session",
 			req:            harness.Request{Source: "discord_direct", ThreadID: "channel:1"},
-			wantTools:      []string{"jellyfin_request", "sonarr_request", "radarr_request", "web_search", "web_fetch"},
+			wantTools:      []string{"jellyfin_request", "sonarr_request", "radarr_request", "firecrawl_search", "firecrawl_scrape"},
 			forbiddenTools: []string{"seerr_request", "sabnzbd_request", "anvil_status", "thread_history_search"},
 		},
 		{
@@ -89,7 +95,7 @@ func TestSourceProfilesIsolateDiscordSessionsAndTools(t *testing.T) {
 		{
 			name:           "review has no tools or session",
 			req:            harness.Request{Source: "mutation_review", ThreadID: "run:1"},
-			forbiddenTools: []string{"seerr_request", "web_search", "thread_history_search"},
+			forbiddenTools: []string{"seerr_request", "firecrawl_search", "thread_history_search"},
 		},
 	}
 

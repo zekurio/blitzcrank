@@ -36,11 +36,12 @@ type Config struct {
 	SabnzbdAPIKey    string `env:"SABNZBD_API_KEY" toml:"sabnzbd.api_key"`
 	AnvilSystemdUnit string `env:"ANVIL_SYSTEMD_UNIT" toml:"anvil.systemd_unit" default:"anvil.service"`
 
-	PiCommand     string            `env:"PI_COMMAND" toml:"pi.command" default:"pi"`
-	PiCWD         string            `env:"PI_CWD" toml:"pi.cwd" default:"."`
-	PiAgentDir    string            `env:"PI_CODING_AGENT_DIR" toml:"pi.agent_dir"`
-	PiSessionsDir string            `env:"PI_SESSIONS_DIR" toml:"pi.sessions_dir" default:"pi-sessions"`
-	PiModels      map[string]string `env:"PI_MODELS" toml:"pi.models"`
+	PiCommand            string            `env:"PI_COMMAND" toml:"pi.command" default:"pi"`
+	PiCWD                string            `env:"PI_CWD" toml:"pi.cwd" default:"."`
+	PiAgentDir           string            `env:"PI_CODING_AGENT_DIR" toml:"pi.agent_dir"`
+	PiSessionsDir        string            `env:"PI_SESSIONS_DIR" toml:"pi.sessions_dir" default:"pi-sessions"`
+	PiModels             map[string]string `env:"PI_MODELS" toml:"pi.models"`
+	PiFirecrawlExtension string            `env:"PI_FIRECRAWL_EXTENSION" toml:"pi.firecrawl_extension"`
 
 	ConfigPath           string        `env:"BLITZCRANK_CONFIG" default:"./blitzcrank.toml"`
 	AutomationsDirectory string        `env:"AUTOMATIONS_DIR" toml:"runtime.automations_dir" default:"automations"`

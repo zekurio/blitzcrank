@@ -82,13 +82,13 @@ webhook ingress, SQLite issue state, Seerr final comments/resolution, and passin
 ┌──────────────────────────────────────────────────────────────┐
 │ Pi RPC Runner                                                 │
 │ pi --mode rpc --session pi-sessions/&lt;thread&gt;.jsonl           │
-│ .pi/skills + .pi/extensions/blitzcrank-tools.ts              │
+│ Blitzcrank + Firecrawl Pi extensions                         │
 └──────────────────────────────┬───────────────────────────────┘
                                │ tool call
                                ▼
 ┌──────────────────────────────────────────────────────────────┐
 │ Direct TypeScript Tools                                      │
-│ service APIs · Kagi web search/fetch · Pi session history    │
+│ service APIs · Firecrawl web search/scrape · Pi history      │
 └──────────────────────────────────────────────────────────────┘</div></div>
 
 <div class="flow-step"><span class="step-num">1</span><p><strong>Load config</strong> from defaults, TOML, and environment.</p></div>
@@ -122,7 +122,7 @@ stale downloads or remove clearly rejected stale queue items. It reports only co
 
 <h2 id="tools">5. Tool System</h2>
 <p>
-Pi sees a small typed tool surface registered by <code>.pi/extensions/blitzcrank-tools.ts</code>. The extension calls configured services directly using environment passed to the Pi process.
+Pi sees a small typed tool surface registered by Blitzcrank's project extension and the installed Firecrawl plugin. The extensions call their configured services using environment passed to the Pi process.
 </p>
 <table>
   <thead><tr><th>Pi Tool</th><th>Purpose</th><th>Backend</th></tr></thead>
@@ -133,8 +133,8 @@ Pi sees a small typed tool surface registered by <code>.pi/extensions/blitzcrank
     <tr><td><code>radarr_request</code></td><td>Radarr movie, queue, history, blocklist, command, and manual-import APIs.</td><td>TypeScript tool injects <code>X-Api-Key</code></td></tr>
     <tr><td><code>sabnzbd_request</code></td><td>SABnzBD <code>/api?mode=...</code> reads. Blitzcrank injects <code>apikey</code> and <code>output=json</code>.</td><td>TypeScript tool</td></tr>
     <tr><td><code>thread_history_search</code></td><td>Search prior Pi session history for repeated issue clues.</td><td>Pi session files</td></tr>
-    <tr><td><code>web_search</code></td><td>Search the public web.</td><td>Kagi Search API</td></tr>
-    <tr><td><code>web_fetch</code></td><td>Extract markdown from a URL.</td><td>Kagi Extract API</td></tr>
+    <tr><td><code>firecrawl_search</code></td><td>Search the public web.</td><td>Firecrawl Search API</td></tr>
+    <tr><td><code>firecrawl_scrape</code></td><td>Extract markdown and structured content from a URL.</td><td>Firecrawl Scrape API</td></tr>
   </tbody>
 </table>
 <p>All service request tools require <code>purpose</code>. Paths must be service-relative and must not contain full URLs or credentials. Non-GET requests require <code>safety_level = "narrow_mutation"</code> and <code>safety_reason</code>.</p>
@@ -209,7 +209,7 @@ go run ./cmd/blitzcrank</code></pre>
 go build ./cmd/blitzcrank
 nix build</code></pre>
 <p>Provider credentials are configured through Pi's normal environment/settings, for example <code>ANTHROPIC_API_KEY</code>, <code>OPENAI_API_KEY</code>, or Pi auth storage. Blitzcrank should not own provider setup.</p>
-<p>Kagi web tools require <code>KAGI_API_KEY</code> in the service environment.</p>
+<p>Firecrawl web tools require <code>FIRECRAWL_API_KEY</code> in the service environment.</p>
 
 <hr>
 <p style="text-align:center;color:var(--text-secondary);font-size:.85rem;">Blitzcrank — TypeScript tool for Pi-powered Seerr issue solving and media-server automation.</p>
