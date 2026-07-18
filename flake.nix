@@ -17,7 +17,17 @@
       ...
     }:
     let
-      overlays.default = final: prev: { };
+      overlays.default = final: prev: {
+        go_1_26 = prev.go_1_26.overrideAttrs (_: rec {
+          version = "1.26.5";
+          src = prev.fetchurl {
+            url = "https://go.dev/dl/go${version}.src.tar.gz";
+            hash = "sha256-SVvkvIcXasVnOS5bQRar2YRm0z17SdQedkzMaXay3EI=";
+          };
+        });
+        buildGoModule = prev.buildGoModule.override { go = final.go_1_26; };
+        go = final.go_1_26;
+      };
       nixosModules.default = import ./nix/module.nix { inherit self; };
     in
     flake-utils.lib.eachDefaultSystem (
