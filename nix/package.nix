@@ -19,7 +19,7 @@ buildGoModule {
       in
       base != ".git" && base != ".direnv" && base != ".env" && base != "git" && base != "result";
   };
-  vendorHash = "sha256-QcEdiccOzzPhzMbXCBtMMCi8CqvUCGoqdjVP9n9gHJQ=";
+  vendorHash = "sha256-4+VRp4z8b6jZQKOahOwVqaFTp3MqovzauOREExTHcM8=";
   subPackages = [ "cmd/blitzcrank" ];
   nativeBuildInputs = [ makeWrapper ];
   nativeCheckInputs = [ pi ];
@@ -39,7 +39,7 @@ buildGoModule {
     mkdir -p $out/share/blitzcrank
     cp -R automations .pi $out/share/blitzcrank/
     rm -f $out/share/blitzcrank/.pi/settings.json
-    cp README.md config.example.toml spec.html $out/share/blitzcrank/
+    cp README.md config.example.toml $out/share/blitzcrank/
     printf '%s\n' \
       '[runtime]' \
       "automations_dir = \"$out/share/blitzcrank/automations\"" \
