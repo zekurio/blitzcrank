@@ -55,4 +55,11 @@ buildGoModule {
       --set PI_FIRECRAWL_EXTENSION ${firecrawlPi}/lib/pi-firecrawl \
       --set-default BLITZCRANK_CONFIG $out/share/blitzcrank/config.toml
   '';
+
+  meta = {
+    description = "Blitzcrank Seerr automation gateway for Pi";
+    homepage = "https://github.com/zekurio/blitzcrank";
+    mainProgram = "blitzcrank";
+    platforms = lib.platforms.unix;
+  };
 }
