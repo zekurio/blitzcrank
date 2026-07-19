@@ -33,7 +33,7 @@ func (r *seerrProgressReporter) start(ctx context.Context) error {
 	if r == nil || r.manager == nil || r.issueID == "" || !r.manager.cfg.SeerrTransientRunComments {
 		return nil
 	}
-	return r.postOrUpdate(ctx, r.manager.signedRunMessage("Ich prüfe das gerade.", nil, r.request))
+	return r.postOrUpdate(ctx, r.manager.signedRunMessage("Ich untersuche das Problem und versuche, es direkt zu beheben.", nil, r.request))
 }
 
 func (r *seerrProgressReporter) update(ctx context.Context, event ProgressEvent) {
@@ -48,7 +48,7 @@ func (r *seerrProgressReporter) update(ctx context.Context, event ProgressEvent)
 		}
 		r.steps++
 		comment := r.manager.signedRunMessage(
-			fmt.Sprintf("Ich prüfe das gerade – %d Schritte abgeschlossen.", r.steps),
+			fmt.Sprintf("Ich untersuche das Problem und versuche, es direkt zu beheben – %d Schritte abgeschlossen.", r.steps),
 			r.todos, r.request)
 		r.mu.Unlock()
 		if err := r.postOrUpdate(ctx, comment); err != nil {

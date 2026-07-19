@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -51,17 +52,22 @@ func actor(payload map[string]any) string {
 
 func actorID(payload map[string]any) string {
 	if _, isComment := payload["comment"].(map[string]any); isComment {
-		return identityFromSection(section(payload, "comment"), []string{"commentedBy_id", "commentedBy_userId", "user_id"})
+		return seerrIdentity(
+			section(payload, "comment"),
+			[]string{"commentedBy_id", "commentedBy_userId", "user_id"},
+			"commentedBy_email",
+		)
 	}
 	for _, candidate := range []struct {
 		section string
 		keys    []string
+		email   string
 	}{
-		{"comment", []string{"commentedBy_id", "commentedBy_userId", "user_id"}},
-		{"issue", []string{"reportedBy_id", "reportedBy_userId", "user_id"}},
-		{"request", []string{"requestedBy_id", "requestedBy_userId", "user_id"}},
+		{"comment", []string{"commentedBy_id", "commentedBy_userId", "user_id"}, "commentedBy_email"},
+		{"issue", []string{"reportedBy_id", "reportedBy_userId", "user_id"}, "reportedBy_email"},
+		{"request", []string{"requestedBy_id", "requestedBy_userId", "user_id"}, "requestedBy_email"},
 	} {
-		if value := identityFromSection(section(payload, candidate.section), candidate.keys); value != "" {
+		if value := seerrIdentity(section(payload, candidate.section), candidate.keys, candidate.email); value != "" {
 			return value
 		}
 	}
@@ -77,16 +83,25 @@ func identityFromSection(values map[string]any, keys []string) string {
 	return ""
 }
 
+func seerrIdentity(values map[string]any, idKeys []string, emailKey string) string {
+	if value := identityFromSection(values, idKeys); value != "" {
+		return value
+	}
+	if value := strings.ToLower(strings.TrimSpace(stringValue(values, emailKey))); value != "" {
+		sum := sha256.Sum256([]byte(value))
+		return fmt.Sprintf("seerr-email:%x", sum)
+	}
+	return ""
+}
+
 func reporterName(payload map[string]any) string {
 	return stringValue(section(payload, "issue"), "reportedBy_username")
 }
 
 func reporterID(payload map[string]any) string {
 	issue := section(payload, "issue")
-	for _, key := range []string{"reportedBy_id", "reportedBy_userId", "user_id"} {
-		if value := scalarString(issue[key]); value != "" {
-			return value
-		}
+	if value := seerrIdentity(issue, []string{"reportedBy_id", "reportedBy_userId", "user_id"}, "reportedBy_email"); value != "" {
+		return value
 	}
 	return reporterName(payload)
 }

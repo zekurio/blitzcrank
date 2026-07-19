@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -150,6 +151,35 @@ func TestSeerrCommentWithoutAuthorIDFailsClosed(t *testing.T) {
 	}
 	if policy := issueMutationPolicy(nil, payload, "comment"); policy != "read_only" {
 		t.Fatalf("comment mutation policy = %q, want read_only", policy)
+	}
+}
+
+func TestSeerrWebhookEmailIdentifiesReporterWhenUserIDsAreAbsent(t *testing.T) {
+	payload := issuePayload("Kommentar", "alice", "ja")
+	issue := payload["issue"].(map[string]any)
+	comment := payload["comment"].(map[string]any)
+	delete(issue, "reportedBy_id")
+	delete(comment, "commentedBy_id")
+	issue["reportedBy_email"] = "Alice@example.invalid"
+	comment["commentedBy_email"] = "alice@EXAMPLE.invalid"
+
+	if !reporterAuthored(payload) {
+		t.Fatal("reporter comment with matching Seerr email was not recognized")
+	}
+	if policy := issueMutationPolicy(nil, payload, "comment"); policy != "issue_report_and_reporter_comments" {
+		t.Fatalf("reporter mutation policy = %q", policy)
+	}
+	if actor := trustedIssueActorID(nil, payload, "comment"); !strings.HasPrefix(actor, "seerr-email:") || strings.Contains(actor, "alice") {
+		t.Fatalf("trusted reporter actor = %q", actor)
+	}
+
+	report := issuePayload("New Issue Reported", "", "")
+	reportIssue := report["issue"].(map[string]any)
+	delete(reportIssue, "reportedBy_id")
+	reportIssue["reportedBy_email"] = "alice@example.invalid"
+	report["comment"] = nil
+	if actor := trustedIssueActorID(nil, report, "reported"); actor != trustedIssueActorID(nil, payload, "comment") {
+		t.Fatalf("reported and comment actor identities differ: %q != %q", actor, trustedIssueActorID(nil, payload, "comment"))
 	}
 }
 

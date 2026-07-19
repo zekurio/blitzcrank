@@ -435,17 +435,23 @@ func TestSeerrProgressToolDoneUpdatesTransientComment(t *testing.T) {
 
 	reporter := manager.newSeerrProgressReporter("42", Request{})
 	ctx := context.Background()
+	if err := reporter.start(ctx); err != nil {
+		t.Fatal(err)
+	}
 	reporter.update(ctx, ProgressEvent{Phase: "tool_done", ToolName: "sonarr_request", Message: "Pi finished a tool call."})
 	reporter.update(ctx, ProgressEvent{Phase: "tool_done", ToolName: "sonarr_request", Message: "Pi finished a tool call."})
 
-	if len(posted) != 1 || len(updated) != 1 {
-		t.Fatalf("posted=%d updated=%d, want one post and one update: posted=%#v updated=%#v", len(posted), len(updated), posted, updated)
+	if len(posted) != 1 || len(updated) != 2 {
+		t.Fatalf("posted=%d updated=%d, want one post and two updates: posted=%#v updated=%#v", len(posted), len(updated), posted, updated)
 	}
-	if !strings.Contains(updated[0], "2 Schritte abgeschlossen") {
-		t.Fatalf("second comment missing step counter: %q", updated[0])
+	if !strings.Contains(posted[0], "versuche, es direkt zu beheben") {
+		t.Fatalf("initial comment does not describe the repair workflow: %q", posted[0])
 	}
-	if strings.Contains(updated[0], "sonarr_request") || strings.Contains(updated[0], "Pi finished") {
-		t.Fatalf("comment leaked internal tool detail: %q", updated[0])
+	if !strings.Contains(updated[1], "versuche, es direkt zu beheben – 2 Schritte abgeschlossen") {
+		t.Fatalf("second comment missing repair-aware step counter: %q", updated[1])
+	}
+	if strings.Contains(updated[1], "sonarr_request") || strings.Contains(updated[1], "Pi finished") {
+		t.Fatalf("comment leaked internal tool detail: %q", updated[1])
 	}
 }
 
