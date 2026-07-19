@@ -435,19 +435,17 @@ func TestSeerrProgressToolDoneUpdatesTransientComment(t *testing.T) {
 
 	reporter := manager.newSeerrProgressReporter("42", Request{})
 	ctx := context.Background()
-	if err := reporter.start(ctx); err != nil {
-		t.Fatal(err)
-	}
+	reporter.update(ctx, ProgressEvent{Phase: "status", ToolName: "report_progress", Message: "Ich prüfe die betroffene Episode und versuche, die richtige Fassung bereitzustellen."})
 	reporter.update(ctx, ProgressEvent{Phase: "tool_done", ToolName: "sonarr_request", Message: "Pi finished a tool call."})
 	reporter.update(ctx, ProgressEvent{Phase: "tool_done", ToolName: "sonarr_request", Message: "Pi finished a tool call."})
 
 	if len(posted) != 1 || len(updated) != 2 {
 		t.Fatalf("posted=%d updated=%d, want one post and two updates: posted=%#v updated=%#v", len(posted), len(updated), posted, updated)
 	}
-	if !strings.Contains(posted[0], "versuche, es direkt zu beheben") {
-		t.Fatalf("initial comment does not describe the repair workflow: %q", posted[0])
+	if !strings.Contains(posted[0], "betroffene Episode") {
+		t.Fatalf("initial comment does not contain the generated issue-specific status: %q", posted[0])
 	}
-	if !strings.Contains(updated[1], "versuche, es direkt zu beheben – 2 Schritte abgeschlossen") {
+	if !strings.Contains(updated[1], "richtige Fassung bereitzustellen – 2 Schritte abgeschlossen") {
 		t.Fatalf("second comment missing repair-aware step counter: %q", updated[1])
 	}
 	if strings.Contains(updated[1], "sonarr_request") || strings.Contains(updated[1], "Pi finished") {
@@ -488,6 +486,7 @@ func TestSeerrFinalCommentUnaffectedByToolProgress(t *testing.T) {
 
 	reporter := manager.newSeerrProgressReporter("42", Request{})
 	ctx := context.Background()
+	reporter.update(ctx, ProgressEvent{Phase: "status", ToolName: "report_progress", Message: "Ich untersuche die gemeldete Episode."})
 	reporter.update(ctx, ProgressEvent{Phase: "tool_done", ToolName: "sonarr_request"})
 	reporter.update(ctx, ProgressEvent{Phase: "tool_done", ToolName: "sonarr_request"})
 	reporter.update(ctx, ProgressEvent{Phase: "tool_done", ToolName: "sonarr_request"})
@@ -496,8 +495,8 @@ func TestSeerrFinalCommentUnaffectedByToolProgress(t *testing.T) {
 	if strings.HasPrefix(strings.TrimSpace(final), "[...]") {
 		t.Fatalf("final comment should not carry the multi-turn prefix after tool progress: %q", final)
 	}
-	if len(posted) != 1 || len(updated) != 2 {
-		t.Fatalf("posted=%d updated=%d, want one post and two tool_done updates: posted=%#v updated=%#v", len(posted), len(updated), posted, updated)
+	if len(posted) != 1 || len(updated) != 3 {
+		t.Fatalf("posted=%d updated=%d, want one post and three tool_done updates: posted=%#v updated=%#v", len(posted), len(updated), posted, updated)
 	}
 }
 

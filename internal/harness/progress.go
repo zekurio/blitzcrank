@@ -15,6 +15,7 @@ type seerrProgressReporter struct {
 	mu        sync.Mutex
 	todos     []TodoItem
 	commentID string
+	status    string
 	turns     int
 	steps     int
 }
@@ -29,26 +30,41 @@ func (r *seerrProgressReporter) callback(ctx context.Context) func(ProgressEvent
 	}
 }
 
-func (r *seerrProgressReporter) start(ctx context.Context) error {
-	if r == nil || r.manager == nil || r.issueID == "" || !r.manager.cfg.SeerrTransientRunComments {
-		return nil
-	}
-	return r.postOrUpdate(ctx, r.manager.signedRunMessage("Ich untersuche das Problem und versuche, es direkt zu beheben.", nil, r.request))
-}
-
 func (r *seerrProgressReporter) update(ctx context.Context, event ProgressEvent) {
 	if r == nil || r.manager == nil || r.issueID == "" || !seerrProgressVisible(event) {
 		return
 	}
 	r.mu.Lock()
+	if strings.TrimSpace(event.Phase) == "status" {
+		status := strings.TrimSpace(event.Message)
+		invalidStatus := strings.ContainsAny(status, "\r\n") || len(status) > 240 || r.manager.validateFinalIssueComment(status) != nil
+		if r.status != "" || !r.manager.cfg.SeerrTransientRunComments || invalidStatus {
+			r.mu.Unlock()
+			return
+		}
+		r.status = status
+		comment := r.manager.signedRunMessage(status, nil, r.request)
+		r.mu.Unlock()
+		if err := r.postOrUpdate(ctx, comment); err != nil {
+			log.Printf("seerr progress comment failed: issue=%s phase=%s error=%v", r.issueID, event.Phase, err)
+			return
+		}
+		log.Printf("seerr progress comment posted: issue=%s phase=%s", r.issueID, event.Phase)
+		return
+	}
 	if strings.TrimSpace(event.Phase) == "tool_done" {
-		if !r.manager.cfg.SeerrTransientRunComments {
+		if !r.manager.cfg.SeerrTransientRunComments || strings.TrimSpace(event.ToolName) == "report_progress" {
 			r.mu.Unlock()
 			return
 		}
 		r.steps++
+		status := strings.TrimSuffix(strings.TrimSpace(r.status), ".")
+		if status == "" {
+			r.mu.Unlock()
+			return
+		}
 		comment := r.manager.signedRunMessage(
-			fmt.Sprintf("Ich untersuche das Problem und versuche, es direkt zu beheben – %d Schritte abgeschlossen.", r.steps),
+			fmt.Sprintf("%s – %s abgeschlossen.", status, completedStepsLabel(r.steps)),
 			r.todos, r.request)
 		r.mu.Unlock()
 		if err := r.postOrUpdate(ctx, comment); err != nil {
@@ -71,6 +87,13 @@ func (r *seerrProgressReporter) update(ctx context.Context, event ProgressEvent)
 		return
 	}
 	log.Printf("seerr progress comment posted: issue=%s phase=%s", r.issueID, event.Phase)
+}
+
+func completedStepsLabel(steps int) string {
+	if steps == 1 {
+		return "1 Schritt"
+	}
+	return fmt.Sprintf("%d Schritte", steps)
 }
 
 func (r *seerrProgressReporter) render(response string) string {
@@ -127,7 +150,7 @@ func (r *seerrProgressReporter) delete(ctx context.Context) error {
 
 func seerrProgressVisible(event ProgressEvent) bool {
 	switch strings.TrimSpace(event.Phase) {
-	case "assistant_turn", "tool_done":
+	case "status", "assistant_turn", "tool_done":
 		return true
 	default:
 		return false

@@ -45,6 +45,7 @@ const MUTATION_ALLOWLIST: Record<string, MutationRule[]> = {
     { method: "POST", pattern: /^\/api\/v3\/queue\/grab\/\d+\/?$/i },
     { method: "DELETE", pattern: /^\/api\/v3\/queue\/\d+(\?.*)?$/i },
     { method: "DELETE", pattern: /^\/api\/v3\/blocklist\/\d+\/?$/i },
+    { method: "DELETE", pattern: /^\/api\/v3\/episodefile\/\d+\/?$/i },
   ],
   radarr: [
     { method: "POST", pattern: /^\/api\/v3\/command\/?$/i, commandNames: ["MoviesSearch", "RefreshMovie", "ManualImport"] },
@@ -661,6 +662,18 @@ async function threadHistorySearch(params: { query: string; source?: string; lim
 
 
 export default function (pi: ExtensionAPI) {
+  pi.registerTool({
+    name: "report_progress",
+    label: "Report issue progress",
+    description: "Publish one short user-facing German sentence describing what you are about to investigate or fix. Call this exactly once as your first action for a Seerr issue. Do not include internal tool names, IDs, URLs, or promises of success.",
+    parameters: Type.Object({
+      message: Type.String({ description: "One concise German sentence tailored to this issue, such as what will be checked or fixed" }),
+    }),
+    async execute(_toolCallId, params) {
+      return toolResult({ reported: true, message: String((params as { message: string }).message || "").trim() });
+    },
+  });
+
   registerServiceTool(pi, "seerr", "Call the configured Seerr API. Use relative /api/v1 paths. Do not post comments or resolve issues; Blitzcrank owns that lifecycle.");
   registerServiceTool(pi, "jellyfin", "Call the configured Jellyfin API. Use relative Jellyfin API paths such as /Items?... or /Users/...");
   registerServiceTool(pi, "sonarr", "Call the configured Sonarr API. Use relative /api/v3 paths for series, history, queue, commands, manual import, etc.");

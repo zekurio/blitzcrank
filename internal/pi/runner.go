@@ -339,7 +339,7 @@ func profileFor(source string) runProfile {
 	default:
 		return runProfile{
 			systemPrompt:     "seerr-issue",
-			tools:            append(append(append([]string{}, serviceTools...), "thread_history_search"), webTools...),
+			tools:            append(append(append(append([]string{}, serviceTools...), "report_progress"), "thread_history_search"), webTools...),
 			skills:           seerrIssueSkillDirectives(),
 			durableSession:   true,
 			sessionNamespace: "seerr",
@@ -688,7 +688,13 @@ func readUntilAgentEnd(ctx context.Context, stdout io.Reader, req harness.Reques
 				}
 			case "tool_execution_start":
 				if req.Progress != nil {
-					req.Progress(harness.ProgressEvent{Phase: "tool_start", ToolName: stringValue(event, "toolName"), Message: "Pi started a tool call."})
+					toolName := stringValue(event, "toolName")
+					if toolName == "report_progress" {
+						args, _ := event["args"].(map[string]any)
+						req.Progress(harness.ProgressEvent{Phase: "status", ToolName: toolName, Message: limitString(stringValue(args, "message"), 500)})
+					} else {
+						req.Progress(harness.ProgressEvent{Phase: "tool_start", ToolName: toolName, Message: "Pi started a tool call."})
+					}
 				}
 			case "tool_execution_end":
 				if req.Progress != nil {

@@ -334,9 +334,6 @@ func (m *Manager) run(ctx context.Context, thread *IssueThread, payload map[stri
 	progress := m.newSeerrProgressReporter(thread.IssueID, request)
 	request.Progress = progress.callback(runCtx)
 	log.Printf("seerr issue run started: issue=%s event=%s actor=%q prior_events=%d prior_runs=%d", thread.IssueID, event, request.Author, len(thread.Events), len(thread.Runs))
-	if err := progress.start(runCtx); err != nil {
-		log.Printf("seerr transient comment failed: issue=%s event=%s error=%v", thread.IssueID, event, err)
-	}
 
 	response, err := m.runner.Respond(runCtx, request)
 	record.CompletedAt = time.Now().UTC()
@@ -577,7 +574,7 @@ func (m *Manager) confirmPendingResolution(ctx context.Context, thread *IssueThr
 		ok = false
 	}
 	m.resolutionMu.Unlock()
-	if !ok || pending.ActorID != actorID(payload) {
+	if !ok || pending.ActorID != trustedIssueActorID(thread, payload, "comment") {
 		return false
 	}
 	confirmer, ok := m.resolutionReviewer.(issueResolutionConfirmer)

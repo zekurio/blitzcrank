@@ -34,6 +34,7 @@ Use `sonarr_request` with relative `/api/v3/...` paths. Every request needs `pur
 - Retry known queue item: `POST /api/v3/queue/grab/{queueId}`.
 - Remove known queue item and download-client job: `DELETE /api/v3/queue/{queueId}?removeFromClient=true&blocklist=true`. Do not use this for Anvil waits.
 - Delete a matching blocklist item: `DELETE /api/v3/blocklist/{blocklistId}`.
+- Delete one verified wrong episode file after the reporter confirms replacement: `DELETE /api/v3/episodefile/{episodeFileId}`. Then search only the affected episode and validate that the wrong file is gone and the replacement is queued.
 - Manual import a verified candidate: `POST /api/v3/command` with body shaped like Sonarr `ManualImport`; use `importMode: "Move"` and `force: true` only when the only blocker is a stale queue/import warning and the candidate is otherwise clearly correct. Do not manual import or force import Anvil waits.
 
 ## Diagnostic rules

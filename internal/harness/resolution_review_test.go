@@ -138,10 +138,12 @@ func TestSeerrMutationAuthorityIsReporterBound(t *testing.T) {
 	}
 }
 
-func TestSeerrCommentWithoutAuthorIDFailsClosed(t *testing.T) {
+func TestSeerrCommentWithoutAnyIdentityFailsClosed(t *testing.T) {
 	payload := issuePayload("Kommentar", "alice", "ja")
 	payload["issue"].(map[string]any)["reportedBy_id"] = "reporter-7"
-	delete(payload["comment"].(map[string]any), "commentedBy_id")
+	comment := payload["comment"].(map[string]any)
+	delete(comment, "commentedBy_id")
+	delete(comment, "commentedBy_username")
 
 	if actor := actorID(payload); actor != "" {
 		t.Fatalf("comment actor ID = %q, want empty without commenter identity", actor)
@@ -151,6 +153,40 @@ func TestSeerrCommentWithoutAuthorIDFailsClosed(t *testing.T) {
 	}
 	if policy := issueMutationPolicy(nil, payload, "comment"); policy != "read_only" {
 		t.Fatalf("comment mutation policy = %q, want read_only", policy)
+	}
+}
+
+func TestSeerrWebhookUsernameIdentifiesReporterWhenEmailIsAbsent(t *testing.T) {
+	payload := issuePayload("Kommentar", "Alice", "ja")
+	issue := payload["issue"].(map[string]any)
+	comment := payload["comment"].(map[string]any)
+	delete(issue, "reportedBy_id")
+	delete(comment, "commentedBy_id")
+	issue["reportedBy_username"] = "alice"
+	comment["commentedBy_username"] = "ALICE"
+
+	if !reporterAuthored(payload) {
+		t.Fatal("reporter comment with matching Seerr username was not recognized")
+	}
+	if actor := trustedIssueActorID(nil, payload, "comment"); !strings.HasPrefix(actor, "seerr-username:") || strings.Contains(actor, "alice") {
+		t.Fatalf("trusted reporter actor = %q", actor)
+	}
+}
+
+func TestSeerrWebhookUsernameLinksCommentWhenOnlyReporterEmailExists(t *testing.T) {
+	payload := issuePayload("Kommentar", "Alice", "ja")
+	issue := payload["issue"].(map[string]any)
+	comment := payload["comment"].(map[string]any)
+	delete(issue, "reportedBy_id")
+	delete(comment, "commentedBy_id")
+	issue["reportedBy_email"] = "alice@example.invalid"
+	comment["commentedBy_email"] = ""
+
+	if !reporterAuthored(payload) {
+		t.Fatal("matching reporter username did not link a comment with a missing commenter email")
+	}
+	if actor := trustedIssueActorID(nil, payload, "comment"); !strings.HasPrefix(actor, "seerr-email:") {
+		t.Fatalf("trusted reporter actor = %q, want reporter email identity", actor)
 	}
 }
 

@@ -58,6 +58,9 @@ func TestArgsForIssueUsesSession(t *testing.T) {
 	if !containsArg(args, "--extension") || !containsArgSuffix(args, ".pi/extensions/blitzcrank-tools.ts") {
 		t.Fatalf("expected explicit Blitzcrank extension so Pi loads service tools in rpc mode, got %q", joined)
 	}
+	if !containsTool(args, "report_progress") {
+		t.Fatalf("expected report_progress tool for issue run, got %q", joined)
+	}
 	if containsArg(args, "--no-session") {
 		t.Fatalf("did not expect --no-session for issue run, got %q", joined)
 	}
@@ -406,6 +409,25 @@ func TestReadUntilAgentEndReportsToolFailure(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected a tool_done progress event, got %+v", events)
+	}
+}
+
+func TestReadUntilAgentEndForwardsGeneratedProgressMessage(t *testing.T) {
+	stream := `{"type":"response","id":"blitzcrank-request","success":true}
+{"type":"tool_execution_start","toolName":"report_progress","args":{"message":"Ich prüfe die gemeldete Episode."}}
+{"type":"tool_execution_end","toolName":"report_progress"}
+{"type":"agent_end","messages":[{"role":"assistant","content":"final answer"}]}
+`
+	var events []harness.ProgressEvent
+	req := harness.Request{Progress: func(event harness.ProgressEvent) {
+		events = append(events, event)
+	}}
+
+	if _, err := readUntilAgentEnd(context.Background(), strings.NewReader(stream), req); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 || events[0].Phase != "status" || events[0].Message != "Ich prüfe die gemeldete Episode." {
+		t.Fatalf("progress events = %+v", events)
 	}
 }
 

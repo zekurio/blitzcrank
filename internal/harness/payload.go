@@ -56,18 +56,20 @@ func actorID(payload map[string]any) string {
 			section(payload, "comment"),
 			[]string{"commentedBy_id", "commentedBy_userId", "user_id"},
 			"commentedBy_email",
+			"commentedBy_username",
 		)
 	}
 	for _, candidate := range []struct {
-		section string
-		keys    []string
-		email   string
+		section  string
+		keys     []string
+		email    string
+		username string
 	}{
-		{"comment", []string{"commentedBy_id", "commentedBy_userId", "user_id"}, "commentedBy_email"},
-		{"issue", []string{"reportedBy_id", "reportedBy_userId", "user_id"}, "reportedBy_email"},
-		{"request", []string{"requestedBy_id", "requestedBy_userId", "user_id"}, "requestedBy_email"},
+		{"comment", []string{"commentedBy_id", "commentedBy_userId", "user_id"}, "commentedBy_email", "commentedBy_username"},
+		{"issue", []string{"reportedBy_id", "reportedBy_userId", "user_id"}, "reportedBy_email", "reportedBy_username"},
+		{"request", []string{"requestedBy_id", "requestedBy_userId", "user_id"}, "requestedBy_email", "requestedBy_username"},
 	} {
-		if value := seerrIdentity(section(payload, candidate.section), candidate.keys, candidate.email); value != "" {
+		if value := seerrIdentity(section(payload, candidate.section), candidate.keys, candidate.email, candidate.username); value != "" {
 			return value
 		}
 	}
@@ -83,13 +85,17 @@ func identityFromSection(values map[string]any, keys []string) string {
 	return ""
 }
 
-func seerrIdentity(values map[string]any, idKeys []string, emailKey string) string {
+func seerrIdentity(values map[string]any, idKeys []string, emailKey, usernameKey string) string {
 	if value := identityFromSection(values, idKeys); value != "" {
 		return value
 	}
 	if value := strings.ToLower(strings.TrimSpace(stringValue(values, emailKey))); value != "" {
 		sum := sha256.Sum256([]byte(value))
 		return fmt.Sprintf("seerr-email:%x", sum)
+	}
+	if value := strings.ToLower(strings.TrimSpace(stringValue(values, usernameKey))); value != "" {
+		sum := sha256.Sum256([]byte(value))
+		return fmt.Sprintf("seerr-username:%x", sum)
 	}
 	return ""
 }
@@ -100,7 +106,7 @@ func reporterName(payload map[string]any) string {
 
 func reporterID(payload map[string]any) string {
 	issue := section(payload, "issue")
-	if value := seerrIdentity(issue, []string{"reportedBy_id", "reportedBy_userId", "user_id"}, "reportedBy_email"); value != "" {
+	if value := seerrIdentity(issue, []string{"reportedBy_id", "reportedBy_userId", "user_id"}, "reportedBy_email", "reportedBy_username"); value != "" {
 		return value
 	}
 	return reporterName(payload)
@@ -111,13 +117,26 @@ func reporterAuthored(payload map[string]any) bool {
 	if reporter == "" {
 		return false
 	}
-	reporterStableID := reporterID(payload)
-	currentStableID := actorID(payload)
 	if _, isComment := payload["comment"].(map[string]any); isComment {
 		// A comment must carry the commenter's stable identity. Seerr's issue
 		// section describes the reporter, not the author of this comment.
-		return reporterStableID == currentStableID
+		issue := section(payload, "issue")
+		comment := section(payload, "comment")
+		if reporterUserID := identityFromSection(issue, []string{"reportedBy_id", "reportedBy_userId", "user_id"}); reporterUserID != "" {
+			if commenterUserID := identityFromSection(comment, []string{"commentedBy_id", "commentedBy_userId", "user_id"}); commenterUserID != "" {
+				return reporterUserID == commenterUserID
+			}
+		}
+		if reporterEmail := stringValue(issue, "reportedBy_email"); reporterEmail != "" {
+			if commenterEmail := stringValue(comment, "commentedBy_email"); commenterEmail != "" {
+				return strings.EqualFold(reporterEmail, commenterEmail)
+			}
+		}
+		commenter := stringValue(comment, "commentedBy_username")
+		return commenter != "" && strings.EqualFold(reporter, commenter)
 	}
+	reporterStableID := reporterID(payload)
+	currentStableID := actorID(payload)
 	if reporterStableID != "" && currentStableID != "" {
 		return reporterStableID == currentStableID
 	}
