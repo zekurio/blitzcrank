@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { execFile } from "node:child_process";
 import { readdir, readFile, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 function env(name: string): string {
   return (process.env[name] || "").trim();
@@ -177,7 +177,12 @@ const serviceRequestSchema = Type.Object({
 });
 
 const anvilStatusSchema = Type.Object({
-  purpose: Type.String({ description: "Why the Anvil systemd service state is needed for this diagnosis or automation run" }),
+  purpose: Type.String({ description: "Why Anvil daemon health is needed for this diagnosis or automation run" }),
+});
+
+const anvilJobLookupSchema = Type.Object({
+  purpose: Type.String({ description: "Why this exact Anvil job correlation is needed" }),
+  absolute_path: Type.String({ description: "Exact absolute Sonarr/Radarr outputPath or SABnzbd storage path; never a title, basename, or guessed path" }),
 });
 
 type ServiceRequest = {
@@ -491,18 +496,21 @@ function registerServiceTool(pi: ExtensionAPI, service: string, description: str
   });
 }
 
-function anvilSystemdUnit(): string {
-  let unit = env("ANVIL_SYSTEMD_UNIT") || "anvil.service";
-  if (!unit.includes(".")) unit += ".service";
-  if (!/^[A-Za-z0-9_.@:-]+\.service$/.test(unit)) {
-    throw new Error("ANVIL_SYSTEMD_UNIT must name a single .service unit");
+function anvilCommand(): string {
+  return env("ANVIL_COMMAND") || "anvilctl";
+}
+
+function anvilControlSocket(): string {
+  const socket = env("ANVIL_CONTROL_SOCKET") || "/run/anvil/anvild.sock";
+  if (!isAbsolute(socket) || socket.includes("\0")) {
+    throw new Error("ANVIL_CONTROL_SOCKET must be an absolute path");
   }
-  return unit;
+  return socket;
 }
 
 function execFileText(file: string, args: string[], signal: AbortSignal): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    execFile(file, args, { signal, timeout: 10_000, maxBuffer: 128 * 1024 }, (error, stdout, stderr) => {
+    execFile(file, args, { signal, timeout: 10_000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
       if (error) {
         const detail = String(stderr || stdout || error.message).trim();
         reject(new Error(detail || error.message));
@@ -513,81 +521,43 @@ function execFileText(file: string, args: string[], signal: AbortSignal): Promis
   });
 }
 
-function parseSystemctlShow(text: string): Record<string, string> {
-  const properties: Record<string, string> = {};
-  for (const line of text.split(/\r?\n/)) {
-    const index = line.indexOf("=");
-    if (index <= 0) continue;
-    properties[line.slice(0, index)] = line.slice(index + 1);
+function parseAnvilResponse(stdout: string): Record<string, unknown> {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(stdout);
+  } catch {
+    throw new Error("anvilctl returned invalid JSON");
   }
-  return properties;
-}
-
-function waitRecommendedFromSystemd(properties: Record<string, string>, jobs: string[]): boolean {
-  const activeState = (properties.ActiveState || "").toLowerCase();
-  const subState = (properties.SubState || "").toLowerCase();
-  if (jobs.length > 0) return true;
-  if (activeState === "activating" || activeState === "reloading") return true;
-  return activeState === "active" && subState !== "exited" && subState !== "dead";
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("anvilctl returned an invalid response object");
+  }
+  const response = payload as Record<string, unknown>;
+  if (response.api_version !== "v1") {
+    throw new Error(`unsupported Anvil API version ${JSON.stringify(response.api_version)}`);
+  }
+  return response;
 }
 
 async function anvilStatus(input: { purpose?: string }, signal: AbortSignal) {
   if (!input.purpose?.trim()) throw new Error("purpose is required");
-  const unit = anvilSystemdUnit();
-  const properties = [
-    "Id",
-    "Names",
-    "Description",
-    "LoadState",
-    "ActiveState",
-    "SubState",
-    "Result",
-    "MainPID",
-    "ExecMainPID",
-    "ExecMainCode",
-    "ExecMainStatus",
-    "NRestarts",
-    "ActiveEnterTimestamp",
-    "InactiveEnterTimestamp",
-    "ExecMainStartTimestamp",
-    "ExecMainExitTimestamp",
-  ].join(",");
-  let show: { stdout: string; stderr: string };
-  try {
-    show = await execFileText("systemctl", ["show", unit, "--no-page", `--property=${properties}`], signal);
-  } catch (error) {
-    return {
-      unit,
-      available: false,
-      wait_recommended: false,
-      active_state: "",
-      sub_state: "",
-      result: "",
-      main_pid: "",
-      jobs: [],
-      error: error instanceof Error ? error.message : String(error),
-      properties: {},
-    };
+  const result = await execFileText(anvilCommand(), ["--socket", anvilControlSocket(), "status", "--json"], signal);
+  return parseAnvilResponse(result.stdout);
+}
+
+async function anvilJobLookup(input: { purpose?: string; absolute_path?: string }, signal: AbortSignal) {
+  if (!input.purpose?.trim()) throw new Error("purpose is required");
+  const path = input.absolute_path?.trim() || "";
+  if (!isAbsolute(path) || path.includes("\0")) {
+    throw new Error("absolute_path must be an exact absolute path");
   }
-  const parsed = parseSystemctlShow(show.stdout);
-  let jobs: string[] = [];
-  try {
-    const listed = await execFileText("systemctl", ["list-jobs", "--no-legend", "--plain", unit], signal);
-    jobs = listed.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  } catch {
-    jobs = [];
-  }
-  return {
-    unit,
-    available: Boolean(parsed.LoadState) && parsed.LoadState !== "not-found",
-    wait_recommended: waitRecommendedFromSystemd(parsed, jobs),
-    active_state: parsed.ActiveState || "",
-    sub_state: parsed.SubState || "",
-    result: parsed.Result || "",
-    main_pid: parsed.MainPID || "",
-    jobs,
-    properties: parsed,
-  };
+  const result = await execFileText(anvilCommand(), [
+    "--socket", anvilControlSocket(),
+    "job", "list",
+    "--absolute-path", path,
+    "--current-only",
+    "--json",
+  ], signal);
+  return parseAnvilResponse(result.stdout);
 }
 
 async function collectFiles(root: string, out: string[], maxFiles = 1000): Promise<void> {
@@ -713,11 +683,21 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "anvil_status",
-    label: "Anvil systemd status",
-    description: "Read the configured Anvil systemd service state. This is read-only and cannot start, stop, restart, or mutate services.",
+    label: "Anvil daemon status",
+    description: "Read factual Anvil daemon health and aggregate queue counts. This never proves that a specific media item is being encoded.",
     parameters: anvilStatusSchema,
     async execute(_toolCallId, params, signal) {
       return toolResult(await anvilStatus(params as { purpose?: string }, signal));
+    },
+  });
+
+  pi.registerTool({
+    name: "anvil_job_lookup",
+    label: "Find exact Anvil jobs",
+    description: "Correlate one exact absolute Sonarr/Radarr outputPath or SABnzbd storage path to current Anvil jobs. No fuzzy, basename, title, or substring matching is performed.",
+    parameters: anvilJobLookupSchema,
+    async execute(_toolCallId, params, signal) {
+      return toolResult(await anvilJobLookup(params as { purpose?: string; absolute_path?: string }, signal));
     },
   });
 

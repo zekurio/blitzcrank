@@ -26,15 +26,16 @@ type Config struct {
 	SeerrBaseURL           string `env:"SEERR_BASE_URL" toml:"seerr.base_url"`
 	SeerrAPIKey            string `env:"SEERR_API_KEY" toml:"seerr.api_key"`
 
-	JellyfinBaseURL  string `env:"JELLYFIN_BASE_URL" toml:"jellyfin.base_url"`
-	JellyfinAPIKey   string `env:"JELLYFIN_API_KEY" toml:"jellyfin.api_key"`
-	SonarrBaseURL    string `env:"SONARR_BASE_URL" toml:"sonarr.base_url"`
-	SonarrAPIKey     string `env:"SONARR_API_KEY" toml:"sonarr.api_key"`
-	RadarrBaseURL    string `env:"RADARR_BASE_URL" toml:"radarr.base_url"`
-	RadarrAPIKey     string `env:"RADARR_API_KEY" toml:"radarr.api_key"`
-	SabnzbdBaseURL   string `env:"SABNZBD_BASE_URL" toml:"sabnzbd.base_url"`
-	SabnzbdAPIKey    string `env:"SABNZBD_API_KEY" toml:"sabnzbd.api_key"`
-	AnvilSystemdUnit string `env:"ANVIL_SYSTEMD_UNIT" toml:"anvil.systemd_unit" default:"anvil.service"`
+	JellyfinBaseURL    string `env:"JELLYFIN_BASE_URL" toml:"jellyfin.base_url"`
+	JellyfinAPIKey     string `env:"JELLYFIN_API_KEY" toml:"jellyfin.api_key"`
+	SonarrBaseURL      string `env:"SONARR_BASE_URL" toml:"sonarr.base_url"`
+	SonarrAPIKey       string `env:"SONARR_API_KEY" toml:"sonarr.api_key"`
+	RadarrBaseURL      string `env:"RADARR_BASE_URL" toml:"radarr.base_url"`
+	RadarrAPIKey       string `env:"RADARR_API_KEY" toml:"radarr.api_key"`
+	SabnzbdBaseURL     string `env:"SABNZBD_BASE_URL" toml:"sabnzbd.base_url"`
+	SabnzbdAPIKey      string `env:"SABNZBD_API_KEY" toml:"sabnzbd.api_key"`
+	AnvilCommand       string `env:"ANVIL_COMMAND" toml:"anvil.command" default:"anvilctl"`
+	AnvilControlSocket string `env:"ANVIL_CONTROL_SOCKET" toml:"anvil.control_socket" default:"/run/anvil/anvild.sock"`
 
 	PiCommand     string            `env:"PI_COMMAND" toml:"pi.command" default:"pi"`
 	PiCWD         string            `env:"PI_CWD" toml:"pi.cwd" default:"."`

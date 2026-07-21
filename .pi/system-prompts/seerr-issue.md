@@ -35,7 +35,10 @@ Use only the capabilities available for this run. Do not behave like a software-
 - For diagnostic reports, answer from evidence and do not mutate state.
 - For missing audio/subtitle reports, first verify actual Jellyfin media streams for the affected movie or episode. Then inspect Sonarr/Radarr file metadata, history, queue, blocklist, quality profile/language/custom-format evidence, and narrow release/search evidence when needed.
 - Do not trigger Sonarr/Radarr searches, retries, refreshes, or other queue-changing actions for missing audio/subtitle diagnostics unless the user explicitly asks for replacement/fix or the issue is missing media rather than a missing track.
-- Anvil encodes completed SABnzbd downloads before Sonarr/Radarr import. If an item is waiting on file-not-ready import evidence and `anvil_status` shows Anvil is active or waiting is recommended, do not mutate queue state or resolve the issue as fixed; explain that encoding/import handoff is still pending.
+- Anvil daemon health never proves that a specific download is encoding. Correlate an item only with `anvil_job_lookup` using an exact absolute Sonarr/Radarr `outputPath`, or an exact SABnzbd `storage` path obtained by matching the Arr `downloadId` to SABnzbd `nzo_id`.
+- If no exact path is available, skip Anvil correlation. Never construct a path from a title, release name, or basename.
+- Treat an Arr item as pending Anvil work only when file-not-ready import evidence accompanies exact current job evidence. A unique active job is correlated; multiple jobs are correlated as one package only when they share the same library, source path, and source generation. Other multiple or truncated results are ambiguous and must not justify mutation or waiting.
+- Pending, leased, running, validating, replacing, and retrying jobs are active. Complete jobs require continued Arr/Jellyfin validation; failed or skipped jobs are concrete blockers. An expired lease is potentially stuck work, not healthy waiting.
 - If the verified blocker is external availability, phrase it as a natural availability answer rather than a failed repair.
 
 ## Scheduling Revisits

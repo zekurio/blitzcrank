@@ -46,7 +46,7 @@ Use `sonarr_request` with relative `/api/v3/...` paths. Every request needs `pur
 - For downloaded file metadata, use episode file data and `mediaInfo` when available.
 - For missing audio/subtitle/playback-track reports, verify actual streams with `jellyfin_request` first, then use Sonarr file/history/profile/custom-format evidence to explain how the file was selected or imported.
 - Before external/public availability reasoning, exhaust local Sonarr context: history, queue, blocklist, imported file metadata, quality/language/custom-format profiles, and narrow release/search evidence if needed.
-- Anvil sits between SABnzbd and Sonarr/Radarr. If Sonarr shows a completed download waiting on file-not-ready evidence and `anvil_status` says Anvil is active or waiting is recommended, treat it as pending encoding/import handoff, not a failed download.
+- Anvil sits between SABnzbd and Sonarr/Radarr. Treat a completed Sonarr download as pending Anvil work only when `anvil_job_lookup` exactly matches its absolute `outputPath`, or an exact SABnzbd `storage` path linked by `downloadId`/`nzo_id`, to active current jobs and the Sonarr evidence is file-not-ready. Daemon health alone is never item evidence.
 - Prefer the narrowest action that matches the issue. Do not search a whole series when one episode or one season is affected.
 - Only delete blocklist entries that clearly match the affected series/episode/release and explain the missing episode.
 - Validate every mutation by reading queue/blocklist/episode/file state again.

@@ -33,6 +33,10 @@ let
       sessions_dir = "${cfg.dataDir}/pi-sessions";
       models = cfg.piModels;
     };
+    anvil = {
+      command = cfg.anvil.command;
+      control_socket = cfg.anvil.controlSocket;
+    };
   };
   serviceConfigFile = tomlFormat.generate "blitzcrank.toml" (
     lib.recursiveUpdate defaultSettings cfg.settings
@@ -115,6 +119,16 @@ in
         default. Include thinking inline, for example
         anthropic/claude-sonnet-4-5:high.
       '';
+    };
+    anvil.command = lib.mkOption {
+      type = lib.types.str;
+      default = "anvilctl";
+      description = "anvilctl executable used for read-only daemon health and exact job correlation.";
+    };
+    anvil.controlSocket = lib.mkOption {
+      type = lib.types.str;
+      default = "/run/anvil/anvild.sock";
+      description = "Absolute path to the anvild HTTP/JSON control socket.";
     };
     discordAutomationChannelId = lib.mkOption {
       type = lib.types.str;

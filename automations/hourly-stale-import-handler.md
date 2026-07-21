@@ -11,7 +11,7 @@ mutation_policy: narrow
 mutation_budget: 5
 ---
 
-Run the hourly stale import handler with `sonarr_request`, `radarr_request`, `sabnzbd_request`, `anvil_status`, and `thread_history_search`.
+Run the hourly stale import handler with `sonarr_request`, `radarr_request`, `sabnzbd_request`, `anvil_status`, `anvil_job_lookup`, and `thread_history_search`.
 
 ## Goal
 
@@ -22,7 +22,7 @@ Find Sonarr/Radarr queue entries where a download is complete but not imported. 
 1. Search prior Pi session history with `thread_history_search` for related stale import/manual intervention records when available. Treat results as clues only; current live Sonarr/Radarr evidence is authoritative.
 2. Read Sonarr queue: `sonarr_request GET /api/v3/queue?page=1&pageSize=100&includeUnknownSeriesItems=true`.
 3. Read Radarr queue: `radarr_request GET /api/v3/queue?page=1&pageSize=100&includeUnknownMovieItems=true`.
-4. Read Anvil status with `anvil_status` before deciding whether any completed Arr queue item is stale.
+4. Read Anvil daemon health with `anvil_status`. This is control-plane context only and never proves that a queue item is encoding.
 5. Consider only completed/stale import candidates where Sonarr/Radarr indicates import is blocked, delayed, failed, unknown, or waiting despite a completed download.
 
 ## Candidate inspection
@@ -34,21 +34,30 @@ For each relevant queue item:
   - Radarr: `GET /api/v3/manualimport?folder={folder}&downloadId={downloadId}` when those fields are available.
 - Inspect candidate `rejections` before deciding, even when the candidate looks safe.
 - Use SABnzbd queue/history only when Sonarr/Radarr evidence needs downloader confirmation, for example `sabnzbd_request GET /api?mode=queue` or `GET /api?mode=history&limit=20`.
+- Correlate Anvil independently for each candidate:
+  - Prefer the exact absolute Arr queue `outputPath`.
+  - Otherwise match the Arr `downloadId` exactly to SABnzbd `nzo_id` and use that entry's exact absolute `storage` path.
+  - Call `anvil_job_lookup` with the exact path. Never construct a path from a title, release name, folder basename, or substring match.
+  - If neither exact path is available, skip Anvil correlation for that item.
 
 ## Anvil wait rules
 
 Anvil encodes completed SABnzbd downloads before Sonarr/Radarr can import them. A completed SABnzbd job can therefore be healthy even while Arr reports import blockers.
 
-Treat a queue item as an Anvil wait when either is true:
+Treat a queue item as an Anvil wait only when both are true:
 
-- `anvil_status` shows the configured Anvil unit is active, activating, reloading, has a queued systemd job, or returns `wait_recommended: true`, and the Sonarr/Radarr/manual-import evidence is only file-not-ready style evidence: no importable files found, missing or unavailable path, locked/in-use file, size still changing, waiting/delayed import, or access/permission-like failures while Anvil may own the file.
-- Anvil status is unavailable, but Sonarr/Radarr evidence is only file-not-ready style evidence and the item is less than 24 hours past SAB completion or Arr queue timestamp. If no reliable age evidence exists, treat it as within this grace window.
+- Exact-path lookup returns active current jobs. Pending, leased, running, validating, replacing, and retrying are active. A single job is correlated. Multiple jobs are correlated as one package only when all share the same library, source path, and source generation. Cross-source multiple matches or `truncated: true` are ambiguous.
+- Sonarr/Radarr/manual-import evidence is only file-not-ready style evidence: no importable files found, missing or unavailable path, locked/in-use file, size still changing, waiting/delayed import, or access/permission-like failures while Anvil owns the exact path.
+
+Compare lease and heartbeat timestamps with Anvil `server_time`. An expired lease is potentially stuck and must be reported under `Manuell prüfen:` rather than treated as healthy waiting. Complete jobs are not an Anvil wait; continue Arr validation. Failed or skipped jobs are concrete Anvil blockers and belong under `Manuell prüfen:`. Zero matches mean the item is not an Anvil wait.
+
+When no exact path is available, a completed item less than 24 hours past SAB completion or the Arr queue timestamp may still receive a conservative generic import grace period. Do not call it an Anvil wait. If no reliable age evidence exists, report it for manual review rather than assuming recent work.
 
 For Anvil waits:
 
 - Do not manual import, force import, remove, blocklist, search, retry, refresh, trigger Seerr activity, or perform any filesystem action.
 - Do not include Anvil wait items under `Manuell prüfen:`. If all current blockers are Anvil waits and no action was taken, return an empty response.
-- If an item is older than 24 hours, Anvil is inactive or unavailable, and the only evidence is still file-not-ready style, report it under `Manuell prüfen:` as a possible stuck Anvil/import handoff. Do not delete it automatically.
+- If an exact active job is older than 24 hours without credible progress, or Anvil correlation is ambiguous or unavailable for an old item, report it under `Manuell prüfen:`. Do not delete it automatically.
 
 ## Safe import rules
 

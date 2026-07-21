@@ -3,10 +3,14 @@ package config
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
 func validateStrictConfig(cfg Config) error {
+	if socket := strings.TrimSpace(cfg.AnvilControlSocket); socket != "" && !filepath.IsAbs(socket) {
+		return errors.New("ANVIL_CONTROL_SOCKET must be absolute")
+	}
 	models := normalizePiModels(cfg.PiModels)
 	if len(cfg.DiscordWatchedChannelIDs) > 0 {
 		if strings.TrimSpace(cfg.DiscordToken) == "" {
