@@ -16,8 +16,8 @@ import (
 
 func TestArgsForAutomationUsesNoSession(t *testing.T) {
 	runner := NewRunner(config.Config{
-		PiSessionsDir:        "/tmp/blitzcrank-pi-sessions",
-		PiFirecrawlExtension: "/nix/store/firecrawl/pi-firecrawl",
+		PiSessionsDir: "/tmp/blitzcrank-pi-sessions",
+		PiCWD:         "../..",
 	})
 
 	args, err := runner.argsFor(harness.Request{Source: "automation_cron", ThreadID: "automation:hourly-stale-import-handler"})
@@ -29,11 +29,14 @@ func TestArgsForAutomationUsesNoSession(t *testing.T) {
 	if !containsArg(args, "--no-session") {
 		t.Fatalf("expected --no-session for automation run, got %q", joined)
 	}
+	if !containsArg(args, "--no-context-files") {
+		t.Fatalf("expected repository context files to be disabled, got %q", joined)
+	}
+	if got := argValue(args, "--system-prompt"); !strings.HasSuffix(got, ".pi/system-prompts/automation.md") {
+		t.Fatalf("system prompt = %q, want automation profile", got)
+	}
 	if !containsArg(args, "--extension") || !containsArgSuffix(args, ".pi/extensions/blitzcrank-tools.ts") {
 		t.Fatalf("expected explicit Blitzcrank extension so Pi loads service tools in rpc mode, got %q", joined)
-	}
-	if !containsArgSuffix(args, "/pi-firecrawl") {
-		t.Fatalf("expected explicit Firecrawl extension for packaged runs, got %q", joined)
 	}
 	if !containsTool(args, "anvil_status") {
 		t.Fatalf("expected anvil_status tool for automation run, got %q", joined)
@@ -44,7 +47,7 @@ func TestArgsForAutomationUsesNoSession(t *testing.T) {
 }
 
 func TestArgsForIssueUsesSession(t *testing.T) {
-	runner := NewRunner(config.Config{PiSessionsDir: "/tmp/blitzcrank-pi-sessions"})
+	runner := NewRunner(config.Config{PiSessionsDir: "/tmp/blitzcrank-pi-sessions", PiCWD: "../.."})
 
 	args, err := runner.argsFor(harness.Request{Source: "seerr_webhook", ThreadID: "issue:123"})
 	if err != nil {
@@ -54,6 +57,9 @@ func TestArgsForIssueUsesSession(t *testing.T) {
 	joined := strings.Join(args, " ")
 	if !containsArg(args, "--session") {
 		t.Fatalf("expected --session for issue run, got %q", joined)
+	}
+	if got := argValue(args, "--system-prompt"); !strings.HasSuffix(got, ".pi/system-prompts/seerr-issue.md") {
+		t.Fatalf("system prompt = %q, want Seerr issue profile", got)
 	}
 	if !containsArg(args, "--extension") || !containsArgSuffix(args, ".pi/extensions/blitzcrank-tools.ts") {
 		t.Fatalf("expected explicit Blitzcrank extension so Pi loads service tools in rpc mode, got %q", joined)
@@ -67,24 +73,27 @@ func TestArgsForIssueUsesSession(t *testing.T) {
 }
 
 func TestSourceProfilesIsolateDiscordSessionsAndTools(t *testing.T) {
-	runner := NewRunner(config.Config{PiSessionsDir: "/tmp/blitzcrank-pi-sessions"})
+	runner := NewRunner(config.Config{PiSessionsDir: "/tmp/blitzcrank-pi-sessions", PiCWD: "../.."})
 	tests := []struct {
 		name           string
 		req            harness.Request
 		wantSession    bool
 		wantNamespace  string
+		wantPrompt     string
 		wantTools      []string
 		forbiddenTools []string
 	}{
 		{
 			name:           "triage has no tools or session",
 			req:            harness.Request{Source: "discord_triage", ThreadID: "channel:1"},
-			forbiddenTools: []string{"seerr_request", "firecrawl_search", "thread_history_search"},
+			wantPrompt:     "discord-triage.md",
+			forbiddenTools: []string{"seerr_request", "web_search", "thread_history_search"},
 		},
 		{
 			name:           "direct has scoped read tools without a session",
 			req:            harness.Request{Source: "discord_direct", ThreadID: "channel:1"},
-			wantTools:      []string{"jellyfin_request", "sonarr_request", "radarr_request", "firecrawl_search", "firecrawl_scrape"},
+			wantPrompt:     "discord-agent.md",
+			wantTools:      []string{"jellyfin_request", "sonarr_request", "radarr_request", "web_search", "web_fetch"},
 			forbiddenTools: []string{"seerr_request", "sabnzbd_request", "anvil_status", "thread_history_search"},
 		},
 		{
@@ -92,13 +101,15 @@ func TestSourceProfilesIsolateDiscordSessionsAndTools(t *testing.T) {
 			req:            harness.Request{Source: "discord_thread", ThreadID: "123456"},
 			wantSession:    true,
 			wantNamespace:  "discord",
+			wantPrompt:     "discord-agent.md",
 			wantTools:      []string{"seerr_request", "jellyfin_request", "sonarr_request", "radarr_request"},
 			forbiddenTools: []string{"thread_history_search"},
 		},
 		{
 			name:           "review has no tools or session",
 			req:            harness.Request{Source: "mutation_review", ThreadID: "run:1"},
-			forbiddenTools: []string{"seerr_request", "firecrawl_search", "thread_history_search"},
+			wantPrompt:     "mutation-review.md",
+			forbiddenTools: []string{"seerr_request", "web_search", "thread_history_search"},
 		},
 	}
 
@@ -110,6 +121,12 @@ func TestSourceProfilesIsolateDiscordSessionsAndTools(t *testing.T) {
 			}
 			if got := containsArg(args, "--session"); got != tt.wantSession {
 				t.Fatalf("--session present = %t, want %t: %q", got, tt.wantSession, args)
+			}
+			if got := filepath.Base(argValue(args, "--system-prompt")); got != tt.wantPrompt {
+				t.Fatalf("system prompt = %q, want %q", got, tt.wantPrompt)
+			}
+			if !containsArg(args, "--no-context-files") {
+				t.Fatalf("expected repository context files to be disabled: %q", args)
 			}
 			for _, tool := range tt.wantTools {
 				if !containsTool(args, tool) {
@@ -186,19 +203,16 @@ func TestReviewerCapacityIsReservedFromOrdinaryRuns(t *testing.T) {
 	runner.release(reviewer)
 }
 
-func TestPromptForIssueUsesSystemPromptAndServiceSkills(t *testing.T) {
+func TestPromptForIssueContainsOnlyTaskAndServiceSkills(t *testing.T) {
 	runner := NewRunner(config.Config{PiCWD: "../.."})
 
-	prompt, err := runner.prompt(harness.Request{
+	prompt := runner.prompt(harness.Request{
 		Source:   "seerr_webhook",
 		ThreadID: "issue:123",
 		Author:   "user",
 		Audience: "seerr_issue",
 		Content:  "Issue id: 123",
 	})
-	if err != nil {
-		t.Fatalf("prompt returned error: %v", err)
-	}
 
 	for _, want := range []string{
 		"/skill:seerr",
@@ -208,8 +222,7 @@ func TestPromptForIssueUsesSystemPromptAndServiceSkills(t *testing.T) {
 		"/skill:sabnzbd",
 		"/skill:anvil",
 		"/skill:filesystem",
-		"System prompt:\n\n# Blitzcrank Seerr Issue Agent",
-		"Task prompt:\n\nHandle this Seerr issue event.",
+		"Handle this Seerr issue event.",
 		"Issue id: 123",
 	} {
 		if !strings.Contains(prompt, want) {
@@ -219,20 +232,20 @@ func TestPromptForIssueUsesSystemPromptAndServiceSkills(t *testing.T) {
 	if strings.Contains(prompt, "seerr-issue-solver") {
 		t.Fatalf("prompt should not load the old solver skill:\n%s", prompt)
 	}
+	if strings.Contains(prompt, "System prompt:") || strings.Contains(prompt, "Blitzcrank Seerr Issue Agent") {
+		t.Fatalf("actual system prompt leaked into the RPC user message:\n%s", prompt)
+	}
 }
 
-func TestPromptForAutomationUsesAutomationSystemPromptAndServiceSkills(t *testing.T) {
+func TestPromptForAutomationContainsOnlyTaskAndServiceSkills(t *testing.T) {
 	runner := NewRunner(config.Config{PiCWD: "../.."})
 
-	prompt, err := runner.prompt(harness.Request{
+	prompt := runner.prompt(harness.Request{
 		Source:   "automation_cron",
 		ThreadID: "automation:hourly-stale-import-handler",
 		Audience: "automation",
 		Content:  "Automation body",
 	})
-	if err != nil {
-		t.Fatalf("prompt returned error: %v", err)
-	}
 
 	for _, want := range []string{
 		"/skill:sonarr",
@@ -240,8 +253,7 @@ func TestPromptForAutomationUsesAutomationSystemPromptAndServiceSkills(t *testin
 		"/skill:sabnzbd",
 		"/skill:anvil",
 		"/skill:filesystem",
-		"System prompt:\n\n# Blitzcrank Automation Agent",
-		"Task prompt:\n\nRun this scheduled Blitzcrank media-server automation.",
+		"Run this scheduled Blitzcrank media-server automation.",
 		"Automation body",
 	} {
 		if !strings.Contains(prompt, want) {
@@ -251,9 +263,12 @@ func TestPromptForAutomationUsesAutomationSystemPromptAndServiceSkills(t *testin
 	if strings.Contains(prompt, "/skill:seerr") || strings.Contains(prompt, "seerr-issue-solver") {
 		t.Fatalf("automation prompt loaded issue-only skill content:\n%s", prompt)
 	}
+	if strings.Contains(prompt, "System prompt:") || strings.Contains(prompt, "Blitzcrank Automation Agent") {
+		t.Fatalf("actual system prompt leaked into the RPC user message:\n%s", prompt)
+	}
 }
 
-func TestDiscordPromptsUseDedicatedProfiles(t *testing.T) {
+func TestDiscordTasksDoNotEmbedDedicatedSystemProfiles(t *testing.T) {
 	runner := NewRunner(config.Config{PiCWD: "../.."})
 	tests := []struct {
 		name   string
@@ -278,12 +293,9 @@ func TestDiscordPromptsUseDedicatedProfiles(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			prompt, err := runner.prompt(tt.req)
-			if err != nil {
-				t.Fatalf("prompt() error = %v", err)
-			}
-			if !strings.Contains(prompt, tt.marker) {
-				t.Fatalf("prompt missing %q:\n%s", tt.marker, prompt)
+			prompt := runner.prompt(tt.req)
+			if strings.Contains(prompt, tt.marker) {
+				t.Fatalf("system profile %q leaked into task prompt:\n%s", tt.marker, prompt)
 			}
 		})
 	}
@@ -512,4 +524,13 @@ func containsArgSuffix(args []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func argValue(args []string, name string) string {
+	for index, arg := range args {
+		if arg == name && index+1 < len(args) {
+			return args[index+1]
+		}
+	}
+	return ""
 }

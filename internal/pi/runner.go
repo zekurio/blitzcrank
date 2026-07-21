@@ -177,10 +177,7 @@ func (r *Runner) Respond(ctx context.Context, req harness.Request) (string, erro
 		_ = cmd.Wait()
 	}()
 
-	message, err := r.prompt(req)
-	if err != nil {
-		return "", err
-	}
+	message := r.prompt(req)
 	prompt := map[string]any{"id": "blitzcrank-request", "type": "prompt", "message": message}
 	if err := json.NewEncoder(stdin).Encode(prompt); err != nil {
 		return "", fmt.Errorf("send pi prompt: %w", err)
@@ -241,14 +238,17 @@ func (r *Runner) cwd() string {
 
 func (r *Runner) argsFor(req harness.Request) ([]string, error) {
 	profile := profileFor(req.Source)
+	systemPromptPath, err := r.systemPromptPath(profile.systemPrompt)
+	if err != nil {
+		return nil, err
+	}
 	args := []string{
 		"--mode", "rpc",
+		"--system-prompt", systemPromptPath,
+		"--no-context-files",
 	}
 	if len(profile.tools) > 0 {
 		args = append(args, "--extension", filepath.Join(r.cwd(), ".pi", "extensions", "blitzcrank-tools.ts"))
-		if extension := strings.TrimSpace(r.cfg.PiFirecrawlExtension); extension != "" {
-			args = append(args, "--extension", extension)
-		}
 	}
 	args = append(args, "--tools", strings.Join(profile.tools, ","))
 	if sessionPath := r.sessionPath(req); sessionPath != "" {
@@ -303,8 +303,8 @@ var serviceTools = []string{
 }
 
 var webTools = []string{
-	"firecrawl_search",
-	"firecrawl_scrape",
+	"web_search",
+	"web_fetch",
 }
 
 func profileFor(source string) runProfile {
@@ -496,12 +496,8 @@ func appendConfigEnv(env []string, key, value string) []string {
 	return append(env, key+"="+strings.TrimSpace(value))
 }
 
-func (r *Runner) prompt(req harness.Request) (string, error) {
+func (r *Runner) prompt(req harness.Request) string {
 	profile := profileFor(req.Source)
-	system, err := r.systemPrompt(profile.systemPrompt)
-	if err != nil {
-		return "", err
-	}
 	var task string
 	source := strings.ToLower(strings.TrimSpace(req.Source))
 	switch {
@@ -516,19 +512,22 @@ func (r *Runner) prompt(req harness.Request) (string, error) {
 	default:
 		task = r.seerrIssueTaskPrompt(req)
 	}
-	return composePrompt(profile.skills, system, task), nil
+	return composePrompt(profile.skills, task)
 }
 
-func (r *Runner) systemPrompt(name string) (string, error) {
+func (r *Runner) systemPromptPath(name string) (string, error) {
 	path := filepath.Join(r.cwd(), ".pi", "system-prompts", name+".md")
-	data, err := os.ReadFile(path)
+	info, err := os.Stat(path)
 	if err != nil {
-		return "", fmt.Errorf("read pi system prompt %s: %w", path, err)
+		return "", fmt.Errorf("inspect pi system prompt %s: %w", path, err)
 	}
-	return strings.TrimSpace(string(data)), nil
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("pi system prompt %s is not a regular file", path)
+	}
+	return path, nil
 }
 
-func composePrompt(skillDirectives []string, system, task string) string {
+func composePrompt(skillDirectives []string, task string) string {
 	var b strings.Builder
 	for _, skill := range skillDirectives {
 		if skill = strings.TrimSpace(skill); skill != "" {
@@ -538,9 +537,6 @@ func composePrompt(skillDirectives []string, system, task string) string {
 	if len(skillDirectives) > 0 {
 		b.WriteString("\n")
 	}
-	b.WriteString("System prompt:\n\n")
-	b.WriteString(strings.TrimSpace(system))
-	b.WriteString("\n\nTask prompt:\n\n")
 	b.WriteString(strings.TrimSpace(task))
 	return b.String()
 }

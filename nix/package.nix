@@ -2,7 +2,6 @@
   buildGoModule,
   lib,
   makeWrapper,
-  firecrawlPi,
   pi,
 }:
 
@@ -31,14 +30,12 @@ buildGoModule {
         pi --mode rpc --no-session --no-context-files --no-skills \
           --no-prompt-templates --no-extensions \
           --extension .pi/extensions/blitzcrank-tools.ts \
-          --extension ${firecrawlPi}/lib/pi-firecrawl \
       > "$response"
     grep -F '"command":"get_state","success":true' "$response" >/dev/null
   '';
   postInstall = ''
     mkdir -p $out/share/blitzcrank
     cp -R automations .pi $out/share/blitzcrank/
-    rm -f $out/share/blitzcrank/.pi/settings.json
     cp README.md config.example.toml $out/share/blitzcrank/
     printf '%s\n' \
       '[runtime]' \
@@ -52,7 +49,6 @@ buildGoModule {
           pi
         ]
       } \
-      --set PI_FIRECRAWL_EXTENSION ${firecrawlPi}/lib/pi-firecrawl \
       --set-default BLITZCRANK_CONFIG $out/share/blitzcrank/config.toml
   '';
 

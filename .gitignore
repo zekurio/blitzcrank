@@ -40,7 +40,6 @@ blitzcrank.toml
 *.sqlite-wal
 pi-sessions/
 memories/
-.pi/git/
 
 # Editor and OS files
 .idea/

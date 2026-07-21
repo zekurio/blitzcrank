@@ -660,6 +660,37 @@ async function threadHistorySearch(params: { query: string; source?: string; lim
   return { query, results: capped };
 }
 
+async function kagiSearch(params: { query: string; limit?: number; include_markdown?: boolean }, signal: AbortSignal) {
+  const query = (params.query || "").trim();
+  if (!query) throw new Error("query is required");
+  const limit = Math.max(1, Math.min(10, Number(params.limit || 5)));
+  const body = { q: query, limit, ...(params.include_markdown ? { extract: true } : {}) };
+  const headers = { authorization: `Bearer ${requireEnv("KAGI_API_KEY")}`, "content-type": "application/json", accept: "application/json" };
+  return await jsonRequest("https://kagi.com/api/v1/search", { method: "POST", headers, body: JSON.stringify(body) }, signal);
+}
+
+function assertPublicHTTPURL(value: string) {
+  const url = new URL(value);
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("only http(s) URLs are allowed");
+  // The fetch itself is performed remotely by Kagi's extract API, not from this
+  // process, so a hostname that merely resolves to a private IP is out of reach
+  // here; rejecting private/reserved literals is the appropriate depth for this check.
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const privateHost =
+    host === "localhost" || host.endsWith(".local") || host.endsWith(".internal") ||
+    /^127\./.test(host) || host === "::1" || host === "0.0.0.0" ||
+    /^10\./.test(host) || /^192\.168\./.test(host) || /^169\.254\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
+    /^f[cd][0-9a-f]{2}:/i.test(host) || /^fe80:/i.test(host);
+  if (privateHost) throw new Error("local/private URLs are not allowed");
+  return url.toString();
+}
+
+async function kagiFetch(params: { url: string }, signal: AbortSignal) {
+  const url = assertPublicHTTPURL((params.url || "").trim());
+  const headers = { authorization: `Bearer ${requireEnv("KAGI_API_KEY")}`, "content-type": "application/json", accept: "application/json" };
+  return await jsonRequest("https://kagi.com/api/v1/extract", { method: "POST", headers, body: JSON.stringify({ urls: [url] }) }, signal);
+}
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
@@ -705,4 +736,29 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  pi.registerTool({
+    name: "web_search",
+    label: "Web search",
+    description: "Search the public web using Kagi. Use for current public information and cite URLs when results influence the answer.",
+    parameters: Type.Object({
+      query: Type.String({ description: "Search query" }),
+      limit: Type.Optional(Type.Number({ description: "Maximum results, 1 to 10" })),
+      include_markdown: Type.Optional(Type.Boolean({ description: "Ask Kagi to include markdown extraction for top results when supported" })),
+    }),
+    async execute(_toolCallId, params, signal) {
+      return toolResult(await kagiSearch(params as { query: string; limit?: number; include_markdown?: boolean }, signal));
+    },
+  });
+
+  pi.registerTool({
+    name: "web_fetch",
+    label: "Fetch web page",
+    description: "Extract markdown from a public HTTP(S) URL using Kagi Extract.",
+    parameters: Type.Object({
+      url: Type.String({ description: "Public http(s) URL to extract" }),
+    }),
+    async execute(_toolCallId, params, signal) {
+      return toolResult(await kagiFetch(params as { url: string }, signal));
+    },
+  });
 }
