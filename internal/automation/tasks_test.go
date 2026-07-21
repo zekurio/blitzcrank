@@ -33,13 +33,22 @@ func TestHourlyStaleImportHandlerKeepsAnvilWaitsNonDestructive(t *testing.T) {
 
 	for _, want := range []string{
 		"`anvil_status`",
+		"`anvil_job_lookup`",
 		"## Anvil wait rules",
+		"never proves that a queue item is encoding",
+		"match the Arr `downloadId` exactly to SABnzbd `nzo_id`",
+		"Cross-source multiple matches or `truncated: true` are ambiguous",
 		"Do not manual import, force import, remove, blocklist, search, retry, refresh",
 		"Do not include Anvil wait items under `Manuell prüfen:`",
 		"older than 24 hours",
 	} {
 		if !strings.Contains(task.Body, want) {
 			t.Fatalf("automation body missing %q:\n%s", want, task.Body)
+		}
+	}
+	for _, forbidden := range []string{"wait_recommended", "queued systemd job"} {
+		if strings.Contains(task.Body, forbidden) {
+			t.Fatalf("automation body still contains obsolete Anvil inference %q:\n%s", forbidden, task.Body)
 		}
 	}
 }

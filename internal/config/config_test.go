@@ -63,6 +63,12 @@ run_timeout = "7m"
 	if cfg.BotPublicName != "blitzcrank" {
 		t.Errorf("BotPublicName = %q, want default %q", cfg.BotPublicName, "blitzcrank")
 	}
+	if cfg.AnvilCommand != "anvilctl" {
+		t.Errorf("AnvilCommand = %q, want default anvilctl", cfg.AnvilCommand)
+	}
+	if cfg.AnvilControlSocket != "/run/anvil/anvild.sock" {
+		t.Errorf("AnvilControlSocket = %q, want default /run/anvil/anvild.sock", cfg.AnvilControlSocket)
+	}
 }
 
 func TestConfigExampleParses(t *testing.T) {
@@ -436,6 +442,13 @@ func TestValidateStrictConfig(t *testing.T) {
 			name: "negative revisit max is rejected",
 			cfg: Config{
 				SeerrRevisitMax: -1,
+			},
+			wantErr: true,
+		},
+		{
+			name: "relative Anvil control socket is rejected",
+			cfg: Config{
+				AnvilControlSocket: "run/anvil/anvild.sock",
 			},
 			wantErr: true,
 		},

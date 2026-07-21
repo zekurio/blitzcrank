@@ -41,6 +41,9 @@ func TestArgsForAutomationUsesNoSession(t *testing.T) {
 	if !containsTool(args, "anvil_status") {
 		t.Fatalf("expected anvil_status tool for automation run, got %q", joined)
 	}
+	if !containsTool(args, "anvil_job_lookup") {
+		t.Fatalf("expected anvil_job_lookup tool for automation run, got %q", joined)
+	}
 	if containsArg(args, "--session") {
 		t.Fatalf("did not expect --session for automation run, got %q", joined)
 	}
@@ -94,7 +97,7 @@ func TestSourceProfilesIsolateDiscordSessionsAndTools(t *testing.T) {
 			req:            harness.Request{Source: "discord_direct", ThreadID: "channel:1"},
 			wantPrompt:     "discord-agent.md",
 			wantTools:      []string{"jellyfin_request", "sonarr_request", "radarr_request", "web_search", "web_fetch"},
-			forbiddenTools: []string{"seerr_request", "sabnzbd_request", "anvil_status", "thread_history_search"},
+			forbiddenTools: []string{"seerr_request", "sabnzbd_request", "anvil_status", "anvil_job_lookup", "thread_history_search"},
 		},
 		{
 			name:           "private thread has isolated durable session",
@@ -301,13 +304,19 @@ func TestDiscordTasksDoNotEmbedDedicatedSystemProfiles(t *testing.T) {
 	}
 }
 
-func TestEnvPassesConfiguredAnvilSystemdUnit(t *testing.T) {
-	runner := NewRunner(config.Config{AnvilSystemdUnit: "anvil-transcode.service"})
+func TestEnvPassesConfiguredAnvilClient(t *testing.T) {
+	runner := NewRunner(config.Config{
+		AnvilCommand:       "/run/current-system/sw/bin/anvilctl",
+		AnvilControlSocket: "/run/anvil/anvild.sock",
+	})
 
 	env := runner.env(harness.Request{})
 
-	if !containsArg(env, "ANVIL_SYSTEMD_UNIT=anvil-transcode.service") {
-		t.Fatalf("env missing configured Anvil unit")
+	if !containsArg(env, "ANVIL_COMMAND=/run/current-system/sw/bin/anvilctl") {
+		t.Fatalf("env missing configured Anvil command")
+	}
+	if !containsArg(env, "ANVIL_CONTROL_SOCKET=/run/anvil/anvild.sock") {
+		t.Fatalf("env missing configured Anvil control socket")
 	}
 }
 

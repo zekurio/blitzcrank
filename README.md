@@ -10,7 +10,7 @@ Pi owns the agent runtime, provider/auth setup, skills, model selection, durable
 - Markdown scheduled automations
 - Optional Discord conversational support agent, automation reporting, and `/automatisierung` trigger command
 - Pi RPC runner with source-isolated persistent sessions
-- Typed Pi service request tools for Seerr, Jellyfin, Sonarr, Radarr, SABnzBD, and Anvil systemd status
+- Typed Pi service request tools for Seerr, Jellyfin, Sonarr, Radarr, SABnzBD, and Anvil daemon/job evidence
 - Independent mutation review for every agent-initiated operational non-GET request
 - SQLite gateway state for Seerr/Discord dedupe, recovery, and sanitized mutation-review audit metadata
 - Pi session search for prior issue context
@@ -61,7 +61,8 @@ JELLYFIN_API_KEY=...
 SONARR_API_KEY=...
 RADARR_API_KEY=...
 SABNZBD_API_KEY=...
-ANVIL_SYSTEMD_UNIT=anvil.service # optional; defaults to anvil.service
+ANVIL_COMMAND=anvilctl # optional; defaults to anvilctl
+ANVIL_CONTROL_SOCKET=/run/anvil/anvild.sock # optional; defaults to this path
 KAGI_API_KEY=... # optional, enables web_search/web_fetch Pi tools
 # Optional incoming webhook secret:
 SEERR_WEBHOOK_SECRET=...
@@ -145,7 +146,8 @@ base_url = "https://radarr.example"
 base_url = "https://sabnzbd.example"
 
 [anvil]
-systemd_unit = "anvil.service"
+command = "anvilctl"
+control_socket = "/run/anvil/anvild.sock"
 
 [runtime]
 automations_dir = "automations"
@@ -179,11 +181,12 @@ Pi-visible tools:
 - `radarr_request`
 - `sabnzbd_request`
 - `anvil_status`
+- `anvil_job_lookup`
 - `thread_history_search`
 - `web_search`
 - `web_fetch`
 
-All service request tools and `anvil_status` require a `purpose`. Paths must be service-relative and must not contain full URLs or credentials. Non-GET requests require `safety_level = "narrow_mutation"` and `safety_reason`. Non-GET requests must additionally match the fixed per-service allowlist enforced in `.pi/extensions/blitzcrank-tools.ts`; SABnzbd is read-only. `anvil_status` reads only the configured systemd unit and cannot control services.
+All service request and Anvil tools require a `purpose`. Service request paths must be service-relative and must not contain full URLs or credentials. Non-GET requests require `safety_level = "narrow_mutation"` and `safety_reason`. Non-GET requests must additionally match the fixed per-service allowlist enforced in `.pi/extensions/blitzcrank-tools.ts`; SABnzbd is read-only. `anvil_status` reads daemon health through the versioned Unix-socket control API. `anvil_job_lookup` performs exact current-job correlation for one absolute Sonarr/Radarr output or SABnzbd storage path; neither tool mutates Anvil.
 
 Every allowed operational non-GET request is then sent through the loopback-only Go review broker before the exact request executes. A separate no-tools, no-session Pi reviewer can approve, deny, or request source-appropriate confirmation. `pi.models.review` must be configured explicitly whenever an enabled Discord, Seerr, or automation workflow has a non-zero mutation budget; it never falls back to `pi.models.default`. Approval is bound to a hash of the exact sanitized proposal plus trusted run/source/actor context; the reviewer cannot override the hard allowlist or lower baseline risk. Reviewer failure or timeout denies the mutation while reads and conversation can continue. Fresh reads must validate successful mutations. Discord, Seerr, and automation runs default to mutation budgets of 3, 5, and 5 respectively.
 

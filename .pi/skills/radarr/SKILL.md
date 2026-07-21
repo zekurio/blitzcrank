@@ -39,7 +39,7 @@ Use `radarr_request` with relative `/api/v3/...` paths. Every request needs `pur
 - Fetch movie file metadata and `mediaInfo` when explaining imported quality, language, audio, subtitles, or custom formats.
 - For missing audio/subtitle/playback-track reports, verify actual streams with `jellyfin_request` first, then use Radarr file/history/profile/custom-format evidence to explain how the file was selected or imported.
 - Before external/public availability reasoning, exhaust local Radarr context: history, queue, blocklist, imported file metadata, quality/language/custom-format profiles, and narrow release/search evidence if needed.
-- Anvil sits between SABnzbd and Sonarr/Radarr. If Radarr shows a completed download waiting on file-not-ready evidence and `anvil_status` says Anvil is active or waiting is recommended, treat it as pending encoding/import handoff, not a failed download.
+- Anvil sits between SABnzbd and Sonarr/Radarr. Treat a completed Radarr download as pending Anvil work only when `anvil_job_lookup` exactly matches its absolute `outputPath`, or an exact SABnzbd `storage` path linked by `downloadId`/`nzo_id`, to active current jobs and the Radarr evidence is file-not-ready. Daemon health alone is never item evidence.
 - Search the movie only when it is missing, a failed release was cleared, or the user explicitly asks for replacement/fix.
 - Do not repeatedly trigger searches without checking queue/history/blocklist state between attempts.
 - Only delete blocklist entries that clearly match the affected movie/release and explain the missing movie.

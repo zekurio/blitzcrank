@@ -91,8 +91,9 @@ base_url = "https://sabnzbd.example"
 api_key = "change-me"
 
 [anvil]
-# Systemd unit checked before treating completed Arr imports as stale.
-systemd_unit = "anvil.service"
+# Read-only client for the Anvil daemon control API.
+command = "anvilctl"
+control_socket = "/run/anvil/anvild.sock"
 
 [runtime]
 automations_dir = "automations"

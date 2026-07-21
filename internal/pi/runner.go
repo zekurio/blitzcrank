@@ -300,6 +300,7 @@ var serviceTools = []string{
 	"radarr_request",
 	"sabnzbd_request",
 	"anvil_status",
+	"anvil_job_lookup",
 }
 
 var webTools = []string{
@@ -468,7 +469,8 @@ func (r *Runner) env(req harness.Request) []string {
 	env = appendConfigEnv(env, "RADARR_API_KEY", r.cfg.RadarrAPIKey)
 	env = appendConfigEnv(env, "SABNZBD_BASE_URL", r.cfg.SabnzbdBaseURL)
 	env = appendConfigEnv(env, "SABNZBD_API_KEY", r.cfg.SabnzbdAPIKey)
-	env = appendConfigEnv(env, "ANVIL_SYSTEMD_UNIT", r.cfg.AnvilSystemdUnit)
+	env = appendConfigEnv(env, "ANVIL_COMMAND", r.cfg.AnvilCommand)
+	env = appendConfigEnv(env, "ANVIL_CONTROL_SOCKET", r.cfg.AnvilControlSocket)
 	return env
 }
 
