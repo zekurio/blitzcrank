@@ -219,6 +219,33 @@ func (r *Runner) Review(ctx context.Context, request review.ReviewRequest) (revi
 	return verdict, nil
 }
 
+// Verify probes the configured Pi executable once so a missing, broken, or
+// misconfigured runtime fails at startup with a clear error instead of during
+// the first issue run. It returns the version Pi reports for startup logging.
+// The Nix pin remains the version authority; Verify deliberately does not
+// enforce a minimum version.
+func (r *Runner) Verify(ctx context.Context) (string, error) {
+	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(probeCtx, r.command(), "--version")
+	cmd.Dir = r.cwd()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		if detail := strings.TrimSpace(string(output)); detail != "" {
+			return "", fmt.Errorf("probe pi runtime %s: %w: %s", r.command(), err, limitString(detail, 500))
+		}
+		return "", fmt.Errorf("probe pi runtime %s: %w", r.command(), err)
+	}
+	version := strings.TrimSpace(string(output))
+	if version == "" {
+		return "", fmt.Errorf("probe pi runtime %s: --version reported nothing", r.command())
+	}
+	if line, _, found := strings.Cut(version, "\n"); found {
+		version = strings.TrimSpace(line)
+	}
+	return limitString(version, 200), nil
+}
+
 func (r *Runner) command() string {
 	if strings.TrimSpace(r.cfg.PiCommand) != "" {
 		return strings.TrimSpace(r.cfg.PiCommand)

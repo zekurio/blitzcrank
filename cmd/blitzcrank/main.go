@@ -122,6 +122,14 @@ func runBot() error {
 	}
 	finishStep(nil)
 
+	finishStep = startup.start("verify_pi_runtime")
+	piVersion, err := runner.Verify(ctx)
+	finishStep(err)
+	if err != nil {
+		return fmt.Errorf("verify pi runtime: %w", err)
+	}
+	log.Printf("pi runtime verified: version=%q", piVersion)
+
 	finishStep = startup.start("start_mutation_review_broker")
 	reviewBroker := review.NewBroker(runner, review.Options{
 		ReviewTimeout:    cfg.ReviewTimeout,

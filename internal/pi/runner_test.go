@@ -543,3 +543,78 @@ func argValue(args []string, name string) string {
 	}
 	return ""
 }
+
+func TestVerify(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("verify probe test relies on shell scripts")
+	}
+	dir := t.TempDir()
+	writeFakePi := func(t *testing.T, name, body string) string {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+			t.Fatalf("write fake pi: %v", err)
+		}
+		return path
+	}
+
+	tests := []struct {
+		name        string
+		script      string
+		missing     bool
+		wantVersion string
+		wantErr     string
+	}{
+		{
+			name:        "reports version",
+			script:      "echo '0.52.1'\n",
+			wantVersion: "0.52.1",
+		},
+		{
+			name:        "keeps first line only",
+			script:      "printf 'pi 1.2.3\\nbuild details\\n'\n",
+			wantVersion: "pi 1.2.3",
+		},
+		{
+			name:    "empty output fails",
+			script:  "exit 0\n",
+			wantErr: "reported nothing",
+		},
+		{
+			name:    "exit failure includes stderr detail",
+			script:  "echo 'unknown flag: --version' >&2\nexit 2\n",
+			wantErr: "unknown flag: --version",
+		},
+		{
+			name:    "missing binary fails",
+			missing: true,
+			wantErr: "probe pi runtime",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			command := filepath.Join(dir, "does-not-exist")
+			if !tt.missing {
+				command = writeFakePi(t, strings.ReplaceAll(tt.name, " ", "-"), tt.script)
+			}
+			runner := NewRunner(config.Config{PiCommand: command, PiCWD: dir})
+
+			version, err := runner.Verify(context.Background())
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("Verify() = %q, want error containing %q", version, tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("Verify() error = %v, want it to contain %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Verify() returned error: %v", err)
+			}
+			if version != tt.wantVersion {
+				t.Fatalf("Verify() = %q, want %q", version, tt.wantVersion)
+			}
+		})
+	}
+}
