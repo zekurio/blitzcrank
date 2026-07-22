@@ -1,0 +1,55 @@
+# Weekly bump of the llm-agents flake input (the Pi runtime).
+#
+# The contract gate (`nix flake check`) runs *inside this workflow* before the
+# PR is opened, because PRs created with the default GITHUB_TOKEN do not
+# trigger other workflows. A red run of this workflow means the new Pi broke
+# the contract check — that is the alarm; no PR is opened in that case.
+name: update-pi
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v16
+      - name: bump llm-agents
+        run: nix flake update llm-agents
+      - name: detect lock changes
+        id: diff
+        run: |
+          if git diff --quiet flake.lock; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: pi version
+        if: steps.diff.outputs.changed == 'true'
+        id: piver
+        run: echo "version=$(nix eval --no-update-lock-file --raw .#pi-coding-agent.version)" >> "$GITHUB_OUTPUT"
+      - name: contract gate
+        if: steps.diff.outputs.changed == 'true'
+        run: nix flake check -L --no-update-lock-file
+      - name: create pull request
+        if: steps.diff.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: pi-bump
+          delete-branch: true
+          commit-message: "chore(nix): bump pi to ${{ steps.piver.outputs.version }}"
+          title: "chore(nix): bump pi to ${{ steps.piver.outputs.version }}"
+          body: |
+            Automated bump of the `llm-agents` flake input.
+
+            Pi version after bump: `${{ steps.piver.outputs.version }}`
+
+            `nix flake check` (package build + go tests + pi-contract) passed
+            against this revision inside the update workflow.

@@ -21,3 +21,13 @@ jobs:
         run: go build ./cmd/blitzcrank
       - name: test
         run: go test ./... -race
+
+  nix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v16
+      # Builds the package (incl. go test via buildGoModule checkPhase) and
+      # the pi-contract check against the pinned Pi runtime.
+      - name: flake check
+        run: nix flake check -L --no-update-lock-file
