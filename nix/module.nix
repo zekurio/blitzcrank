@@ -95,9 +95,20 @@ in
       default = [ ];
     };
     automations.enable = lib.mkEnableOption "Blitzcrank Markdown automations";
+    piPackage = lib.mkOption {
+      type = lib.types.package;
+      default = self.packages.${pkgs.system}.pi-coding-agent;
+      defaultText = lib.literalExpression "blitzcrank.packages.\${pkgs.system}.pi-coding-agent";
+      description = ''
+        Pi runtime package. Point this at an older llm-agents revision to roll
+        Pi back independently of Blitzcrank.
+      '';
+    };
     piCommand = lib.mkOption {
       type = lib.types.str;
-      default = "${self.packages.${pkgs.system}.pi-coding-agent}/bin/pi";
+      default = "${cfg.piPackage}/bin/pi";
+      defaultText = lib.literalExpression "\"\${cfg.piPackage}/bin/pi\"";
+      description = "Pi executable. Prefer overriding piPackage so the store path stays a proper dependency.";
     };
     piCwd = lib.mkOption {
       type = lib.types.str;

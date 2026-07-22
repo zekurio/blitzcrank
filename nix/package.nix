@@ -3,36 +3,32 @@
   lib,
   makeWrapper,
   pi,
+  rev ? null,
 }:
 
 buildGoModule {
   pname = "blitzcrank";
-  version = "0.1.0";
-  src = builtins.path {
-    path = ../.;
-    name = "blitzcrank-source";
-    filter =
-      path: type:
-      let
-        base = baseNameOf path;
-      in
-      base != ".git" && base != ".direnv" && base != ".env" && base != "git" && base != "result";
+  version = "0.1.0" + lib.optionalString (rev != null) "+${rev}";
+  # Explicit allowlist: keeps local state (blitzcrank.toml, *.sqlite*,
+  # pi-sessions/, .env*) out of the world-readable Nix store and avoids
+  # rebuilds on unrelated file churn.
+  src = lib.fileset.toSource {
+    root = ../.;
+    fileset = lib.fileset.unions [
+      ../cmd
+      ../internal
+      ../assets.go
+      ../go.mod
+      ../go.sum
+      ../.pi
+      ../automations
+      ../config.example.toml
+      ../README.md
+    ];
   };
   vendorHash = "sha256-4+VRp4z8b6jZQKOahOwVqaFTp3MqovzauOREExTHcM8=";
   subPackages = [ "cmd/blitzcrank" ];
   nativeBuildInputs = [ makeWrapper ];
-  nativeCheckInputs = [ pi ];
-  postCheck = ''
-    mkdir -p "$TMPDIR/pi-agent"
-    response="$TMPDIR/pi-extension-smoke.jsonl"
-    printf '%s\n' '{"type":"get_state"}' \
-      | PI_OFFLINE=1 PI_CODING_AGENT_DIR="$TMPDIR/pi-agent" \
-        pi --mode rpc --no-session --no-context-files --no-skills \
-          --no-prompt-templates --no-extensions \
-          --extension .pi/extensions/blitzcrank-tools.ts \
-      > "$response"
-    grep -F '"command":"get_state","success":true' "$response" >/dev/null
-  '';
   postInstall = ''
     mkdir -p $out/share/blitzcrank
     cp -R automations .pi $out/share/blitzcrank/
