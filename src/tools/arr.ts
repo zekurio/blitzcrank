@@ -10,7 +10,11 @@ import { makeReadTool, reasonParam, runMutation, textResult, type ServiceName } 
  *  sonarr: EpisodeSearch/SeasonSearch/SeriesSearch/RefreshSeries commands,
  *          queue grab/delete, blocklist delete, episodefile delete
  *  radarr: MoviesSearch/RefreshMovie commands, queue grab/delete,
- *          blocklist delete (movie-file deletion is NOT authorized)
+ *          blocklist delete, moviefile delete
+ *
+ * Note: moviefile deletion was absent from the legacy allowlist (never
+ * documented as an incident response); added deliberately — the evidence
+ * gates and deletion budget apply.
  */
 
 function arrRequest(cfg: ServiceConfig, path: string, method: "GET" | "POST" | "DELETE" = "GET", body?: unknown) {
@@ -236,6 +240,35 @@ export function buildRadarrTools(cfg: ServiceConfig, ctx: RunContext): ToolDefin
           verify: (result) => verifyCommand(cfg, service, ctx, result),
         });
         return textResult(outcome, { service, action: "search", movieId: params.movieId });
+      },
+    }),
+    defineTool({
+      name: "radarr_delete_movie_file",
+      label: "Radarr: delete movie file",
+      description:
+        "Delete one movie file from disk (e.g. verified corrupt), so a replacement can be searched. This removes the only copy of the movie — evidence must be strong. Deletion budget applies; the moviefile id must come from a Radarr read this run.",
+      parameters: Type.Object({
+        reason: reasonParam(),
+        movieFileId: Type.Integer({ minimum: 1 }),
+      }),
+      async execute(_toolCallId, params) {
+        const outcome = await runMutation(ctx, {
+          kind: "delete",
+          evidence: [{ service, value: params.movieFileId, hint: "moviefile id" }],
+          perform: () => arrRequest(cfg, `/api/v3/moviefile/${params.movieFileId}`, "DELETE"),
+          verify: async () => {
+            try {
+              const still = await arrRequest(cfg, `/api/v3/moviefile/${params.movieFileId}`);
+              return { warning: "movie file still present after delete", body: still };
+            } catch (err) {
+              if (err instanceof HttpError && err.status === 404) {
+                return { confirmed: "movie file no longer present (HTTP 404)" };
+              }
+              throw err;
+            }
+          },
+        });
+        return textResult(outcome, { service, action: "delete_movie_file", movieFileId: params.movieFileId });
       },
     }),
     defineTool({

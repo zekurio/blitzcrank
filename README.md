@@ -28,11 +28,11 @@ because enforcement now lives in-process:
   directive block (`RESOLVE_ISSUE: yes|no`, optional `REVISIT_IN`/`REVISIT_REASON`) and
   the host executes it. Malformed directives ⇒ nothing is posted.
 - **GET-only raw tools** — `seerr|sonarr|radarr|jellyfin|sabnzbd_request` can only read;
-  SABnzbd is limited to `queue`/`history`; Seerr lifecycle paths are blocked.
+  SABnzbd raw reads are limited to `queue`/`history`; Seerr lifecycle paths are blocked.
 - **Typed mutations** — every state change is its own tool (`sonarr_search`,
-  `sonarr_delete_episode_file`, `radarr_refresh_movie`, …) mirroring the legacy
-  allowlist. No raw POST/DELETE surface, no path parsing. Radarr movie-file deletion
-  remains unauthorized.
+  `sonarr_delete_episode_file`, `radarr_delete_movie_file`, `sabnzbd_retry_job`, …).
+  No raw POST/DELETE surface, no path parsing. SAB job control (retry/delete/pause/
+  resume) and Radarr file deletion extend the legacy allowlist deliberately.
 - **Evidence gates** — mutation targets must have appeared in a GET response earlier in
   the same run; guessed IDs are rejected in code.
 - **Budgets** — max 5 mutations / 2 deletions per run.
