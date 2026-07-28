@@ -14,19 +14,70 @@ import {
 
 export const DEFAULT_MODEL = "anthropic/claude-sonnet-4-5"
 
+const THINKING_LEVELS = /^(.*?):(off|minimal|low|medium|high|xhigh|max)$/
+type ThinkingLevel =
+  | "off"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max"
+
+export interface ParsedModelSpec {
+  provider: string
+  modelId: string
+  thinkingLevel: ThinkingLevel
+}
+
+/** Parse "provider/model[:thinking]", e.g. "openai-codex/gpt-5.2-codex:high". */
+export function parseModelSpec(spec: string): ParsedModelSpec {
+  const suffix = spec.match(THINKING_LEVELS)
+  const base = suffix ? suffix[1]! : spec
+  const thinkingLevel = suffix ? (suffix[2] as ThinkingLevel) : "medium"
+  const slash = base.indexOf("/")
+  if (slash === -1) {
+    throw new Error(
+      `BLITZCRANK_MODEL must be "provider/model[:thinking]", got "${spec}"`,
+    )
+  }
+  return {
+    provider: base.slice(0, slash),
+    modelId: base.slice(slash + 1),
+    thinkingLevel,
+  }
+}
+
+/** Comment footer identity, e.g. "[blitzcrank w/ gpt-5.2-codex:high]". */
+export function modelAnchor(spec: string): string {
+  const parsed = parseModelSpec(spec)
+  return `[blitzcrank w/ ${parsed.modelId}:${parsed.thinkingLevel}]`
+}
+
+export interface RunUsage {
+  totalTokens: number
+  cost: number
+}
+
+function formatTokens(count: number): string {
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(2)}M`
+  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}k`
+  return String(count)
+}
+
+/** Anchor plus usage, e.g. "[blitzcrank w/ gpt-5.2-codex:high · 48.2k tokens · $0.19]". */
+export function usageAnchor(spec: string, usage: RunUsage): string {
+  const cost = `$${usage.cost.toFixed(usage.cost >= 0.1 ? 2 : 3)}`
+  return `${modelAnchor(spec).slice(0, -1)} · ${formatTokens(usage.totalTokens)} tokens · ${cost}]`
+}
+
 /** Repo root (contains skills/): two levels up from dist/agent/. */
 const projectRoot = path.resolve(new URL("../..", import.meta.url).pathname)
 const skillsDir = path.join(projectRoot, "skills")
 
 export function resolveModel(modelRuntime: ModelRuntime, spec: string) {
-  const slash = spec.indexOf("/")
-  if (slash === -1) {
-    throw new Error(`BLITZCRANK_MODEL must be "provider/model", got "${spec}"`)
-  }
-  const model = modelRuntime.getModel(
-    spec.slice(0, slash),
-    spec.slice(slash + 1),
-  )
+  const parsed = parseModelSpec(spec)
+  const model = modelRuntime.getModel(parsed.provider, parsed.modelId)
   if (!model) throw new Error(`Unknown model: ${spec}`)
   return model
 }
@@ -47,9 +98,16 @@ export interface AgentTurnOptions {
 /**
  * One locked-down agent turn: our skills only, our tools plus builtin `read`
  * (for SKILL.md loading), no extensions/context discovery, run to completion,
- * return the final assistant text.
+ * return the final assistant text plus aggregate token usage/cost.
  */
-export async function runAgentTurn(opts: AgentTurnOptions): Promise<string> {
+export interface AgentTurnResult {
+  text: string
+  usage: RunUsage
+}
+
+export async function runAgentTurn(
+  opts: AgentTurnOptions,
+): Promise<AgentTurnResult> {
   const cwd = path.join(os.tmpdir(), "blitzcrank-work")
   await mkdir(cwd, { recursive: true })
   if (opts.sessionDir) await mkdir(opts.sessionDir, { recursive: true })
@@ -74,7 +132,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<string> {
   const { session } = await createAgentSession({
     cwd,
     model: resolveModel(opts.modelRuntime, opts.modelSpec),
-    thinkingLevel: "medium",
+    thinkingLevel: parseModelSpec(opts.modelSpec).thinkingLevel,
     modelRuntime: opts.modelRuntime,
     resourceLoader: loader,
     customTools: opts.tools,
@@ -113,10 +171,20 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<string> {
       throw new Error(lastAssistant.errorMessage ?? "model request failed")
     }
 
-    return lastAssistant.content
-      .filter((b) => b.type === "text")
-      .map((b) => b.text)
-      .join("")
+    const usage: RunUsage = { totalTokens: 0, cost: 0 }
+    for (const message of session.messages) {
+      if (message.role !== "assistant") continue
+      usage.totalTokens += message.usage.totalTokens
+      usage.cost += message.usage.cost.total
+    }
+
+    return {
+      text: lastAssistant.content
+        .filter((b) => b.type === "text")
+        .map((b) => b.text)
+        .join(""),
+      usage,
+    }
   } finally {
     unsubscribe()
     session.dispose()

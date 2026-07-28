@@ -72,7 +72,7 @@ export class AutomationRunner {
       }
     }
 
-    const finalText = await runAgentTurn({
+    const turn = await runAgentTurn({
       modelRuntime: this.modelRuntime,
       modelSpec: this.modelSpec,
       systemPrompt: buildAutomationSystemPrompt(this.config, def),
@@ -85,12 +85,13 @@ export class AutomationRunner {
 
     const report: AutomationReport = {
       name: def.name,
-      ...parseAutomationOutput(finalText),
+      ...parseAutomationOutput(turn.text),
     }
     const { mutations, deletes } = ctx.counts
     const log = report.status === "fehler" ? console.error : console.log
     log(
-      `[automation:${def.name}] status=${report.status} mutations=${mutations} deletes=${deletes}` +
+      `[automation:${def.name}] status=${report.status} mutations=${mutations} deletes=${deletes} ` +
+        `tokens=${turn.usage.totalTokens} cost=$${turn.usage.cost.toFixed(4)}` +
         `${report.malformed ? " (malformed output)" : ""}${report.empty ? " (no report)" : ""}` +
         `${report.body ? `\n${report.body}` : ""}`,
     )

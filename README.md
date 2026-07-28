@@ -78,7 +78,10 @@ when configured.
 
 ### Models & auth
 
-`BLITZCRANK_MODEL` is `provider/model` (default `anthropic/claude-sonnet-4-5`).
+`BLITZCRANK_MODEL` is `provider/model[:thinking]` (default
+`anthropic/claude-sonnet-4-5:medium`). Every public comment carries a footer
+with the model identity and the run's total token usage and cost, e.g.
+`[blitzcrank w/ gpt-5.2-codex:high · 48.2k tokens · $0.19]`.
 Authentication, in pi's resolution order:
 
 - **API-key providers** (`anthropic/...`, `openai/...`): the usual env vars
