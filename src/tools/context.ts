@@ -8,49 +8,57 @@
  *  - per-run mutation budgets (hard caps, deletions counted separately).
  */
 
-const MAX_EVIDENCE_ENTRIES = 24;
-const MAX_EVIDENCE_BODY_CHARS = 80_000;
+const MAX_EVIDENCE_ENTRIES = 24
+const MAX_EVIDENCE_BODY_CHARS = 80_000
 
 export interface RunLimits {
-  maxMutations: number;
-  maxDeletes: number;
+  maxMutations: number
+  maxDeletes: number
 }
 
-const DEFAULT_LIMITS: RunLimits = { maxMutations: 5, maxDeletes: 2 };
+const DEFAULT_LIMITS: RunLimits = { maxMutations: 5, maxDeletes: 2 }
 
 interface EvidenceEntry {
-  service: string;
-  path: string;
-  body: string;
+  service: string
+  path: string
+  body: string
 }
 
 function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
 
 export class RunContext {
-  private readonly evidence: EvidenceEntry[] = [];
-  private mutations = 0;
-  private deletes = 0;
+  private readonly evidence: EvidenceEntry[] = []
+  private mutations = 0
+  private deletes = 0
 
   constructor(private readonly limits: RunLimits = DEFAULT_LIMITS) {}
 
   recordRead(service: string, path: string, body: string): void {
-    this.evidence.push({ service, path, body: body.slice(0, MAX_EVIDENCE_BODY_CHARS) });
+    this.evidence.push({
+      service,
+      path,
+      body: body.slice(0, MAX_EVIDENCE_BODY_CHARS),
+    })
     if (this.evidence.length > MAX_EVIDENCE_ENTRIES) {
-      this.evidence.splice(0, this.evidence.length - MAX_EVIDENCE_ENTRIES);
+      this.evidence.splice(0, this.evidence.length - MAX_EVIDENCE_ENTRIES)
     }
   }
 
   sawValue(service: string, value: string | number): boolean {
-    const text = String(value);
+    const text = String(value)
     // Word boundaries only make sense for purely alphanumeric values (IDs);
     // paths and other punctuated strings use exact substring matching.
     if (/^[\w-]+$/.test(text)) {
-      const pattern = new RegExp(`\\b${escapeRegExp(text)}\\b`);
-      return this.evidence.some((e) => e.service === service && pattern.test(e.body));
+      const pattern = new RegExp(`\\b${escapeRegExp(text)}\\b`)
+      return this.evidence.some(
+        (e) => e.service === service && pattern.test(e.body),
+      )
     }
-    return this.evidence.some((e) => e.service === service && e.body.includes(text));
+    return this.evidence.some(
+      (e) => e.service === service && e.body.includes(text),
+    )
   }
 
   requireEvidence(service: string, value: string | number, hint: string): void {
@@ -58,7 +66,7 @@ export class RunContext {
       throw new Error(
         `evidence gate: ${hint} ${value} did not appear in any ${service} read this run; ` +
           `fetch it first (do not guess IDs)`,
-      );
+      )
     }
   }
 
@@ -66,18 +74,18 @@ export class RunContext {
     if (kind === "delete" && this.deletes >= this.limits.maxDeletes) {
       throw new Error(
         `mutation budget: at most ${this.limits.maxDeletes} deletions per run; ask the operator instead`,
-      );
+      )
     }
     if (this.mutations >= this.limits.maxMutations) {
       throw new Error(
         `mutation budget: at most ${this.limits.maxMutations} mutations per run; ask the operator instead`,
-      );
+      )
     }
-    this.mutations += 1;
-    if (kind === "delete") this.deletes += 1;
+    this.mutations += 1
+    if (kind === "delete") this.deletes += 1
   }
 
   get counts(): { mutations: number; deletes: number } {
-    return { mutations: this.mutations, deletes: this.deletes };
+    return { mutations: this.mutations, deletes: this.deletes }
   }
 }

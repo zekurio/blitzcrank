@@ -1,5 +1,5 @@
-import type { Config } from "../config.js";
-import type { SeerrWebhookPayload } from "../webhook/types.js";
+import type { Config } from "../config.js"
+import type { SeerrWebhookPayload } from "../webhook/types.js"
 
 /**
  * System prompt adapted from the battle-tested legacy deployment
@@ -9,7 +9,7 @@ import type { SeerrWebhookPayload } from "../webhook/types.js";
  * so the legacy safety_level/review-broker ceremony is gone.
  */
 export function buildSystemPrompt(config: Config): string {
-  const lang = config.language;
+  const lang = config.language
 
   const anvilRules = config.anvil
     ? `
@@ -20,7 +20,7 @@ export function buildSystemPrompt(config: Config): string {
 - Pending, leased, running, validating, replacing, and retrying Anvil jobs are active.
   Failed or skipped jobs are concrete blockers; an expired lease is potentially stuck work,
   not healthy waiting.`
-    : "";
+    : ""
 
   return `You are blitzcrank's Seerr issue operations agent for a private media stack. Understand
 what the reporter is asking for, inspect live service state, apply only narrow verified
@@ -131,7 +131,7 @@ Public comment here.
 
 Use RESOLVE_ISSUE: yes only when validation confirms the reported issue is solved.
 If nothing changed and there is no useful user-facing update, return RESOLVE_ISSUE: no
-followed by a blank line and no comment.`;
+followed by a blank line and no comment.`
 }
 
 export function buildIssuePrompt(payload: SeerrWebhookPayload): string {
@@ -143,7 +143,7 @@ ${JSON.stringify(payload, null, 2)}
 
 Work this issue now: report progress, load the relevant skills, fetch the full issue from
 Seerr, investigate, remediate if appropriate, and finish with the directive block and
-public comment.`;
+public comment.`
 }
 
 export function buildRevisitPrompt(issueId: string, reason: string): string {
@@ -153,5 +153,5 @@ Recorded reason: ${reason}
 
 This is not a new user message. Verify exactly that pending work with reads first, then
 finish with the directive block (resolve, re-schedule, or leave open) and a public
-comment only if there is user-visible news.`;
+comment only if there is user-visible news.`
 }

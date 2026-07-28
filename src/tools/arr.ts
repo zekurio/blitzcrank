@@ -1,9 +1,12 @@
-import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import type { ServiceConfig } from "../config.js";
-import { jsonRequest, HttpError } from "../services/http.js";
-import type { RunContext } from "./context.js";
-import { StringEnum } from "@earendil-works/pi-ai";
+import { StringEnum } from "@earendil-works/pi-ai"
+import {
+  defineTool,
+  type ToolDefinition,
+} from "@earendil-works/pi-coding-agent"
+import { Type } from "typebox"
+
+import type { ServiceConfig } from "../config.js"
+import { jsonRequest, HttpError } from "../services/http.js"
 import {
   makeReadTool,
   reasonParam,
@@ -11,7 +14,8 @@ import {
   textResult,
   type EvidenceRequirement,
   type ServiceName,
-} from "./common.js";
+} from "./common.js"
+import type { RunContext } from "./context.js"
 
 /**
  * Sonarr/Radarr tools. Mutation surface mirrors the legacy allowlist exactly:
@@ -25,27 +29,45 @@ import {
  * gates and deletion budget apply.
  */
 
-function arrRequest(cfg: ServiceConfig, path: string, method: "GET" | "POST" | "DELETE" = "GET", body?: unknown) {
+function arrRequest(
+  cfg: ServiceConfig,
+  path: string,
+  method: "GET" | "POST" | "DELETE" = "GET",
+  body?: unknown,
+) {
   return jsonRequest(cfg.url, path, {
     method,
     headers: { "X-Api-Key": cfg.apiKey },
     ...(body !== undefined ? { body } : {}),
-  });
+  })
 }
 
 /** Follow-up read on the queued command so the model can see it was accepted. */
-async function verifyCommand(cfg: ServiceConfig, service: ServiceName, ctx: RunContext, result: unknown) {
-  const id = (result as { id?: number } | null)?.id;
-  if (!id) return { warning: "command response had no id; verify manually via GET /api/v3/command" };
-  const status = await arrRequest(cfg, `/api/v3/command/${id}`);
-  ctx.recordRead(service, `/api/v3/command/${id}`, JSON.stringify(status));
-  return status;
+async function verifyCommand(
+  cfg: ServiceConfig,
+  service: ServiceName,
+  ctx: RunContext,
+  result: unknown,
+) {
+  const id = (result as { id?: number } | null)?.id
+  if (!id)
+    return {
+      warning:
+        "command response had no id; verify manually via GET /api/v3/command",
+    }
+  const status = await arrRequest(cfg, `/api/v3/command/${id}`)
+  ctx.recordRead(service, `/api/v3/command/${id}`, JSON.stringify(status))
+  return status
 }
 
-async function verifyQueue(cfg: ServiceConfig, service: ServiceName, ctx: RunContext) {
-  const queue = await arrRequest(cfg, `/api/v3/queue?pageSize=100`);
-  ctx.recordRead(service, `/api/v3/queue?pageSize=100`, JSON.stringify(queue));
-  return queue;
+async function verifyQueue(
+  cfg: ServiceConfig,
+  service: ServiceName,
+  ctx: RunContext,
+) {
+  const queue = await arrRequest(cfg, `/api/v3/queue?pageSize=100`)
+  ctx.recordRead(service, `/api/v3/queue?pageSize=100`, JSON.stringify(queue))
+  return queue
 }
 
 /**
@@ -53,7 +75,11 @@ async function verifyQueue(cfg: ServiceConfig, service: ServiceName, ctx: RunCon
  * the model takes from GET /api/v3/manualimport; every path and id in them is
  * evidence-gated so candidates cannot be invented.
  */
-function manualImportTool(service: ServiceName, cfg: ServiceConfig, ctx: RunContext): ToolDefinition {
+function manualImportTool(
+  service: ServiceName,
+  cfg: ServiceConfig,
+  ctx: RunContext,
+): ToolDefinition {
   return defineTool({
     name: `${service}_manual_import`,
     label: `${service}: manual import`,
@@ -67,26 +93,33 @@ function manualImportTool(service: ServiceName, cfg: ServiceConfig, ctx: RunCont
       reason: reasonParam(),
       files: Type.Array(Type.Record(Type.String(), Type.Any()), {
         minItems: 1,
-        description: "Candidate objects from the manualimport read, trimmed to required fields",
+        description:
+          "Candidate objects from the manualimport read, trimmed to required fields",
       }),
       importMode: StringEnum(["auto", "move", "copy"] as const),
     }),
     async execute(_toolCallId, params) {
       const evidence: EvidenceRequirement[] = params.files.flatMap((file) => {
-        const path = file.path;
+        const path = file.path
         if (typeof path !== "string" || path.length === 0) {
-          throw new Error("every manual import file needs the candidate's path field");
+          throw new Error(
+            "every manual import file needs the candidate's path field",
+          )
         }
         const ids = [
           file.seriesId,
           file.movieId,
           ...(Array.isArray(file.episodeIds) ? file.episodeIds : []),
-        ].filter((id): id is number => typeof id === "number");
+        ].filter((id): id is number => typeof id === "number")
         return [
           { service, value: path, hint: "candidate path" },
-          ...ids.map((id) => ({ service, value: id, hint: "candidate target id" })),
-        ];
-      });
+          ...ids.map((id) => ({
+            service,
+            value: id,
+            hint: "candidate target id",
+          })),
+        ]
+      })
       const outcome = await runMutation(ctx, {
         kind: "mutate",
         evidence,
@@ -97,13 +130,21 @@ function manualImportTool(service: ServiceName, cfg: ServiceConfig, ctx: RunCont
             importMode: params.importMode,
           }),
         verify: (result) => verifyCommand(cfg, service, ctx, result),
-      });
-      return textResult(outcome, { service, action: "manual_import", files: params.files.length });
+      })
+      return textResult(outcome, {
+        service,
+        action: "manual_import",
+        files: params.files.length,
+      })
     },
-  });
+  })
 }
 
-function queueAndBlocklistTools(service: ServiceName, cfg: ServiceConfig, ctx: RunContext): ToolDefinition[] {
+function queueAndBlocklistTools(
+  service: ServiceName,
+  cfg: ServiceConfig,
+  ctx: RunContext,
+): ToolDefinition[] {
   return [
     defineTool({
       name: `${service}_delete_queue_item`,
@@ -113,10 +154,12 @@ function queueAndBlocklistTools(service: ServiceName, cfg: ServiceConfig, ctx: R
         reason: reasonParam(),
         queueId: Type.Integer({ minimum: 1 }),
         blocklist: Type.Boolean({
-          description: "Blocklist the release so it is not grabbed again (default true)",
+          description:
+            "Blocklist the release so it is not grabbed again (default true)",
         }),
         removeFromClient: Type.Boolean({
-          description: "Also remove the job from the download client (default true)",
+          description:
+            "Also remove the job from the download client (default true)",
         }),
       }),
       async execute(_toolCallId, params) {
@@ -130,8 +173,12 @@ function queueAndBlocklistTools(service: ServiceName, cfg: ServiceConfig, ctx: R
               "DELETE",
             ),
           verify: () => verifyQueue(cfg, service, ctx),
-        });
-        return textResult(outcome, { service, action: "delete_queue_item", queueId: params.queueId });
+        })
+        return textResult(outcome, {
+          service,
+          action: "delete_queue_item",
+          queueId: params.queueId,
+        })
       },
     }),
     defineTool({
@@ -146,10 +193,15 @@ function queueAndBlocklistTools(service: ServiceName, cfg: ServiceConfig, ctx: R
         const outcome = await runMutation(ctx, {
           kind: "mutate",
           evidence: [{ service, value: params.queueId, hint: "queue item id" }],
-          perform: () => arrRequest(cfg, `/api/v3/queue/grab/${params.queueId}`, "POST"),
+          perform: () =>
+            arrRequest(cfg, `/api/v3/queue/grab/${params.queueId}`, "POST"),
           verify: () => verifyQueue(cfg, service, ctx),
-        });
-        return textResult(outcome, { service, action: "grab_queue_item", queueId: params.queueId });
+        })
+        return textResult(outcome, {
+          service,
+          action: "grab_queue_item",
+          queueId: params.queueId,
+        })
       },
     }),
     defineTool({
@@ -163,17 +215,31 @@ function queueAndBlocklistTools(service: ServiceName, cfg: ServiceConfig, ctx: R
       async execute(_toolCallId, params) {
         const outcome = await runMutation(ctx, {
           kind: "mutate",
-          evidence: [{ service, value: params.blocklistId, hint: "blocklist entry id" }],
-          perform: () => arrRequest(cfg, `/api/v3/blocklist/${params.blocklistId}`, "DELETE"),
-        });
-        return textResult(outcome, { service, action: "remove_from_blocklist", blocklistId: params.blocklistId });
+          evidence: [
+            { service, value: params.blocklistId, hint: "blocklist entry id" },
+          ],
+          perform: () =>
+            arrRequest(
+              cfg,
+              `/api/v3/blocklist/${params.blocklistId}`,
+              "DELETE",
+            ),
+        })
+        return textResult(outcome, {
+          service,
+          action: "remove_from_blocklist",
+          blocklistId: params.blocklistId,
+        })
       },
     }),
-  ];
+  ]
 }
 
-export function buildSonarrTools(cfg: ServiceConfig, ctx: RunContext): ToolDefinition[] {
-  const service: ServiceName = "sonarr";
+export function buildSonarrTools(
+  cfg: ServiceConfig,
+  ctx: RunContext,
+): ToolDefinition[] {
+  const service: ServiceName = "sonarr"
   return [
     makeReadTool(
       {
@@ -192,11 +258,15 @@ export function buildSonarrTools(cfg: ServiceConfig, ctx: RunContext): ToolDefin
         "Trigger a Sonarr search: whole series, one season, or specific episodes. The series id (and episode ids, if given) must come from Sonarr reads this run.",
       parameters: Type.Object({
         reason: reasonParam(),
-        seriesId: Type.Integer({ minimum: 1, description: "Internal Sonarr series id (not tvdbId)" }),
+        seriesId: Type.Integer({
+          minimum: 1,
+          description: "Internal Sonarr series id (not tvdbId)",
+        }),
         seasonNumber: Type.Optional(Type.Integer({ minimum: 0 })),
         episodeIds: Type.Optional(
           Type.Array(Type.Integer({ minimum: 1 }), {
-            description: "Internal Sonarr episode ids for a targeted EpisodeSearch",
+            description:
+              "Internal Sonarr episode ids for a targeted EpisodeSearch",
           }),
         ),
       }),
@@ -205,18 +275,30 @@ export function buildSonarrTools(cfg: ServiceConfig, ctx: RunContext): ToolDefin
           params.episodeIds && params.episodeIds.length > 0
             ? { name: "EpisodeSearch", episodeIds: params.episodeIds }
             : params.seasonNumber !== undefined
-              ? { name: "SeasonSearch", seriesId: params.seriesId, seasonNumber: params.seasonNumber }
-              : { name: "SeriesSearch", seriesId: params.seriesId };
+              ? {
+                  name: "SeasonSearch",
+                  seriesId: params.seriesId,
+                  seasonNumber: params.seasonNumber,
+                }
+              : { name: "SeriesSearch", seriesId: params.seriesId }
         const outcome = await runMutation(ctx, {
           kind: "mutate",
           evidence: [
             { service, value: params.seriesId, hint: "series id" },
-            ...(params.episodeIds ?? []).map((id) => ({ service, value: id, hint: "episode id" })),
+            ...(params.episodeIds ?? []).map((id) => ({
+              service,
+              value: id,
+              hint: "episode id",
+            })),
           ],
           perform: () => arrRequest(cfg, "/api/v3/command", "POST", command),
           verify: (result) => verifyCommand(cfg, service, ctx, result),
-        });
-        return textResult(outcome, { service, action: "search", command: command.name });
+        })
+        return textResult(outcome, {
+          service,
+          action: "search",
+          command: command.name,
+        })
       },
     }),
     defineTool({
@@ -233,10 +315,17 @@ export function buildSonarrTools(cfg: ServiceConfig, ctx: RunContext): ToolDefin
           kind: "mutate",
           evidence: [{ service, value: params.seriesId, hint: "series id" }],
           perform: () =>
-            arrRequest(cfg, "/api/v3/command", "POST", { name: "RefreshSeries", seriesId: params.seriesId }),
+            arrRequest(cfg, "/api/v3/command", "POST", {
+              name: "RefreshSeries",
+              seriesId: params.seriesId,
+            }),
           verify: (result) => verifyCommand(cfg, service, ctx, result),
-        });
-        return textResult(outcome, { service, action: "refresh_series", seriesId: params.seriesId });
+        })
+        return textResult(outcome, {
+          service,
+          action: "refresh_series",
+          seriesId: params.seriesId,
+        })
       },
     }),
     defineTool({
@@ -251,30 +340,52 @@ export function buildSonarrTools(cfg: ServiceConfig, ctx: RunContext): ToolDefin
       async execute(_toolCallId, params) {
         const outcome = await runMutation(ctx, {
           kind: "delete",
-          evidence: [{ service, value: params.episodeFileId, hint: "episodefile id" }],
-          perform: () => arrRequest(cfg, `/api/v3/episodefile/${params.episodeFileId}`, "DELETE"),
+          evidence: [
+            { service, value: params.episodeFileId, hint: "episodefile id" },
+          ],
+          perform: () =>
+            arrRequest(
+              cfg,
+              `/api/v3/episodefile/${params.episodeFileId}`,
+              "DELETE",
+            ),
           verify: async () => {
             try {
-              const still = await arrRequest(cfg, `/api/v3/episodefile/${params.episodeFileId}`);
-              return { warning: "episode file still present after delete", body: still };
+              const still = await arrRequest(
+                cfg,
+                `/api/v3/episodefile/${params.episodeFileId}`,
+              )
+              return {
+                warning: "episode file still present after delete",
+                body: still,
+              }
             } catch (err) {
               if (err instanceof HttpError && err.status === 404) {
-                return { confirmed: "episode file no longer present (HTTP 404)" };
+                return {
+                  confirmed: "episode file no longer present (HTTP 404)",
+                }
               }
-              throw err;
+              throw err
             }
           },
-        });
-        return textResult(outcome, { service, action: "delete_episode_file", episodeFileId: params.episodeFileId });
+        })
+        return textResult(outcome, {
+          service,
+          action: "delete_episode_file",
+          episodeFileId: params.episodeFileId,
+        })
       },
     }),
     manualImportTool(service, cfg, ctx),
     ...queueAndBlocklistTools(service, cfg, ctx),
-  ];
+  ]
 }
 
-export function buildRadarrTools(cfg: ServiceConfig, ctx: RunContext): ToolDefinition[] {
-  const service: ServiceName = "radarr";
+export function buildRadarrTools(
+  cfg: ServiceConfig,
+  ctx: RunContext,
+): ToolDefinition[] {
+  const service: ServiceName = "radarr"
   return [
     makeReadTool(
       {
@@ -293,17 +404,27 @@ export function buildRadarrTools(cfg: ServiceConfig, ctx: RunContext): ToolDefin
         "Trigger a Radarr search for one movie (MoviesSearch). The movie id must come from a Radarr read this run.",
       parameters: Type.Object({
         reason: reasonParam(),
-        movieId: Type.Integer({ minimum: 1, description: "Internal Radarr movie id (not tmdbId)" }),
+        movieId: Type.Integer({
+          minimum: 1,
+          description: "Internal Radarr movie id (not tmdbId)",
+        }),
       }),
       async execute(_toolCallId, params) {
         const outcome = await runMutation(ctx, {
           kind: "mutate",
           evidence: [{ service, value: params.movieId, hint: "movie id" }],
           perform: () =>
-            arrRequest(cfg, "/api/v3/command", "POST", { name: "MoviesSearch", movieIds: [params.movieId] }),
+            arrRequest(cfg, "/api/v3/command", "POST", {
+              name: "MoviesSearch",
+              movieIds: [params.movieId],
+            }),
           verify: (result) => verifyCommand(cfg, service, ctx, result),
-        });
-        return textResult(outcome, { service, action: "search", movieId: params.movieId });
+        })
+        return textResult(outcome, {
+          service,
+          action: "search",
+          movieId: params.movieId,
+        })
       },
     }),
     defineTool({
@@ -318,21 +439,38 @@ export function buildRadarrTools(cfg: ServiceConfig, ctx: RunContext): ToolDefin
       async execute(_toolCallId, params) {
         const outcome = await runMutation(ctx, {
           kind: "delete",
-          evidence: [{ service, value: params.movieFileId, hint: "moviefile id" }],
-          perform: () => arrRequest(cfg, `/api/v3/moviefile/${params.movieFileId}`, "DELETE"),
+          evidence: [
+            { service, value: params.movieFileId, hint: "moviefile id" },
+          ],
+          perform: () =>
+            arrRequest(
+              cfg,
+              `/api/v3/moviefile/${params.movieFileId}`,
+              "DELETE",
+            ),
           verify: async () => {
             try {
-              const still = await arrRequest(cfg, `/api/v3/moviefile/${params.movieFileId}`);
-              return { warning: "movie file still present after delete", body: still };
+              const still = await arrRequest(
+                cfg,
+                `/api/v3/moviefile/${params.movieFileId}`,
+              )
+              return {
+                warning: "movie file still present after delete",
+                body: still,
+              }
             } catch (err) {
               if (err instanceof HttpError && err.status === 404) {
-                return { confirmed: "movie file no longer present (HTTP 404)" };
+                return { confirmed: "movie file no longer present (HTTP 404)" }
               }
-              throw err;
+              throw err
             }
           },
-        });
-        return textResult(outcome, { service, action: "delete_movie_file", movieFileId: params.movieFileId });
+        })
+        return textResult(outcome, {
+          service,
+          action: "delete_movie_file",
+          movieFileId: params.movieFileId,
+        })
       },
     }),
     defineTool({
@@ -349,13 +487,20 @@ export function buildRadarrTools(cfg: ServiceConfig, ctx: RunContext): ToolDefin
           kind: "mutate",
           evidence: [{ service, value: params.movieId, hint: "movie id" }],
           perform: () =>
-            arrRequest(cfg, "/api/v3/command", "POST", { name: "RefreshMovie", movieIds: [params.movieId] }),
+            arrRequest(cfg, "/api/v3/command", "POST", {
+              name: "RefreshMovie",
+              movieIds: [params.movieId],
+            }),
           verify: (result) => verifyCommand(cfg, service, ctx, result),
-        });
-        return textResult(outcome, { service, action: "refresh_movie", movieId: params.movieId });
+        })
+        return textResult(outcome, {
+          service,
+          action: "refresh_movie",
+          movieId: params.movieId,
+        })
       },
     }),
     manualImportTool(service, cfg, ctx),
     ...queueAndBlocklistTools(service, cfg, ctx),
-  ];
+  ]
 }

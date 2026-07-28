@@ -30,34 +30,34 @@ import {
   ModelRuntime,
   SessionManager,
   SettingsManager,
-} from "@earendil-works/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent"
 
 // The installed SDK examples use /compat for model lookup.
-import { getModel } from "@earendil-works/pi-ai/compat";
-import { StringEnum } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
+import { getModel } from "@earendil-works/pi-ai/compat"
+import { StringEnum } from "@earendil-works/pi-ai"
+import { Type } from "typebox"
 
 // Only when using the lower-level agent API directly:
-import { Agent, type AgentEvent } from "@earendil-works/pi-agent-core";
+import { Agent, type AgentEvent } from "@earendil-works/pi-agent-core"
 ```
 
 ## Minimal headless session
 
 ```ts
-import { getModel } from "@earendil-works/pi-ai/compat";
+import { getModel } from "@earendil-works/pi-ai/compat"
 import {
   createAgentSession,
   DefaultResourceLoader,
   ModelRuntime,
   SessionManager,
   SettingsManager,
-} from "@earendil-works/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent"
 
-const cwd = process.cwd();
+const cwd = process.cwd()
 
-const modelRuntime = await ModelRuntime.create();
-const model = getModel("anthropic", "claude-sonnet-4-5");
-if (!model) throw new Error("Model not found");
+const modelRuntime = await ModelRuntime.create()
+const model = getModel("anthropic", "claude-sonnet-4-5")
+if (!model) throw new Error("Model not found")
 
 const loader = new DefaultResourceLoader({
   cwd,
@@ -65,8 +65,8 @@ const loader = new DefaultResourceLoader({
   systemPromptOverride: () => "You are a concise service agent.",
   // Prevent APPEND_SYSTEM.md discovery from adding further instructions.
   appendSystemPromptOverride: () => [],
-});
-await loader.reload();
+})
+await loader.reload()
 
 const { session } = await createAgentSession({
   cwd,
@@ -78,12 +78,12 @@ const { session } = await createAgentSession({
   settingsManager: SettingsManager.inMemory({
     compaction: { enabled: false },
   }),
-});
+})
 
 try {
-  await session.prompt("Reply with one sentence.");
+  await session.prompt("Reply with one sentence.")
 } finally {
-  session.dispose();
+  session.dispose()
 }
 ```
 
@@ -96,16 +96,16 @@ Supported `thinkingLevel` values in the declarations are `"off"`, `"minimal"`, `
 `ModelRuntime` is the high-level model/authentication API:
 
 ```ts
-const modelRuntime = await ModelRuntime.create();
+const modelRuntime = await ModelRuntime.create()
 
 // Includes built-in models and models.json custom providers.
-const configured = modelRuntime.getModel("my-provider", "my-model");
+const configured = modelRuntime.getModel("my-provider", "my-model")
 
 // Only models for which valid authentication is available.
-const available = await modelRuntime.getAvailable();
+const available = await modelRuntime.getAvailable()
 
 // Ephemeral override; not persisted.
-modelRuntime.setRuntimeApiKey("anthropic", process.env.ANTHROPIC_API_KEY!);
+modelRuntime.setRuntimeApiKey("anthropic", process.env.ANTHROPIC_API_KEY!)
 ```
 
 Authentication resolution order documented by pi is:
@@ -118,11 +118,11 @@ Authentication resolution order documented by pi is:
 For a service that must not read a developer's home directory, use custom paths or an in-memory credential store:
 
 ```ts
-import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
+import { InMemoryCredentialStore } from "@earendil-works/pi-ai"
 
-const credentials = new InMemoryCredentialStore();
-const modelRuntime = await ModelRuntime.create({ credentials });
-modelRuntime.setRuntimeApiKey("anthropic", process.env.ANTHROPIC_API_KEY!);
+const credentials = new InMemoryCredentialStore()
+const modelRuntime = await ModelRuntime.create({ credentials })
+modelRuntime.setRuntimeApiKey("anthropic", process.env.ANTHROPIC_API_KEY!)
 ```
 
 Alternatively:
@@ -131,7 +131,7 @@ Alternatively:
 const modelRuntime = await ModelRuntime.create({
   authPath: "/var/lib/my-service/pi/auth.json",
   modelsPath: "/etc/my-service/pi/models.json",
-});
+})
 ```
 
 ## Custom tools
@@ -139,8 +139,8 @@ const modelRuntime = await ModelRuntime.create({
 Pi uses **TypeBox**, via the package named `typebox`—not Zod—for tool parameter schemas. Use `defineTool()` to preserve `params` inference when storing tools in variables or arrays.
 
 ```ts
-import { Type } from "typebox";
-import { defineTool } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox"
+import { defineTool } from "@earendil-works/pi-coding-agent"
 
 const lookupUser = defineTool({
   name: "lookup_user",
@@ -150,24 +150,24 @@ const lookupUser = defineTool({
     id: Type.Integer({ minimum: 1 }),
   }),
   async execute(_toolCallId, params, signal, onUpdate, ctx) {
-    if (signal?.aborted) throw new Error("Lookup cancelled");
+    if (signal?.aborted) throw new Error("Lookup cancelled")
 
     onUpdate?.({
       content: [{ type: "text", text: "Looking up user..." }],
       details: { stage: "lookup" },
-    });
+    })
 
-    const user = await findUser(params.id, { signal });
-    if (!user) throw new Error(`User ${params.id} not found`);
+    const user = await findUser(params.id, { signal })
+    if (!user) throw new Error(`User ${params.id} not found`)
 
     return {
       // Text/image content is sent back to the model.
       content: [{ type: "text", text: JSON.stringify(user) }],
       // Arbitrary structured data for logging/rendering/state.
       details: { user },
-    };
+    }
   },
-});
+})
 ```
 
 Register it directly on the session:
@@ -177,7 +177,7 @@ const { session } = await createAgentSession({
   customTools: [lookupUser],
   noTools: "builtin", // custom/extension tools remain enabled
   sessionManager: SessionManager.inMemory(),
-});
+})
 ```
 
 Or use an explicit allowlist:
@@ -186,7 +186,7 @@ Or use an explicit allowlist:
 const { session } = await createAgentSession({
   customTools: [lookupUser],
   tools: ["lookup_user"],
-});
+})
 ```
 
 Tool results have this effective shape from `AgentToolResult<T>`:
@@ -220,23 +220,23 @@ Tool calls execute in parallel by default. File-mutating custom tools should use
 `await session.prompt(text)` waits until the accepted run has completed, including tool calls and retries. It returns `void`; read the transcript afterward.
 
 ```ts
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage } from "@earendil-works/pi-ai"
 
-await session.prompt("Summarize the account status.");
+await session.prompt("Summarize the account status.")
 
 const lastAssistant = [...session.messages]
   .reverse()
-  .find((m): m is AssistantMessage => m.role === "assistant");
+  .find((m): m is AssistantMessage => m.role === "assistant")
 
-if (!lastAssistant) throw new Error("Agent produced no assistant message");
+if (!lastAssistant) throw new Error("Agent produced no assistant message")
 if (lastAssistant.stopReason === "error") {
-  throw new Error(lastAssistant.errorMessage ?? "Model request failed");
+  throw new Error(lastAssistant.errorMessage ?? "Model request failed")
 }
 
 const finalText = lastAssistant.content
   .filter((block) => block.type === "text")
   .map((block) => block.text)
-  .join("");
+  .join("")
 ```
 
 The examples also access `session.state.messages`; the public documentation emphasizes `session.messages` and `session.agent.state.messages`. Prefer `session.messages` unless a particular installed declaration requires otherwise.
@@ -248,46 +248,52 @@ const unsubscribe = session.subscribe((event) => {
   switch (event.type) {
     case "message_update":
       if (event.assistantMessageEvent.type === "text_delta") {
-        process.stdout.write(event.assistantMessageEvent.delta);
+        process.stdout.write(event.assistantMessageEvent.delta)
       }
-      break;
+      break
 
     case "tool_execution_start":
-      logger.info({
-        toolCallId: event.toolCallId,
-        toolName: event.toolName,
-        args: event.args,
-      }, "tool started");
-      break;
+      logger.info(
+        {
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          args: event.args,
+        },
+        "tool started",
+      )
+      break
 
     case "tool_execution_update":
-      logger.debug({ partialResult: event.partialResult }, "tool update");
-      break;
+      logger.debug({ partialResult: event.partialResult }, "tool update")
+      break
 
     case "tool_execution_end":
-      logger.info({
-        toolCallId: event.toolCallId,
-        toolName: event.toolName,
-        result: event.result,
-        isError: event.isError,
-      }, "tool finished");
-      break;
+      logger.info(
+        {
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          result: event.result,
+          isError: event.isError,
+        },
+        "tool finished",
+      )
+      break
 
     case "message_end":
-      logger.debug({ message: event.message }, "message finished");
-      break;
+      logger.debug({ message: event.message }, "message finished")
+      break
 
     case "agent_end":
-      logger.info({ messages: event.messages }, "agent finished");
-      break;
+      logger.info({ messages: event.messages }, "agent finished")
+      break
   }
-});
+})
 
 try {
-  await session.prompt("Do the work.");
+  await session.prompt("Do the work.")
 } finally {
-  unsubscribe();
-  session.dispose();
+  unsubscribe()
+  session.dispose()
 }
 ```
 
@@ -349,16 +355,16 @@ const loader = new DefaultResourceLoader({
   additionalSkillPaths: ["/opt/my-service/skills"],
   // Set true if only the explicit paths should load.
   noSkills: true,
-});
-await loader.reload();
+})
+await loader.reload()
 
-const { skills, diagnostics } = loader.getSkills();
-for (const diagnostic of diagnostics) console.warn(diagnostic.message);
+const { skills, diagnostics } = loader.getSkills()
+for (const diagnostic of diagnostics) console.warn(diagnostic.message)
 
 const { session } = await createAgentSession({
   resourceLoader: loader,
   sessionManager: SessionManager.inMemory(cwd),
-});
+})
 ```
 
 The docs state that explicit CLI `--skill` paths remain additive with `--no-skills`. For the SDK, the declaration exposes `additionalSkillPaths` and `noSkills`, but does not explicitly document their interaction. Verify whether `noSkills: true` plus `additionalSkillPaths` remains additive for the exact release before relying on that combination; otherwise use `skillsOverride`, or load only the desired skills into a custom `ResourceLoader`.
@@ -376,8 +382,8 @@ const loader = new DefaultResourceLoader({
     ),
     diagnostics: current.diagnostics,
   }),
-});
-await loader.reload();
+})
+await loader.reload()
 ```
 
 ### Progressive disclosure caveat
@@ -387,7 +393,7 @@ At startup, skill names/descriptions are included in the system prompt. For auto
 Skill commands are named `/skill:<name>`. `AgentSession.prompt()` supports command expansion, so a service may explicitly call:
 
 ```ts
-await session.prompt("/skill:my-skill input arguments");
+await session.prompt("/skill:my-skill input arguments")
 ```
 
 Skill command availability is controlled by `enableSkillCommands` in settings. `disable-model-invocation: true` hides a skill from the system prompt and leaves it available only through explicit `/skill:name` invocation.
@@ -399,7 +405,7 @@ Skill command availability is controlled by `enableSkillCommands` in settings. `
 ```ts
 const { session } = await createAgentSession({
   sessionManager: SessionManager.inMemory(cwd),
-});
+})
 ```
 
 No session file is written; `session.sessionFile` is `undefined`.
@@ -408,20 +414,20 @@ No session file is written; `session.sessionFile` is `undefined`.
 
 ```ts
 // New persistent session in pi's cwd-derived session directory.
-SessionManager.create(cwd);
+SessionManager.create(cwd)
 
 // New persistent session in a custom directory.
-SessionManager.create(cwd, "/var/lib/my-service/pi-sessions");
+SessionManager.create(cwd, "/var/lib/my-service/pi-sessions")
 
 // Continue the most recent session, creating one if necessary.
-SessionManager.continueRecent(cwd, "/var/lib/my-service/pi-sessions");
+SessionManager.continueRecent(cwd, "/var/lib/my-service/pi-sessions")
 
 // Open an exact session file.
-SessionManager.open("/var/lib/my-service/pi-sessions/session.jsonl");
+SessionManager.open("/var/lib/my-service/pi-sessions/session.jsonl")
 
 // Discover sessions.
-await SessionManager.list(cwd, "/var/lib/my-service/pi-sessions");
-await SessionManager.listAll(cwd);
+await SessionManager.list(cwd, "/var/lib/my-service/pi-sessions")
+await SessionManager.listAll(cwd)
 ```
 
 For replacing the active session at runtime (`newSession()`, `switchSession()`, `fork()`, imports), use `createAgentSessionRuntime()`/`AgentSessionRuntime`. `runtime.session` changes after replacement, so unsubscribe from the old session and subscribe again; extension bindings must also be rebound.
@@ -478,8 +484,8 @@ Project-local resources may involve pi's project-trust behavior. For fully contr
 ## Suggested service factory
 
 ```ts
-import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
-import { getModel } from "@earendil-works/pi-ai/compat";
+import { InMemoryCredentialStore } from "@earendil-works/pi-ai"
+import { getModel } from "@earendil-works/pi-ai/compat"
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -487,19 +493,19 @@ import {
   SessionManager,
   SettingsManager,
   type ToolDefinition,
-} from "@earendil-works/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent"
 
 export async function createServiceAgent(options: {
-  cwd: string;
-  tools: ToolDefinition[];
+  cwd: string
+  tools: ToolDefinition[]
 }) {
   const modelRuntime = await ModelRuntime.create({
     credentials: new InMemoryCredentialStore(),
-  });
-  modelRuntime.setRuntimeApiKey("anthropic", process.env.ANTHROPIC_API_KEY!);
+  })
+  modelRuntime.setRuntimeApiKey("anthropic", process.env.ANTHROPIC_API_KEY!)
 
-  const model = getModel("anthropic", "claude-sonnet-4-5");
-  if (!model) throw new Error("Configured model is unavailable in the catalog");
+  const model = getModel("anthropic", "claude-sonnet-4-5")
+  if (!model) throw new Error("Configured model is unavailable in the catalog")
 
   const loader = new DefaultResourceLoader({
     cwd: options.cwd,
@@ -509,10 +515,11 @@ export async function createServiceAgent(options: {
     noPromptTemplates: true,
     noThemes: true,
     noContextFiles: true,
-    systemPromptOverride: () => "You are a service agent. Use only the provided tools.",
+    systemPromptOverride: () =>
+      "You are a service agent. Use only the provided tools.",
     appendSystemPromptOverride: () => [],
-  });
-  await loader.reload();
+  })
+  await loader.reload()
 
   return createAgentSession({
     cwd: options.cwd,
@@ -527,7 +534,7 @@ export async function createServiceAgent(options: {
       compaction: { enabled: false },
       retry: { enabled: true, maxRetries: 2 },
     }),
-  });
+  })
 }
 ```
 

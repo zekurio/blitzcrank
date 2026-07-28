@@ -1,7 +1,8 @@
-import { mkdir } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { mkdir } from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
+
+import type { AssistantMessage } from "@earendil-works/pi-ai"
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -9,35 +10,38 @@ import {
   SessionManager,
   SettingsManager,
   type ToolDefinition,
-} from "@earendil-works/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent"
 
-export const DEFAULT_MODEL = "anthropic/claude-sonnet-4-5";
+export const DEFAULT_MODEL = "anthropic/claude-sonnet-4-5"
 
 /** Repo root (contains skills/): two levels up from dist/agent/. */
-const projectRoot = path.resolve(new URL("../..", import.meta.url).pathname);
-const skillsDir = path.join(projectRoot, "skills");
+const projectRoot = path.resolve(new URL("../..", import.meta.url).pathname)
+const skillsDir = path.join(projectRoot, "skills")
 
 export function resolveModel(modelRuntime: ModelRuntime, spec: string) {
-  const slash = spec.indexOf("/");
+  const slash = spec.indexOf("/")
   if (slash === -1) {
-    throw new Error(`BLITZCRANK_MODEL must be "provider/model", got "${spec}"`);
+    throw new Error(`BLITZCRANK_MODEL must be "provider/model", got "${spec}"`)
   }
-  const model = modelRuntime.getModel(spec.slice(0, slash), spec.slice(slash + 1));
-  if (!model) throw new Error(`Unknown model: ${spec}`);
-  return model;
+  const model = modelRuntime.getModel(
+    spec.slice(0, slash),
+    spec.slice(slash + 1),
+  )
+  if (!model) throw new Error(`Unknown model: ${spec}`)
+  return model
 }
 
 export interface AgentTurnOptions {
-  modelRuntime: ModelRuntime;
-  modelSpec: string;
-  systemPrompt: string;
-  tools: ToolDefinition[];
-  prompt: string;
+  modelRuntime: ModelRuntime
+  modelSpec: string
+  systemPrompt: string
+  tools: ToolDefinition[]
+  prompt: string
   /** Persist the session transcript (JSONL) into this directory when set. */
-  sessionDir: string | undefined;
+  sessionDir: string | undefined
   /** Receives the session file path once known, for history self-exclusion. */
-  sessionFileRef: { current: string | undefined } | undefined;
-  logPrefix: string;
+  sessionFileRef: { current: string | undefined } | undefined
+  logPrefix: string
 }
 
 /**
@@ -46,9 +50,9 @@ export interface AgentTurnOptions {
  * return the final assistant text.
  */
 export async function runAgentTurn(opts: AgentTurnOptions): Promise<string> {
-  const cwd = path.join(os.tmpdir(), "blitzcrank-work");
-  await mkdir(cwd, { recursive: true });
-  if (opts.sessionDir) await mkdir(opts.sessionDir, { recursive: true });
+  const cwd = path.join(os.tmpdir(), "blitzcrank-work")
+  await mkdir(cwd, { recursive: true })
+  if (opts.sessionDir) await mkdir(opts.sessionDir, { recursive: true })
 
   const loader = new DefaultResourceLoader({
     cwd,
@@ -64,8 +68,8 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<string> {
     }),
     systemPromptOverride: () => opts.systemPrompt,
     appendSystemPromptOverride: () => [],
-  });
-  await loader.reload();
+  })
+  await loader.reload()
 
   const { session } = await createAgentSession({
     cwd,
@@ -81,37 +85,40 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<string> {
     settingsManager: SettingsManager.inMemory({
       compaction: { enabled: true },
     }),
-  });
+  })
 
-  if (opts.sessionFileRef) opts.sessionFileRef.current = session.sessionFile;
+  if (opts.sessionFileRef) opts.sessionFileRef.current = session.sessionFile
 
   const unsubscribe = session.subscribe((event) => {
     if (event.type === "tool_execution_start") {
-      console.log(`[${opts.logPrefix}] tool ${event.toolName}`, JSON.stringify(event.args));
-      return;
+      console.log(
+        `[${opts.logPrefix}] tool ${event.toolName}`,
+        JSON.stringify(event.args),
+      )
+      return
     }
     if (event.type === "tool_execution_end" && event.isError) {
-      console.warn(`[${opts.logPrefix}] tool ${event.toolName} failed`);
+      console.warn(`[${opts.logPrefix}] tool ${event.toolName} failed`)
     }
-  });
+  })
 
   try {
-    await session.prompt(opts.prompt);
+    await session.prompt(opts.prompt)
 
-    const lastAssistant = [...session.messages]
-      .reverse()
-      .find((m): m is AssistantMessage => m.role === "assistant");
-    if (!lastAssistant) throw new Error("agent produced no assistant message");
+    const lastAssistant = session.messages.findLast(
+      (m): m is AssistantMessage => m.role === "assistant",
+    )
+    if (!lastAssistant) throw new Error("agent produced no assistant message")
     if (lastAssistant.stopReason === "error") {
-      throw new Error(lastAssistant.errorMessage ?? "model request failed");
+      throw new Error(lastAssistant.errorMessage ?? "model request failed")
     }
 
     return lastAssistant.content
       .filter((b) => b.type === "text")
       .map((b) => b.text)
-      .join("");
+      .join("")
   } finally {
-    unsubscribe();
-    session.dispose();
+    unsubscribe()
+    session.dispose()
   }
 }

@@ -78,8 +78,11 @@ Safety invariants (do not weaken without explicit operator sign-off):
 ## Development Commands
 
 - `pnpm dev` - run with `tsx watch`.
-- `pnpm typecheck` - `tsc --noEmit`.
+- `pnpm fmt` / `pnpm lint` / `pnpm typecheck` - oxfmt, oxlint (type-aware), `tsc --noEmit`.
+- `pnpm verify` - fmt check + lint + typecheck; must pass before a task is done.
 - `pnpm build` / `pnpm start` - compile to `dist/` and run.
+- `pnpm e2e:issue` - end-to-end issue run against mock services; costs real
+  model tokens, run manually only.
 - `nix develop` (or direnv) - dev shell with Node 24, pnpm, TypeScript.
 - Config is env-only; see `.env.example`. Never commit `.env`.
 
@@ -184,9 +187,10 @@ small named helpers below it. Extract only when it names a real concept.
 - Node >= 22.19.0 (SDK requirement; dev shell provides 24), pnpm only — never
   npm, yarn, or Bun.
 - Strict ESM TypeScript, `module: NodeNext`, `tsc --noEmit` for typechecking.
-- No formatter/linter is configured yet; match the existing style (2-space
-  indent, double quotes, semicolons). Adopting oxfmt/oxlint is welcome as a
-  dedicated chore PR, not as a side effect.
+- Formatting is oxfmt, linting is oxlint (type-aware) — not Prettier/ESLint.
+  80-col width, 2-space indent, no semicolons, double quotes, sorted imports.
+  `no-console` is deliberately off: console output to journald IS the logging
+  strategy.
 - pi SDK packages are pinned exact (`@earendil-works/*@0.82.1`); bump them
   deliberately and re-verify against `docs/research/pi-sdk.md`.
 
@@ -205,8 +209,9 @@ No test suite exists yet. When adding one:
 
 ### Coding Tasks
 
-`pnpm typecheck` must pass before considering a coding task completed. If you
-changed the tool surface, confirm prompts and skills still match it.
+`pnpm verify` (fmt check, lint, typecheck) must pass before considering a
+coding task completed. If you changed the tool surface, confirm prompts and
+skills still match it.
 
 ### Nix Tasks
 
