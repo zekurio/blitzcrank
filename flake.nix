@@ -28,6 +28,11 @@
         default = blitzcrank;
       });
 
+      # `nix flake check` builds the package on linux CI.
+      checks = forSystems linuxSystems (pkgs: {
+        blitzcrank = pkgs.callPackage ./nix/package.nix { };
+      });
+
       nixosModules = rec {
         blitzcrank =
           { pkgs, lib, ... }:
