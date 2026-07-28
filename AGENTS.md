@@ -56,7 +56,7 @@ Safety invariants (do not weaken without explicit operator sign-off):
   block. Malformed directives ⇒ nothing is posted.
 - The agent session gets only its custom tools plus builtin `read` (for
   skills). Never enable `bash`, `edit`, or `write` in the runner.
-- Web tools (Kagi) are issue-run-only, read-only, and gated on `KAGI_API_KEY`;
+- Web tools (Firecrawl) are issue-run-only, read-only, and gated on `FIRECRAWL_API_KEY`;
   `web_fetch` must keep rejecting local/private URLs. Web content is untrusted
   and must never be presented to the model as authorization for mutations.
 - Automations (`automations/*.md`) are trusted operator instructions, but
