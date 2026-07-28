@@ -1,9 +1,11 @@
+import path from "node:path";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { Config } from "../config.js";
 import type { SeerrClient } from "../services/seerr.js";
 import { buildAnvilTools } from "./anvil.js";
 import { buildRadarrTools, buildSonarrTools } from "./arr.js";
 import type { RunContext } from "./context.js";
+import { buildHistoryTool } from "./history.js";
 import {
   buildJellyfinTools,
   buildProgressTool,
@@ -11,28 +13,49 @@ import {
   buildSeerrTools,
 } from "./services.js";
 
-export interface ToolDeps {
-  config: Config;
-  ctx: RunContext;
-  seerr: SeerrClient;
-  issueId: string | number;
-  commentHeader: string;
+export interface SessionFileRef {
+  current: string | undefined;
 }
 
 /**
- * Assemble the per-run tool set. Raw `*_request` tools are GET-only;
- * every state change is a dedicated typed tool with evidence gates,
- * budgets, and built-in verification (see tools/common.ts).
+ * Service tool set shared by issue runs and automations: GET-only reads,
+ * typed evidence-gated mutations, anvil correlation, run-history search.
  */
-export function buildTools({ config, ctx, seerr, issueId, commentHeader }: ToolDeps): ToolDefinition[] {
-  const tools: ToolDefinition[] = [
-    buildProgressTool(seerr, issueId, commentHeader, config.language),
-    ...buildSeerrTools(config.seerr, seerr, ctx),
-  ];
+export function buildServiceTools(
+  config: Config,
+  ctx: RunContext,
+  sessionFileRef: SessionFileRef,
+): ToolDefinition[] {
+  const tools: ToolDefinition[] = [...buildSeerrTools(config.seerr, ctx)];
   if (config.sonarr) tools.push(...buildSonarrTools(config.sonarr, ctx));
   if (config.radarr) tools.push(...buildRadarrTools(config.radarr, ctx));
   if (config.jellyfin) tools.push(...buildJellyfinTools(config.jellyfin, ctx));
   if (config.sabnzbd) tools.push(...buildSabnzbdTools(config.sabnzbd, ctx));
   if (config.anvil) tools.push(...buildAnvilTools(config.anvil));
+  tools.push(buildHistoryTool(path.join(config.dataDir, "sessions"), sessionFileRef));
   return tools;
+}
+
+/** True for tools that cannot change service state. */
+export function isReadTool(name: string): boolean {
+  return (
+    name.endsWith("_request") || name.startsWith("anvil_") || name === "thread_history_search"
+  );
+}
+
+export interface IssueToolDeps {
+  config: Config;
+  ctx: RunContext;
+  seerr: SeerrClient;
+  issueId: string | number;
+  commentHeader: string;
+  sessionFileRef: SessionFileRef;
+}
+
+/** Issue runs additionally get the single-use public progress comment tool. */
+export function buildIssueTools(deps: IssueToolDeps): ToolDefinition[] {
+  return [
+    buildProgressTool(deps.seerr, deps.issueId, deps.commentHeader, deps.config.language),
+    ...buildServiceTools(deps.config, deps.ctx, deps.sessionFileRef),
+  ];
 }

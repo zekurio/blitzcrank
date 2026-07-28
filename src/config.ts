@@ -10,6 +10,10 @@ export interface AnvilConfig {
 
 export interface Config {
   port: number;
+  /** Persistent state (session transcripts) lives here. */
+  dataDir: string;
+  /** Directory containing automation definition .md files. */
+  automationsDir: string;
   /** Shared secret checked against the Authorization header of incoming webhooks. */
   webhookSecret: string | undefined;
   /** Model string for the agent, e.g. "anthropic/claude-sonnet-4-5". */
@@ -42,6 +46,8 @@ export function loadConfig(): Config {
   }
   return {
     port: Number(process.env.BLITZCRANK_PORT ?? 8484),
+    dataDir: process.env.BLITZCRANK_DATA_DIR ?? "data",
+    automationsDir: process.env.BLITZCRANK_AUTOMATIONS_DIR ?? "automations",
     webhookSecret: process.env.BLITZCRANK_WEBHOOK_SECRET,
     model: process.env.BLITZCRANK_MODEL,
     language: process.env.BLITZCRANK_LANGUAGE ?? "German",

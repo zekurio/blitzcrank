@@ -43,9 +43,11 @@ because enforcement now lives in-process:
 
 ## Layout
 
-- `src/server.ts` — Hono webhook endpoint (`POST /webhook/seerr`), `GET /healthz`, event filtering
+- `src/server.ts` — Hono webhook endpoint (`POST /webhook/seerr`), `GET /healthz`, `GET /automations`, `POST /automations/:name/run`, event filtering
 - `src/queue.ts` / `src/revisits.ts` — serial run queue + revisit scheduler
-- `src/agent/` — pi SDK session setup, system prompt, directive parsing
+- `src/agent/` — pi SDK session factory, issue system prompt, directive parsing
+- `src/automations/` — automation definitions (frontmatter + trusted body), capability→tool mapping, cron scheduling, `STATUS:` report protocol
+- `automations/` — operator-authored scheduled tasks (e.g. the hourly stale-import handler)
 - `src/tools/` — run context (evidence/budgets), GET-only read tools, typed mutation tools, anvil
 - `src/services/` — HTTP helper + host-side Seerr client (comments, status)
 - `skills/` — agent skills for Sonarr, Radarr, SABnzbd, Jellyfin, Seerr, Anvil, filesystem
@@ -86,13 +88,13 @@ Settings → Notifications → Webhook:
 
 Done: scaffolding, webhook intake, host-owned issue lifecycle with directives and
 revisits, tightened typed tool layer with evidence gates/budgets/verification, merged
-production skills.
+production skills, ManualImport tools, scheduled automations (cron + manual trigger,
+capability-scoped tools, per-automation budgets, `STATUS:` protocol), persisted run
+transcripts + `thread_history_search`.
 
 Ideas for later (see the porting checklist in `docs/research/legacy.md`):
 
 - optional second-model mutation review for high-risk ops (legacy broker, in-process)
-- ManualImport support (was allowlisted in the legacy deployment)
-- scheduled automations (`STATUS:` protocol) and Discord agents
-- session transcripts persisted for auditing (`SessionManager.create`)
-- proper test suite (directives/context/safety are pure and easy to cover)
-- NixOS module + package output in the flake
+- report sinks beyond the log (ntfy/Discord) and Discord agents
+- proper test suite (directives/context/safety/automations parsing are pure and easy to cover)
+- NixOS module + package output in the flake (systemd timers may own automation scheduling)

@@ -43,8 +43,14 @@ export class RunContext {
   }
 
   sawValue(service: string, value: string | number): boolean {
-    const pattern = new RegExp(`\\b${escapeRegExp(String(value))}\\b`);
-    return this.evidence.some((e) => e.service === service && pattern.test(e.body));
+    const text = String(value);
+    // Word boundaries only make sense for purely alphanumeric values (IDs);
+    // paths and other punctuated strings use exact substring matching.
+    if (/^[\w-]+$/.test(text)) {
+      const pattern = new RegExp(`\\b${escapeRegExp(text)}\\b`);
+      return this.evidence.some((e) => e.service === service && pattern.test(e.body));
+    }
+    return this.evidence.some((e) => e.service === service && e.body.includes(text));
   }
 
   requireEvidence(service: string, value: string | number, hint: string): void {

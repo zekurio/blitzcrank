@@ -56,11 +56,17 @@ Safety invariants (do not weaken without explicit operator sign-off):
   block. Malformed directives ⇒ nothing is posted.
 - The agent session gets only its custom tools plus builtin `read` (for
   skills). Never enable `bash`, `edit`, or `write` in the runner.
+- Automations (`automations/*.md`) are trusted operator instructions, but
+  their runs only get the mutation tools mapped from their declared
+  `capabilities` (registry in `src/automations/definitions.ts`) plus the
+  always-on read tools, with per-automation budgets from frontmatter.
 
 ## Key Directories
 
-- `src/tools/` - run context (evidence/budgets), safety guards, GET-only read tools, typed mutation tools per service.
-- `src/agent/` - pi SDK session setup, system prompt, directive parsing.
+- `src/tools/` - run context (evidence/budgets), safety guards, GET-only read tools, typed mutation tools per service, run-history search.
+- `src/agent/` - pi SDK session factory, issue prompt, directive parsing.
+- `src/automations/` - definition loading/validation, capability registry, cron scheduler, STATUS report parsing.
+- `automations/` - operator-authored scheduled tasks; frontmatter declares schedule, capabilities, and budgets.
 - `src/services/` - HTTP helper and the host-side Seerr client.
 - `src/webhook/` - verified Seerr webhook payload types.
 - `skills/` - agent skills (domain knowledge, playbooks); merged from the legacy production deployment. Frontmatter `name` must match the directory.

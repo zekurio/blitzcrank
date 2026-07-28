@@ -44,11 +44,7 @@ export function buildJellyfinTools(cfg: ServiceConfig, ctx: RunContext): ToolDef
   ];
 }
 
-export function buildSeerrTools(
-  cfg: ServiceConfig,
-  seerr: SeerrClient,
-  ctx: RunContext,
-): ToolDefinition[] {
+export function buildSeerrTools(cfg: ServiceConfig, ctx: RunContext): ToolDefinition[] {
   const request = (path: string) =>
     jsonRequest(cfg.url, path, { headers: { "X-Api-Key": cfg.apiKey } });
 

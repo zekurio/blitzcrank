@@ -68,8 +68,9 @@ Every call below requires a `reason`. Fetch the target IDs with `sonarr_request`
 - Remove a verified bad queue item: call `sonarr_delete_queue_item` with the verified `queueId` and explicit `blocklist` and `removeFromClient` booleans. This consumes the deletion budget.
 - Remove only a clearly matching blocklist entry: call `sonarr_remove_from_blocklist` with the verified `blocklistId`.
 - Delete one verified wrong episode file only after replacement is confirmed by the reporter: call `sonarr_delete_episode_file` with the verified `episodeFileId`. This consumes the deletion budget; preserve multi-episode relationships, then search only the affected episode.
+- Manually import verified candidates: call `sonarr_manual_import` with `importMode: "move"` and candidate objects returned by `GET /api/v3/manualimport?folder={folder}&downloadId={downloadId}`, trimmed to `path`, `folderName`, `seriesId`, `episodeIds`, `quality`, `languages`, `releaseGroup`, and `indexerFlags` when present. Every file path and ID submitted must have appeared in a Sonarr read this run. The tool consumes the mutation budget and verifies the resulting command status.
 
-No manual-import or force-import tool is exposed.
+No generic force-import tool is exposed.
 
 Never remove, blocklist, retry, search, refresh, manual-import, or force-import an exact active Anvil wait.
 
@@ -86,6 +87,18 @@ Verify content and Jellyfin streams rather than trusting the filename. Identify 
 ### Stalled download or failed import
 
 Read Sonarr's queue message and correlate SAB state. Allow active download, repair, and unpack work. For completed payloads, inspect category, mapping, permissions, space, locks, naming, and usable-video evidence from APIs. Check exact Anvil correlation before treating files as absent. Fix infrastructure before retrying; re-search only for an unusable payload.
+
+### Manual import of a completed download
+
+Manual import is appropriate when a completed download remains unimported in the queue and import is blocked, delayed, failed, or has an unknown status. Typical causes include a worse-scored release finishing after a better-scored release was grabbed, or import warnings that have gone stale.
+
+1. Read the queue and identify the exact queued episode, folder, and `downloadId`.
+2. Read `GET /api/v3/manualimport?folder={urlEncodedFolder}&downloadId={urlEncodedDownloadId}` with `sonarr_request`.
+3. Inspect `rejections` on every candidate, including candidates that otherwise look safe.
+4. Import only candidates resolved to the exact queued episode whose path and `downloadId` belong to that queued download, with acceptable quality and language evidence. Pass only the documented trimmed fields and use `importMode: "move"`.
+5. Re-read the queue and confirm the item cleared; also verify the resulting episode-file state as appropriate.
+
+Do not import candidates with substantive rejections, including wrong target, sample, missing path, permissions, duplicate conflict, unwanted language, or low score/profile cutoff. Never import while a transcode or Anvil job owns the path. When rejection evidence instead warrants cleanup, use `sonarr_delete_queue_item` with `blocklist: true` rather than forcing the import.
 
 ### Upgrade loop
 
