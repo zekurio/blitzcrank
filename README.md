@@ -1,0 +1,99 @@
+# blitzcrank
+
+Agentic webhook gateway for a Seerr/Arr/Jellyfin homelab, built on the
+[pi SDK](https://www.npmjs.com/package/@earendil-works/pi-coding-agent).
+
+Users report media issues in Jellyseerr ("episode is corrupt", "wrong language",
+"won't play"). Jellyseerr fires a webhook at blitzcrank, which spins up an agent
+session that investigates across your services, fixes what it safely can, and
+reports back as a comment on the issue.
+
+```
+Jellyseerr issue ──webhook──▶ blitzcrank host ──▶ pi agent session (one per run)
+                              │    │                │  skills/   (domain knowledge)
+                              │    │                │  reads:    *_request  (GET-only)
+                              │    │                │  mutations: typed tools w/ evidence
+                              │    │                │             gates + budgets + verify
+                              │    ◀─ directives ──┘  RESOLVE_ISSUE / REVISIT_IN/_REASON
+                              ├── posts comments, resolves the issue (host-owned)
+                              └── schedules revisits (10m–48h)
+```
+
+## Safety model
+
+Adapted from the legacy Go deployment (see `docs/research/legacy-pi.md`), tightened
+because enforcement now lives in-process:
+
+- **Host-owned lifecycle** — the agent never comments or resolves directly; it returns a
+  directive block (`RESOLVE_ISSUE: yes|no`, optional `REVISIT_IN`/`REVISIT_REASON`) and
+  the host executes it. Malformed directives ⇒ nothing is posted.
+- **GET-only raw tools** — `seerr|sonarr|radarr|jellyfin|sabnzbd_request` can only read;
+  SABnzbd is limited to `queue`/`history`; Seerr lifecycle paths are blocked.
+- **Typed mutations** — every state change is its own tool (`sonarr_search`,
+  `sonarr_delete_episode_file`, `radarr_refresh_movie`, …) mirroring the legacy
+  allowlist. No raw POST/DELETE surface, no path parsing. Radarr movie-file deletion
+  remains unauthorized.
+- **Evidence gates** — mutation targets must have appeared in a GET response earlier in
+  the same run; guessed IDs are rejected in code.
+- **Budgets** — max 5 mutations / 2 deletions per run.
+- **Built-in verification** — mutation tools perform the follow-up read themselves and
+  return it in the result.
+- **Loop guards** — the bot's own comment webhooks and `ISSUE_RESOLVED` events are
+  dropped; new user activity cancels pending revisits.
+
+## Layout
+
+- `src/server.ts` — Hono webhook endpoint (`POST /webhook/seerr`), `GET /healthz`, event filtering
+- `src/queue.ts` / `src/revisits.ts` — serial run queue + revisit scheduler
+- `src/agent/` — pi SDK session setup, system prompt, directive parsing
+- `src/tools/` — run context (evidence/budgets), GET-only read tools, typed mutation tools, anvil
+- `src/services/` — HTTP helper + host-side Seerr client (comments, status)
+- `skills/` — agent skills for Sonarr, Radarr, SABnzbd, Jellyfin, Seerr, Anvil, filesystem
+  (merged from the battle-tested legacy deployment in `.pi/`)
+- `docs/research/` — pi-sdk guide, Seerr/service API references, legacy design reference
+- `.pi/` — artifacts from the previous production deployment (read-only reference)
+
+## Dev environment
+
+Nix flake devshell (node 24, pnpm, typescript). With direnv: `direnv allow`.
+Otherwise: `nix develop`.
+
+```sh
+pnpm install
+cp .env.example .env   # fill in service URLs + API keys
+pnpm dev               # tsx watch
+pnpm typecheck
+pnpm build && pnpm start
+```
+
+## Configuration
+
+All via env (see `.env.example`). `SEERR_URL`/`SEERR_API_KEY` are required;
+Sonarr/Radarr/SABnzbd/Jellyfin are optional — their tools are only registered
+when configured. Model is `BLITZCRANK_MODEL` (`provider/model`, default
+`anthropic/claude-sonnet-4-5`); provider API keys resolve via the usual env
+vars (`ANTHROPIC_API_KEY`, ...) or your existing pi auth.
+
+### Jellyseerr webhook setup
+
+Settings → Notifications → Webhook:
+
+- URL: `http://<blitzcrank-host>:8484/webhook/seerr`
+- Authorization header: value of `BLITZCRANK_WEBHOOK_SECRET` (if set)
+- Payload: keep the default JSON template
+- Notification types: enable the Issue events
+
+## Status / roadmap
+
+Done: scaffolding, webhook intake, host-owned issue lifecycle with directives and
+revisits, tightened typed tool layer with evidence gates/budgets/verification, merged
+production skills.
+
+Ideas for later (see the porting checklist in `docs/research/legacy-pi.md`):
+
+- optional second-model mutation review for high-risk ops (legacy broker, in-process)
+- ManualImport support (was allowlisted in the legacy deployment)
+- scheduled automations (`STATUS:` protocol) and Discord agents
+- session transcripts persisted for auditing (`SessionManager.create`)
+- proper test suite (directives/context/safety are pure and easy to cover)
+- NixOS module + package output in the flake
