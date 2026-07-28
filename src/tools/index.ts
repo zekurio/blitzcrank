@@ -12,6 +12,7 @@ import {
   buildSabnzbdTools,
   buildSeerrTools,
 } from "./services.js";
+import { buildWebTools } from "./web.js";
 
 export interface SessionFileRef {
   current: string | undefined;
@@ -71,5 +72,7 @@ export function buildIssueTools(deps: IssueToolDeps): ToolDefinition[] {
   return [
     buildProgressTool(deps.seerr, deps.issueId, deps.commentHeader, deps.config.language),
     ...tools,
+    // Issue runs only: availability/context lookups. Automations stay mechanical.
+    ...(deps.config.kagiApiKey ? buildWebTools(deps.config.kagiApiKey) : []),
   ];
 }
