@@ -301,7 +301,7 @@ export function buildSabnzbdTools(
 export function buildProgressTool(
   seerr: SeerrClient,
   issueId: string | number,
-  commentHeader: string,
+  anchor: string,
   language: string,
 ): ToolDefinition {
   let used = false
@@ -322,7 +322,7 @@ export function buildProgressTool(
       used = true
       const message = params.message.trim()
       if (!message) throw new Error("message must not be empty")
-      await seerr.postComment(issueId, `${commentHeader}\n\n${message}`)
+      await seerr.postComment(issueId, `${message}\n\n${anchor}`)
       return textResult({ reported: true }, { action: "report_progress" })
     },
   })

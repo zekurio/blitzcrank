@@ -17,7 +17,7 @@ import {
   buildRevisitPrompt,
   buildSystemPrompt,
 } from "./prompt.js"
-import { runAgentTurn } from "./session.js"
+import { modelAnchor, runAgentTurn, usageAnchor } from "./session.js"
 
 export type IssueEvent =
   | { kind: "webhook"; issueId: string; payload: SeerrWebhookPayload }
@@ -41,8 +41,8 @@ export class IssueRunner {
     private readonly modelSpec: string,
   ) {}
 
-  get commentHeader(): string {
-    return `[blitzcrank w/ ${this.modelSpec}]`
+  get anchor(): string {
+    return modelAnchor(this.modelSpec)
   }
 
   async run(event: IssueEvent): Promise<RunOutcome> {
@@ -51,7 +51,7 @@ export class IssueRunner {
     const seerr = new SeerrClient(this.config.seerr, this.config.seerrBotUserId)
     const sessionFileRef: SessionFileRef = { current: undefined }
 
-    const finalText = await runAgentTurn({
+    const turn = await runAgentTurn({
       modelRuntime: this.modelRuntime,
       modelSpec: this.modelSpec,
       systemPrompt: buildSystemPrompt(this.config),
@@ -60,7 +60,7 @@ export class IssueRunner {
         ctx,
         seerr,
         issueId,
-        commentHeader: this.commentHeader,
+        anchor: this.anchor,
         sessionFileRef,
         mediaScope: eventMediaScope(event),
       }),
@@ -73,17 +73,17 @@ export class IssueRunner {
       logPrefix: `issue:${issueId}`,
     })
 
-    const directives = parseDirectives(finalText)
+    const directives = parseDirectives(turn.text)
 
     if (directives.malformed) {
       console.warn(
-        `[issue:${issueId}] malformed directive block; no comment posted:\n${finalText}`,
+        `[issue:${issueId}] malformed directive block; no comment posted:\n${turn.text}`,
       )
     } else {
       if (directives.comment) {
         await seerr.postComment(
           issueId,
-          `${this.commentHeader}\n\n${directives.comment}`,
+          `${directives.comment}\n\n${usageAnchor(this.modelSpec, turn.usage)}`,
         )
       }
       if (directives.resolve) {
@@ -94,7 +94,7 @@ export class IssueRunner {
     const { mutations, deletes } = ctx.counts
     console.log(
       `[issue:${issueId}] done resolve=${directives.resolve} revisit=${directives.revisitInMs ?? "-"} ` +
-        `mutations=${mutations} deletes=${deletes}`,
+        `mutations=${mutations} deletes=${deletes} tokens=${turn.usage.totalTokens} cost=$${turn.usage.cost.toFixed(4)}`,
     )
     return { issueId, directives }
   }

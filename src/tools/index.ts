@@ -57,7 +57,8 @@ export interface IssueToolDeps {
   ctx: RunContext
   seerr: SeerrClient
   issueId: string | number
-  commentHeader: string
+  /** Model identity footer appended to public comments, e.g. "[blitzcrank w/ ...]". */
+  anchor: string
   sessionFileRef: SessionFileRef
   /** Known media type of the issue; prunes the irrelevant Arr's tools. */
   mediaScope: MediaScope
@@ -85,7 +86,7 @@ export function buildIssueTools(deps: IssueToolDeps): ToolDefinition[] {
     buildProgressTool(
       deps.seerr,
       deps.issueId,
-      deps.commentHeader,
+      deps.anchor,
       deps.config.language,
     ),
     ...tools,
