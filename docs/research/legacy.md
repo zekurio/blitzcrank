@@ -2,6 +2,10 @@
 
 This document records the battle-tested Go-hosted Blitzcrank design represented by the legacy `.pi/` prompts, extension, and skills. It is the canonical behavioral reference for the TypeScript/pi SDK rebuild.
 
+> The original `.pi/` artifacts were removed from the repository after their
+> knowledge was distilled here and into `skills/` and `src/agent/prompt.ts`;
+> file paths mentioned below refer to that retired layout.
+
 ## 1. Architecture overview
 
 Blitzcrank was split between a **trusted Go host** and a **pi agent session**.

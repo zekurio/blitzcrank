@@ -13,9 +13,9 @@ agent session that investigates across Sonarr/Radarr/SABnzbd/Jellyfin/Seerr,
 applies narrow verified fixes, and reports back on the issue. The host process
 — not the agent — owns all user-visible actions.
 
-This is a greenfield rebuild of a battle-tested Go deployment; the legacy
-artifacts live in `.pi/` (read-only reference) and are summarized in
-`docs/research/legacy-pi.md`.
+This is a greenfield rebuild of a battle-tested Go deployment; its design is
+distilled in `docs/research/legacy.md` (the original artifacts are not in the
+repo).
 
 ### Core Priorities
 
@@ -65,7 +65,6 @@ Safety invariants (do not weaken without explicit operator sign-off):
 - `src/webhook/` - verified Seerr webhook payload types.
 - `skills/` - agent skills (domain knowledge, playbooks); merged from the legacy production deployment. Frontmatter `name` must match the directory.
 - `docs/research/` - pi SDK integration guide, Seerr/service API references, legacy design reference. Consult before touching tool or API code.
-- `.pi/` - legacy deployment artifacts. Reference only; never load or import from here at runtime.
 
 ## Development Commands
 
