@@ -212,19 +212,19 @@ Network errors, non-object JSON, invalid JSON, or non-success HTTP failed closed
 
 ```ts
 type ReviewProposal = {
-  service: string;
-  method: string;
-  path: string;
-  body: unknown;       // null when absent
-  purpose: string;
-  safety_claim: string; // `${safety_level}: ${safety_reason}`
+  service: string
+  method: string
+  path: string
+  body: unknown // null when absent
+  purpose: string
+  safety_claim: string // `${safety_level}: ${safety_reason}`
   evidence: Array<{
-    service: string;
-    method: "GET";
-    path: string;
-    summary: string;
-  }>;
-};
+    service: string
+    method: "GET"
+    path: string
+    summary: string
+  }>
+}
 ```
 
 The extension retained at most the eight most recent GET observations. Evidence summaries were JSON strings capped at 10,000 characters. Sanitization:
@@ -242,7 +242,11 @@ The mutation-review prompt states that trusted Go code enriched the review envel
 The reviewer LLM returned exactly one JSON object:
 
 ```json
-{"verdict":"approve","reason":"concise reason","authority_basis":"explicit_intent"}
+{
+  "verdict": "approve",
+  "reason": "concise reason",
+  "authority_basis": "explicit_intent"
+}
 ```
 
 `verdict` was exactly:
@@ -272,7 +276,15 @@ After approval, the extension called `POST /v1/approvals/consume`:
 ```json
 {
   "approval_token": "<token>",
-  "proposal": { "service": "...", "method": "...", "path": "...", "body": null, "purpose": "...", "safety_claim": "...", "evidence": [] }
+  "proposal": {
+    "service": "...",
+    "method": "...",
+    "path": "...",
+    "body": null,
+    "purpose": "...",
+    "safety_claim": "...",
+    "evidence": []
+  }
 }
 ```
 
@@ -393,30 +405,30 @@ Both used `KAGI_API_KEY` as a bearer token.
 
 ## 8. Porting checklist
 
-| Legacy feature | Suggested status | Rationale |
-|---|---|---|
-| Trusted run metadata and source-specific prompts | **port-now** | Core trust boundary; agent-visible text must not redefine actor, route, authority, or budget. |
-| Seerr directive parser (`RESOLVE_ISSUE`, `REVISIT_*`) | **port-now** | Required to preserve host-owned comments, closure, and durable follow-up behavior. |
-| 10m–48h revisit clamp and revisit-event semantics | **port-now** | Prevents pathological schedules and preserves autonomous pending-work verification. |
-| Automation `STATUS:`/empty-response protocol | **port-now** | Existing jobs and notification behavior depend on exact output semantics. |
-| `report_progress` first-action publication | **port-now** | Public UX contract for issue runs; enforce in orchestration, not only prompt text. |
-| Service-relative path and credential assertions | **port-now** | Cheap, deterministic SSRF/credential-leak defense before any request. |
-| Exact per-service mutation allowlists | **port-now** | Principal hard safety boundary; copy patterns and command enums exactly before expanding. |
-| SABnzbd strict read-only API gate | **port-now** | Deliberate prevention of downloader mutations. |
-| Host-owned Seerr comments/resolution | **port-now** | Keeps lifecycle actions reviewable and prevents agent bypass. |
-| Discord-direct public read allowlist | **port-now** | Prevents public leakage of personal and operational stack details. |
-| Independent mutation reviewer and authority model | **port-now** | Working-agent self-claims are insufficient; exact-request review is central to safe mutations. |
-| Approval token consumption + `proposal_hash` binding | **port-now** | Prevents replay and post-approval argument substitution. |
-| Execution and validation observation endpoints | **port-now** | Makes mutation completion auditable and blocks success claims without fresh evidence. |
-| Evidence sanitation/redaction/caps | **port-now** | Limits secret leakage, prompt-injection surface, and review-envelope size. |
-| Confirmation workflow for Seerr/Discord | **port-now** | Required for medium/high-risk actions lacking explicit intent. |
-| Checked-in automation capability/budget enforcement | **port-now** | Automations cannot ask interactively; authority must be deterministic and fail closed. |
-| Anvil exact-path correlation | **port-now** | Essential to distinguish real encode waits from unsafe guessed import repairs. |
-| Anvil daemon status and state interpretation | **port-now** | Needed for current deployment diagnostics, while retaining item-level proof rules. |
-| Durable Discord private-thread sessions | **phase-2** | Valuable conversational UX, but can follow safe direct routing and core service gateway. |
-| Discord triage classifier | **phase-2** | Reintroduce once direct/private execution paths and privacy controls are stable. |
-| Kagi search/extract integration | **phase-2** | Useful enrichment but not required for core homelab operations; preserve URL guard when added. |
-| Cross-session `thread_history_search` | **phase-2** | Helpful diagnostic memory but creates privacy and stale-evidence risks; route-gate it carefully. |
-| Filesystem operation tools | **host-specific-drop** | None existed in the legacy agent surface; retain the explicit no-filesystem policy instead. |
-| Go-specific runner/session naming implementation | **host-specific-drop** | Preserve normalization/exclusion behavior, but rewrite it idiomatically in the TS host. |
-| Go duration parser implementation | **host-specific-drop** | Preserve accepted duration syntax and clamp, but use a TS implementation rather than Go code. |
+| Legacy feature                                        | Suggested status       | Rationale                                                                                        |
+| ----------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------ |
+| Trusted run metadata and source-specific prompts      | **port-now**           | Core trust boundary; agent-visible text must not redefine actor, route, authority, or budget.    |
+| Seerr directive parser (`RESOLVE_ISSUE`, `REVISIT_*`) | **port-now**           | Required to preserve host-owned comments, closure, and durable follow-up behavior.               |
+| 10m–48h revisit clamp and revisit-event semantics     | **port-now**           | Prevents pathological schedules and preserves autonomous pending-work verification.              |
+| Automation `STATUS:`/empty-response protocol          | **port-now**           | Existing jobs and notification behavior depend on exact output semantics.                        |
+| `report_progress` first-action publication            | **port-now**           | Public UX contract for issue runs; enforce in orchestration, not only prompt text.               |
+| Service-relative path and credential assertions       | **port-now**           | Cheap, deterministic SSRF/credential-leak defense before any request.                            |
+| Exact per-service mutation allowlists                 | **port-now**           | Principal hard safety boundary; copy patterns and command enums exactly before expanding.        |
+| SABnzbd strict read-only API gate                     | **port-now**           | Deliberate prevention of downloader mutations.                                                   |
+| Host-owned Seerr comments/resolution                  | **port-now**           | Keeps lifecycle actions reviewable and prevents agent bypass.                                    |
+| Discord-direct public read allowlist                  | **port-now**           | Prevents public leakage of personal and operational stack details.                               |
+| Independent mutation reviewer and authority model     | **port-now**           | Working-agent self-claims are insufficient; exact-request review is central to safe mutations.   |
+| Approval token consumption + `proposal_hash` binding  | **port-now**           | Prevents replay and post-approval argument substitution.                                         |
+| Execution and validation observation endpoints        | **port-now**           | Makes mutation completion auditable and blocks success claims without fresh evidence.            |
+| Evidence sanitation/redaction/caps                    | **port-now**           | Limits secret leakage, prompt-injection surface, and review-envelope size.                       |
+| Confirmation workflow for Seerr/Discord               | **port-now**           | Required for medium/high-risk actions lacking explicit intent.                                   |
+| Checked-in automation capability/budget enforcement   | **port-now**           | Automations cannot ask interactively; authority must be deterministic and fail closed.           |
+| Anvil exact-path correlation                          | **port-now**           | Essential to distinguish real encode waits from unsafe guessed import repairs.                   |
+| Anvil daemon status and state interpretation          | **port-now**           | Needed for current deployment diagnostics, while retaining item-level proof rules.               |
+| Durable Discord private-thread sessions               | **phase-2**            | Valuable conversational UX, but can follow safe direct routing and core service gateway.         |
+| Discord triage classifier                             | **phase-2**            | Reintroduce once direct/private execution paths and privacy controls are stable.                 |
+| Kagi search/extract integration                       | **phase-2**            | Useful enrichment but not required for core homelab operations; preserve URL guard when added.   |
+| Cross-session `thread_history_search`                 | **phase-2**            | Helpful diagnostic memory but creates privacy and stale-evidence risks; route-gate it carefully. |
+| Filesystem operation tools                            | **host-specific-drop** | None existed in the legacy agent surface; retain the explicit no-filesystem policy instead.      |
+| Go-specific runner/session naming implementation      | **host-specific-drop** | Preserve normalization/exclusion behavior, but rewrite it idiomatically in the TS host.          |
+| Go duration parser implementation                     | **host-specific-drop** | Preserve accepted duration syntax and clamp, but use a TS implementation rather than Go code.    |

@@ -11,7 +11,7 @@
 
 export function assertServicePath(path: string): void {
   if (!path.startsWith("/")) {
-    throw new Error("path must be service-relative and start with /");
+    throw new Error("path must be service-relative and start with /")
   }
   if (
     path.startsWith("//") ||
@@ -19,29 +19,31 @@ export function assertServicePath(path: string): void {
     /^https?:\/\//i.test(path) ||
     /apikey|api_key|token/i.test(path)
   ) {
-    throw new Error("path must not contain full URLs or credentials");
+    throw new Error("path must not contain full URLs or credentials")
   }
 }
 
 export function assertSabReadAllowed(path: string): void {
-  const parsed = new URL(path, "http://127.0.0.1");
-  const permitted = new Set(["mode", "limit"]);
+  const parsed = new URL(path, "http://127.0.0.1")
+  const permitted = new Set(["mode", "limit"])
   for (const [key] of parsed.searchParams) {
     if (!permitted.has(key.toLowerCase())) {
       throw new Error(
         "SABnzbd raw reads allow only mode and limit query parameters; job control goes through the sabnzbd_* tools",
-      );
+      )
     }
   }
-  const modes = parsed.searchParams.getAll("mode");
+  const modes = parsed.searchParams.getAll("mode")
   if (modes.length !== 1) {
-    throw new Error("SABnzbd raw reads require exactly one mode query parameter");
+    throw new Error(
+      "SABnzbd raw reads require exactly one mode query parameter",
+    )
   }
-  const mode = modes[0]!.toLowerCase();
+  const mode = modes[0]!.toLowerCase()
   if (parsed.pathname !== "/api" || (mode !== "queue" && mode !== "history")) {
     throw new Error(
       "SABnzbd raw reads allow only GET /api?mode=queue and GET /api?mode=history; job control goes through the sabnzbd_* tools",
-    );
+    )
   }
 }
 
@@ -49,6 +51,6 @@ export function assertSeerrLifecycleOwned(path: string): void {
   if (/\/comment\b/i.test(path) || /\/(resolved|open)\b/i.test(path)) {
     throw new Error(
       "Seerr comments and issue status changes are owned by blitzcrank; use your final-response directives instead",
-    );
+    )
   }
 }

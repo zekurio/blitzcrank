@@ -1,16 +1,26 @@
-import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { StringEnum } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
-import type { ServiceConfig } from "../config.js";
-import { jsonRequest } from "../services/http.js";
-import type { SeerrClient } from "../services/seerr.js";
-import type { RunContext } from "./context.js";
-import { makeReadTool, reasonParam, runMutation, textResult } from "./common.js";
-import { assertSabReadAllowed, assertSeerrLifecycleOwned } from "./safety.js";
+import { StringEnum } from "@earendil-works/pi-ai"
+import {
+  defineTool,
+  type ToolDefinition,
+} from "@earendil-works/pi-coding-agent"
+import { Type } from "typebox"
 
-export function buildJellyfinTools(cfg: ServiceConfig, ctx: RunContext): ToolDefinition[] {
+import type { ServiceConfig } from "../config.js"
+import { jsonRequest } from "../services/http.js"
+import type { SeerrClient } from "../services/seerr.js"
+import { makeReadTool, reasonParam, runMutation, textResult } from "./common.js"
+import type { RunContext } from "./context.js"
+import { assertSabReadAllowed, assertSeerrLifecycleOwned } from "./safety.js"
+
+export function buildJellyfinTools(
+  cfg: ServiceConfig,
+  ctx: RunContext,
+): ToolDefinition[] {
   const request = (path: string, method: "GET" | "POST" = "GET") =>
-    jsonRequest(cfg.url, path, { method, headers: { "X-Emby-Token": cfg.apiKey } });
+    jsonRequest(cfg.url, path, {
+      method,
+      headers: { "X-Emby-Token": cfg.apiKey },
+    })
 
   return [
     makeReadTool(
@@ -35,18 +45,31 @@ export function buildJellyfinTools(cfg: ServiceConfig, ctx: RunContext): ToolDef
       async execute(_toolCallId, params) {
         const outcome = await runMutation(ctx, {
           kind: "mutate",
-          evidence: [{ service: "jellyfin", value: params.itemId, hint: "item id" }],
-          perform: () => request(`/Items/${encodeURIComponent(params.itemId)}/Refresh`, "POST"),
-        });
-        return textResult(outcome, { service: "jellyfin", action: "refresh_item", itemId: params.itemId });
+          evidence: [
+            { service: "jellyfin", value: params.itemId, hint: "item id" },
+          ],
+          perform: () =>
+            request(
+              `/Items/${encodeURIComponent(params.itemId)}/Refresh`,
+              "POST",
+            ),
+        })
+        return textResult(outcome, {
+          service: "jellyfin",
+          action: "refresh_item",
+          itemId: params.itemId,
+        })
       },
     }),
-  ];
+  ]
 }
 
-export function buildSeerrTools(cfg: ServiceConfig, ctx: RunContext): ToolDefinition[] {
+export function buildSeerrTools(
+  cfg: ServiceConfig,
+  ctx: RunContext,
+): ToolDefinition[] {
   const request = (path: string) =>
-    jsonRequest(cfg.url, path, { headers: { "X-Api-Key": cfg.apiKey } });
+    jsonRequest(cfg.url, path, { headers: { "X-Api-Key": cfg.apiKey } })
 
   return [
     makeReadTool(
@@ -68,15 +91,22 @@ export function buildSeerrTools(cfg: ServiceConfig, ctx: RunContext): ToolDefini
       parameters: Type.Object({
         reason: reasonParam(),
         mediaType: StringEnum(["movie", "tv"] as const),
-        mediaId: Type.Integer({ minimum: 1, description: "TMDB id of the media" }),
+        mediaId: Type.Integer({
+          minimum: 1,
+          description: "TMDB id of the media",
+        }),
         seasons: Type.Optional(
-          Type.Array(Type.Integer({ minimum: 0 }), { description: "Season numbers for tv requests" }),
+          Type.Array(Type.Integer({ minimum: 0 }), {
+            description: "Season numbers for tv requests",
+          }),
         ),
       }),
       async execute(_toolCallId, params) {
         const outcome = await runMutation(ctx, {
           kind: "mutate",
-          evidence: [{ service: "seerr", value: params.mediaId, hint: "tmdbId" }],
+          evidence: [
+            { service: "seerr", value: params.mediaId, hint: "tmdbId" },
+          ],
           perform: () =>
             jsonRequest(cfg.url, "/api/v1/request", {
               method: "POST",
@@ -88,39 +118,51 @@ export function buildSeerrTools(cfg: ServiceConfig, ctx: RunContext): ToolDefini
               },
             }),
           verify: async (result) => {
-            const id = (result as { id?: number } | null)?.id;
-            if (!id) return { warning: "request response had no id" };
-            const created = await request(`/api/v1/request/${id}`);
-            ctx.recordRead("seerr", `/api/v1/request/${id}`, JSON.stringify(created));
-            return created;
+            const id = (result as { id?: number } | null)?.id
+            if (!id) return { warning: "request response had no id" }
+            const created = await request(`/api/v1/request/${id}`)
+            ctx.recordRead(
+              "seerr",
+              `/api/v1/request/${id}`,
+              JSON.stringify(created),
+            )
+            return created
           },
-        });
-        return textResult(outcome, { service: "seerr", action: "create_request", mediaId: params.mediaId });
+        })
+        return textResult(outcome, {
+          service: "seerr",
+          action: "create_request",
+          mediaId: params.mediaId,
+        })
       },
     }),
-  ];
+  ]
 }
 
-export function buildSabnzbdTools(cfg: ServiceConfig, ctx: RunContext): ToolDefinition[] {
-  const service = "sabnzbd" as const;
+export function buildSabnzbdTools(
+  cfg: ServiceConfig,
+  ctx: RunContext,
+): ToolDefinition[] {
+  const service = "sabnzbd" as const
 
   const sabCall = (params: Record<string, string>) => {
-    const url = new URL(cfg.url + "/api");
-    for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
-    url.searchParams.set("apikey", cfg.apiKey);
-    url.searchParams.set("output", "json");
-    return jsonRequest(url.origin, url.pathname + url.search, {});
-  };
+    const url = new URL(cfg.url + "/api")
+    for (const [key, value] of Object.entries(params))
+      url.searchParams.set(key, value)
+    url.searchParams.set("apikey", cfg.apiKey)
+    url.searchParams.set("output", "json")
+    return jsonRequest(url.origin, url.pathname + url.search, {})
+  }
 
   const verifyList = async (mode: "queue" | "history") => {
-    const list = await sabCall({ mode, limit: "50" });
-    ctx.recordRead(service, `/api?mode=${mode}&limit=50`, JSON.stringify(list));
-    return list;
-  };
+    const list = await sabCall({ mode, limit: "50" })
+    ctx.recordRead(service, `/api?mode=${mode}&limit=50`, JSON.stringify(list))
+    return list
+  }
 
   const nzoEvidence = (nzoId: string) => [
     { service, value: nzoId, hint: "nzo_id" } as const,
-  ];
+  ]
 
   return [
     makeReadTool(
@@ -130,14 +172,15 @@ export function buildSabnzbdTools(cfg: ServiceConfig, ctx: RunContext): ToolDefi
         description:
           "Read SABnzbd state: only /api?mode=queue and /api?mode=history (plus limit=N). Job control goes through the dedicated sabnzbd_* tools.",
         guards: (path) => {
-          if (!path.startsWith("/api")) throw new Error("SABnzbd path must start with /api");
-          assertSabReadAllowed(path);
+          if (!path.startsWith("/api"))
+            throw new Error("SABnzbd path must start with /api")
+          assertSabReadAllowed(path)
         },
         request: (path) => {
-          const url = new URL(cfg.url + path);
-          url.searchParams.set("apikey", cfg.apiKey);
-          url.searchParams.set("output", "json");
-          return jsonRequest(url.origin, url.pathname + url.search, {});
+          const url = new URL(cfg.url + path)
+          url.searchParams.set("apikey", cfg.apiKey)
+          url.searchParams.set("output", "json")
+          return jsonRequest(url.origin, url.pathname + url.search, {})
         },
       },
       ctx,
@@ -149,7 +192,10 @@ export function buildSabnzbdTools(cfg: ServiceConfig, ctx: RunContext): ToolDefi
         "Retry one failed SABnzbd history job (moves it back to the queue). Only after the failure cause is understood/fixed. The nzo_id must come from a SABnzbd read this run.",
       parameters: Type.Object({
         reason: reasonParam(),
-        nzoId: Type.String({ minLength: 1, description: "SABnzbd nzo_id of the failed history job" }),
+        nzoId: Type.String({
+          minLength: 1,
+          description: "SABnzbd nzo_id of the failed history job",
+        }),
       }),
       async execute(_toolCallId, params) {
         const outcome = await runMutation(ctx, {
@@ -157,8 +203,12 @@ export function buildSabnzbdTools(cfg: ServiceConfig, ctx: RunContext): ToolDefi
           evidence: nzoEvidence(params.nzoId),
           perform: () => sabCall({ mode: "retry", value: params.nzoId }),
           verify: () => verifyList("queue"),
-        });
-        return textResult(outcome, { service, action: "retry_job", nzoId: params.nzoId });
+        })
+        return textResult(outcome, {
+          service,
+          action: "retry_job",
+          nzoId: params.nzoId,
+        })
       },
     }),
     defineTool({
@@ -171,7 +221,8 @@ export function buildSabnzbdTools(cfg: ServiceConfig, ctx: RunContext): ToolDefi
         nzoId: Type.String({ minLength: 1 }),
         from: StringEnum(["queue", "history"] as const),
         deleteFiles: Type.Boolean({
-          description: "Also delete downloaded data from disk (counts as a deletion)",
+          description:
+            "Also delete downloaded data from disk (counts as a deletion)",
         }),
       }),
       async execute(_toolCallId, params) {
@@ -186,8 +237,13 @@ export function buildSabnzbdTools(cfg: ServiceConfig, ctx: RunContext): ToolDefi
               del_files: params.deleteFiles ? "1" : "0",
             }),
           verify: () => verifyList(params.from),
-        });
-        return textResult(outcome, { service, action: "delete_job", from: params.from, nzoId: params.nzoId });
+        })
+        return textResult(outcome, {
+          service,
+          action: "delete_job",
+          from: params.from,
+          nzoId: params.nzoId,
+        })
       },
     }),
     defineTool({
@@ -203,10 +259,15 @@ export function buildSabnzbdTools(cfg: ServiceConfig, ctx: RunContext): ToolDefi
         const outcome = await runMutation(ctx, {
           kind: "mutate",
           evidence: nzoEvidence(params.nzoId),
-          perform: () => sabCall({ mode: "queue", name: "pause", value: params.nzoId }),
+          perform: () =>
+            sabCall({ mode: "queue", name: "pause", value: params.nzoId }),
           verify: () => verifyList("queue"),
-        });
-        return textResult(outcome, { service, action: "pause_job", nzoId: params.nzoId });
+        })
+        return textResult(outcome, {
+          service,
+          action: "pause_job",
+          nzoId: params.nzoId,
+        })
       },
     }),
     defineTool({
@@ -222,13 +283,18 @@ export function buildSabnzbdTools(cfg: ServiceConfig, ctx: RunContext): ToolDefi
         const outcome = await runMutation(ctx, {
           kind: "mutate",
           evidence: nzoEvidence(params.nzoId),
-          perform: () => sabCall({ mode: "queue", name: "resume", value: params.nzoId }),
+          perform: () =>
+            sabCall({ mode: "queue", name: "resume", value: params.nzoId }),
           verify: () => verifyList("queue"),
-        });
-        return textResult(outcome, { service, action: "resume_job", nzoId: params.nzoId });
+        })
+        return textResult(outcome, {
+          service,
+          action: "resume_job",
+          nzoId: params.nzoId,
+        })
       },
     }),
-  ];
+  ]
 }
 
 /** Posts one early public progress comment on the issue; enforced single-use. */
@@ -238,7 +304,7 @@ export function buildProgressTool(
   commentHeader: string,
   language: string,
 ): ToolDefinition {
-  let used = false;
+  let used = false
   return defineTool({
     name: "report_progress",
     label: "Report issue progress",
@@ -251,12 +317,13 @@ export function buildProgressTool(
       }),
     }),
     async execute(_toolCallId, params) {
-      if (used) throw new Error("report_progress may only be called once per run");
-      used = true;
-      const message = params.message.trim();
-      if (!message) throw new Error("message must not be empty");
-      await seerr.postComment(issueId, `${commentHeader}\n\n${message}`);
-      return textResult({ reported: true }, { action: "report_progress" });
+      if (used)
+        throw new Error("report_progress may only be called once per run")
+      used = true
+      const message = params.message.trim()
+      if (!message) throw new Error("message must not be empty")
+      await seerr.postComment(issueId, `${commentHeader}\n\n${message}`)
+      return textResult({ reported: true }, { action: "report_progress" })
     },
-  });
+  })
 }

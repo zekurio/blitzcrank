@@ -1,64 +1,64 @@
 export interface ServiceConfig {
-  url: string;
-  apiKey: string;
+  url: string
+  apiKey: string
 }
 
 export interface FirecrawlConfig {
-  apiKey: string;
+  apiKey: string
   /** API base; override for self-hosted Firecrawl. */
-  apiUrl: string;
+  apiUrl: string
 }
 
 export interface AnvilConfig {
-  command: string;
-  socket: string;
+  command: string
+  socket: string
 }
 
 export interface Config {
-  port: number;
+  port: number
   /** Persistent state (session transcripts) lives here. */
-  dataDir: string;
+  dataDir: string
   /** Directory containing automation definition .md files. */
-  automationsDir: string;
+  automationsDir: string
   /** Shared secret checked against the Authorization header of incoming webhooks. */
-  webhookSecret: string | undefined;
+  webhookSecret: string | undefined
   /** Model string for the agent, e.g. "anthropic/claude-sonnet-4-5". */
-  model: string | undefined;
+  model: string | undefined
   /**
    * pi auth.json holding API keys and OAuth credentials (e.g. openai-codex).
    * Must be writable: OAuth tokens auto-refresh and are persisted back.
    * Defaults to pi's own ~/.pi/agent/auth.json when unset.
    */
-  authPath: string | undefined;
+  authPath: string | undefined
   /** pi models.json declaring custom providers. */
-  modelsPath: string | undefined;
+  modelsPath: string | undefined
   /** Enables web_search/web_fetch tools in issue runs when configured. */
-  firecrawl: FirecrawlConfig | undefined;
+  firecrawl: FirecrawlConfig | undefined
   /** Language for public comments (default German, matching the deployment). */
-  language: string;
+  language: string
   /** Seerr user id sent as X-Api-User so bot comments are attributed correctly. */
-  seerrBotUserId: string | undefined;
+  seerrBotUserId: string | undefined
   /** Display name of the bot's Seerr user; its own comment webhooks are ignored. */
-  seerrBotUsername: string | undefined;
-  seerr: ServiceConfig;
-  sonarr: ServiceConfig | undefined;
-  radarr: ServiceConfig | undefined;
-  sabnzbd: ServiceConfig | undefined;
-  jellyfin: ServiceConfig | undefined;
-  anvil: AnvilConfig | undefined;
+  seerrBotUsername: string | undefined
+  seerr: ServiceConfig
+  sonarr: ServiceConfig | undefined
+  radarr: ServiceConfig | undefined
+  sabnzbd: ServiceConfig | undefined
+  jellyfin: ServiceConfig | undefined
+  anvil: AnvilConfig | undefined
 }
 
 function service(prefix: string): ServiceConfig | undefined {
-  const url = process.env[`${prefix}_URL`];
-  const apiKey = process.env[`${prefix}_API_KEY`];
-  if (!url || !apiKey) return undefined;
-  return { url: url.replace(/\/+$/, ""), apiKey };
+  const url = process.env[`${prefix}_URL`]
+  const apiKey = process.env[`${prefix}_API_KEY`]
+  if (!url || !apiKey) return undefined
+  return { url: url.replace(/\/+$/, ""), apiKey }
 }
 
 export function loadConfig(): Config {
-  const seerr = service("SEERR");
+  const seerr = service("SEERR")
   if (!seerr) {
-    throw new Error("SEERR_URL and SEERR_API_KEY are required");
+    throw new Error("SEERR_URL and SEERR_API_KEY are required")
   }
   return {
     port: Number(process.env.BLITZCRANK_PORT ?? 8484),
@@ -71,7 +71,9 @@ export function loadConfig(): Config {
     firecrawl: process.env.FIRECRAWL_API_KEY
       ? {
           apiKey: process.env.FIRECRAWL_API_KEY,
-          apiUrl: (process.env.FIRECRAWL_API_URL ?? "https://api.firecrawl.dev").replace(/\/+$/, ""),
+          apiUrl: (
+            process.env.FIRECRAWL_API_URL ?? "https://api.firecrawl.dev"
+          ).replace(/\/+$/, ""),
         }
       : undefined,
     language: process.env.BLITZCRANK_LANGUAGE ?? "German",
@@ -88,5 +90,5 @@ export function loadConfig(): Config {
           socket: process.env.ANVIL_CONTROL_SOCKET,
         }
       : undefined,
-  };
+  }
 }

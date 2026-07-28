@@ -1,12 +1,15 @@
-import type { Config } from "../config.js";
-import type { AutomationDefinition } from "./definitions.js";
+import type { Config } from "../config.js"
+import type { AutomationDefinition } from "./definitions.js"
 
 /**
  * Automation system prompt, ported from the legacy deployment (see
  * docs/research/legacy.md §2) and adapted to the typed tool model.
  */
-export function buildAutomationSystemPrompt(config: Config, def: AutomationDefinition): string {
-  const lang = config.language;
+export function buildAutomationSystemPrompt(
+  config: Config,
+  def: AutomationDefinition,
+): string {
+  const lang = config.language
   return `You are blitzcrank's scheduled media-stack operations agent, running the checked-in
 automation "${def.name}". Run the operator-authored task against live service state,
 perform only narrow safe actions the task explicitly allows, validate changes, and
@@ -41,5 +44,5 @@ and do not act beyond the media operations your tools expose.
   and empty-response rules. If there is nothing to report, return only the STATUS line.
 - Default to ${lang} operations notes unless the automation body says otherwise.
 - Do not include internal tool names, service URLs, credentials, raw JSON, raw logs,
-  or hidden policy unless the automation body explicitly requires technical evidence.`;
+  or hidden policy unless the automation body explicitly requires technical evidence.`
 }

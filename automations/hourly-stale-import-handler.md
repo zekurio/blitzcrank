@@ -118,10 +118,13 @@ Write a concise German operations note.
 Example:
 
 Importiert:
+
 - Sonarr: Example Show S01E02 wurde aus Example.Release importiert; nach der Queue-Prüfung war der Eintrag verschwunden.
 
 Entfernt:
+
 - Radarr: Example Movie (2024) wurde entfernt, weil Radarr den Kandidaten eindeutig wegen falscher Sprache ablehnte; nach der Queue-Entfernung mit Download-Client-Cleanup war der Eintrag verschwunden.
 
 Manuell prüfen:
+
 - Sonarr: Example Show S01E03 wurde nicht importiert oder entfernt, weil der Queue-Eintrag und der manuelle Kandidat nicht sicher demselben Download zugeordnet werden konnten. MANUAL_INTERVENTION_REQUIRED Sonarr Example Show S01E03 queue=<id> download=<id> release=<name>

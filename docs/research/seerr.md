@@ -78,15 +78,15 @@ The source’s serialized fallback setting still contains an older payload lacki
 
 ### All verified template variables
 
-| Group | Variables |
-|---|---|
-| General | `{{notification_type}}`, `{{event}}`, `{{subject}}`, `{{message}}`, `{{image}}` |
-| Special keys | `{{media}}`, `{{request}}`, `{{issue}}`, `{{comment}}`, `{{extra}}` |
-| Notify user | `{{notifyuser_username}}`, `{{notifyuser_email}}`, `{{notifyuser_avatar}}`, `{{notifyuser_settings_discordIds}}`, `{{notifyuser_settings_telegramChatId}}` |
-| Media | `{{media_type}}`, `{{media_imdbid}}`, `{{media_tmdbid}}`, `{{media_tvdbid}}`, `{{media_jellyfinMediaId}}`, `{{media_status}}`, `{{media_status4k}}`, `{{media_plexRatingKey}}`, `{{media_plexRatingKey4k}}` |
-| Request | `{{request_id}}`, `{{requestedBy_jellyfinUserId}}`, `{{requestedBy_username}}`, `{{requestedBy_email}}`, `{{requestedBy_avatar}}`, `{{requestedBy_settings_discordIds}}`, `{{requestedBy_settings_telegramChatId}}` |
-| Issue | `{{issue_id}}`, `{{issue_type}}`, `{{issue_status}}`, `{{reportedBy_username}}`, `{{reportedBy_email}}`, `{{reportedBy_avatar}}`, `{{reportedBy_settings_discordIds}}`, `{{reportedBy_settings_telegramChatId}}` |
-| Comment | `{{comment_message}}`, `{{commentedBy_username}}`, `{{commentedBy_email}}`, `{{commentedBy_avatar}}`, `{{commentedBy_settings_discordIds}}`, `{{commentedBy_settings_telegramChatId}}` |
+| Group        | Variables                                                                                                                                                                                                           |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| General      | `{{notification_type}}`, `{{event}}`, `{{subject}}`, `{{message}}`, `{{image}}`                                                                                                                                     |
+| Special keys | `{{media}}`, `{{request}}`, `{{issue}}`, `{{comment}}`, `{{extra}}`                                                                                                                                                 |
+| Notify user  | `{{notifyuser_username}}`, `{{notifyuser_email}}`, `{{notifyuser_avatar}}`, `{{notifyuser_settings_discordIds}}`, `{{notifyuser_settings_telegramChatId}}`                                                          |
+| Media        | `{{media_type}}`, `{{media_imdbid}}`, `{{media_tmdbid}}`, `{{media_tvdbid}}`, `{{media_jellyfinMediaId}}`, `{{media_status}}`, `{{media_status4k}}`, `{{media_plexRatingKey}}`, `{{media_plexRatingKey4k}}`         |
+| Request      | `{{request_id}}`, `{{requestedBy_jellyfinUserId}}`, `{{requestedBy_username}}`, `{{requestedBy_email}}`, `{{requestedBy_avatar}}`, `{{requestedBy_settings_discordIds}}`, `{{requestedBy_settings_telegramChatId}}` |
+| Issue        | `{{issue_id}}`, `{{issue_type}}`, `{{issue_status}}`, `{{reportedBy_username}}`, `{{reportedBy_email}}`, `{{reportedBy_avatar}}`, `{{reportedBy_settings_discordIds}}`, `{{reportedBy_settings_telegramChatId}}`    |
+| Comment      | `{{comment_message}}`, `{{commentedBy_username}}`, `{{commentedBy_email}}`, `{{commentedBy_avatar}}`, `{{commentedBy_settings_discordIds}}`, `{{commentedBy_settings_telegramChatId}}`                              |
 
 Verified rendered values:
 
@@ -106,54 +106,51 @@ The following describes the output of the current default template—not the ful
 ```ts
 type IssueWebhook = {
   notification_type:
-    | "ISSUE_CREATED"
-    | "ISSUE_COMMENT"
-    | "ISSUE_RESOLVED"
-    | "ISSUE_REOPENED";
-  event: string;
-  subject: string;             // title plus year when available
-  message: string;             // first/original issue comment, not necessarily the new comment
-  image: string;               // TMDB poster URL
+    "ISSUE_CREATED" | "ISSUE_COMMENT" | "ISSUE_RESOLVED" | "ISSUE_REOPENED"
+  event: string
+  subject: string // title plus year when available
+  message: string // first/original issue comment, not necessarily the new comment
+  image: string // TMDB poster URL
   media: {
-    media_type: "movie" | "tv";
-    imdbId: string;            // empty when unavailable
-    tmdbId: string;            // numeric source ID rendered as a string
-    tvdbId: string;            // numeric source ID rendered as a string; may be empty
-    jellyfinMediaId: string;   // may be empty
-    status: string;            // availability enum name
-    status4k: string;          // availability enum name
-  };
-  request: null;               // issue events do not supply a request entity
+    media_type: "movie" | "tv"
+    imdbId: string // empty when unavailable
+    tmdbId: string // numeric source ID rendered as a string
+    tvdbId: string // numeric source ID rendered as a string; may be empty
+    jellyfinMediaId: string // may be empty
+    status: string // availability enum name
+    status4k: string // availability enum name
+  }
+  request: null // issue events do not supply a request entity
   issue: {
-    issue_id: string;          // numeric source ID rendered as a string
-    issue_type: "VIDEO" | "AUDIO" | "SUBTITLES" | "OTHER";
-    issue_status: "OPEN" | "RESOLVED";
-    reportedBy_email: string;
-    reportedBy_username: string; // source is User.displayName, despite field name
-    reportedBy_avatar: string;
-    reportedBy_settings_discordIds: string;
-    reportedBy_settings_telegramChatId: string;
-  };
+    issue_id: string // numeric source ID rendered as a string
+    issue_type: "VIDEO" | "AUDIO" | "SUBTITLES" | "OTHER"
+    issue_status: "OPEN" | "RESOLVED"
+    reportedBy_email: string
+    reportedBy_username: string // source is User.displayName, despite field name
+    reportedBy_avatar: string
+    reportedBy_settings_discordIds: string
+    reportedBy_settings_telegramChatId: string
+  }
   comment: null | {
-    comment_message: string;
-    commentedBy_email: string;
-    commentedBy_username: string; // source is User.displayName
-    commentedBy_avatar: string;
-    commentedBy_settings_discordIds: string;
-    commentedBy_settings_telegramChatId: string;
-  };
-  extra: Array<{ name: string; value: string }>;
-};
+    comment_message: string
+    commentedBy_email: string
+    commentedBy_username: string // source is User.displayName
+    commentedBy_avatar: string
+    commentedBy_settings_discordIds: string
+    commentedBy_settings_telegramChatId: string
+  }
+  extra: Array<{ name: string; value: string }>
+}
 ```
 
 ### Differences by event
 
-| Event | `issue.issue_status` | `comment` | `extra` | `message` |
-|---|---|---|---|---|
-| `ISSUE_CREATED` | `OPEN` | `null` | For TV, affected season/episode entries when set | Original/first issue comment |
-| `ISSUE_COMMENT` | Current issue status | New comment object | `[]` (the comment subscriber does not supply extras) | Original/first issue comment; use `comment.comment_message` for the new comment |
-| `ISSUE_RESOLVED` | `RESOLVED` | `null` | Affected season/episode entries when set | Original/first issue comment |
-| `ISSUE_REOPENED` | `OPEN` | `null` | Affected season/episode entries when set | Original/first issue comment |
+| Event            | `issue.issue_status` | `comment`          | `extra`                                              | `message`                                                                       |
+| ---------------- | -------------------- | ------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `ISSUE_CREATED`  | `OPEN`               | `null`             | For TV, affected season/episode entries when set     | Original/first issue comment                                                    |
+| `ISSUE_COMMENT`  | Current issue status | New comment object | `[]` (the comment subscriber does not supply extras) | Original/first issue comment; use `comment.comment_message` for the new comment |
+| `ISSUE_RESOLVED` | `RESOLVED`           | `null`             | Affected season/episode entries when set             | Original/first issue comment                                                    |
+| `ISSUE_REOPENED` | `OPEN`               | `null`             | Affected season/episode entries when set             | Original/first issue comment                                                    |
 
 For TV issues, the exact extra entries are:
 
@@ -258,7 +255,12 @@ X-Api-Key: ...
   "comments": [
     {
       "id": 901,
-      "user": { "id": 7, "email": "alex@example.com", "createdAt": "...", "updatedAt": "..." },
+      "user": {
+        "id": 7,
+        "email": "alex@example.com",
+        "createdAt": "...",
+        "updatedAt": "..."
+      },
       "message": "Episode freezes at 18:42 and then loses audio."
     }
   ]
@@ -301,7 +303,12 @@ Minimal `200` response:
       "id": 417,
       "issueType": 1,
       "media": { "id": 92, "tmdbId": 95396, "tvdbId": 371980, "status": 5 },
-      "createdBy": { "id": 7, "email": "alex@example.com", "createdAt": "...", "updatedAt": "..." },
+      "createdBy": {
+        "id": 7,
+        "email": "alex@example.com",
+        "createdAt": "...",
+        "updatedAt": "..."
+      },
       "comments": []
     }
   ]

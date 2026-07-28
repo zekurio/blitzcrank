@@ -1,5 +1,5 @@
-import type { ServiceConfig } from "../config.js";
-import { jsonRequest } from "./http.js";
+import type { ServiceConfig } from "../config.js"
+import { jsonRequest } from "./http.js"
 
 /** Host-owned Seerr issue lifecycle: fetching, commenting, status changes. */
 export class SeerrClient {
@@ -12,13 +12,13 @@ export class SeerrClient {
     return {
       "X-Api-Key": this.cfg.apiKey,
       ...(this.botUserId ? { "X-Api-User": this.botUserId } : {}),
-    };
+    }
   }
 
   getIssue(issueId: string | number): Promise<unknown> {
     return jsonRequest(this.cfg.url, `/api/v1/issue/${issueId}`, {
       headers: this.headers(),
-    });
+    })
   }
 
   postComment(issueId: string | number, message: string): Promise<unknown> {
@@ -26,13 +26,16 @@ export class SeerrClient {
       method: "POST",
       headers: this.headers(),
       body: { message },
-    });
+    })
   }
 
-  setStatus(issueId: string | number, status: "open" | "resolved"): Promise<unknown> {
+  setStatus(
+    issueId: string | number,
+    status: "open" | "resolved",
+  ): Promise<unknown> {
     return jsonRequest(this.cfg.url, `/api/v1/issue/${issueId}/${status}`, {
       method: "POST",
       headers: this.headers(),
-    });
+    })
   }
 }
