@@ -21,7 +21,7 @@ Jellyseerr issue ──webhook──▶ blitzcrank host ──▶ pi agent sessi
 
 ## Safety model
 
-Adapted from the legacy Go deployment (see `docs/research/legacy-pi.md`), tightened
+Adapted from the legacy Go deployment (see `docs/research/legacy.md`), tightened
 because enforcement now lives in-process:
 
 - **Host-owned lifecycle** — the agent never comments or resolves directly; it returns a
@@ -49,9 +49,8 @@ because enforcement now lives in-process:
 - `src/tools/` — run context (evidence/budgets), GET-only read tools, typed mutation tools, anvil
 - `src/services/` — HTTP helper + host-side Seerr client (comments, status)
 - `skills/` — agent skills for Sonarr, Radarr, SABnzbd, Jellyfin, Seerr, Anvil, filesystem
-  (merged from the battle-tested legacy deployment in `.pi/`)
+  (merged from the battle-tested legacy deployment)
 - `docs/research/` — pi-sdk guide, Seerr/service API references, legacy design reference
-- `.pi/` — artifacts from the previous production deployment (read-only reference)
 
 ## Dev environment
 
@@ -89,7 +88,7 @@ Done: scaffolding, webhook intake, host-owned issue lifecycle with directives an
 revisits, tightened typed tool layer with evidence gates/budgets/verification, merged
 production skills.
 
-Ideas for later (see the porting checklist in `docs/research/legacy-pi.md`):
+Ideas for later (see the porting checklist in `docs/research/legacy.md`):
 
 - optional second-model mutation review for high-risk ops (legacy broker, in-process)
 - ManualImport support (was allowlisted in the legacy deployment)

@@ -3,7 +3,7 @@ import type { SeerrWebhookPayload } from "../webhook/types.js";
 
 /**
  * System prompt adapted from the battle-tested legacy deployment
- * (.pi/system-prompts/seerr-issue.md), updated for the tightened tool model:
+ * (see docs/research/legacy.md), updated for the tightened tool model:
  * raw *_request tools are GET-only and every mutation is a dedicated typed
  * tool with in-process evidence gates, budgets, and built-in verification —
  * so the legacy safety_level/review-broker ceremony is gone.

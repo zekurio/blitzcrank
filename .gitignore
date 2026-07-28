@@ -10,6 +10,9 @@ dist/
 # direnv
 .direnv/
 
+# legacy artifacts (distilled into docs/research/legacy.md; keep out of git)
+.pi/
+
 # misc
 tmp/
 *.log
