@@ -1,0 +1,16 @@
+# deps / build
+node_modules/
+dist/
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# direnv
+.direnv/
+
+# misc
+tmp/
+*.log
+.DS_Store

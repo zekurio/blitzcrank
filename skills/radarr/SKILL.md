@@ -1,0 +1,103 @@
+---
+name: radarr
+description: Diagnose and safely remediate Radarr-managed movies, releases, queues, imports, files, and quality upgrades. Load for Seerr movie issues involving missing, corrupt, wrong, stalled, or repeatedly replaced media.
+---
+
+# Radarr
+
+Use the read-only `radarr_request` with relative `/api/v3/...` paths; it accepts only `purpose` and `path` and performs GETs. All state changes use the dedicated typed Radarr tools below. Each mutation requires a `reason`, and every target ID must first appear in a Radarr read during the current run. The tool layer enforces a maximum of 5 mutations and 2 deletions per run.
+
+## Terminology
+
+- **Movie**: Radarr record with internal `id`, title, year, path, monitoring, minimum availability, and profile.
+- **tmdbId**: Primary external movie identity from Seerr; never substitute it for Radarr's internal ID.
+- **Movie file**: Imported file with path, size, parsed quality, release metadata, and often `mediaInfo`.
+- **Quality profile/custom formats**: Acceptance, scoring, upgrade, language, edition, and cutoff rules.
+- **Queue/history/blocklist**: Current tracked downloads, past events, and releases excluded from selection.
+- **Download ID**: Correlates Radarr to SABnzbd; it is distinct from movie, file, and queue IDs.
+- **Command**: Asynchronous search or refresh; completion alone does not prove import.
+
+## How it fits the stack
+
+1. Seerr supplies the movie `tmdbId` and report context.
+2. Radarr selects a release and sends it to SABnzbd.
+3. SABnzbd downloads and post-processes; Anvil may encode before import.
+4. Radarr imports into its managed movie path, and Jellyfin scans and serves it.
+5. Diagnose acquisition, downloader, Anvil, import, metadata, and playback boundaries separately.
+
+## Common reads
+
+- TMDB lookup: `GET /api/v3/movie?tmdbId={tmdbId}`
+- Title/TMDB lookup: `GET /api/v3/movie/lookup?term={query}`
+- Movie: `GET /api/v3/movie/{movieId}`
+- Calendar: `GET /api/v3/calendar?start={urlEncodedISODate}&end={urlEncodedISODate}`
+- Movie file: `GET /api/v3/moviefile/{movieFileId}`
+- History: `GET /api/v3/history?movieId={movieId}&page=1&pageSize=20&sortKey=date&sortDirection=descending`
+- Queue: `GET /api/v3/queue?page=1&pageSize=50&includeUnknownMovieItems=true`
+- Blocklist: `GET /api/v3/blocklist?page=1&pageSize=50&movieId={movieId}`
+- Profiles: `GET /api/v3/qualityprofile`
+- Manual import: `GET /api/v3/manualimport?folder={urlEncodedFolder}&downloadId={urlEncodedDownloadId}`
+- System: `GET /api/v3/system/status`
+- Anvil: `anvil_status` for health and `anvil_job_lookup` for exact correlation when configured.
+
+## Diagnostic workflow
+
+1. Fetch the live Seerr issue and map `tmdbId` to Radarr. TMDB identity overrides IMDb or other enrichment; do not construct unverified links.
+2. Record year, path, monitoring, minimum availability, profile, internal ID, and file state.
+3. Inspect file release title, quality, size, custom formats, edition/language data, and `mediaInfo`.
+4. Inspect queue, reverse-chronological history, blocklist, and profiles. Correlate download IDs with read-only `sabnzbd_request`.
+5. For release dates, prefer Radarr movie/calendar data and name the date type: cinema (`inCinemas`), digital, or physical; state uncertainty.
+6. For audio, subtitle, codec, or playback reports, inspect actual streams with `jellyfin_request` first, then use Radarr evidence to explain selection/import.
+7. Exhaust local queue/history/blocklist/file/profile and narrow search evidence before external availability reasoning.
+8. Treat completion as pending Anvil only when `anvil_job_lookup` exactly matches an absolute Radarr `outputPath`, or exact SAB `storage` linked by `downloadId`/`nzo_id`, to active current jobs and Radarr has file-not-ready evidence. Health alone is never item evidence.
+9. Apply the smallest targeted action. Check the mutation result's `verification` field, use follow-up reads when needed to confirm queue/blocklist/movie/file state, and verify Jellyfin afterward.
+
+## Allowed typed mutations
+
+Every call below requires a `reason`. Fetch the target IDs with `radarr_request` first, and inspect the returned `verification` field.
+
+- Search one movie: call `radarr_search` with the verified `movieId`.
+- Refresh one movie: call `radarr_refresh_movie` with the verified `movieId`.
+- Retry a known queue item: call `radarr_grab_queue_item` with the verified `queueId`.
+- Remove a verified bad queue item: call `radarr_delete_queue_item` with the verified `queueId` and explicit `blocklist` and `removeFromClient` booleans. This consumes the deletion budget.
+- Remove only a clearly matching blocklist entry: call `radarr_remove_from_blocklist` with the verified `blocklistId`.
+
+No manual-import or force-import tool is exposed. Do not remove, blocklist, retry, search, or refresh an exact active Anvil wait. Movie-file deletion is not exposed or authorized; report replacement needs instead.
+
+## Playbooks
+
+### Missing movie or missing after grab
+
+Check monitoring, minimum availability, file record, queue, history, SAB state, and exact Anvil correlation. Do not duplicate a progressing job. For sound completed payloads, diagnose import access/category/naming first. Search once only when missing, after a failed release is cleared, or when explicitly asked for replacement/fix.
+
+### Corrupt, unplayable, wrong movie, cut, or language
+
+Verify actual content and Jellyfin streams, including multi-version selection. Identify the originating release and profile/custom-format cause. Do not delete the movie file; report the verified replacement need and only use the exposed typed queue/blocklist/search actions when safe. Verify edition, audio, and playback after replacement.
+
+### Stuck queue or failed import
+
+Read the Radarr warning and correlate SAB by download ID. Allow genuine download, verification, repair, unpack, and exact Anvil work. Use service evidence for path mapping, permissions, space, locks, category, and recognized-video failures. Correct environmental causes before retrying; re-search only if the payload is bad.
+
+### Upgrade loop
+
+Inspect repeated grabs/imports/deletions, parsed quality, custom-format score, cutoff, language, edition, and naming. Correct the profile or parsing cause, then run one search and verify the final file.
+
+### File exists but Radarr says missing
+
+Confirm path/layout evidence available through APIs, runtime visibility, and naming. Refresh the movie and inspect import/rejection results. Do not create a duplicate before evaluating the existing file.
+
+## Verification and communication
+
+- A grab is not a download; SAB completion is not import; a Radarr file record is not Jellyfin playback proof.
+- Call `report_progress` exactly once as the first action, with one short public, user-facing progress sentence; do not include internal tool names, IDs, URLs, or promises.
+- Do not call Seerr comment or resolve endpoints. Final output must include `RESOLVE_ISSUE: yes|no`; unresolved work may include `REVISIT_IN` and `REVISIT_REASON`.
+- Resolve only after physical/file-state evidence available through services and the original Jellyfin symptom are verified.
+
+## Pitfalls
+
+- Keep TMDB, movie, movie-file, queue, and SAB IDs distinct.
+- Do not delete directly from disk or repeatedly trigger searches.
+- Respect monitoring and minimum availability.
+- Check Jellyfin multi-version selection and metadata before replacing valid media.
+- Do not infer Anvil work from a guessed path, title match, or daemon health.
+- Never resolve while only a queue or encoding job exists.
