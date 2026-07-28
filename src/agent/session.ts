@@ -1,3 +1,4 @@
+import { mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
@@ -46,6 +47,8 @@ export interface AgentTurnOptions {
  */
 export async function runAgentTurn(opts: AgentTurnOptions): Promise<string> {
   const cwd = path.join(os.tmpdir(), "blitzcrank-work");
+  await mkdir(cwd, { recursive: true });
+  if (opts.sessionDir) await mkdir(opts.sessionDir, { recursive: true });
 
   const loader = new DefaultResourceLoader({
     cwd,
