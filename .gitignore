@@ -21,3 +21,6 @@ data/
 
 # nix build output
 result
+
+# exported pi session transcripts
+pi-session-*.html
