@@ -1,6 +1,6 @@
 import { serve } from "@hono/node-server";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { IssueRunner, type IssueEvent } from "./agent/runner.js";
+import { eventMediaScope, IssueRunner, type IssueEvent } from "./agent/runner.js";
 import { DEFAULT_MODEL } from "./agent/session.js";
 import { loadAutomations, type AutomationDefinition } from "./automations/definitions.js";
 import { AutomationRunner } from "./automations/runner.js";
@@ -28,8 +28,9 @@ async function main(): Promise<void> {
       if (directives.revisitInMs !== undefined && directives.revisitReason) {
         const reason = directives.revisitReason;
         console.log(`[revisit] issue=${issueId} in ${Math.round(directives.revisitInMs / 60000)}m: ${reason}`);
+        const mediaScope = eventMediaScope(event);
         revisits.schedule(issueId, directives.revisitInMs, () =>
-          enqueueIssue({ kind: "revisit", issueId, reason }),
+          enqueueIssue({ kind: "revisit", issueId, reason, mediaScope }),
         );
       }
     });

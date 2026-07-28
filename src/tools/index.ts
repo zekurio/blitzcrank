@@ -43,6 +43,8 @@ export function isReadTool(name: string): boolean {
   );
 }
 
+export type MediaScope = "movie" | "tv" | undefined;
+
 export interface IssueToolDeps {
   config: Config;
   ctx: RunContext;
@@ -50,12 +52,24 @@ export interface IssueToolDeps {
   issueId: string | number;
   commentHeader: string;
   sessionFileRef: SessionFileRef;
+  /** Known media type of the issue; prunes the irrelevant Arr's tools. */
+  mediaScope: MediaScope;
 }
 
-/** Issue runs additionally get the single-use public progress comment tool. */
+/**
+ * Issue runs additionally get the single-use public progress comment tool.
+ * When the webhook names the media type, the other Arr's tools are omitted
+ * entirely — a movie issue never needs Sonarr and vice versa — keeping the
+ * tool surface small for the model.
+ */
 export function buildIssueTools(deps: IssueToolDeps): ToolDefinition[] {
+  const droppedPrefix =
+    deps.mediaScope === "movie" ? "sonarr_" : deps.mediaScope === "tv" ? "radarr_" : undefined;
+  const tools = buildServiceTools(deps.config, deps.ctx, deps.sessionFileRef).filter(
+    (tool) => !droppedPrefix || !tool.name.startsWith(droppedPrefix),
+  );
   return [
     buildProgressTool(deps.seerr, deps.issueId, deps.commentHeader, deps.config.language),
-    ...buildServiceTools(deps.config, deps.ctx, deps.sessionFileRef),
+    ...tools,
   ];
 }
