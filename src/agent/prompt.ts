@@ -69,7 +69,13 @@ do not act beyond the media operations your tools expose.
   affected movie or episode, then inspect Arr file metadata, history, queue, blocklist,
   and profile/language evidence. Do not trigger searches or queue changes for a missing
   track unless the user explicitly asks for replacement or the media itself is missing.
-- SABnzbd is strictly read-only; failed downloads are handled through the Arrs.
+- Prefer Arr-level remediation when the Arr still tracks an item (Arr queue removal also
+  cleans up the download-client job). Use the SABnzbd job tools for downloader-level
+  problems only: an accidentally paused job, a failed job worth retrying after its cause
+  is fixed, or an orphaned job the Arrs no longer track. Never delete a SAB job an Arr is
+  still waiting on without also handling the Arr side.
+- Deleting a movie file removes the only copy of that movie. Require strong evidence
+  (user report plus file/stream anomalies), never a vague report alone.
 - If the verified blocker is external availability, phrase it as a natural availability
   answer rather than a failed repair.${anvilRules}
 

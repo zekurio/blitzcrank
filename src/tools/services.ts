@@ -106,13 +106,33 @@ export function buildSeerrTools(
 }
 
 export function buildSabnzbdTools(cfg: ServiceConfig, ctx: RunContext): ToolDefinition[] {
+  const service = "sabnzbd" as const;
+
+  const sabCall = (params: Record<string, string>) => {
+    const url = new URL(cfg.url + "/api");
+    for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
+    url.searchParams.set("apikey", cfg.apiKey);
+    url.searchParams.set("output", "json");
+    return jsonRequest(url.origin, url.pathname + url.search, {});
+  };
+
+  const verifyList = async (mode: "queue" | "history") => {
+    const list = await sabCall({ mode, limit: "50" });
+    ctx.recordRead(service, `/api?mode=${mode}&limit=50`, JSON.stringify(list));
+    return list;
+  };
+
+  const nzoEvidence = (nzoId: string) => [
+    { service, value: nzoId, hint: "nzo_id" } as const,
+  ];
+
   return [
     makeReadTool(
       {
-        service: "sabnzbd",
+        service,
         label: "SABnzbd read",
         description:
-          "Read SABnzbd state. Strictly read-only by policy: only /api?mode=queue and /api?mode=history (plus limit=N). Failed downloads are handled through the Arrs, never directly in SAB.",
+          "Read SABnzbd state: only /api?mode=queue and /api?mode=history (plus limit=N). Job control goes through the dedicated sabnzbd_* tools.",
         guards: (path) => {
           if (!path.startsWith("/api")) throw new Error("SABnzbd path must start with /api");
           assertSabReadAllowed(path);
@@ -126,6 +146,92 @@ export function buildSabnzbdTools(cfg: ServiceConfig, ctx: RunContext): ToolDefi
       },
       ctx,
     ),
+    defineTool({
+      name: "sabnzbd_retry_job",
+      label: "SABnzbd: retry failed job",
+      description:
+        "Retry one failed SABnzbd history job (moves it back to the queue). Only after the failure cause is understood/fixed. The nzo_id must come from a SABnzbd read this run.",
+      parameters: Type.Object({
+        reason: reasonParam(),
+        nzoId: Type.String({ minLength: 1, description: "SABnzbd nzo_id of the failed history job" }),
+      }),
+      async execute(_toolCallId, params) {
+        const outcome = await runMutation(ctx, {
+          kind: "mutate",
+          evidence: nzoEvidence(params.nzoId),
+          perform: () => sabCall({ mode: "retry", value: params.nzoId }),
+          verify: () => verifyList("queue"),
+        });
+        return textResult(outcome, { service, action: "retry_job", nzoId: params.nzoId });
+      },
+    }),
+    defineTool({
+      name: "sabnzbd_delete_job",
+      label: "SABnzbd: delete job",
+      description:
+        "Remove one job from the SABnzbd queue or history. deleteFiles=true also deletes downloaded data (deletion budget applies). Prefer Arr-level queue removal when the Arr still tracks the item; never orphan an Arr that is waiting on this job. The nzo_id must come from a SABnzbd read this run.",
+      parameters: Type.Object({
+        reason: reasonParam(),
+        nzoId: Type.String({ minLength: 1 }),
+        from: StringEnum(["queue", "history"] as const),
+        deleteFiles: Type.Boolean({
+          description: "Also delete downloaded data from disk (counts as a deletion)",
+        }),
+      }),
+      async execute(_toolCallId, params) {
+        const outcome = await runMutation(ctx, {
+          kind: params.deleteFiles ? "delete" : "mutate",
+          evidence: nzoEvidence(params.nzoId),
+          perform: () =>
+            sabCall({
+              mode: params.from,
+              name: "delete",
+              value: params.nzoId,
+              del_files: params.deleteFiles ? "1" : "0",
+            }),
+          verify: () => verifyList(params.from),
+        });
+        return textResult(outcome, { service, action: "delete_job", from: params.from, nzoId: params.nzoId });
+      },
+    }),
+    defineTool({
+      name: "sabnzbd_pause_job",
+      label: "SABnzbd: pause job",
+      description:
+        "Pause one SABnzbd queue job. The nzo_id must come from a SABnzbd read this run.",
+      parameters: Type.Object({
+        reason: reasonParam(),
+        nzoId: Type.String({ minLength: 1 }),
+      }),
+      async execute(_toolCallId, params) {
+        const outcome = await runMutation(ctx, {
+          kind: "mutate",
+          evidence: nzoEvidence(params.nzoId),
+          perform: () => sabCall({ mode: "queue", name: "pause", value: params.nzoId }),
+          verify: () => verifyList("queue"),
+        });
+        return textResult(outcome, { service, action: "pause_job", nzoId: params.nzoId });
+      },
+    }),
+    defineTool({
+      name: "sabnzbd_resume_job",
+      label: "SABnzbd: resume job",
+      description:
+        "Resume one paused SABnzbd queue job. The nzo_id must come from a SABnzbd read this run.",
+      parameters: Type.Object({
+        reason: reasonParam(),
+        nzoId: Type.String({ minLength: 1 }),
+      }),
+      async execute(_toolCallId, params) {
+        const outcome = await runMutation(ctx, {
+          kind: "mutate",
+          evidence: nzoEvidence(params.nzoId),
+          perform: () => sabCall({ mode: "queue", name: "resume", value: params.nzoId }),
+          verify: () => verifyList("queue"),
+        });
+        return textResult(outcome, { service, action: "resume_job", nzoId: params.nzoId });
+      },
+    }),
   ];
 }
 

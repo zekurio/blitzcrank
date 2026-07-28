@@ -49,8 +49,8 @@ Safety invariants (do not weaken without explicit operator sign-off):
 - Mutations go through `runMutation` (`src/tools/common.ts`): evidence gates
   (target IDs must appear in a prior read this run, `src/tools/context.ts`),
   per-run budgets, built-in verification.
-- SABnzbd is read-only (`queue`/`history` only). Radarr movie-file deletion is
-  not authorized. Both are deliberate legacy policy, not omissions.
+- SABnzbd raw reads are limited to `queue`/`history`; SAB job control and all
+  file deletions exist only as typed tools with evidence gates and budgets.
 - The agent cannot post Seerr comments or change issue status; the host does,
   driven by the parsed `RESOLVE_ISSUE`/`REVISIT_IN`/`REVISIT_REASON` directive
   block. Malformed directives ⇒ nothing is posted.

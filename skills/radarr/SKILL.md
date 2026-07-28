@@ -31,7 +31,7 @@ Use the read-only `radarr_request` with relative `/api/v3/...` paths; it accepts
 - Title/TMDB lookup: `GET /api/v3/movie/lookup?term={query}`
 - Movie: `GET /api/v3/movie/{movieId}`
 - Calendar: `GET /api/v3/calendar?start={urlEncodedISODate}&end={urlEncodedISODate}`
-- Movie file: `GET /api/v3/moviefile/{movieFileId}`
+- Movie file: `GET /api/v3/moviefile/{movieFileId}` or `GET /api/v3/moviefile?movieId={movieId}`
 - History: `GET /api/v3/history?movieId={movieId}&page=1&pageSize=20&sortKey=date&sortDirection=descending`
 - Queue: `GET /api/v3/queue?page=1&pageSize=50&includeUnknownMovieItems=true`
 - Blocklist: `GET /api/v3/blocklist?page=1&pageSize=50&movieId={movieId}`
@@ -61,8 +61,9 @@ Every call below requires a `reason`. Fetch the target IDs with `radarr_request`
 - Retry a known queue item: call `radarr_grab_queue_item` with the verified `queueId`.
 - Remove a verified bad queue item: call `radarr_delete_queue_item` with the verified `queueId` and explicit `blocklist` and `removeFromClient` booleans. This consumes the deletion budget.
 - Remove only a clearly matching blocklist entry: call `radarr_remove_from_blocklist` with the verified `blocklistId`.
+- Delete one verified corrupt or otherwise unusable movie file: call `radarr_delete_movie_file` with the verified `movieFileId`. This consumes the deletion budget and removes the only copy of the movie from disk. The `movieFileId` must come from a Radarr read this run, such as `GET /api/v3/moviefile?movieId={movieId}`; the tool re-reads the movie file and verification must confirm HTTP 404.
 
-No manual-import or force-import tool is exposed. Do not remove, blocklist, retry, search, or refresh an exact active Anvil wait. Movie-file deletion is not exposed or authorized; report replacement needs instead.
+No manual-import or force-import tool is exposed. Do not remove, blocklist, retry, search, refresh, or delete a movie file during an exact active Anvil wait.
 
 ## Playbooks
 
@@ -72,7 +73,7 @@ Check monitoring, minimum availability, file record, queue, history, SAB state, 
 
 ### Corrupt, unplayable, wrong movie, cut, or language
 
-Verify actual content and Jellyfin streams, including multi-version selection. Identify the originating release and profile/custom-format cause. Do not delete the movie file; report the verified replacement need and only use the exposed typed queue/blocklist/search actions when safe. Verify edition, audio, and playback after replacement.
+Verify the report with strong evidence, such as the user report plus Jellyfin stream or Radarr `mediaInfo` anomalies; never delete on a vague report. Resolve the `tmdbId` with `GET /api/v3/movie?tmdbId={tmdbId}`, fetch the file with `GET /api/v3/moviefile?movieId={movieId}`, and confirm that exact file is the problematic item, including multi-version selection and the originating release. Because deletion removes the only copy of the movie, call `radarr_delete_movie_file` only when the evidence is strong, check that its `verification` reports HTTP 404, then call `radarr_search` for the verified movie. Verify the replacement appears in the queue, schedule a revisit for download/import/playback validation, and after replacement verify edition, audio, and playback. Identify and report any profile/custom-format cause.
 
 ### Stuck queue or failed import
 
@@ -96,7 +97,7 @@ Confirm path/layout evidence available through APIs, runtime visibility, and nam
 ## Pitfalls
 
 - Keep TMDB, movie, movie-file, queue, and SAB IDs distinct.
-- Do not delete directly from disk or repeatedly trigger searches.
+- Delete movie files only through `radarr_delete_movie_file`, with strong item-specific evidence; never delete directly from disk or repeatedly trigger searches.
 - Respect monitoring and minimum availability.
 - Check Jellyfin multi-version selection and metadata before replacing valid media.
 - Do not infer Anvil work from a guessed path, title match, or daemon health.

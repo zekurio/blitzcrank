@@ -5,7 +5,7 @@
  * external review broker), mutations here are dedicated typed tools — the
  * allowlist IS the tool surface. What remains for raw requests:
  *  - GET-only, service-relative paths, no credentials/URLs,
- *  - SABnzbd restricted to queue/history reads,
+ *  - SABnzbd raw reads restricted to queue/history (job control is typed),
  *  - the Seerr issue lifecycle (comments, open/resolved) is host-owned.
  */
 
@@ -28,17 +28,19 @@ export function assertSabReadAllowed(path: string): void {
   const permitted = new Set(["mode", "limit"]);
   for (const [key] of parsed.searchParams) {
     if (!permitted.has(key.toLowerCase())) {
-      throw new Error("SABnzbd is read-only; only mode and limit query parameters are allowed");
+      throw new Error(
+        "SABnzbd raw reads allow only mode and limit query parameters; job control goes through the sabnzbd_* tools",
+      );
     }
   }
   const modes = parsed.searchParams.getAll("mode");
   if (modes.length !== 1) {
-    throw new Error("SABnzbd is read-only; exactly one mode query parameter is required");
+    throw new Error("SABnzbd raw reads require exactly one mode query parameter");
   }
   const mode = modes[0]!.toLowerCase();
   if (parsed.pathname !== "/api" || (mode !== "queue" && mode !== "history")) {
     throw new Error(
-      "SABnzbd is read-only; only GET /api?mode=queue and GET /api?mode=history are allowed",
+      "SABnzbd raw reads allow only GET /api?mode=queue and GET /api?mode=history; job control goes through the sabnzbd_* tools",
     );
   }
 }
