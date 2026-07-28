@@ -71,9 +71,44 @@ pnpm build && pnpm start
 
 All via env (see `.env.example`). `SEERR_URL`/`SEERR_API_KEY` are required;
 Sonarr/Radarr/SABnzbd/Jellyfin are optional — their tools are only registered
-when configured. Model is `BLITZCRANK_MODEL` (`provider/model`, default
-`anthropic/claude-sonnet-4-5`); provider API keys resolve via the usual env
-vars (`ANTHROPIC_API_KEY`, ...) or your existing pi auth.
+when configured.
+
+### Models & auth
+
+`BLITZCRANK_MODEL` is `provider/model` (default `anthropic/claude-sonnet-4-5`).
+Authentication, in pi's resolution order:
+
+- **API-key providers** (`anthropic/...`, `openai/...`): the usual env vars
+  (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, ...).
+- **OAuth/subscription providers** (`openai-codex/...` via ChatGPT Plus/Pro,
+  Claude Pro/Max, ...): a pi `auth.json`. Bootstrap once interactively — run
+  `pi`, `/login`, pick the provider — then point `BLITZCRANK_AUTH_PATH` at the
+  file (or copy the provider's entry from `~/.pi/agent/auth.json`). The file
+  must stay **writable**: tokens auto-refresh and are persisted back. Unset,
+  blitzcrank falls back to `~/.pi/agent/auth.json`.
+- Custom providers can be declared in a pi `models.json` via
+  `BLITZCRANK_MODELS_PATH`.
+
+### NixOS
+
+The flake ships a linux package and a NixOS module:
+
+```nix
+{
+  imports = [ blitzcrank.nixosModules.default ];
+  services.blitzcrank = {
+    enable = true;
+    model = "openai-codex/gpt-5.2-codex";
+    environmentFile = "/run/secrets/blitzcrank.env"; # SEERR_*, SONARR_*, ...
+    settings.SEERR_BOT_USERNAME = "blitzcrank";
+  };
+}
+```
+
+State lives in `/var/lib/blitzcrank` (session transcripts, and `auth.json`
+for OAuth providers — drop the bootstrapped file there, it stays writable).
+Automations default to the definitions shipped in the package; set
+`services.blitzcrank.automationsDir` to manage your own.
 
 ### Jellyseerr webhook setup
 

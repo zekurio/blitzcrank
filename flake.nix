@@ -8,15 +8,38 @@
   outputs =
     { self, nixpkgs }:
     let
+      # x86_64-darwin is gone from nixpkgs 26.11; aarch64-darwin is dev-only.
       systems = [
         "aarch64-darwin"
-        "x86_64-darwin"
         "x86_64-linux"
         "aarch64-linux"
       ];
-      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
+      linuxSystems = [
+        "x86_64-linux"
+        "aarch64-linux"
+      ];
+      forSystems = list: f: nixpkgs.lib.genAttrs list (system: f nixpkgs.legacyPackages.${system});
+      forAllSystems = forSystems systems;
     in
     {
+      # The service is deployed on NixOS only; no darwin packages.
+      packages = forSystems linuxSystems (pkgs: rec {
+        blitzcrank = pkgs.callPackage ./nix/package.nix { };
+        default = blitzcrank;
+      });
+
+      nixosModules = rec {
+        blitzcrank =
+          { pkgs, lib, ... }:
+          {
+            imports = [ ./nix/module.nix ];
+            services.blitzcrank.package = lib.mkDefault (
+              self.packages.${pkgs.stdenv.hostPlatform.system}.blitzcrank
+            );
+          };
+        default = blitzcrank;
+      };
+
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
           packages = with pkgs; [
