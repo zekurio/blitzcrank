@@ -18,6 +18,14 @@ export interface Config {
   webhookSecret: string | undefined;
   /** Model string for the agent, e.g. "anthropic/claude-sonnet-4-5". */
   model: string | undefined;
+  /**
+   * pi auth.json holding API keys and OAuth credentials (e.g. openai-codex).
+   * Must be writable: OAuth tokens auto-refresh and are persisted back.
+   * Defaults to pi's own ~/.pi/agent/auth.json when unset.
+   */
+  authPath: string | undefined;
+  /** pi models.json declaring custom providers. */
+  modelsPath: string | undefined;
   /** Language for public comments (default German, matching the deployment). */
   language: string;
   /** Seerr user id sent as X-Api-User so bot comments are attributed correctly. */
@@ -50,6 +58,8 @@ export function loadConfig(): Config {
     automationsDir: process.env.BLITZCRANK_AUTOMATIONS_DIR ?? "automations",
     webhookSecret: process.env.BLITZCRANK_WEBHOOK_SECRET,
     model: process.env.BLITZCRANK_MODEL,
+    authPath: process.env.BLITZCRANK_AUTH_PATH,
+    modelsPath: process.env.BLITZCRANK_MODELS_PATH,
     language: process.env.BLITZCRANK_LANGUAGE ?? "German",
     seerrBotUserId: process.env.SEERR_BOT_USER_ID,
     seerrBotUsername: process.env.SEERR_BOT_USERNAME,

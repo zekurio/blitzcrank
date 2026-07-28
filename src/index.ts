@@ -13,7 +13,10 @@ import { createApp } from "./server.js";
 async function main(): Promise<void> {
   const config = loadConfig();
   const modelSpec = config.model ?? DEFAULT_MODEL;
-  const modelRuntime = await ModelRuntime.create();
+  const modelRuntime = await ModelRuntime.create({
+    ...(config.authPath ? { authPath: config.authPath } : {}),
+    ...(config.modelsPath ? { modelsPath: config.modelsPath } : {}),
+  });
 
   const issueRunner = new IssueRunner(config, modelRuntime, modelSpec);
   const automationRunner = new AutomationRunner(config, modelRuntime, modelSpec);
