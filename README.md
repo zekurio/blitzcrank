@@ -111,6 +111,7 @@ The flake ships a linux package and a NixOS module:
     enable = true;
     model = "openai-codex/gpt-5.2-codex";
     environmentFile = "/run/secrets/blitzcrank.env"; # SEERR_*, SONARR_*, ...
+    authSeedFile = "/run/secrets/pi_auth_json";      # optional, see below
     settings.SEERR_BOT_USERNAME = "blitzcrank";
   };
 }
@@ -118,6 +119,11 @@ The flake ships a linux package and a NixOS module:
 
 State lives in `/var/lib/blitzcrank` (session transcripts, and `auth.json`
 for OAuth providers — drop the bootstrapped file there, it stays writable).
+`authSeedFile` automates that bootstrap: the secret is loaded as a systemd
+credential and copied to `authFile` when that file is missing or when the
+secret changed, so refreshed OAuth tokens are never clobbered by a rebuild.
+It is a restore seed, not a live mirror — rotating refresh tokens make the
+encrypted copy stale after first use.
 Automations default to the definitions shipped in the package; set
 `services.blitzcrank.automationsDir` to manage your own.
 
