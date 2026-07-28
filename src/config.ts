@@ -26,6 +26,8 @@ export interface Config {
   authPath: string | undefined;
   /** pi models.json declaring custom providers. */
   modelsPath: string | undefined;
+  /** Enables web_search/web_fetch tools in issue runs when set. */
+  kagiApiKey: string | undefined;
   /** Language for public comments (default German, matching the deployment). */
   language: string;
   /** Seerr user id sent as X-Api-User so bot comments are attributed correctly. */
@@ -60,6 +62,7 @@ export function loadConfig(): Config {
     model: process.env.BLITZCRANK_MODEL,
     authPath: process.env.BLITZCRANK_AUTH_PATH,
     modelsPath: process.env.BLITZCRANK_MODELS_PATH,
+    kagiApiKey: process.env.KAGI_API_KEY,
     language: process.env.BLITZCRANK_LANGUAGE ?? "German",
     seerrBotUserId: process.env.SEERR_BOT_USER_ID,
     seerrBotUsername: process.env.SEERR_BOT_USERNAME,
