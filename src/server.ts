@@ -2,24 +2,58 @@ import { Hono } from "hono";
 import type { Config } from "./config.js";
 import { isIssueEvent, type SeerrWebhookPayload } from "./webhook/types.js";
 
+export interface AutomationInfo {
+  name: string;
+  description: string;
+  schedule: string;
+  enabled: boolean;
+  capabilities: string[];
+  nextRun: string | undefined;
+}
+
 export interface ServerDeps {
   config: Config;
   /** Called with a validated issue event; must not throw synchronously. */
   onIssueEvent: (issueId: string, payload: SeerrWebhookPayload) => void;
+  listAutomations: () => AutomationInfo[];
+  /** Returns false when the automation is unknown. */
+  triggerAutomation: (name: string) => boolean;
   stats: () => { queued: number; pendingRevisits: number };
 }
 
-export function createApp({ config, onIssueEvent, stats }: ServerDeps): Hono {
+export function createApp(deps: ServerDeps): Hono {
+  const { config, onIssueEvent, stats } = deps;
   const app = new Hono();
+
+  const authorized = (auth: string | undefined): boolean =>
+    !config.webhookSecret ||
+    auth === config.webhookSecret ||
+    auth === `Bearer ${config.webhookSecret}`;
 
   app.get("/healthz", (c) => c.json({ status: "ok", ...stats() }));
 
+  app.get("/automations", (c) => {
+    if (!authorized(c.req.header("authorization"))) {
+      return c.json({ error: "unauthorized" }, 401);
+    }
+    return c.json({ automations: deps.listAutomations() });
+  });
+
+  app.post("/automations/:name/run", (c) => {
+    if (!authorized(c.req.header("authorization"))) {
+      return c.json({ error: "unauthorized" }, 401);
+    }
+    const name = c.req.param("name");
+    if (!deps.triggerAutomation(name)) {
+      return c.json({ error: `unknown automation ${name}` }, 404);
+    }
+    console.log(`[automations] manual trigger: ${name}`);
+    return c.json({ ok: true, queued: name });
+  });
+
   app.post("/webhook/seerr", async (c) => {
-    if (config.webhookSecret) {
-      const auth = c.req.header("authorization");
-      if (auth !== config.webhookSecret && auth !== `Bearer ${config.webhookSecret}`) {
-        return c.json({ error: "unauthorized" }, 401);
-      }
+    if (!authorized(c.req.header("authorization"))) {
+      return c.json({ error: "unauthorized" }, 401);
     }
 
     let payload: SeerrWebhookPayload;

@@ -3,7 +3,15 @@ import { Type } from "typebox";
 import type { ServiceConfig } from "../config.js";
 import { jsonRequest, HttpError } from "../services/http.js";
 import type { RunContext } from "./context.js";
-import { makeReadTool, reasonParam, runMutation, textResult, type ServiceName } from "./common.js";
+import { StringEnum } from "@earendil-works/pi-ai";
+import {
+  makeReadTool,
+  reasonParam,
+  runMutation,
+  textResult,
+  type EvidenceRequirement,
+  type ServiceName,
+} from "./common.js";
 
 /**
  * Sonarr/Radarr tools. Mutation surface mirrors the legacy allowlist exactly:
@@ -38,6 +46,61 @@ async function verifyQueue(cfg: ServiceConfig, service: ServiceName, ctx: RunCon
   const queue = await arrRequest(cfg, `/api/v3/queue?pageSize=100`);
   ctx.recordRead(service, `/api/v3/queue?pageSize=100`, JSON.stringify(queue));
   return queue;
+}
+
+/**
+ * ManualImport command tool shared by both Arrs. `files` are candidate objects
+ * the model takes from GET /api/v3/manualimport; every path and id in them is
+ * evidence-gated so candidates cannot be invented.
+ */
+function manualImportTool(service: ServiceName, cfg: ServiceConfig, ctx: RunContext): ToolDefinition {
+  return defineTool({
+    name: `${service}_manual_import`,
+    label: `${service}: manual import`,
+    description:
+      `Run ${service}'s ManualImport command for verified candidates from a GET /api/v3/manualimport read this run. ` +
+      "Trim each candidate to the fields the command needs " +
+      (service === "sonarr"
+        ? "(path, folderName, seriesId, episodeIds, quality, languages, releaseGroup); use importMode move."
+        : "(path, folderName, movieId, quality, languages, releaseGroup); use importMode auto."),
+    parameters: Type.Object({
+      reason: reasonParam(),
+      files: Type.Array(Type.Record(Type.String(), Type.Any()), {
+        minItems: 1,
+        description: "Candidate objects from the manualimport read, trimmed to required fields",
+      }),
+      importMode: StringEnum(["auto", "move", "copy"] as const),
+    }),
+    async execute(_toolCallId, params) {
+      const evidence: EvidenceRequirement[] = params.files.flatMap((file) => {
+        const path = file.path;
+        if (typeof path !== "string" || path.length === 0) {
+          throw new Error("every manual import file needs the candidate's path field");
+        }
+        const ids = [
+          file.seriesId,
+          file.movieId,
+          ...(Array.isArray(file.episodeIds) ? file.episodeIds : []),
+        ].filter((id): id is number => typeof id === "number");
+        return [
+          { service, value: path, hint: "candidate path" },
+          ...ids.map((id) => ({ service, value: id, hint: "candidate target id" })),
+        ];
+      });
+      const outcome = await runMutation(ctx, {
+        kind: "mutate",
+        evidence,
+        perform: () =>
+          arrRequest(cfg, "/api/v3/command", "POST", {
+            name: "ManualImport",
+            files: params.files,
+            importMode: params.importMode,
+          }),
+        verify: (result) => verifyCommand(cfg, service, ctx, result),
+      });
+      return textResult(outcome, { service, action: "manual_import", files: params.files.length });
+    },
+  });
 }
 
 function queueAndBlocklistTools(service: ServiceName, cfg: ServiceConfig, ctx: RunContext): ToolDefinition[] {
@@ -205,6 +268,7 @@ export function buildSonarrTools(cfg: ServiceConfig, ctx: RunContext): ToolDefin
         return textResult(outcome, { service, action: "delete_episode_file", episodeFileId: params.episodeFileId });
       },
     }),
+    manualImportTool(service, cfg, ctx),
     ...queueAndBlocklistTools(service, cfg, ctx),
   ];
 }
@@ -291,6 +355,7 @@ export function buildRadarrTools(cfg: ServiceConfig, ctx: RunContext): ToolDefin
         return textResult(outcome, { service, action: "refresh_movie", movieId: params.movieId });
       },
     }),
+    manualImportTool(service, cfg, ctx),
     ...queueAndBlocklistTools(service, cfg, ctx),
   ];
 }

@@ -62,8 +62,9 @@ Every call below requires a `reason`. Fetch the target IDs with `radarr_request`
 - Remove a verified bad queue item: call `radarr_delete_queue_item` with the verified `queueId` and explicit `blocklist` and `removeFromClient` booleans. This consumes the deletion budget.
 - Remove only a clearly matching blocklist entry: call `radarr_remove_from_blocklist` with the verified `blocklistId`.
 - Delete one verified corrupt or otherwise unusable movie file: call `radarr_delete_movie_file` with the verified `movieFileId`. This consumes the deletion budget and removes the only copy of the movie from disk. The `movieFileId` must come from a Radarr read this run, such as `GET /api/v3/moviefile?movieId={movieId}`; the tool re-reads the movie file and verification must confirm HTTP 404.
+- Manually import verified candidates: call `radarr_manual_import` with `importMode: "auto"` and candidate objects returned by `GET /api/v3/manualimport?folder={folder}&downloadId={downloadId}`, trimmed to `path`, `folderName`, `movieId`, `quality`, `languages`, `releaseGroup`, and `indexerFlags` when present. Every file path and ID submitted must have appeared in a Radarr read this run. The tool consumes the mutation budget and verifies the resulting command status.
 
-No manual-import or force-import tool is exposed. Do not remove, blocklist, retry, search, refresh, or delete a movie file during an exact active Anvil wait.
+No generic force-import tool is exposed. Do not remove, blocklist, retry, search, refresh, manually import, or delete a movie file during an exact active Anvil wait.
 
 ## Playbooks
 
@@ -78,6 +79,18 @@ Verify the report with strong evidence, such as the user report plus Jellyfin st
 ### Stuck queue or failed import
 
 Read the Radarr warning and correlate SAB by download ID. Allow genuine download, verification, repair, unpack, and exact Anvil work. Use service evidence for path mapping, permissions, space, locks, category, and recognized-video failures. Correct environmental causes before retrying; re-search only if the payload is bad.
+
+### Manual import of a completed download
+
+Manual import is appropriate when a completed download remains unimported in the queue and import is blocked, delayed, failed, or has an unknown status. Typical causes include a worse-scored release finishing after a better-scored release was grabbed, or import warnings that have gone stale.
+
+1. Read the queue and identify the exact queued movie, folder, and `downloadId`.
+2. Read `GET /api/v3/manualimport?folder={urlEncodedFolder}&downloadId={urlEncodedDownloadId}` with `radarr_request`.
+3. Inspect `rejections` on every candidate, including candidates that otherwise look safe.
+4. Import only candidates resolved to the exact queued movie whose path and `downloadId` belong to that queued download, with acceptable quality and language evidence. Pass only the documented trimmed fields and use `importMode: "auto"`.
+5. Re-read the queue and confirm the item cleared; also verify the resulting movie-file state as appropriate.
+
+Do not import candidates with substantive rejections, including wrong target, sample, missing path, permissions, duplicate conflict, unwanted language, or low score/profile cutoff. Never import while a transcode or Anvil job owns the path. When rejection evidence instead warrants cleanup, use `radarr_delete_queue_item` with `blocklist: true` rather than forcing the import.
 
 ### Upgrade loop
 
