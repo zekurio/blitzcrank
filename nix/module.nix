@@ -156,7 +156,7 @@ in
         ProtectHome = true;
         PrivateTmp = true;
         NoNewPrivileges = true;
-        RestrictSuidSgid = true;
+        RestrictSUIDSGID = true;
         ProtectKernelTunables = true;
         ProtectControlGroups = true;
         RestrictAddressFamilies = [
