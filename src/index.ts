@@ -17,6 +17,8 @@ import { loadConfig } from "./config.js"
 import { SerialQueue } from "./queue.js"
 import { RevisitScheduler } from "./revisits.js"
 import { createApp } from "./server.js"
+import { SeerrClient } from "./services/seerr.js"
+import { createCommentGate } from "./webhook/comment-gate.js"
 
 async function main(): Promise<void> {
   const config = loadConfig()
@@ -60,6 +62,9 @@ async function main(): Promise<void> {
 
   const app = createApp({
     config,
+    allowComment: createCommentGate(
+      new SeerrClient(config.seerr, config.seerrBotUserId),
+    ),
     onIssueEvent: (issueId, payload) => {
       // New user activity supersedes any scheduled follow-up for this issue.
       revisits.cancel(issueId)

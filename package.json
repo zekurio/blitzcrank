@@ -13,7 +13,8 @@
     "fmt": "oxfmt .",
     "fmt:check": "oxfmt --check .",
     "lint": "oxlint .",
-    "verify": "pnpm fmt:check && pnpm lint && pnpm typecheck"
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
+    "verify": "pnpm fmt:check && pnpm lint && pnpm typecheck && pnpm test"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.82.1",
