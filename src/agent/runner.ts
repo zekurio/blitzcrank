@@ -3,7 +3,7 @@ import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { Config } from "../config.js";
 import { SeerrClient } from "../services/seerr.js";
 import { RunContext } from "../tools/context.js";
-import { buildIssueTools, type SessionFileRef } from "../tools/index.js";
+import { buildIssueTools, type MediaScope, type SessionFileRef } from "../tools/index.js";
 import type { SeerrWebhookPayload } from "../webhook/types.js";
 import { parseDirectives, type Directives } from "./directives.js";
 import { buildIssuePrompt, buildRevisitPrompt, buildSystemPrompt } from "./prompt.js";
@@ -11,7 +11,13 @@ import { runAgentTurn } from "./session.js";
 
 export type IssueEvent =
   | { kind: "webhook"; issueId: string; payload: SeerrWebhookPayload }
-  | { kind: "revisit"; issueId: string; reason: string };
+  | { kind: "revisit"; issueId: string; reason: string; mediaScope: MediaScope };
+
+export function eventMediaScope(event: IssueEvent): MediaScope {
+  if (event.kind === "revisit") return event.mediaScope;
+  const type = event.payload.media?.media_type;
+  return type === "movie" || type === "tv" ? type : undefined;
+}
 
 export interface RunOutcome {
   issueId: string;
@@ -46,6 +52,7 @@ export class IssueRunner {
         issueId,
         commentHeader: this.commentHeader,
         sessionFileRef,
+        mediaScope: eventMediaScope(event),
       }),
       prompt:
         event.kind === "webhook"
