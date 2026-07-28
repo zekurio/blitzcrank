@@ -51,6 +51,11 @@ Safety invariants (do not weaken without explicit operator sign-off):
   per-run budgets, built-in verification.
 - SABnzbd raw reads are limited to `queue`/`history`; SAB job control and all
   file deletions exist only as typed tools with evidence gates and budgets.
+- Comment-triggered runs are authorized host-side by `src/webhook/comment-gate.ts`:
+  only the issue reporter or a Seerr `ADMIN`/`MANAGE_ISSUES` user can drive the
+  agent. The gate runs before the event handler (so a rejected comment cannot
+  cancel a revisit) and fails closed when Seerr is unreachable. It is
+  unconditional — do not add an opt-out.
 - The agent cannot post Seerr comments or change issue status; the host does,
   driven by the parsed `RESOLVE_ISSUE`/`REVISIT_IN`/`REVISIT_REASON` directive
   block. Malformed directives ⇒ nothing is posted.
@@ -71,7 +76,8 @@ Safety invariants (do not weaken without explicit operator sign-off):
 - `src/automations/` - definition loading/validation, capability registry, cron scheduler, STATUS report parsing.
 - `automations/` - operator-authored scheduled tasks; frontmatter declares schedule, capabilities, and budgets.
 - `src/services/` - HTTP helper and the host-side Seerr client.
-- `src/webhook/` - verified Seerr webhook payload types.
+- `src/webhook/` - verified Seerr webhook payload types, comment authorization
+  gate.
 - `skills/` - agent skills (domain knowledge, playbooks); merged from the legacy production deployment. Frontmatter `name` must match the directory.
 - `docs/research/` - pi SDK integration guide, Seerr/service API references, legacy design reference. Consult before touching tool or API code.
 
@@ -79,7 +85,9 @@ Safety invariants (do not weaken without explicit operator sign-off):
 
 - `pnpm dev` - run with `tsx watch`.
 - `pnpm fmt` / `pnpm lint` / `pnpm typecheck` - oxfmt, oxlint (type-aware), `tsc --noEmit`.
-- `pnpm verify` - fmt check + lint + typecheck; must pass before a task is done.
+- `pnpm test` - `node --test` over `src/**/*.test.ts` via tsx.
+- `pnpm verify` - fmt check + lint + typecheck + tests; must pass before a task
+  is done.
 - `pnpm build` / `pnpm start` - compile to `dist/` and run.
 - `pnpm e2e:issue` - end-to-end issue run against mock services; costs real
   model tokens, run manually only.
@@ -196,11 +204,12 @@ small named helpers below it. Extract only when it names a real concept.
 
 ## Testing & QA
 
-No test suite exists yet. When adding one:
+Tests are `src/**/*.test.ts`, run with `node --test` via tsx (`pnpm test`, part
+of `pnpm verify`). Coverage is thin so far (`webhook/comment-gate.test.ts`).
 
-- Prefer pushing logic into pure functions and testing those with `node --test`
-  via `tsx`; `directives.ts`, `context.ts`, and `safety.ts` are pure and are
-  the highest-value targets.
+- Prefer pushing logic into pure functions and testing those; `directives.ts`,
+  `context.ts`, and `safety.ts` are pure and are the highest-value remaining
+  targets.
 - Avoid mocks as much as possible; never mock the safety layer to make a test
   pass.
 - Test actual implementation, do not duplicate logic into tests.

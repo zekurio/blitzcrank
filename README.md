@@ -40,6 +40,10 @@ because enforcement now lives in-process:
   return it in the result.
 - **Loop guards** — the bot's own comment webhooks and `ISSUE_RESOLVED` events are
   dropped; new user activity cancels pending revisits.
+- **Comment authorization** — follow-up comments only start a run when their author is
+  the issue's reporter or a Seerr user with `ADMIN`/`MANAGE_ISSUES`. Identity is matched
+  by email whenever both sides have one, the check runs before the revisit cancellation,
+  and it fails closed if Seerr can't be consulted.
 - **Web tools** — optional Firecrawl `web_search`/`web_fetch` (issue runs only,
   when `FIRECRAWL_API_KEY` is set; `FIRECRAWL_API_URL` for self-hosted) for availability/context answers; fetch rejects
   local/private URLs and web content never justifies a mutation.
@@ -53,6 +57,7 @@ because enforcement now lives in-process:
 - `automations/` — operator-authored scheduled tasks (e.g. the hourly stale-import handler)
 - `src/tools/` — run context (evidence/budgets), GET-only read tools, typed mutation tools, anvil
 - `src/services/` — HTTP helper + host-side Seerr client (comments, status)
+- `src/webhook/` — Seerr payload types + comment authorization gate
 - `skills/` — agent skills for Sonarr, Radarr, SABnzbd, Jellyfin, Seerr, Anvil, filesystem
   (merged from the battle-tested legacy deployment)
 - `docs/research/` — pi-sdk guide, Seerr/service API references, legacy design reference
@@ -116,6 +121,13 @@ for OAuth providers — drop the bootstrapped file there, it stays writable).
 Automations default to the definitions shipped in the package; set
 `services.blitzcrank.automationsDir` to manage your own.
 
+### Who may talk to the agent
+
+Only the issue's reporter and Seerr users with the `ADMIN` or `MANAGE_ISSUES`
+permission can drive a run by commenting. Everyone else's comments are
+acknowledged with `200` and ignored (no run, no revisit cancellation). Set
+`SEERR_BOT_USERNAME` so the bot's own comments never trigger runs either.
+
 ### Jellyseerr webhook setup
 
 Settings → Notifications → Webhook:
@@ -137,5 +149,6 @@ Ideas for later (see the porting checklist in `docs/research/legacy.md`):
 
 - optional second-model mutation review for high-risk ops (legacy broker, in-process)
 - report sinks beyond the log (ntfy/Discord) and Discord agents
-- proper test suite (directives/context/safety/automations parsing are pure and easy to cover)
+- broader test suite (only the comment gate is covered; directives/context/safety/automations
+  parsing are pure and easy to cover)
 - NixOS module + package output in the flake (systemd timers may own automation scheduling)

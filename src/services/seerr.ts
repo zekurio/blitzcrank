@@ -1,6 +1,14 @@
 import type { ServiceConfig } from "../config.js"
 import { jsonRequest } from "./http.js"
 
+export interface SeerrUser {
+  id?: number
+  email?: string
+  username?: string
+  displayName?: string
+  permissions?: number
+}
+
 /** Host-owned Seerr issue lifecycle: fetching, commenting, status changes. */
 export class SeerrClient {
   constructor(
@@ -19,6 +27,15 @@ export class SeerrClient {
     return jsonRequest(this.cfg.url, `/api/v1/issue/${issueId}`, {
       headers: this.headers(),
     })
+  }
+
+  async listUsers(): Promise<SeerrUser[]> {
+    const response = await jsonRequest<{ results?: SeerrUser[] }>(
+      this.cfg.url,
+      "/api/v1/user?take=200",
+      { headers: this.headers() },
+    )
+    return response.results ?? []
   }
 
   postComment(issueId: string | number, message: string): Promise<unknown> {

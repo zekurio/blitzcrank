@@ -16,6 +16,8 @@ export interface ServerDeps {
   config: Config
   /** Called with a validated issue event; must not throw synchronously. */
   onIssueEvent: (issueId: string, payload: SeerrWebhookPayload) => void
+  /** Authorizes comment-triggered runs (reporter/admin policy). */
+  allowComment: (payload: SeerrWebhookPayload) => Promise<boolean>
   listAutomations: () => AutomationInfo[]
   /** Returns false when the automation is unknown. */
   triggerAutomation: (name: string) => boolean
@@ -78,13 +80,19 @@ export function createApp(deps: ServerDeps): Hono {
       return c.json({ ok: true, ignored: "issue resolved" })
     }
 
-    // Loop guard: ignore comment events caused by the bot's own comments.
-    if (
-      payload.notification_type === "ISSUE_COMMENT" &&
-      config.seerrBotUsername &&
-      payload.comment?.commentedBy_username === config.seerrBotUsername
-    ) {
-      return c.json({ ok: true, ignored: "own comment" })
+    if (payload.notification_type === "ISSUE_COMMENT") {
+      // Loop guard: ignore comment events caused by the bot's own comments.
+      if (
+        config.seerrBotUsername &&
+        payload.comment?.commentedBy_username === config.seerrBotUsername
+      ) {
+        return c.json({ ok: true, ignored: "own comment" })
+      }
+      // Authorization gate. Runs before onIssueEvent so an unauthorized
+      // comment neither starts a run nor cancels a pending revisit.
+      if (!(await deps.allowComment(payload))) {
+        return c.json({ ok: true, ignored: "comment author not authorized" })
+      }
     }
 
     const issueId = payload.issue?.issue_id
