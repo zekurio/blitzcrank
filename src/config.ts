@@ -3,6 +3,12 @@ export interface ServiceConfig {
   apiKey: string;
 }
 
+export interface FirecrawlConfig {
+  apiKey: string;
+  /** API base; override for self-hosted Firecrawl. */
+  apiUrl: string;
+}
+
 export interface AnvilConfig {
   command: string;
   socket: string;
@@ -26,8 +32,8 @@ export interface Config {
   authPath: string | undefined;
   /** pi models.json declaring custom providers. */
   modelsPath: string | undefined;
-  /** Enables web_search/web_fetch tools in issue runs when set. */
-  kagiApiKey: string | undefined;
+  /** Enables web_search/web_fetch tools in issue runs when configured. */
+  firecrawl: FirecrawlConfig | undefined;
   /** Language for public comments (default German, matching the deployment). */
   language: string;
   /** Seerr user id sent as X-Api-User so bot comments are attributed correctly. */
@@ -62,7 +68,12 @@ export function loadConfig(): Config {
     model: process.env.BLITZCRANK_MODEL,
     authPath: process.env.BLITZCRANK_AUTH_PATH,
     modelsPath: process.env.BLITZCRANK_MODELS_PATH,
-    kagiApiKey: process.env.KAGI_API_KEY,
+    firecrawl: process.env.FIRECRAWL_API_KEY
+      ? {
+          apiKey: process.env.FIRECRAWL_API_KEY,
+          apiUrl: (process.env.FIRECRAWL_API_URL ?? "https://api.firecrawl.dev").replace(/\/+$/, ""),
+        }
+      : undefined,
     language: process.env.BLITZCRANK_LANGUAGE ?? "German",
     seerrBotUserId: process.env.SEERR_BOT_USER_ID,
     seerrBotUsername: process.env.SEERR_BOT_USERNAME,

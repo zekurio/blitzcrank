@@ -73,6 +73,6 @@ export function buildIssueTools(deps: IssueToolDeps): ToolDefinition[] {
     buildProgressTool(deps.seerr, deps.issueId, deps.commentHeader, deps.config.language),
     ...tools,
     // Issue runs only: availability/context lookups. Automations stay mechanical.
-    ...(deps.config.kagiApiKey ? buildWebTools(deps.config.kagiApiKey) : []),
+    ...(deps.config.firecrawl ? buildWebTools(deps.config.firecrawl) : []),
   ];
 }

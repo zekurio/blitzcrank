@@ -40,8 +40,8 @@ because enforcement now lives in-process:
   return it in the result.
 - **Loop guards** — the bot's own comment webhooks and `ISSUE_RESOLVED` events are
   dropped; new user activity cancels pending revisits.
-- **Web tools** — optional Kagi `web_search`/`web_fetch` (issue runs only, when
-  `KAGI_API_KEY` is set) for availability/context answers; fetch rejects
+- **Web tools** — optional Firecrawl `web_search`/`web_fetch` (issue runs only,
+  when `FIRECRAWL_API_KEY` is set; `FIRECRAWL_API_URL` for self-hosted) for availability/context answers; fetch rejects
   local/private URLs and web content never justifies a mutation.
 
 ## Layout
