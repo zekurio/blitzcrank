@@ -62,9 +62,10 @@ Use the read-only `sonarr_request` with relative `/api/v3/...` paths; it accepts
 
 Every call below requires a `reason`. Fetch the target IDs with `sonarr_request` first, and inspect the returned `verification` field.
 
-- Episode search: call `sonarr_search` with the verified `seriesId` and the exact `episodeIds` fetched this run.
+- Episode search: call `sonarr_search` with the verified `seriesId` and the exact `episodeIds` fetched this run. A single episode is the correct way to test a hypothesis.
 - Season search: call `sonarr_search` with the verified `seriesId` and `seasonNumber`.
 - Whole-series search only for a whole-series issue: call `sonarr_search` with only the verified `seriesId`.
+- Scope is enforced in code for every search form. A search touching more than one episode must pass `expectedEpisodeCount` equal to the number Sonarr actually reports; a wrong or missing value is rejected with the true count, which is the number you must have told the reporter. Replacing two or more episode files additionally requires that at least one of those exact files was inspected with `media_probe` during this run — release-name `languages` never satisfies it. Missing episodes (no file) are unaffected.
 - Refresh one series: call `sonarr_refresh_series` with the verified `seriesId`.
 - Retry a known queue item: call `sonarr_grab_queue_item` with the verified `queueId`.
 - Remove a verified bad queue item: call `sonarr_delete_queue_item` with the verified `queueId` and explicit `blocklist` and `removeFromClient` booleans. This consumes the deletion budget.
@@ -77,6 +78,15 @@ No generic force-import tool is exposed.
 Never remove, blocklist, retry, search, refresh, manual-import, or force-import an exact active Anvil wait.
 
 ## Playbooks
+
+### Scope discipline for searches
+
+One `SeasonSearch` re-downloads the whole season: 24 episodes, tens of gigabytes, and every one of them re-encoded. Treat it as a bulk action, not a probe.
+
+1. Test the hypothesis on one episode: probe the file, or search that single episode with `episodeIds`.
+2. Read the episodes to learn the real count before proposing a season-wide action, and name that count and its consequence to the reporter ("das sind 24 Downloads") before asking for approval. A bare "ja" to a question that never mentioned the scope is not approval for it.
+3. Only then call `sonarr_search` with `expectedEpisodeCount` set to the true number.
+4. If a probe shows the existing file already lacks the requested track, a replacement of the same release cannot add it — report that instead of searching.
 
 ### Missing audio or subtitle track
 
