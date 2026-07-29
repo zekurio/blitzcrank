@@ -37,11 +37,17 @@ function snippet(text: string, terms: string[]): string {
   const lower = text.toLowerCase()
   const idx = terms.map((t) => lower.indexOf(t)).find((i) => i >= 0) ?? 0
   const start = Math.max(0, idx - 240)
-  return text
-    .slice(start, Math.min(text.length, idx + 760))
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 700)
+  return (
+    text
+      .slice(start, Math.min(text.length, idx + 760))
+      .replace(/\s+/g, " ")
+      // Old transcripts contain the paths of older transcripts (as `read` tool
+      // arguments); leaving them in would hand back the affordance this tool
+      // just dropped.
+      .replace(/\S*\.jsonl/g, "<transcript>")
+      .trim()
+      .slice(0, 700)
+  )
 }
 
 export function buildHistoryTool(

@@ -73,6 +73,23 @@ function service(prefix: string): ServiceConfig | undefined {
   return { url: url.replace(/\/+$/, ""), apiKey }
 }
 
+/**
+ * A cap that silently becomes NaN is not a cap: an unparsable budget would
+ * disable the ceiling and make revisit chains unbounded.
+ */
+function number(
+  name: string,
+  value: string | undefined,
+  fallback: number,
+): number {
+  if (value === undefined || value.trim() === "") return fallback
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`${name} must be a non-negative number, got "${value}"`)
+  }
+  return parsed
+}
+
 /** Colon-separated absolute paths, PATH-style. */
 function absoluteRoots(name: string, value: string | undefined): string[] {
   const roots = (value ?? "")
@@ -106,7 +123,7 @@ export function loadConfig(): Config {
     throw new Error("SEERR_URL and SEERR_API_KEY are required")
   }
   return {
-    port: Number(process.env.BLITZCRANK_PORT ?? 8484),
+    port: number("BLITZCRANK_PORT", process.env.BLITZCRANK_PORT, 8484),
     dataDir: process.env.BLITZCRANK_DATA_DIR ?? "data",
     automationsDir: process.env.BLITZCRANK_AUTOMATIONS_DIR ?? "automations",
     webhookSecret: process.env.BLITZCRANK_WEBHOOK_SECRET,
@@ -122,12 +139,20 @@ export function loadConfig(): Config {
         }
       : undefined,
     language: process.env.BLITZCRANK_LANGUAGE ?? "German",
-    issueBudgetUsd: Number(process.env.BLITZCRANK_ISSUE_BUDGET_USD ?? 5),
+    issueBudgetUsd: number(
+      "BLITZCRANK_ISSUE_BUDGET_USD",
+      process.env.BLITZCRANK_ISSUE_BUDGET_USD,
+      5,
+    ),
     budgetMessage:
       process.env.BLITZCRANK_BUDGET_MESSAGE ??
       "Ich komme hier allein nicht weiter und melde mich nicht mehr automatisch. " +
         "Bitte wende dich an einen Admin, wenn das Problem weiter besteht.",
-    maxRevisitChain: Number(process.env.BLITZCRANK_MAX_REVISITS ?? 3),
+    maxRevisitChain: number(
+      "BLITZCRANK_MAX_REVISITS",
+      process.env.BLITZCRANK_MAX_REVISITS,
+      3,
+    ),
     seerrBotUserId: process.env.SEERR_BOT_USER_ID,
     seerrBotUsername: process.env.SEERR_BOT_USERNAME,
     seerr,

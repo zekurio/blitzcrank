@@ -80,9 +80,9 @@ async function main(): Promise<void> {
   const scheduler = new AutomationScheduler(enqueueAutomation)
   scheduler.start(automations)
 
+  const cases = new CaseStore(path.join(config.dataDir, "cases"))
   // Follow-ups survive a restart: pending revisits are re-armed from the case
   // files, overdue ones shortly after boot rather than all at once.
-  const cases = new CaseStore(path.join(config.dataDir, "cases"))
   for (const file of await cases.pendingRevisits()) {
     const delayMs = revisitDelay(file, Date.now())
     const revisit = file.revisit
@@ -105,6 +105,14 @@ async function main(): Promise<void> {
       // New user activity supersedes any scheduled follow-up for this issue.
       revisits.cancel(issueId)
       enqueueIssue({ kind: "webhook", issueId, payload })
+    },
+    onIssueClosed: async (issueId) => {
+      revisits.cancel(issueId)
+      const file = await cases.load(issueId)
+      if (!file.revisit) return
+      file.revisit = undefined
+      await cases.save(file)
+      console.log(`[revisit] issue=${issueId} resolved; follow-up dropped`)
     },
     listAutomations: () =>
       automations.map((def) => ({
