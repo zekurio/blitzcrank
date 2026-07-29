@@ -58,7 +58,6 @@ export function modelAnchor(spec: string): string {
 
 export interface RunUsage {
   totalTokens: number
-  cost: number
 }
 
 function formatTokens(count: number): string {
@@ -67,10 +66,15 @@ function formatTokens(count: number): string {
   return String(count)
 }
 
-/** Anchor plus usage, e.g. "[blitzcrank w/ gpt-5.2-codex:high · 48.2k tokens · $0.19]". */
-export function usageAnchor(spec: string, usage: RunUsage): string {
-  const cost = `$${usage.cost.toFixed(usage.cost >= 0.1 ? 2 : 3)}`
-  return `${modelAnchor(spec).slice(0, -1)} · ${formatTokens(usage.totalTokens)} tokens · ${cost}]`
+/**
+ * Anchor plus usage, e.g. "[blitzcrank w/ gpt-5.2-codex:high · 132.4k tokens]".
+ *
+ * The count is everything the issue has cost so far, not this run alone: a run
+ * leaves exactly one comment and each comment replaces the last one, so a
+ * per-run number would silently understate an issue that took four runs.
+ */
+export function usageAnchor(spec: string, issueTokens: number): string {
+  return `${modelAnchor(spec).slice(0, -1)} · ${formatTokens(issueTokens)} tokens]`
 }
 
 /** Repo root (contains skills/): two levels up from dist/agent/. */
@@ -149,6 +153,11 @@ export async function runAgentTurn(
 
   if (opts.sessionFileRef) opts.sessionFileRef.current = session.sessionFile
 
+  // Usage is accumulated as assistant messages complete, not summed from
+  // `session.messages` afterwards: auto-compaction replaces that array with a
+  // summary plus the recent tail, so the longest runs would under-report most.
+  const usage: RunUsage = { totalTokens: 0 }
+
   const unsubscribe = session.subscribe((event) => {
     if (event.type === "tool_execution_start") {
       console.log(
@@ -159,6 +168,10 @@ export async function runAgentTurn(
     }
     if (event.type === "tool_execution_end" && event.isError) {
       console.warn(`[${opts.logPrefix}] tool ${event.toolName} failed`)
+      return
+    }
+    if (event.type === "message_end" && event.message.role === "assistant") {
+      usage.totalTokens += event.message.usage.totalTokens
     }
   })
 
@@ -171,13 +184,6 @@ export async function runAgentTurn(
     if (!lastAssistant) throw new Error("agent produced no assistant message")
     if (lastAssistant.stopReason === "error") {
       throw new Error(lastAssistant.errorMessage ?? "model request failed")
-    }
-
-    const usage: RunUsage = { totalTokens: 0, cost: 0 }
-    for (const message of session.messages) {
-      if (message.role !== "assistant") continue
-      usage.totalTokens += message.usage.totalTokens
-      usage.cost += message.usage.cost.total
     }
 
     return {

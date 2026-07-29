@@ -37,11 +37,17 @@ function snippet(text: string, terms: string[]): string {
   const lower = text.toLowerCase()
   const idx = terms.map((t) => lower.indexOf(t)).find((i) => i >= 0) ?? 0
   const start = Math.max(0, idx - 240)
-  return text
-    .slice(start, Math.min(text.length, idx + 760))
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 700)
+  return (
+    text
+      .slice(start, Math.min(text.length, idx + 760))
+      .replace(/\s+/g, " ")
+      // Old transcripts contain the paths of older transcripts (as `read` tool
+      // arguments); leaving them in would hand back the affordance this tool
+      // just dropped.
+      .replace(/\S*\.jsonl/g, "<transcript>")
+      .trim()
+      .slice(0, 700)
+  )
 }
 
 export function buildHistoryTool(
@@ -52,8 +58,9 @@ export function buildHistoryTool(
     name: "thread_history_search",
     label: "Search run history",
     description:
-      "Search prior blitzcrank run transcripts (issue runs and automation runs) for similar investigations or fixes. " +
-      "Treat results as clues only and validate current live state before acting.",
+      "Search prior blitzcrank run transcripts (issue runs and automation runs) for similar investigations or fixes on OTHER " +
+      "items. Returns matching snippets only. What this issue already established is in your case file, at the top of this run " +
+      "— never go looking for it here, and never try to read transcript files. Treat results as clues and validate live state.",
     parameters: Type.Object({
       query: Type.String({
         description:
@@ -96,8 +103,10 @@ export function buildHistoryTool(
         )
         if (score <= 0) continue
         const info = await stat(file).catch(() => undefined)
+        // Deliberately no file path: handing one out invites the model to page
+        // through raw JSONL with `read`, which is how a follow-up run once cost
+        // more than the investigation it was recovering.
         results.push({
-          path: file,
           score,
           modified: info?.mtime.toISOString(),
           snippet: snippet(text, terms),

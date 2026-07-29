@@ -34,6 +34,7 @@ Single pnpm package, ESM TypeScript, no build step in dev (`tsx`).
 ```
 Jellyseerr ──webhook──▶ src/server.ts (Hono, filtering, loop guards)
                           └▶ src/queue.ts (serial) ──▶ src/agent/runner.ts
+                               case file in/out (src/casefile.ts): memory, spend, revisits
                                one pi session per run (src/agent/prompt.ts)
                                ├─ reads:    *_request tools   (GET-only)
                                ├─ mutations: typed tools       (src/tools/)
@@ -77,6 +78,12 @@ Safety invariants (do not weaken without explicit operator sign-off):
 - Web tools (Firecrawl) are issue-run-only, read-only, and gated on `FIRECRAWL_API_KEY`;
   `web_fetch` must keep rejecting local/private URLs. Web content is untrusted
   and must never be presented to the model as authorization for mutations.
+- Revisit chains are capped (`MAX_REVISIT_CHAIN`) and backed off in `src/revisits.ts`: a
+  revisit is the only run nobody asked for. The counter, the run history and the token
+  totals live in the host-written half of the case file; the `update_case_file` tool can
+  only write the agent's summary, never usage or revisit state. There is deliberately no
+  spend ceiling: the deployment runs on subscription auth, where a dollar figure derived
+  from list prices would be fiction.
 - Automations (`automations/*.md`) are trusted operator instructions, but
   their runs only get the mutation tools mapped from their declared
   `capabilities` (registry in `src/automations/definitions.ts`) plus the
@@ -98,12 +105,8 @@ Safety invariants (do not weaken without explicit operator sign-off):
 
 - `pnpm dev` - run with `tsx watch`.
 - `pnpm fmt` / `pnpm lint` / `pnpm typecheck` - oxfmt, oxlint (type-aware), `tsc --noEmit`.
-- `pnpm test` - `node --test` over `src/**/*.test.ts` via tsx.
-- `pnpm verify` - fmt check + lint + typecheck + tests; must pass before a task
-  is done.
+- `pnpm verify` - fmt check + lint + typecheck; must pass before a task is done.
 - `pnpm build` / `pnpm start` - compile to `dist/` and run.
-- `pnpm e2e:issue` - end-to-end issue run against mock services; costs real
-  model tokens, run manually only.
 - `nix develop` (or direnv) - dev shell with Node 24, pnpm, TypeScript.
 - Config is env-only; see `.env.example`. Never commit `.env`.
 
@@ -197,7 +200,10 @@ small named helpers below it. Extract only when it names a real concept.
 
 ## Important Files
 
-- Entry point: `src/index.ts` (wiring), `src/server.ts` (webhook filtering).
+- Entry point: `src/index.ts` (wiring, revisit re-arm on boot), `src/server.ts` (webhook
+  filtering).
+- Memory/limits: `src/casefile.ts` (per-issue case file), `src/revisits.ts` (chain caps,
+  backoff, restart re-arm).
 - Agent: `src/agent/runner.ts` (session per run, locked-down resource loader),
   `src/agent/directives.ts` (final-response protocol).
 - Safety: `src/tools/context.ts`, `src/tools/safety.ts`, `src/tools/common.ts`.
@@ -215,19 +221,6 @@ small named helpers below it. Extract only when it names a real concept.
   strategy.
 - pi SDK packages are pinned exact (`@earendil-works/*@0.82.1`); bump them
   deliberately and re-verify against `docs/research/pi-sdk.md`.
-
-## Testing & QA
-
-Tests are `src/**/*.test.ts`, run with `node --test` via tsx (`pnpm test`, part
-of `pnpm verify`). Covered so far: `webhook/comment-gate.test.ts`,
-`webhook/loop-guard.test.ts`, `agent/runner.test.ts` (comment lifecycle).
-
-- Prefer pushing logic into pure functions and testing those; `directives.ts`,
-  `context.ts`, and `safety.ts` are pure and are the highest-value remaining
-  targets.
-- Avoid mocks as much as possible; never mock the safety layer to make a test
-  pass.
-- Test actual implementation, do not duplicate logic into tests.
 
 ## Task Completion Requirements
 

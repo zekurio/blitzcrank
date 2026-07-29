@@ -91,7 +91,7 @@ export class AutomationRunner {
     const log = report.status === "fehler" ? console.error : console.log
     log(
       `[automation:${def.name}] status=${report.status} mutations=${mutations} deletes=${deletes} ` +
-        `tokens=${turn.usage.totalTokens} cost=$${turn.usage.cost.toFixed(4)}` +
+        `tokens=${turn.usage.totalTokens}` +
         `${report.malformed ? " (malformed output)" : ""}${report.empty ? " (no report)" : ""}` +
         `${report.body ? `\n${report.body}` : ""}`,
     )
