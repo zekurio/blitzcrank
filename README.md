@@ -44,6 +44,11 @@ because enforcement now lives in-process:
   the issue's reporter or a Seerr user with `ADMIN`/`MANAGE_ISSUES`. Identity is matched
   by email whenever both sides have one, the check runs before the revisit cancellation,
   and it fails closed if Seerr can't be consulted.
+- **Media probe** — optional read-only `media_probe` (ffprobe) when
+  `BLITZCRANK_MEDIA_ROOTS` is set: the real audio/subtitle streams of a file or release
+  directory, before or after import. Arr `languages` is parsed from the release name
+  (`MULTi` is a claim, not a fact), so language questions are answered from the file.
+  Paths are resolved through `realpath` and must land inside a configured root.
 - **Web tools** — optional Firecrawl `web_search`/`web_fetch` (issue runs only,
   when `FIRECRAWL_API_KEY` is set; `FIRECRAWL_API_URL` for self-hosted) for availability/context answers; fetch rejects
   local/private URLs and web content never justifies a mutation.
@@ -55,10 +60,10 @@ because enforcement now lives in-process:
 - `src/agent/` — pi SDK session factory, issue system prompt, directive parsing
 - `src/automations/` — automation definitions (frontmatter + trusted body), capability→tool mapping, cron scheduling, `STATUS:` report protocol
 - `automations/` — operator-authored scheduled tasks (e.g. the hourly stale-import handler)
-- `src/tools/` — run context (evidence/budgets), GET-only read tools, typed mutation tools, anvil
+- `src/tools/` — run context (evidence/budgets), GET-only read tools, typed mutation tools, anvil, media probe
 - `src/services/` — HTTP helper + host-side Seerr client (comments, status)
 - `src/webhook/` — Seerr payload types + comment authorization gate
-- `skills/` — agent skills for Sonarr, Radarr, SABnzbd, Jellyfin, Seerr, Anvil, filesystem
+- `skills/` — agent skills for Sonarr, Radarr, SABnzbd, Jellyfin, Seerr, Anvil, media-probe, filesystem
   (merged from the battle-tested legacy deployment)
 - `docs/research/` — pi-sdk guide, Seerr/service API references, legacy design reference
 

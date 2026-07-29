@@ -13,6 +13,7 @@ Use the read-only `sonarr_request` with relative `/api/v3/...` paths; it accepts
 - **tvdbId**: Primary external identity linking Seerr to Sonarr. It is not Sonarr's internal series ID.
 - **Season / episode / episode file**: Monitoring controls search eligibility; the episode is Sonarr's logical record; the episode file is the imported file. One file can cover multiple episodes.
 - **Quality/language profile and custom formats**: Rules controlling accepted releases and continued upgrades. Language profiles exist only on instances that support them.
+- **`languages` on releases, queue items, history, and files**: Parsed from the release _name_, not from the file. `MULTi`, `DL`, and `GERMAN` are claims by the release group; only `media_probe` (or Jellyfin streams after import) proves what a file contains.
 - **Queue / history / blocklist**: Current tracked downloads, past events, and releases prevented from being selected again.
 - **Command**: An asynchronous search, refresh, or rescan. Command completion alone does not prove download or import.
 - **Download ID**: Correlation key between Sonarr and SABnzbd; keep it distinct from series, episode, and file IDs.
@@ -42,6 +43,7 @@ Use the read-only `sonarr_request` with relative `/api/v3/...` paths; it accepts
 - Manual-import candidates: `GET /api/v3/manualimport?folder={urlEncodedFolder}&downloadId={urlEncodedDownloadId}`
 - System status: `GET /api/v3/system/status`
 - Anvil: use `anvil_status` for health and `anvil_job_lookup` for exact item correlation when configured.
+- File contents: `media_probe` on `episodeFile.path` or on a queue `outputPath` when configured; load the `media-probe` skill for language questions.
 
 ## Diagnostic workflow
 
@@ -50,7 +52,7 @@ Use the read-only `sonarr_request` with relative `/api/v3/...` paths; it accepts
 3. Record path, monitoring, series type, profile, and internal ID. Fetch episodes and select the exact episode ID.
 4. For release dates, prefer matching Sonarr episode/calendar `airDate` and `airDateUtc`; state timezone/date uncertainty.
 5. Inspect episode-file data and `mediaInfo`, queue, reverse-chronological history, blocklist, profiles, and narrow release/search evidence before public-availability speculation.
-6. For audio, subtitle, codec, or playback-track reports, inspect actual streams with `jellyfin_request` first, then explain selection using Sonarr file/history/profile/custom-format evidence.
+6. For audio, subtitle, codec, or playback-track reports, inspect the actual file with `media_probe` (it also works on completed, not-yet-imported downloads) and the imported streams with `jellyfin_request`, then explain selection using Sonarr file/history/profile/custom-format evidence. Sonarr `languages` is release-name parsing and never settles whether a track exists.
 7. Correlate any download ID with read-only `sabnzbd_request`. A SAB completion is not a Sonarr import.
 8. If Sonarr reports file-not-ready after completion, check Anvil only with an exact absolute queue `outputPath`, or exact SAB `storage` path linked by `downloadId`/`nzo_id`. Daemon health alone is never item evidence.
 9. Make the smallest reversible mutation. Check the mutation result's `verification` field, then use follow-up reads when needed to confirm queue/blocklist/episode/file and downstream state.
@@ -75,6 +77,10 @@ No generic force-import tool is exposed.
 Never remove, blocklist, retry, search, refresh, manual-import, or force-import an exact active Anvil wait.
 
 ## Playbooks
+
+### Missing audio or subtitle track
+
+Probe the file before anything else: `media_probe` on the episode file, or on the queue `outputPath`/SAB `storage` when the download has not imported yet. If the track is not in the file, report that; a `SeasonSearch` or `EpisodeSearch` re-grabbing the same release cannot add a track that was never there, and it costs the whole season in downloads and encodes. Only search when a genuinely different release is plausible, say so explicitly, and never search on `languages` metadata alone. If the track is in the file but not offered in playback, the problem is Jellyfin/client side. See the `media-probe` skill.
 
 ### Missing episode
 
@@ -118,4 +124,5 @@ Review repeated history, cutoff, upgrades, custom-format scores, language, namin
 - Do not assume unaired or unmonitored episodes should be searched.
 - Do not blocklist without reliable history identity.
 - Do not infer an Anvil wait from daemon health, a guessed path, or a title match.
+- Do not treat `languages` on a release, queue item, or file as proof that an audio or subtitle track exists.
 - Do not resolve merely because a replacement entered the queue.

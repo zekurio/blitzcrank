@@ -12,6 +12,7 @@ Use the read-only `radarr_request` with relative `/api/v3/...` paths; it accepts
 - **Movie**: Radarr record with internal `id`, title, year, path, monitoring, minimum availability, and profile.
 - **tmdbId**: Primary external movie identity from Seerr; never substitute it for Radarr's internal ID.
 - **Movie file**: Imported file with path, size, parsed quality, release metadata, and often `mediaInfo`.
+- **`languages` on releases, queue items, history, and files**: Parsed from the release _name_, not from the file. `MULTi`, `DL`, and `GERMAN` are claims by the release group; only `media_probe` (or Jellyfin streams after import) proves what a file contains.
 - **Quality profile/custom formats**: Acceptance, scoring, upgrade, language, edition, and cutoff rules.
 - **Queue/history/blocklist**: Current tracked downloads, past events, and releases excluded from selection.
 - **Download ID**: Correlates Radarr to SABnzbd; it is distinct from movie, file, and queue IDs.
@@ -39,6 +40,7 @@ Use the read-only `radarr_request` with relative `/api/v3/...` paths; it accepts
 - Manual import: `GET /api/v3/manualimport?folder={urlEncodedFolder}&downloadId={urlEncodedDownloadId}`
 - System: `GET /api/v3/system/status`
 - Anvil: `anvil_status` for health and `anvil_job_lookup` for exact correlation when configured.
+- File contents: `media_probe` on `movieFile.path` or on a queue `outputPath` when configured; load the `media-probe` skill for language questions.
 
 ## Diagnostic workflow
 
@@ -47,7 +49,7 @@ Use the read-only `radarr_request` with relative `/api/v3/...` paths; it accepts
 3. Inspect file release title, quality, size, custom formats, edition/language data, and `mediaInfo`.
 4. Inspect queue, reverse-chronological history, blocklist, and profiles. Correlate download IDs with read-only `sabnzbd_request`.
 5. For release dates, prefer Radarr movie/calendar data and name the date type: cinema (`inCinemas`), digital, or physical; state uncertainty.
-6. For audio, subtitle, codec, or playback reports, inspect actual streams with `jellyfin_request` first, then use Radarr evidence to explain selection/import.
+6. For audio, subtitle, codec, or playback reports, inspect the actual file with `media_probe` (it also works on completed, not-yet-imported downloads) and the imported streams with `jellyfin_request`, then use Radarr evidence to explain selection/import. Radarr `languages` is release-name parsing and never settles whether a track exists.
 7. Exhaust local queue/history/blocklist/file/profile and narrow search evidence before external availability reasoning.
 8. Treat completion as pending Anvil only when `anvil_job_lookup` exactly matches an absolute Radarr `outputPath`, or exact SAB `storage` linked by `downloadId`/`nzo_id`, to active current jobs and Radarr has file-not-ready evidence. Health alone is never item evidence.
 9. Apply the smallest targeted action. Check the mutation result's `verification` field, use follow-up reads when needed to confirm queue/blocklist/movie/file state, and verify Jellyfin afterward.
@@ -72,9 +74,13 @@ No generic force-import tool is exposed. Do not remove, blocklist, retry, search
 
 Check monitoring, minimum availability, file record, queue, history, SAB state, and exact Anvil correlation. Do not duplicate a progressing job. For sound completed payloads, diagnose import access/category/naming first. Search once only when missing, after a failed release is cleared, or when explicitly asked for replacement/fix.
 
+### Missing audio or subtitle track
+
+Probe the file before anything else: `media_probe` on the movie file, or on the queue `outputPath`/SAB `storage` when the download has not imported yet. If the track is not in the file, report that; re-grabbing the same release cannot add a track that was never there. Only search when a genuinely different release is plausible, say so explicitly, and never search or delete on `languages` metadata alone. If the track is in the file but not offered in playback, the problem is Jellyfin/client side. See the `media-probe` skill.
+
 ### Corrupt, unplayable, wrong movie, cut, or language
 
-Verify the report with strong evidence, such as the user report plus Jellyfin stream or Radarr `mediaInfo` anomalies; never delete on a vague report. Resolve the `tmdbId` with `GET /api/v3/movie?tmdbId={tmdbId}`, fetch the file with `GET /api/v3/moviefile?movieId={movieId}`, and confirm that exact file is the problematic item, including multi-version selection and the originating release. Because deletion removes the only copy of the movie, call `radarr_delete_movie_file` only when the evidence is strong, check that its `verification` reports HTTP 404, then call `radarr_search` for the verified movie. Verify the replacement appears in the queue, schedule a revisit for download/import/playback validation, and after replacement verify edition, audio, and playback. Identify and report any profile/custom-format cause.
+Verify the report with strong evidence, such as the user report plus a `media_probe` result, Jellyfin stream, or Radarr `mediaInfo` anomalies; never delete on a vague report. Resolve the `tmdbId` with `GET /api/v3/movie?tmdbId={tmdbId}`, fetch the file with `GET /api/v3/moviefile?movieId={movieId}`, and confirm that exact file is the problematic item, including multi-version selection and the originating release. Because deletion removes the only copy of the movie, call `radarr_delete_movie_file` only when the evidence is strong, check that its `verification` reports HTTP 404, then call `radarr_search` for the verified movie. Verify the replacement appears in the queue, schedule a revisit for download/import/playback validation, and after replacement verify edition, audio, and playback. Identify and report any profile/custom-format cause.
 
 ### Stuck queue or failed import
 
@@ -114,4 +120,5 @@ Confirm path/layout evidence available through APIs, runtime visibility, and nam
 - Respect monitoring and minimum availability.
 - Check Jellyfin multi-version selection and metadata before replacing valid media.
 - Do not infer Anvil work from a guessed path, title match, or daemon health.
+- Do not treat `languages` on a release, queue item, or file as proof that an audio or subtitle track exists.
 - Never resolve while only a queue or encoding job exists.
