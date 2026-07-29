@@ -21,6 +21,8 @@ export interface ServerDeps {
   config: Config
   /** Called with a validated issue event; must not throw synchronously. */
   onIssueEvent: (issueId: string, payload: SeerrWebhookPayload) => void
+  /** Called when an issue is resolved, so pending follow-ups are dropped. */
+  onIssueClosed: (issueId: string) => Promise<void>
   /** Authorizes comment-triggered runs (reporter/admin policy). */
   allowComment: (payload: SeerrWebhookPayload) => Promise<boolean>
   listAutomations: () => AutomationInfo[]
@@ -80,11 +82,6 @@ export function createApp(deps: ServerDeps): Hono {
       return c.json({ ok: true, ignored: "not an issue event" })
     }
 
-    // Nothing to do on resolution; our own resolutions also fire this.
-    if (payload.notification_type === "ISSUE_RESOLVED") {
-      return c.json({ ok: true, ignored: "issue resolved" })
-    }
-
     // Seerr renders issue_id as a numeric string; anything else means a broken
     // or customized template, not an issue we can act on.
     const issueId = issueIdOf(payload)
@@ -93,6 +90,13 @@ export function createApp(deps: ServerDeps): Hono {
         `[webhook] ${payload.notification_type} without usable issue_id; ignoring`,
       )
       return c.json({ ok: true, ignored: "missing issue_id" })
+    }
+
+    // No run on resolution (our own resolutions fire this too), but a resolved
+    // issue must not be woken later by a follow-up that is still armed.
+    if (payload.notification_type === "ISSUE_RESOLVED") {
+      await deps.onIssueClosed(issueId)
+      return c.json({ ok: true, ignored: "issue resolved" })
     }
 
     if (payload.notification_type === "ISSUE_COMMENT") {

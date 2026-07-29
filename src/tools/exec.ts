@@ -1,5 +1,16 @@
 import { execFile } from "node:child_process"
 
+/** Carries the helper's exit status, which is part of anvilctl's contract. */
+export class ExecError extends Error {
+  constructor(
+    message: string,
+    readonly exitCode: number | undefined,
+  ) {
+    super(message)
+    this.name = "ExecError"
+  }
+}
+
 /**
  * Runs a local helper binary (anvilctl, ffprobe) and returns stdout.
  * Never uses a shell: arguments are passed as an array, so nothing in a path
@@ -26,7 +37,13 @@ export function execFileText(
       (error, stdout, stderr) => {
         if (error) {
           const detail = String(stderr || stdout || error.message).trim()
-          reject(new Error(detail || error.message))
+          const status = (error as { code?: number | string }).code
+          reject(
+            new ExecError(
+              detail || error.message,
+              typeof status === "number" ? status : undefined,
+            ),
+          )
           return
         }
         resolve(String(stdout))

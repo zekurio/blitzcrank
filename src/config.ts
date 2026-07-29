@@ -64,6 +64,20 @@ function service(prefix: string): ServiceConfig | undefined {
   return { url: url.replace(/\/+$/, ""), apiKey }
 }
 
+/** A port that silently becomes NaN would bind nowhere useful. */
+function number(
+  name: string,
+  value: string | undefined,
+  fallback: number,
+): number {
+  if (value === undefined || value.trim() === "") return fallback
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`${name} must be a non-negative number, got "${value}"`)
+  }
+  return parsed
+}
+
 /** Colon-separated absolute paths, PATH-style. */
 function absoluteRoots(name: string, value: string | undefined): string[] {
   const roots = (value ?? "")
@@ -97,7 +111,7 @@ export function loadConfig(): Config {
     throw new Error("SEERR_URL and SEERR_API_KEY are required")
   }
   return {
-    port: Number(process.env.BLITZCRANK_PORT ?? 8484),
+    port: number("BLITZCRANK_PORT", process.env.BLITZCRANK_PORT, 8484),
     dataDir: process.env.BLITZCRANK_DATA_DIR ?? "data",
     automationsDir: process.env.BLITZCRANK_AUTOMATIONS_DIR ?? "automations",
     webhookSecret: process.env.BLITZCRANK_WEBHOOK_SECRET,

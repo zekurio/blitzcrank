@@ -48,6 +48,10 @@ because enforcement now lives in-process:
   return it in the result.
 - **Loop guards** — the bot's own comment webhooks and `ISSUE_RESOLVED` events are
   dropped; new user activity cancels pending revisits.
+- **Bounded follow-ups** — at most 3 self-scheduled revisits between two user messages,
+  and a revisit that produced no news at least doubles the next delay. A revisit is the
+  only run nobody asked for, so it is the only loop that needs its own limit. Pending
+  revisits are persisted, so a restart re-arms them instead of dropping them.
 - **Comment authorization** — follow-up comments only start a run when their author is
   the issue's reporter or a Seerr user with `ADMIN`/`MANAGE_ISSUES`. Identity is matched
   by email whenever both sides have one, the check runs before the revisit cancellation,
@@ -64,7 +68,8 @@ because enforcement now lives in-process:
 ## Layout
 
 - `src/server.ts` — Hono webhook endpoint (`POST /webhook/seerr`), `GET /healthz`, `GET /automations`, `POST /automations/:name/run`, event filtering
-- `src/queue.ts` / `src/revisits.ts` — serial run queue + revisit scheduler
+- `src/queue.ts` / `src/revisits.ts` — serial run queue + revisit scheduler (chain caps, backoff, restart re-arm)
+- `src/casefile.ts` — per-issue memory: agent-written findings, host-written run/spend/revisit facts
 - `src/agent/` — pi SDK session factory, issue system prompt, directive parsing
 - `src/automations/` — automation definitions (frontmatter + trusted body), capability→tool mapping, cron scheduling, `STATUS:` report protocol
 - `automations/` — operator-authored scheduled tasks (e.g. the hourly stale-import handler)
@@ -98,8 +103,11 @@ when configured.
 
 `BLITZCRANK_MODEL` is `provider/model[:thinking]` (default
 `anthropic/claude-sonnet-4-5:medium`). Every public comment carries a footer
-with the model identity and the run's total token usage and cost, e.g.
-`[blitzcrank w/ gpt-5.2-codex:high · 48.2k tokens · $0.19]`.
+with the model identity and the issue's cumulative token usage, e.g.
+`[blitzcrank w/ gpt-5.2-codex:high · 132.4k tokens]`. A run leaves exactly one
+comment and each comment replaces the previous one, so the count is per issue,
+not per run. No cost is shown: the deployment runs on subscription auth, where a
+dollar figure derived from list prices would be fiction.
 Authentication, in pi's resolution order:
 
 - **API-key providers** (`anthropic/...`, `openai/...`): the usual env vars
@@ -168,6 +176,4 @@ Ideas for later (see the porting checklist in `docs/research/legacy.md`):
 
 - optional second-model mutation review for high-risk ops (legacy broker, in-process)
 - report sinks beyond the log (ntfy/Discord) and Discord agents
-- broader test suite (only the comment gate is covered; directives/context/safety/automations
-  parsing are pure and easy to cover)
 - NixOS module + package output in the flake (systemd timers may own automation scheduling)
