@@ -9,6 +9,7 @@ import { Type } from "typebox"
 
 import type { MediaConfig } from "../config.js"
 import { textResult } from "./common.js"
+import type { RunContext } from "./context.js"
 import { execFileText } from "./exec.js"
 
 /**
@@ -24,9 +25,10 @@ import { execFileText } from "./exec.js"
  * Read-only and root-constrained: the target is resolved through `realpath`
  * and must land inside a configured media root, so neither a symlink nor a
  * path pasted into an issue can reach outside the media directories. The probe
- * result is deliberately *not* recorded as run evidence: stream titles are
+ * *result* is deliberately not recorded as run evidence — stream titles are
  * attacker-controllable text and must never be able to satisfy a mutation's ID
- * evidence gate.
+ * evidence gate — but the probed paths are, so bulk replacement gates can
+ * require that the files being replaced were actually inspected.
  */
 
 const MEDIA_EXTENSIONS = new Set([
@@ -55,7 +57,10 @@ const MAX_STREAMS = 100
 const MAX_PROBES_PER_RUN = 25
 const PROBE_TIMEOUT_MS = 30_000
 
-export function buildMediaTools(cfg: MediaConfig): ToolDefinition[] {
+export function buildMediaTools(
+  cfg: MediaConfig,
+  ctx: RunContext,
+): ToolDefinition[] {
   let probes = 0
   return [
     defineTool({
@@ -110,6 +115,10 @@ export function buildMediaTools(cfg: MediaConfig): ToolDefinition[] {
           ],
           { signal, timeoutMs: PROBE_TIMEOUT_MS },
         )
+        // Both the path the model asked for and the file actually read: the
+        // former is the Arr's own spelling (pre-symlink-resolution), which is
+        // what a later scope gate compares against.
+        ctx.recordProbe(params.path.trim(), target, file.path)
 
         return textResult(
           {
