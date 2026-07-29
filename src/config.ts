@@ -43,6 +43,15 @@ export interface Config {
   firecrawl: FirecrawlConfig | undefined
   /** Language for public comments (default German, matching the deployment). */
   language: string
+  /**
+   * Cumulative model spend allowed per issue, in USD. Enforced before and
+   * during a run (the agent loop is aborted on reaching it); 0 disables it.
+   */
+  issueBudgetUsd: number
+  /** Public comment posted once when an issue exhausts its budget. */
+  budgetMessage: string
+  /** Self-scheduled follow-ups allowed between two user messages. */
+  maxRevisitChain: number
   /** Seerr user id sent as X-Api-User so bot comments are attributed correctly. */
   seerrBotUserId: string | undefined
   /** Display name of the bot's Seerr user; its own comment webhooks are ignored. */
@@ -113,6 +122,12 @@ export function loadConfig(): Config {
         }
       : undefined,
     language: process.env.BLITZCRANK_LANGUAGE ?? "German",
+    issueBudgetUsd: Number(process.env.BLITZCRANK_ISSUE_BUDGET_USD ?? 5),
+    budgetMessage:
+      process.env.BLITZCRANK_BUDGET_MESSAGE ??
+      "Ich komme hier allein nicht weiter und melde mich nicht mehr automatisch. " +
+        "Bitte wende dich an einen Admin, wenn das Problem weiter besteht.",
+    maxRevisitChain: Number(process.env.BLITZCRANK_MAX_REVISITS ?? 3),
     seerrBotUserId: process.env.SEERR_BOT_USER_ID,
     seerrBotUsername: process.env.SEERR_BOT_USERNAME,
     seerr,

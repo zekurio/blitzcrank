@@ -2,7 +2,9 @@ import path from "node:path"
 
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent"
 
+import { CaseStore, type CaseFile } from "../casefile.js"
 import type { Config } from "../config.js"
+import { planRevisit } from "../revisits.js"
 import { SeerrClient } from "../services/seerr.js"
 import { RunContext } from "../tools/context.js"
 import {
@@ -33,14 +35,28 @@ export function eventMediaScope(event: IssueEvent): MediaScope {
 export interface RunOutcome {
   issueId: string
   directives: Directives
+  /** The case file as persisted, including the revisit the host armed. */
+  casefile: CaseFile
+}
+
+const NO_DIRECTIVES: Directives = {
+  resolve: false,
+  revisitInMs: undefined,
+  revisitReason: undefined,
+  comment: "",
+  malformed: false,
 }
 
 export class IssueRunner {
+  private readonly cases: CaseStore
+
   constructor(
     private readonly config: Config,
     private readonly modelRuntime: ModelRuntime,
     private readonly modelSpec: string,
-  ) {}
+  ) {
+    this.cases = new CaseStore(path.join(config.dataDir, "cases"))
+  }
 
   get anchor(): string {
     return modelAnchor(this.modelSpec)
@@ -48,12 +64,34 @@ export class IssueRunner {
 
   async run(event: IssueEvent): Promise<RunOutcome> {
     const { issueId } = event
-    const ctx = new RunContext()
     const seerr = new SeerrClient(this.config.seerr, this.config.seerrBotUserId)
+    const casefile = await this.cases.load(issueId)
+    const budget = this.config.issueBudgetUsd
+
+    // Enforced before the spend: an exhausted issue never starts a session.
+    if (budget > 0 && casefile.spend.cost >= budget) {
+      console.warn(
+        `[issue:${issueId}] budget exhausted ($${casefile.spend.cost.toFixed(2)} of $${budget.toFixed(2)}); skipping run`,
+      )
+      if (!casefile.budgetNotified) {
+        await seerr.postComment(issueId, this.budgetComment())
+        casefile.budgetNotified = true
+        casefile.revisit = undefined
+        await this.cases.save(casefile)
+      }
+      return { issueId, directives: NO_DIRECTIVES, casefile }
+    }
+
+    const ctx = new RunContext()
     const sessionFileRef: SessionFileRef = { current: undefined }
     // The agent's progress tool posts this once and edits it in place; the
     // final comment then overwrites it, so a run leaves one comment at most.
     const status: StatusComment = { id: undefined }
+    const revisitsLeft = Math.max(
+      0,
+      this.config.maxRevisitChain -
+        (event.kind === "revisit" ? (casefile.revisit?.chain ?? 0) : 0),
+    )
 
     const turn = await runAgentTurn({
       modelRuntime: this.modelRuntime,
@@ -68,17 +106,29 @@ export class IssueRunner {
         sessionFileRef,
         mediaScope: eventMediaScope(event),
         status,
+        casefile,
       }),
       prompt:
         event.kind === "webhook"
-          ? buildIssuePrompt(event.payload)
-          : buildRevisitPrompt(event.issueId, event.reason),
+          ? buildIssuePrompt(event.payload, casefile, revisitsLeft)
+          : buildRevisitPrompt(
+              event.issueId,
+              event.reason,
+              casefile,
+              revisitsLeft,
+            ),
       sessionDir: path.join(this.config.dataDir, "sessions", "issues"),
       sessionFileRef,
       logPrefix: `issue:${issueId}`,
+      ...(budget > 0
+        ? { costCeiling: budget, costSpent: casefile.spend.cost }
+        : {}),
     })
 
-    const directives = parseDirectives(turn.text)
+    const directives =
+      turn.stopped === "cost_ceiling"
+        ? NO_DIRECTIVES
+        : parseDirectives(turn.text)
 
     if (directives.malformed) {
       console.warn(
@@ -86,26 +136,74 @@ export class IssueRunner {
       )
     }
 
-    const comment = directives.malformed ? undefined : directives.comment
+    // A run stopped at the ceiling has no final answer: say so once, rather
+    // than leaving the reporter with a stale status line.
+    const comment =
+      turn.stopped === "cost_ceiling"
+        ? casefile.budgetNotified
+          ? undefined
+          : this.budgetComment()
+        : directives.malformed
+          ? undefined
+          : directives.comment
     await publishComment(
       seerr,
       issueId,
       status,
       comment
-        ? `${comment}\n\n${usageAnchor(this.modelSpec, turn.usage)}`
+        ? turn.stopped === "cost_ceiling"
+          ? comment
+          : `${comment}\n\n${usageAnchor(this.modelSpec, turn.usage)}`
         : undefined,
     )
+    if (turn.stopped === "cost_ceiling") casefile.budgetNotified = true
 
     if (!directives.malformed && directives.resolve) {
       await seerr.setStatus(issueId, "resolved")
     }
 
     const { mutations, deletes } = ctx.counts
+    casefile.runs.push({
+      at: new Date().toISOString(),
+      trigger: event.kind === "revisit" ? "revisit" : "webhook",
+      mutations,
+      deletes,
+      tokens: turn.usage.totalTokens,
+      cost: turn.usage.cost,
+      commented: comment !== undefined && comment.length > 0,
+      resolved: directives.resolve,
+    })
+    casefile.spend = {
+      runs: casefile.spend.runs + 1,
+      tokens: casefile.spend.tokens + turn.usage.totalTokens,
+      cost: casefile.spend.cost + turn.usage.cost,
+    }
+
+    const plan = planRevisit({
+      requestedMs: directives.revisitInMs,
+      reason: directives.revisitReason,
+      mediaScope: eventMediaScope(event),
+      previous: casefile.revisit,
+      isRevisitRun: event.kind === "revisit",
+      producedNews: mutations > 0 || (comment !== undefined && comment !== ""),
+      maxChain: this.config.maxRevisitChain,
+      now: Date.now(),
+    })
+    if (plan.refused) console.warn(`[issue:${issueId}] ${plan.refused}`)
+    casefile.revisit = plan.revisit
+    await this.cases.save(casefile)
+
     console.log(
-      `[issue:${issueId}] done resolve=${directives.resolve} revisit=${directives.revisitInMs ?? "-"} ` +
-        `mutations=${mutations} deletes=${deletes} tokens=${turn.usage.totalTokens} cost=$${turn.usage.cost.toFixed(4)}`,
+      `[issue:${issueId}] done resolve=${directives.resolve} revisit=${plan.revisit?.delayMs ?? "-"} ` +
+        `mutations=${mutations} deletes=${deletes} tokens=${turn.usage.totalTokens} ` +
+        `cost=$${turn.usage.cost.toFixed(4)} issueTotal=$${casefile.spend.cost.toFixed(2)}` +
+        (turn.stopped ? ` stopped=${turn.stopped}` : ""),
     )
-    return { issueId, directives }
+    return { issueId, directives, casefile }
+  }
+
+  private budgetComment(): string {
+    return `${this.config.budgetMessage}\n\n${this.anchor}`
   }
 }
 
