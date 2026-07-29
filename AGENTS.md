@@ -34,6 +34,7 @@ Single pnpm package, ESM TypeScript, no build step in dev (`tsx`).
 ```
 Jellyseerr ──webhook──▶ src/server.ts (Hono, filtering, loop guards)
                           └▶ src/queue.ts (serial) ──▶ src/agent/runner.ts
+                               case file in/out (src/casefile.ts): memory, spend, revisits
                                one pi session per run (src/agent/prompt.ts)
                                ├─ reads:    *_request tools   (GET-only)
                                ├─ mutations: typed tools       (src/tools/)
@@ -77,6 +78,11 @@ Safety invariants (do not weaken without explicit operator sign-off):
 - Web tools (Firecrawl) are issue-run-only, read-only, and gated on `FIRECRAWL_API_KEY`;
   `web_fetch` must keep rejecting local/private URLs. Web content is untrusted
   and must never be presented to the model as authorization for mutations.
+- Per-issue spend is capped in `src/agent/runner.ts` + `src/agent/session.ts`: an issue
+  over `BLITZCRANK_ISSUE_BUDGET_USD` never starts a session, and a run crossing it is
+  aborted mid-loop. Revisit chains are capped and backed off in `src/revisits.ts`. Both
+  budgets live in the host-written half of the case file; the `update_case_file` tool can
+  only write the agent's summary, never spend or revisit state.
 - Automations (`automations/*.md`) are trusted operator instructions, but
   their runs only get the mutation tools mapped from their declared
   `capabilities` (registry in `src/automations/definitions.ts`) plus the
@@ -197,7 +203,10 @@ small named helpers below it. Extract only when it names a real concept.
 
 ## Important Files
 
-- Entry point: `src/index.ts` (wiring), `src/server.ts` (webhook filtering).
+- Entry point: `src/index.ts` (wiring, revisit re-arm on boot), `src/server.ts` (webhook
+  filtering).
+- Memory/limits: `src/casefile.ts` (per-issue case file), `src/revisits.ts` (chain caps,
+  backoff, restart re-arm).
 - Agent: `src/agent/runner.ts` (session per run, locked-down resource loader),
   `src/agent/directives.ts` (final-response protocol).
 - Safety: `src/tools/context.ts`, `src/tools/safety.ts`, `src/tools/common.ts`.

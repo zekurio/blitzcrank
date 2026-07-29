@@ -2,10 +2,12 @@ import path from "node:path"
 
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent"
 
+import type { CaseFile } from "../casefile.js"
 import type { Config } from "../config.js"
 import type { SeerrClient } from "../services/seerr.js"
 import { buildAnvilTools } from "./anvil.js"
 import { buildRadarrTools, buildSonarrTools } from "./arr.js"
+import { buildCaseFileTool } from "./casefile.js"
 import type { RunContext } from "./context.js"
 import { buildHistoryTool } from "./history.js"
 import { buildMediaTools } from "./media.js"
@@ -74,6 +76,8 @@ export interface IssueToolDeps {
   mediaScope: MediaScope
   /** Shared handle to the run's live status comment (posted, then edited). */
   status: StatusComment
+  /** This issue's memory; the agent rewrites its summary, the host persists it. */
+  casefile: CaseFile
 }
 
 /**
@@ -102,6 +106,7 @@ export function buildIssueTools(deps: IssueToolDeps): ToolDefinition[] {
       deps.config.language,
       deps.status,
     ),
+    buildCaseFileTool(deps.casefile),
     ...tools,
     // Issue runs only: availability/context lookups. Automations stay mechanical.
     ...(deps.config.firecrawl ? buildWebTools(deps.config.firecrawl) : []),

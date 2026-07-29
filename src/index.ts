@@ -1,3 +1,5 @@
+import path from "node:path"
+
 import { ModelRuntime } from "@earendil-works/pi-coding-agent"
 import { serve } from "@hono/node-server"
 
@@ -13,9 +15,10 @@ import {
 } from "./automations/definitions.js"
 import { AutomationRunner } from "./automations/runner.js"
 import { AutomationScheduler } from "./automations/scheduler.js"
+import { CaseStore } from "./casefile.js"
 import { loadConfig } from "./config.js"
 import { SerialQueue } from "./queue.js"
-import { RevisitScheduler } from "./revisits.js"
+import { RevisitScheduler, revisitDelay } from "./revisits.js"
 import { createApp } from "./server.js"
 import { SeerrClient } from "./services/seerr.js"
 import { createCommentGate } from "./webhook/comment-gate.js"
@@ -35,17 +38,34 @@ async function main(): Promise<void> {
   const queue = new SerialQueue()
   const revisits = new RevisitScheduler()
 
+  const armRevisit = (
+    issueId: string,
+    delayMs: number,
+    reason: string,
+    mediaScope: ReturnType<typeof eventMediaScope>,
+    chain: number,
+  ): void => {
+    console.log(
+      `[revisit] issue=${issueId} in ${Math.round(delayMs / 60000)}m (${chain}/${config.maxRevisitChain}): ${reason}`,
+    )
+    revisits.schedule(issueId, delayMs, () =>
+      enqueueIssue({ kind: "revisit", issueId, reason, mediaScope }),
+    )
+  }
+
   const enqueueIssue = (event: IssueEvent): void => {
     queue.enqueue(async () => {
-      const { issueId, directives } = await issueRunner.run(event)
-      if (directives.revisitInMs !== undefined && directives.revisitReason) {
-        const reason = directives.revisitReason
-        console.log(
-          `[revisit] issue=${issueId} in ${Math.round(directives.revisitInMs / 60000)}m: ${reason}`,
-        )
-        const mediaScope = eventMediaScope(event)
-        revisits.schedule(issueId, directives.revisitInMs, () =>
-          enqueueIssue({ kind: "revisit", issueId, reason, mediaScope }),
+      const { issueId, casefile } = await issueRunner.run(event)
+      // The runner persisted the plan; the timer only mirrors it, so a restart
+      // re-arms from disk instead of silently dropping the follow-up.
+      const revisit = casefile.revisit
+      if (revisit) {
+        armRevisit(
+          issueId,
+          revisit.delayMs,
+          revisit.reason,
+          revisit.mediaScope,
+          revisit.chain,
         )
       }
     })
@@ -59,6 +79,22 @@ async function main(): Promise<void> {
 
   const scheduler = new AutomationScheduler(enqueueAutomation)
   scheduler.start(automations)
+
+  // Follow-ups survive a restart: pending revisits are re-armed from the case
+  // files, overdue ones shortly after boot rather than all at once.
+  const cases = new CaseStore(path.join(config.dataDir, "cases"))
+  for (const file of await cases.pendingRevisits()) {
+    const delayMs = revisitDelay(file, Date.now())
+    const revisit = file.revisit
+    if (delayMs === undefined || !revisit) continue
+    armRevisit(
+      file.issueId,
+      delayMs,
+      revisit.reason,
+      revisit.mediaScope,
+      revisit.chain,
+    )
+  }
 
   const app = createApp({
     config,

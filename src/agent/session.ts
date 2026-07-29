@@ -95,6 +95,14 @@ export interface AgentTurnOptions {
   /** Receives the session file path once known, for history self-exclusion. */
   sessionFileRef: { current: string | undefined } | undefined
   logPrefix: string
+  /**
+   * Hard spend ceiling in USD for this run, counted together with what the
+   * issue already cost. Reaching it aborts the agent loop mid-run: a ceiling
+   * that only reports after the fact is not a ceiling.
+   */
+  costCeiling?: number | undefined
+  /** Cost already attributed to this issue before the run. */
+  costSpent?: number | undefined
 }
 
 /**
@@ -105,6 +113,8 @@ export interface AgentTurnOptions {
 export interface AgentTurnResult {
   text: string
   usage: RunUsage
+  /** Set when the run was stopped by the host rather than by the model. */
+  stopped: "cost_ceiling" | undefined
 }
 
 export async function runAgentTurn(
@@ -149,6 +159,12 @@ export async function runAgentTurn(
 
   if (opts.sessionFileRef) opts.sessionFileRef.current = session.sessionFile
 
+  // Live cost tracking: assistant messages carry final usage as they complete,
+  // so the ceiling can stop the loop instead of describing the damage later.
+  const spent = opts.costSpent ?? 0
+  let runCost = 0
+  let aborting: Promise<void> | undefined
+
   const unsubscribe = session.subscribe((event) => {
     if (event.type === "tool_execution_start") {
       console.log(
@@ -159,11 +175,31 @@ export async function runAgentTurn(
     }
     if (event.type === "tool_execution_end" && event.isError) {
       console.warn(`[${opts.logPrefix}] tool ${event.toolName} failed`)
+      return
     }
+    if (event.type !== "message_end" || event.message.role !== "assistant") {
+      return
+    }
+    runCost += event.message.usage.cost.total
+    if (
+      opts.costCeiling === undefined ||
+      aborting ||
+      spent + runCost < opts.costCeiling
+    ) {
+      return
+    }
+    console.warn(
+      `[${opts.logPrefix}] cost ceiling $${opts.costCeiling.toFixed(2)} reached ` +
+        `(issue total $${(spent + runCost).toFixed(2)}); aborting run`,
+    )
+    aborting = session.abort()
   })
 
   try {
     await session.prompt(opts.prompt)
+    // The prompt resolves as soon as the loop stops; the abort itself still
+    // has to settle before the session is disposed.
+    if (aborting) await aborting
 
     const lastAssistant = session.messages.findLast(
       (m): m is AssistantMessage => m.role === "assistant",
@@ -186,6 +222,7 @@ export async function runAgentTurn(
         .map((b) => b.text)
         .join(""),
       usage,
+      stopped: aborting ? "cost_ceiling" : undefined,
     }
   } finally {
     unsubscribe()

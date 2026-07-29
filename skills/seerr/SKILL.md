@@ -40,6 +40,22 @@ Use the read-only `seerr_request` with relative `/api/v1/...` paths; it accepts 
 - Search first, confirm exact media ID/type, and check quota before creating the request. Inspect the returned `verification` field to confirm the created request.
 - Paths containing `/comment` and paths ending in `/resolved` or `/open` are forbidden. Do not attempt them.
 
+## Continuity between runs
+
+Every trigger starts a fresh session, but not from zero: what earlier runs on this issue established is handed to you at the top of the prompt, from the issue's case file. Start there.
+
+- Do not re-derive facts that are already recorded, and never search or read old session transcripts to recover your own conclusions. `thread_history_search` is for _other_ items, and it returns snippets only.
+- Before the final response, call `update_case_file` with the verified facts and their evidence, the explanations you disproved, and what is still open. It replaces the previous summary: restate what still holds, drop what no longer does, and correct anything the earlier run got wrong.
+- Run count, spend, and the remaining follow-up budget are host facts shown in the prompt. When follow-ups are exhausted, resolve or ask the reporter one concrete question — you cannot schedule another check.
+
+## Ordering: does the thing even exist?
+
+When the report is that something is _missing_ — a German dub, a 4K version, an uncut edition, a later season, subtitles in a given language — establish that it exists at all before investigating the local pipeline. A web search costs cents; a wrong assumption that it must exist costs a full investigation, and can end in re-downloading a whole season that was never going to contain the track.
+
+1. Does the requested version exist publicly, and since when? If it does not, this is an availability answer, not a repair.
+2. If it exists, does the local file already contain it (probe the file, check Jellyfin streams)?
+3. Only then ask why the pipeline did not deliver it.
+
 ## Initial triage workflow
 
 1. Fetch the live issue; record status, type, original report, reporter context, media type/IDs, request ID, and affected season/episode.
@@ -93,7 +109,7 @@ Classify first. Trace missing media through Seerr → Arr → SABnzbd → Anvil 
 - Do not post Seerr comments and do not resolve through `seerr_request`.
 - The prose final response should be concise, factual, suitable for the host to post, and distinguish queued, downloading, encoding, importing, scanning, and verified states.
 - End with `RESOLVE_ISSUE: yes` only after verification; otherwise `RESOLVE_ISSUE: no`.
-- For active work, optionally add `REVISIT_IN: <duration>` and `REVISIT_REASON: <why another check is needed>`.
+- For active work, optionally add `REVISIT_IN: <duration>` and `REVISIT_REASON: <why another check is needed>`. `REVISIT_REASON` must name a falsifiable condition you will check, not a vague "see if it worked". Follow-ups are capped per issue, and a follow-up that produced no news doubles the next delay, so estimate generously instead of polling.
 - Ask focused reporter questions in the final prose when information is missing. Do not claim a queued replacement is fixed.
 - Avoid secrets, private internal URLs/paths, raw logs, and private user data.
 
