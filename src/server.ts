@@ -1,7 +1,12 @@
 import { Hono } from "hono"
 
 import type { Config } from "./config.js"
-import { isIssueEvent, type SeerrWebhookPayload } from "./webhook/types.js"
+import { isBotComment } from "./webhook/loop-guard.js"
+import {
+  isIssueEvent,
+  issueIdOf,
+  type SeerrWebhookPayload,
+} from "./webhook/types.js"
 
 export interface AutomationInfo {
   name: string
@@ -80,12 +85,19 @@ export function createApp(deps: ServerDeps): Hono {
       return c.json({ ok: true, ignored: "issue resolved" })
     }
 
+    // Seerr renders issue_id as a numeric string; anything else means a broken
+    // or customized template, not an issue we can act on.
+    const issueId = issueIdOf(payload)
+    if (issueId === undefined) {
+      console.warn(
+        `[webhook] ${payload.notification_type} without usable issue_id; ignoring`,
+      )
+      return c.json({ ok: true, ignored: "missing issue_id" })
+    }
+
     if (payload.notification_type === "ISSUE_COMMENT") {
       // Loop guard: ignore comment events caused by the bot's own comments.
-      if (
-        config.seerrBotUsername &&
-        payload.comment?.commentedBy_username === config.seerrBotUsername
-      ) {
+      if (isBotComment(payload, config.seerrBotUsername)) {
         return c.json({ ok: true, ignored: "own comment" })
       }
       // Authorization gate. Runs before onIssueEvent so an unauthorized
@@ -95,22 +107,10 @@ export function createApp(deps: ServerDeps): Hono {
       }
     }
 
-    const issueId = payload.issue?.issue_id
-    if (
-      issueId === undefined ||
-      issueId === null ||
-      String(issueId).length === 0
-    ) {
-      console.warn(
-        `[webhook] ${payload.notification_type} without issue_id; ignoring`,
-      )
-      return c.json({ ok: true, ignored: "missing issue_id" })
-    }
-
     console.log(
       `[webhook] ${payload.notification_type} issue=${issueId} subject=${payload.subject}`,
     )
-    onIssueEvent(String(issueId), payload)
+    onIssueEvent(issueId, payload)
     return c.json({ ok: true })
   })
 

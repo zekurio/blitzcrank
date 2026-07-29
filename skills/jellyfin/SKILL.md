@@ -84,7 +84,7 @@ Compare path, size, modification evidence, streams, and runtime against the repl
 
 ## Verification and communication
 
-- Call `report_progress` exactly once as the first action, with one short public, user-facing progress sentence; do not include internal tool names, IDs, URLs, or promises.
+- Call `report_progress` as the first action, with one short public, user-facing status sentence; do not include internal tool names, IDs, URLs, or promises. It is one live status line: later calls rewrite it in place and your final comment replaces it.
 - A successful scan does not prove playback.
 - Do not call Seerr comment/resolve APIs. Final output must use `RESOLVE_ISSUE: yes|no`; unresolved work may add `REVISIT_IN` and `REVISIT_REASON`.
 - Verify the affected item and original symptom before resolution.

@@ -297,33 +297,63 @@ export function buildSabnzbdTools(
   ]
 }
 
-/** Posts one early public progress comment on the issue; enforced single-use. */
+/**
+ * The run's single live status comment on the issue. The progress tool posts
+ * it once and rewrites it in place afterwards; the host then replaces it with
+ * the final public comment (or deletes it when there is nothing to say), so a
+ * run never leaves more than one comment behind.
+ */
+export interface StatusComment {
+  id: number | undefined
+}
+
+/** Max report_progress calls per run; keeps status churn (and API calls) bounded. */
+const MAX_PROGRESS_UPDATES = 4
+
 export function buildProgressTool(
   seerr: SeerrClient,
   issueId: string | number,
   anchor: string,
   language: string,
+  status: StatusComment,
 ): ToolDefinition {
-  let used = false
+  let calls = 0
   return defineTool({
     name: "report_progress",
     label: "Report issue progress",
     description:
-      `Publish one short user-facing ${language} sentence describing what you are about to investigate or fix. ` +
-      "Call this exactly once as your first action. It is shown publicly: no internal tool names, IDs, URLs, or promises of success.",
+      `Publish or rewrite this run's single live status line: one short user-facing ${language} sentence ` +
+      "describing what you are doing right now. Call it as your first action, then again only when the work " +
+      `moves to a clearly different phase (max ${MAX_PROGRESS_UPDATES} calls). Each call replaces the previous ` +
+      "text instead of adding a comment, and your final response replaces it again. Shown publicly: no internal " +
+      "tool names, IDs, URLs, or promises of success.",
     parameters: Type.Object({
       message: Type.String({
         description: `One concise ${language} sentence tailored to this issue`,
       }),
     }),
     async execute(_toolCallId, params) {
-      if (used)
-        throw new Error("report_progress may only be called once per run")
-      used = true
+      if (calls >= MAX_PROGRESS_UPDATES) {
+        throw new Error(
+          `report_progress may be called at most ${MAX_PROGRESS_UPDATES} times per run`,
+        )
+      }
+      calls++
       const message = params.message.trim()
       if (!message) throw new Error("message must not be empty")
-      await seerr.postComment(issueId, `${message}\n\n${anchor}`)
-      return textResult({ reported: true }, { action: "report_progress" })
+      const body = `${message}\n\n${anchor}`
+      if (status.id === undefined) {
+        status.id = await seerr.postComment(issueId, body)
+        return textResult(
+          { posted: true, replacesPrevious: true },
+          { action: "report_progress" },
+        )
+      }
+      await seerr.updateComment(status.id, body)
+      return textResult(
+        { updated: true, replacesPrevious: true },
+        { action: "report_progress" },
+      )
     },
   })
 }

@@ -49,7 +49,7 @@ Use the read-only `seerr_request` with relative `/api/v1/...` paths; it accepts 
 5. For TV, require enough scope before destructive or broad action. If missing, ask one focused question in the final response and set `RESOLVE_ISSUE: no`.
 6. Route by symptom: video to file/playback/transcode; audio to tracks/language; subtitles to embedded/sidecar/selection; other to metadata, availability, request, or download state.
 7. Query the owning Arr and Jellyfin before changing anything; use SAB and Anvil only when handoff evidence calls for them.
-8. Call `report_progress` exactly once as the first action, with one short public, user-facing progress sentence. It posts the progress comment; do not include internal tool names, IDs, URLs, or promises.
+8. Call `report_progress` as the first action, with one short public, user-facing status sentence. It posts one live status comment that later calls rewrite in place and your final comment replaces, so a run leaves a single comment; do not include internal tool names, IDs, URLs, or promises.
 9. Resolve only after objective verification, or after explicit reporter confirmation for subjective/client-specific symptoms.
 
 ## Media mapping

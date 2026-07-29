@@ -9,6 +9,7 @@ import {
   buildIssueTools,
   type MediaScope,
   type SessionFileRef,
+  type StatusComment,
 } from "../tools/index.js"
 import type { SeerrWebhookPayload } from "../webhook/types.js"
 import { parseDirectives, type Directives } from "./directives.js"
@@ -50,6 +51,9 @@ export class IssueRunner {
     const ctx = new RunContext()
     const seerr = new SeerrClient(this.config.seerr, this.config.seerrBotUserId)
     const sessionFileRef: SessionFileRef = { current: undefined }
+    // The agent's progress tool posts this once and edits it in place; the
+    // final comment then overwrites it, so a run leaves one comment at most.
+    const status: StatusComment = { id: undefined }
 
     const turn = await runAgentTurn({
       modelRuntime: this.modelRuntime,
@@ -63,6 +67,7 @@ export class IssueRunner {
         anchor: this.anchor,
         sessionFileRef,
         mediaScope: eventMediaScope(event),
+        status,
       }),
       prompt:
         event.kind === "webhook"
@@ -79,16 +84,20 @@ export class IssueRunner {
       console.warn(
         `[issue:${issueId}] malformed directive block; no comment posted:\n${turn.text}`,
       )
-    } else {
-      if (directives.comment) {
-        await seerr.postComment(
-          issueId,
-          `${directives.comment}\n\n${usageAnchor(this.modelSpec, turn.usage)}`,
-        )
-      }
-      if (directives.resolve) {
-        await seerr.setStatus(issueId, "resolved")
-      }
+    }
+
+    const comment = directives.malformed ? undefined : directives.comment
+    await publishComment(
+      seerr,
+      issueId,
+      status,
+      comment
+        ? `${comment}\n\n${usageAnchor(this.modelSpec, turn.usage)}`
+        : undefined,
+    )
+
+    if (!directives.malformed && directives.resolve) {
+      await seerr.setStatus(issueId, "resolved")
     }
 
     const { mutations, deletes } = ctx.counts
@@ -98,4 +107,26 @@ export class IssueRunner {
     )
     return { issueId, directives }
   }
+}
+
+/**
+ * Publishes the run's one public comment: it overwrites the live status line
+ * the agent posted via `report_progress` when there is one. Without a final
+ * comment the status line is removed, so no stale "looking into it" survives.
+ */
+export async function publishComment(
+  seerr: Pick<SeerrClient, "postComment" | "updateComment" | "deleteComment">,
+  issueId: string,
+  status: StatusComment,
+  body: string | undefined,
+): Promise<void> {
+  if (body === undefined) {
+    if (status.id !== undefined) await seerr.deleteComment(status.id)
+    return
+  }
+  if (status.id === undefined) {
+    await seerr.postComment(issueId, body)
+    return
+  }
+  await seerr.updateComment(status.id, body)
 }

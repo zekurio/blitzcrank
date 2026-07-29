@@ -1,5 +1,5 @@
 import type { SeerrClient, SeerrUser } from "../services/seerr.js"
-import type { SeerrWebhookPayload } from "./types.js"
+import { issueIdOf, webhookText, type SeerrWebhookPayload } from "./types.js"
 
 /**
  * Host-side authorization for comment-triggered runs: only the issue's
@@ -20,16 +20,12 @@ export function createCommentGate(
   seerr: Pick<SeerrClient, "getIssue" | "listUsers">,
 ): (payload: SeerrWebhookPayload) => Promise<boolean> {
   return async (payload) => {
-    const issueId = payload.issue?.issue_id
+    const issueId = issueIdOf(payload)
     const who: CommenterIdentity = {
       email: normalize(payload.comment?.commentedBy_email),
       name: normalize(payload.comment?.commentedBy_username),
     }
-    if (
-      issueId === undefined ||
-      issueId === null ||
-      (!who.email && !who.name)
-    ) {
+    if (issueId === undefined || (!who.email && !who.name)) {
       console.warn(
         "[comment-gate] comment event without identifiable author; ignoring",
       )
@@ -81,5 +77,5 @@ function matchesUser(
 }
 
 function normalize(value: string | undefined): string | undefined {
-  return value?.trim().toLowerCase() || undefined
+  return webhookText(value)?.toLowerCase()
 }

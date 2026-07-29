@@ -14,7 +14,7 @@ Use `anvil_status` for daemon health and `anvil_job_lookup` for exact item corre
 
 ## Diagnostic rules
 
-- Call `report_progress` exactly once as the first action for the overall issue, not as a recurring Anvil status update.
+- Call `report_progress` as the first action for the overall issue; it is one rewritable status line, not a recurring Anvil status feed.
 
 - Anvil sits between SABnzbd and Sonarr/Radarr. A SABnzbd job can be complete while Anvil is still encoding, so Sonarr/Radarr may temporarily report no importable file, a missing or unavailable path, a locked/in-use file, size changes, access/permission-like failures, or a waiting/delayed import state.
 - Never construct or guess a path from a title, release name, or basename. If no exact path is available, skip Anvil correlation and rely on Arr/SAB evidence.

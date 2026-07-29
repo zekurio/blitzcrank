@@ -13,7 +13,10 @@ import {
   buildProgressTool,
   buildSabnzbdTools,
   buildSeerrTools,
+  type StatusComment,
 } from "./services.js"
+
+export type { StatusComment } from "./services.js"
 import { buildWebTools } from "./web.js"
 
 export interface SessionFileRef {
@@ -62,10 +65,12 @@ export interface IssueToolDeps {
   sessionFileRef: SessionFileRef
   /** Known media type of the issue; prunes the irrelevant Arr's tools. */
   mediaScope: MediaScope
+  /** Shared handle to the run's live status comment (posted, then edited). */
+  status: StatusComment
 }
 
 /**
- * Issue runs additionally get the single-use public progress comment tool.
+ * Issue runs additionally get the live public status comment tool.
  * When the webhook names the media type, the other Arr's tools are omitted
  * entirely — a movie issue never needs Sonarr and vice versa — keeping the
  * tool surface small for the model.
@@ -88,6 +93,7 @@ export function buildIssueTools(deps: IssueToolDeps): ToolDefinition[] {
       deps.issueId,
       deps.anchor,
       deps.config.language,
+      deps.status,
     ),
     ...tools,
     // Issue runs only: availability/context lookups. Automations stay mechanical.

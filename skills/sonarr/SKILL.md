@@ -107,7 +107,7 @@ Review repeated history, cutoff, upgrades, custom-format scores, language, namin
 ## Verification and communication
 
 - Search completion is not a grab; a grab is not a download; SAB completion is not import; a Sonarr file record is not Jellyfin playback proof.
-- Call `report_progress` exactly once as the first action, with one short public, user-facing progress sentence; do not include internal tool names, IDs, URLs, or promises.
+- Call `report_progress` as the first action, with one short public, user-facing status sentence; do not include internal tool names, IDs, URLs, or promises. It is one live status line: later calls rewrite it in place and your final comment replaces it.
 - The host owns Seerr comments and issue resolution. In the final response, include `RESOLVE_ISSUE: yes|no`; when unresolved, optionally include `REVISIT_IN` and `REVISIT_REASON`.
 - Resolve only after the reported symptom is objectively verified, or reporter confirmation is required and obtained.
 

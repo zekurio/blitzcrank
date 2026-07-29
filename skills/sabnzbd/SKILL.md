@@ -36,7 +36,7 @@ Use read-only `sabnzbd_request` with `purpose` and a relative `path`. It remains
 2. Search SAB queue and history, matching Arr `downloadId` to SAB `nzo_id` whenever possible; title/NZB matching is weaker.
 3. Record status, percentage, remaining time, age, priority, global/job pause evidence, category, `storage`, and failure message.
 4. Distinguish downloading, queued, paused, verifying, repairing, extracting, moving, completed, and failed.
-5. Compare repeated reads before calling slow work stalled. `report_progress` is single-use, so do not use it for repeated state updates.
+5. Compare repeated reads before calling slow work stalled. `report_progress` rewrites one status line, so use it for phase changes, not for a running download-percentage commentary.
 6. Use service evidence for server errors, missing articles, scheduling, limits, disk thresholds, permissions, and post-processing failures; do not claim direct filesystem inspection.
 7. Return to the Arr to see whether it recognized completion/failure and whether the issue is downloader-side, import-side, or release-side.
 8. If SAB is complete but Arr says files are not ready, call `anvil_job_lookup` only with exact SAB `storage` linked to the Arr download ID, or exact Arr `outputPath`. Health alone is not item evidence.
@@ -81,7 +81,7 @@ A completed SAB item may still be encoding. Only exact active `anvil_job_lookup`
 
 ## Verification and communication
 
-- Call `report_progress` exactly once as the first action, with one short public, user-facing progress sentence; do not include internal tool names, IDs, URLs, or promises.
+- Call `report_progress` as the first action, with one short public, user-facing status sentence; do not include internal tool names, IDs, URLs, or promises. It is one live status line: later calls rewrite it in place and your final comment replaces it.
 - Claim a SAB mutation only when the typed tool succeeds and its `verification` field confirms the expected state.
 - Completed download does not prove Arr import or Jellyfin playback.
 - Do not call Seerr comment/resolve APIs. Use final directives `RESOLVE_ISSUE: yes|no`, optionally `REVISIT_IN` and `REVISIT_REASON` for active work.
