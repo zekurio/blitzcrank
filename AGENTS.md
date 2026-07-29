@@ -56,9 +56,18 @@ Safety invariants (do not weaken without explicit operator sign-off):
   agent. The gate runs before the event handler (so a rejected comment cannot
   cancel a revisit) and fails closed when Seerr is unreachable. It is
   unconditional — do not add an opt-out.
-- The agent cannot post Seerr comments or change issue status; the host does,
-  driven by the parsed `RESOLVE_ISSUE`/`REVISIT_IN`/`REVISIT_REASON` directive
-  block. Malformed directives ⇒ nothing is posted.
+- The agent cannot post arbitrary Seerr comments or change issue status; the
+  host does, driven by the parsed `RESOLVE_ISSUE`/`REVISIT_IN`/`REVISIT_REASON`
+  directive block. Malformed directives ⇒ nothing is posted.
+- One run leaves at most one comment: `report_progress` posts a live status
+  comment and rewrites it in place (`PUT /issueComment/{id}`, max 4 calls), the
+  host's final comment overwrites it, and a run with no final comment deletes
+  it. Comment edits/deletes emit no Seerr webhook, so this cannot loop.
+- Webhook payload fields are sanitized with `webhookText`/`issueIdOf`
+  (`src/webhook/types.ts`): Seerr renders unset values as `""` and leaves
+  unknown template placeholders literal, so `"{{...}}"` is never an identity.
+  The own-comment loop guard (`src/webhook/loop-guard.ts`) matches the
+  `[blitzcrank w/` comment marker first, then the bot display name.
 - The agent session gets only its custom tools plus builtin `read` (for
   skills). Never enable `bash`, `edit`, or `write` in the runner.
 - Web tools (Firecrawl) are issue-run-only, read-only, and gated on `FIRECRAWL_API_KEY`;
@@ -205,7 +214,8 @@ small named helpers below it. Extract only when it names a real concept.
 ## Testing & QA
 
 Tests are `src/**/*.test.ts`, run with `node --test` via tsx (`pnpm test`, part
-of `pnpm verify`). Coverage is thin so far (`webhook/comment-gate.test.ts`).
+of `pnpm verify`). Covered so far: `webhook/comment-gate.test.ts`,
+`webhook/loop-guard.test.ts`, `agent/runner.test.ts` (comment lifecycle).
 
 - Prefer pushing logic into pure functions and testing those; `directives.ts`,
   `context.ts`, and `safety.ts` are pure and are the highest-value remaining

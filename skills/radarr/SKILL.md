@@ -103,7 +103,7 @@ Confirm path/layout evidence available through APIs, runtime visibility, and nam
 ## Verification and communication
 
 - A grab is not a download; SAB completion is not import; a Radarr file record is not Jellyfin playback proof.
-- Call `report_progress` exactly once as the first action, with one short public, user-facing progress sentence; do not include internal tool names, IDs, URLs, or promises.
+- Call `report_progress` as the first action, with one short public, user-facing status sentence; do not include internal tool names, IDs, URLs, or promises. It is one live status line: later calls rewrite it in place and your final comment replaces it.
 - Do not call Seerr comment or resolve endpoints. Final output must include `RESOLVE_ISSUE: yes|no`; unresolved work may include `REVISIT_IN` and `REVISIT_REASON`.
 - Resolve only after physical/file-state evidence available through services and the original Jellyfin symptom are verified.
 

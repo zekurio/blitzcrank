@@ -12,6 +12,8 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent"
 
+import { BOT_COMMENT_MARKER } from "../webhook/loop-guard.js"
+
 export const DEFAULT_MODEL = "anthropic/claude-sonnet-4-5"
 
 const THINKING_LEVELS = /^(.*?):(off|minimal|low|medium|high|xhigh|max)$/
@@ -51,7 +53,7 @@ export function parseModelSpec(spec: string): ParsedModelSpec {
 /** Comment footer identity, e.g. "[blitzcrank w/ gpt-5.2-codex:high]". */
 export function modelAnchor(spec: string): string {
   const parsed = parseModelSpec(spec)
-  return `[blitzcrank w/ ${parsed.modelId}:${parsed.thinkingLevel}]`
+  return `${BOT_COMMENT_MARKER} ${parsed.modelId}:${parsed.thinkingLevel}]`
 }
 
 export interface RunUsage {

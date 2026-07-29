@@ -91,6 +91,27 @@ test("unidentifiable authors are rejected", async () => {
   )
 })
 
+test("empty Seerr fields do not become an identity", async () => {
+  // Jellyfin-backed users often have no email: Seerr renders "", and
+  // customized templates leave unknown placeholders literal.
+  const gate = createCommentGate(seerrStub())
+  assert.equal(await gate(comment("", "Alex")), true)
+  assert.equal(await gate(comment("{{commentedBy_email}}", "Alex")), true)
+  assert.equal(
+    await gate(comment("{{commentedBy_email}}", "{{commentedBy_username}}")),
+    false,
+  )
+})
+
+test("a comment event without a usable issue id is rejected", async () => {
+  const gate = createCommentGate(seerrStub())
+  const payload = comment("alex@example.com", "Alex")
+  assert.equal(
+    await gate({ ...payload, issue: { issue_id: "{{issue_id}}" } }),
+    false,
+  )
+})
+
 test("fails closed when Seerr is unreachable", async () => {
   const gate = createCommentGate(
     seerrStub({

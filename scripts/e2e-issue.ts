@@ -50,10 +50,21 @@ seerr.get("/api/v1/issue/9", (c) => {
     },
   })
 })
+let nextCommentId = 1
 seerr.post("/api/v1/issue/9/comment", async (c) => {
   const body = await c.req.json()
   calls.push(`seerr COMMENT: ${body.message}`)
-  return c.json({ id: 2 })
+  nextCommentId += 1
+  return c.json({ id: 9, comments: [{ id: 1 }, { id: nextCommentId }] })
+})
+seerr.put("/api/v1/issueComment/:id", async (c) => {
+  const body = await c.req.json()
+  calls.push(`seerr EDIT COMMENT ${c.req.param("id")}: ${body.message}`)
+  return c.json({ id: Number(c.req.param("id")) })
+})
+seerr.delete("/api/v1/issueComment/:id", (c) => {
+  calls.push(`seerr DELETE COMMENT ${c.req.param("id")}`)
+  return c.body(null, 204)
 })
 seerr.post("/api/v1/issue/9/:status", (c) => {
   calls.push(`seerr STATUS -> ${c.req.param("status")}`)

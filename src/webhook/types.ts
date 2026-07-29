@@ -55,3 +55,29 @@ export interface SeerrWebhookPayload {
 export function isIssueEvent(payload: SeerrWebhookPayload): boolean {
   return payload.notification_type?.startsWith("ISSUE_") ?? false
 }
+
+/**
+ * Reads one template field. Seerr renders unknown values as empty strings and
+ * leaves placeholders it does not know (operator-customized templates contain
+ * e.g. `{{commentedBy_settings_discordId}}`, singular, which is not in Seerr's
+ * key map) literally in the payload. Both mean "no value" — never an identity.
+ */
+export function webhookText(
+  value: string | number | null | undefined,
+): string | undefined {
+  if (value === undefined || value === null) return undefined
+  const text = String(value).trim()
+  if (!text) return undefined
+  if (text.startsWith("{{") && text.endsWith("}}")) return undefined
+  return text
+}
+
+/**
+ * The event's Seerr issue id. Seerr renders `issue.id` as a numeric string, so
+ * anything else (empty, placeholder, garbage from a broken template) is
+ * rejected rather than used to drive a run against an unknown issue.
+ */
+export function issueIdOf(payload: SeerrWebhookPayload): string | undefined {
+  const raw = webhookText(payload.issue?.issue_id)
+  return raw !== undefined && /^\d+$/.test(raw) ? raw : undefined
+}

@@ -38,11 +38,35 @@ export class SeerrClient {
     return response.results ?? []
   }
 
-  postComment(issueId: string | number, message: string): Promise<unknown> {
-    return jsonRequest(this.cfg.url, `/api/v1/issue/${issueId}/comment`, {
-      method: "POST",
+  /** Posts a comment; returns its id (newest of the returned issue comments). */
+  async postComment(
+    issueId: string | number,
+    message: string,
+  ): Promise<number | undefined> {
+    const issue = await jsonRequest<{ comments?: Array<{ id?: number }> }>(
+      this.cfg.url,
+      `/api/v1/issue/${issueId}/comment`,
+      { method: "POST", headers: this.headers(), body: { message } },
+    )
+    const ids = (issue?.comments ?? [])
+      .map((comment) => comment.id)
+      .filter((id): id is number => typeof id === "number")
+    return ids.length > 0 ? Math.max(...ids) : undefined
+  }
+
+  /** Rewrites an existing comment in place (author or MANAGE_ISSUES only). */
+  updateComment(commentId: number, message: string): Promise<unknown> {
+    return jsonRequest(this.cfg.url, `/api/v1/issueComment/${commentId}`, {
+      method: "PUT",
       headers: this.headers(),
       body: { message },
+    })
+  }
+
+  deleteComment(commentId: number): Promise<unknown> {
+    return jsonRequest(this.cfg.url, `/api/v1/issueComment/${commentId}`, {
+      method: "DELETE",
+      headers: this.headers(),
     })
   }
 

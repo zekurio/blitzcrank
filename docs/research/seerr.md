@@ -95,6 +95,8 @@ Verified rendered values:
 - `issue_status`: `OPEN` or `RESOLVED`.
 - `media_type`: `movie` or `tv`.
 - `media_status` / `media_status4k`: enum name such as `UNKNOWN`, `PENDING`, `PROCESSING`, `PARTIALLY_AVAILABLE`, `AVAILABLE`, or `DELETED` (the webhook documentation omits `DELETED`, but the current enum/API includes it).
+- Missing values render as the empty string (`get(payload, path) ?? ''` in `server/lib/notifications/agents/webhook.ts`), so e.g. `commentedBy_email` is `""` for Jellyfin-backed users without an email.
+- Placeholders Seerr does not know are **left verbatim** in the payload: substitution only replaces keys present in that file's `KeyMap`. A customized template using the singular `{{commentedBy_settings_discordId}}` (the key map has the plural `discordIds`) therefore delivers the literal string `"{{commentedBy_settings_discordId}}"`. Never treat a `{{...}}` value as data — see `webhookText` in `src/webhook/types.ts`.
 - Discord-ID variables originate as arrays but, in the default template, are substituted into quoted strings. Their exact resulting string serialization is not documented and should not be treated as a native JSON array unless the receiver verifies actual behavior. The special full entity objects are not exposed; the nested objects shown above are template-authored projections.
 
 ## 2. Concrete issue-event webhook payloads
@@ -325,7 +327,24 @@ Content-Type: application/json
 {"message":"Acknowledged. Checking the Sonarr/Jellyfin files now."}
 ```
 
-`message` is a required string. The `200` response is the associated `Issue`, including its comments array.
+`message` is a required string. The `200` response is the associated `Issue`, including its comments array. Comment IDs increase monotonically, so the highest `comments[].id` in that response is the comment just created — this is how blitzcrank learns the id of its live status comment.
+
+### Edit or delete a comment
+
+```http
+PUT /api/v1/issueComment/{commentId}
+X-Api-Key: ...
+Content-Type: application/json
+
+{"message":"Updated text"}
+```
+
+```http
+DELETE /api/v1/issueComment/{commentId}
+X-Api-Key: ...
+```
+
+`PUT` returns the updated `IssueComment`; `DELETE` returns `204`. Both are restricted to the comment's author or users with `MANAGE_ISSUES` — blitzcrank qualifies because it comments as its own bot user via `X-Api-User`. Neither operation emits a notification/webhook (only comment creation does), so editing the status comment cannot re-trigger a run.
 
 ### Resolve or reopen an issue
 
