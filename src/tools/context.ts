@@ -5,11 +5,14 @@
  * deployment could only ask a reviewer to check:
  *  - evidence gates: a mutation's target ID must have appeared in a GET
  *    response earlier in this run (no hallucinated/guessed IDs),
- *  - per-run mutation budgets (hard caps, deletions counted separately).
+ *  - per-run mutation budgets (hard caps, deletions counted separately),
+ *  - file-level evidence: which media files were actually probed this run, so
+ *    a bulk replacement cannot be justified by release-name metadata alone.
  */
 
 const MAX_EVIDENCE_ENTRIES = 24
 const MAX_EVIDENCE_BODY_CHARS = 80_000
+const MAX_PROBED_PATHS = 64
 
 export interface RunLimits {
   maxMutations: number
@@ -30,6 +33,7 @@ function escapeRegExp(value: string): string {
 
 export class RunContext {
   private readonly evidence: EvidenceEntry[] = []
+  private readonly probed: string[] = []
   private mutations = 0
   private deletes = 0
 
@@ -58,6 +62,43 @@ export class RunContext {
     }
     return this.evidence.some(
       (e) => e.service === service && e.body.includes(text),
+    )
+  }
+
+  /**
+   * Records that a media file (or the directory it was found in) was inspected
+   * with ffprobe. Only paths are kept — probe *contents* stay out of the
+   * evidence store because stream titles are attacker-controllable text and
+   * must never satisfy an ID evidence gate.
+   */
+  recordProbe(...paths: string[]): void {
+    for (const path of paths) {
+      if (path.length > 0 && !this.probed.includes(path)) this.probed.push(path)
+    }
+    if (this.probed.length > MAX_PROBED_PATHS) {
+      this.probed.splice(0, this.probed.length - MAX_PROBED_PATHS)
+    }
+  }
+
+  /**
+   * True when a path, or the directory it sits in, appeared in a service read
+   * this run. Probing is filesystem access driven by model input, so the target
+   * must come from a service's own answer (Arr file path/outputPath, SABnzbd
+   * storage, Jellyfin Path) rather than from issue text or reconstruction.
+   */
+  sawPathInAnyRead(filePath: string): boolean {
+    const parent = filePath.slice(0, filePath.lastIndexOf("/"))
+    return [filePath, parent].some(
+      (candidate) =>
+        candidate.length > 1 &&
+        this.evidence.some((entry) => entry.body.includes(candidate)),
+    )
+  }
+
+  /** True when this exact file, or a directory containing it, was probed. */
+  sawProbe(filePath: string): boolean {
+    return this.probed.some(
+      (probe) => probe === filePath || filePath.startsWith(`${probe}/`),
     )
   }
 

@@ -64,26 +64,31 @@ function service(prefix: string): ServiceConfig | undefined {
   return { url: url.replace(/\/+$/, ""), apiKey }
 }
 
-/** Colon-separated absolute roots, PATH-style; unset means no probe tool. */
-function media(): MediaConfig | undefined {
-  const roots = (process.env.BLITZCRANK_MEDIA_ROOTS ?? "")
+/** Colon-separated absolute paths, PATH-style. */
+function absoluteRoots(name: string, value: string | undefined): string[] {
+  const roots = (value ?? "")
     .split(":")
     .map((root) => root.trim())
     .filter((root) => root.length > 0)
-  if (roots.length === 0) return undefined
   for (const root of roots) {
     if (!isAbsolute(root) || root.includes("\0")) {
-      throw new Error(
-        `BLITZCRANK_MEDIA_ROOTS entries must be absolute paths, got "${root}"`,
-      )
+      throw new Error(`${name} entries must be absolute paths, got "${root}"`)
     }
     if (resolve(root) === "/") {
-      throw new Error(
-        "BLITZCRANK_MEDIA_ROOTS must name the media directories, not the whole filesystem",
-      )
+      throw new Error(`${name} must name directories, not the whole filesystem`)
     }
   }
-  return { roots: roots.map((root) => resolve(root)) }
+  return roots.map((root) => resolve(root))
+}
+
+/** Media roots unset means the probe tool is not registered at all. */
+function media(): MediaConfig | undefined {
+  const roots = absoluteRoots(
+    "BLITZCRANK_MEDIA_ROOTS",
+    process.env.BLITZCRANK_MEDIA_ROOTS,
+  )
+  if (roots.length === 0) return undefined
+  return { roots }
 }
 
 export function loadConfig(): Config {

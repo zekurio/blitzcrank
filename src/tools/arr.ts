@@ -42,6 +42,146 @@ function arrRequest(
   })
 }
 
+/**
+ * One episode as far as search scope is concerned.
+ */
+export interface ScopedEpisode {
+  id: number
+  seasonNumber: number
+  monitored: boolean
+  filePath: string | undefined
+}
+
+/**
+ * Scope gate for Sonarr searches.
+ *
+ * A `SeasonSearch` is one tool call that re-grabs an entire season: in the
+ * incident this gate comes from, an unverified hypothesis about a missing
+ * audio track cost 24 downloads, ~21 GB, and 18 encodes. Two things are
+ * therefore enforced before any multi-episode search:
+ *
+ *  - the model must state the true number of affected episodes
+ *    (`expectedEpisodeCount`), which it can only get right by reading them, so
+ *    the real scope is surfaced before execution rather than after;
+ *  - replacing files that already exist needs *file-level* evidence: at least
+ *    one of them must have been probed with `media_probe` this run, because
+ *    Arr `languages`/quality metadata is parsed from the release name.
+ *
+ * Missing media is unaffected: searching for episodes that have no file is
+ * the normal remediation path and needs no probe.
+ */
+export function assertSearchScope(input: {
+  episodes: ScopedEpisode[]
+  expectedEpisodeCount: number | undefined
+  probeAvailable: boolean
+  probed: (filePath: string) => boolean
+}): void {
+  if (input.episodes.length === 0) {
+    throw new Error(
+      "scope gate: this search matches no monitored episode; nothing would be " +
+        "searched. Check monitoring and the season number before acting.",
+    )
+  }
+  if (
+    input.episodes.length > 1 &&
+    input.expectedEpisodeCount !== input.episodes.length
+  ) {
+    const replaced = input.episodes.filter((e) => e.filePath !== undefined)
+    throw new Error(
+      `scope gate: this search affects ${input.episodes.length} episodes ` +
+        `(${replaced.length} already have a file and would be replaced). ` +
+        `Pass expectedEpisodeCount: ${input.episodes.length} to confirm you intend that ` +
+        "scope and have told the reporter the real number, or search a single episode " +
+        "first with episodeIds to test the hypothesis at 1/N the cost.",
+    )
+  }
+  const replacements = input.episodes.filter(
+    (episode): episode is ScopedEpisode & { filePath: string } =>
+      episode.filePath !== undefined,
+  )
+  if (replacements.length < 2 || !input.probeAvailable) return
+  if (replacements.some((episode) => input.probed(episode.filePath))) return
+  throw new Error(
+    `evidence gate: this search would replace ${replacements.length} existing episode ` +
+      "files, so it needs file-level evidence. Sonarr `languages`, `quality`, and custom " +
+      "formats are parsed from the release name and never prove what a file contains: " +
+      `probe at least one of the affected files with media_probe first (e.g. ${replacements[0]!.filePath}). ` +
+      "If the probe shows the file already lacks the track, a re-grab of the same release cannot add it.",
+  )
+}
+
+interface SonarrEpisodeRecord {
+  id?: number
+  seasonNumber?: number
+  monitored?: boolean
+  hasFile?: boolean
+  episodeFile?: { path?: string }
+}
+
+/**
+ * The episodes a search would actually touch.
+ *
+ * This is an internal guard read and is deliberately *not* fed to
+ * `ctx.recordRead`: the response contains every episode id of the series, so
+ * recording it would let a guessed id pass the ID evidence gate.
+ */
+async function scopedEpisodes(
+  cfg: ServiceConfig,
+  params: {
+    seriesId: number
+    seasonNumber?: number | undefined
+    episodeIds?: number[] | undefined
+  },
+): Promise<ScopedEpisode[]> {
+  const raw = await arrRequest(
+    cfg,
+    `/api/v3/episode?seriesId=${params.seriesId}&includeEpisodeFile=true`,
+  )
+  if (!Array.isArray(raw)) {
+    throw new Error(
+      `could not read the episodes of series ${params.seriesId}; refusing to search with unknown scope`,
+    )
+  }
+  const episodes = (raw as SonarrEpisodeRecord[]).flatMap<ScopedEpisode>(
+    (episode) =>
+      typeof episode.id === "number"
+        ? [
+            {
+              id: episode.id,
+              seasonNumber:
+                typeof episode.seasonNumber === "number"
+                  ? episode.seasonNumber
+                  : -1,
+              monitored: episode.monitored === true,
+              filePath:
+                episode.hasFile === true
+                  ? episode.episodeFile?.path
+                  : undefined,
+            },
+          ]
+        : [],
+  )
+
+  if (params.episodeIds && params.episodeIds.length > 0) {
+    const byId = new Map(episodes.map((episode) => [episode.id, episode]))
+    return [...new Set(params.episodeIds)].map((id) => {
+      const episode = byId.get(id)
+      if (!episode) {
+        throw new Error(
+          `episode id ${id} does not belong to series ${params.seriesId}; fetch the episodes again`,
+        )
+      }
+      return episode
+    })
+  }
+  // Sonarr only searches monitored episodes, so they are the real scope.
+  const monitored = episodes.filter((episode) => episode.monitored)
+  if (params.seasonNumber === undefined) return monitored
+  return monitored.filter(
+    (episode) => episode.seasonNumber === params.seasonNumber,
+  )
+}
+
 /** Follow-up read on the queued command so the model can see it was accepted. */
 async function verifyCommand(
   cfg: ServiceConfig,
@@ -238,6 +378,8 @@ function queueAndBlocklistTools(
 export function buildSonarrTools(
   cfg: ServiceConfig,
   ctx: RunContext,
+  /** Whether media_probe exists this run; the file-evidence gate needs it. */
+  probeAvailable: boolean,
 ): ToolDefinition[] {
   const service: ServiceName = "sonarr"
   return [
@@ -255,7 +397,9 @@ export function buildSonarrTools(
       name: "sonarr_search",
       label: "Sonarr: trigger search",
       description:
-        "Trigger a Sonarr search: whole series, one season, or specific episodes. The series id (and episode ids, if given) must come from Sonarr reads this run.",
+        "Trigger a Sonarr search: whole series, one season, or specific episodes. The series id (and episode ids, if given) must come from Sonarr reads this run. " +
+        "Scope is enforced: a search affecting more than one episode must state the true episode count in expectedEpisodeCount, and replacing two or more existing " +
+        "episode files additionally requires that one of them was inspected with media_probe this run. Prefer one episode first to test a hypothesis.",
       parameters: Type.Object({
         reason: reasonParam(),
         seriesId: Type.Integer({
@@ -269,8 +413,25 @@ export function buildSonarrTools(
               "Internal Sonarr episode ids for a targeted EpisodeSearch",
           }),
         ),
+        expectedEpisodeCount: Type.Optional(
+          Type.Integer({
+            minimum: 1,
+            description:
+              "How many episodes this search affects; required (and checked against Sonarr) when that is more than one",
+          }),
+        ),
       }),
       async execute(_toolCallId, params) {
+        // Before spending a request on the scope read: a guessed series id must
+        // fail the ID gate, not produce a confusing empty-scope error.
+        ctx.requireEvidence(service, params.seriesId, "series id")
+        const episodes = await scopedEpisodes(cfg, params)
+        assertSearchScope({
+          episodes,
+          expectedEpisodeCount: params.expectedEpisodeCount,
+          probeAvailable,
+          probed: (filePath) => ctx.sawProbe(filePath),
+        })
         const command =
           params.episodeIds && params.episodeIds.length > 0
             ? { name: "EpisodeSearch", episodeIds: params.episodeIds }
@@ -298,6 +459,7 @@ export function buildSonarrTools(
           service,
           action: "search",
           command: command.name,
+          episodes: episodes.length,
         })
       },
     }),

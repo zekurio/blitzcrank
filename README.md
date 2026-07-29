@@ -35,6 +35,14 @@ because enforcement now lives in-process:
   resume) and Radarr file deletion extend the legacy allowlist deliberately.
 - **Evidence gates** — mutation targets must have appeared in a GET response earlier in
   the same run; guessed IDs are rejected in code.
+- **Scope gates** — a Sonarr search touching more than one episode must state the true
+  episode count (checked against Sonarr), and replacing two or more existing episode files
+  requires that one of them was inspected with `media_probe` this run. A season-wide
+  re-grab can no longer ride on release-name metadata.
+- **No laundered negatives** — an empty `anvil_job_lookup` is returned as
+  `conclusion: UNKNOWN` with the reasons a correct-looking lookup still misses, never as
+  proof that no encode exists. `anvil_job_list` gives the one broad read that can
+  establish absence, and Anvil reports which path side matched (`matched_on`).
 - **Budgets** — max 5 mutations / 2 deletions per run.
 - **Built-in verification** — mutation tools perform the follow-up read themselves and
   return it in the result.

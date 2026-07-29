@@ -34,12 +34,16 @@ export function buildServiceTools(
   sessionFileRef: SessionFileRef,
 ): ToolDefinition[] {
   const tools: ToolDefinition[] = [...buildSeerrTools(config.seerr, ctx)]
-  if (config.sonarr) tools.push(...buildSonarrTools(config.sonarr, ctx))
+  if (config.sonarr) {
+    tools.push(
+      ...buildSonarrTools(config.sonarr, ctx, config.media !== undefined),
+    )
+  }
   if (config.radarr) tools.push(...buildRadarrTools(config.radarr, ctx))
   if (config.jellyfin) tools.push(...buildJellyfinTools(config.jellyfin, ctx))
   if (config.sabnzbd) tools.push(...buildSabnzbdTools(config.sabnzbd, ctx))
-  if (config.anvil) tools.push(...buildAnvilTools(config.anvil))
-  if (config.media) tools.push(...buildMediaTools(config.media))
+  if (config.anvil) tools.push(...buildAnvilTools(config.anvil, ctx))
+  if (config.media) tools.push(...buildMediaTools(config.media, ctx))
   tools.push(
     buildHistoryTool(path.join(config.dataDir, "sessions"), sessionFileRef),
   )
