@@ -54,7 +54,7 @@ Use the read-only `jellyfin_request` with relative Jellyfin API paths; it accept
 
 ### Wrong language or missing audio
 
-Inspect all audio streams, labels, codec, channels, language, and default flags. Check user/client selection if the desired track exists. If absent, treat it as a release problem and use Sonarr/Radarr evidence; metadata refresh cannot add audio.
+Inspect all audio streams, labels, codec, channels, language, and default flags. Check user/client selection if the desired track exists. If absent, treat it as a release problem and use Sonarr/Radarr evidence; metadata refresh cannot add audio. Do not accept Sonarr/Radarr `languages` as a contradicting signal — it is parsed from the release name; confirm the file itself with `media_probe` on the Arr file path (see the `media-probe` skill), which also works before import when the item is not in the library yet.
 
 ### Missing subtitles
 
@@ -94,5 +94,6 @@ Compare path, size, modification evidence, streams, and runtime against the repl
 - Never match solely by title or assume the first stream is selected.
 - Multiple versions may make Jellyfin play a different file than Radarr's inspected file.
 - Metadata refresh cannot repair corruption or create tracks.
+- Jellyfin stream data only exists after import; for a not-yet-imported download, probe the file with `media_probe` instead of inferring from release names.
 - Subtitle selection can force expensive video transcoding.
 - Do not expose private user data.

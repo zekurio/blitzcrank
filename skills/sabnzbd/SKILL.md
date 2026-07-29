@@ -29,6 +29,7 @@ Use read-only `sabnzbd_request` with `purpose` and a relative `path`. It remains
 - History: `GET /api?mode=history&limit=20`
 - Prefer narrow limits; fetch full queue/history only when necessary.
 - Use `anvil_status` for daemon health and `anvil_job_lookup` for exact item correlation when configured.
+- A completed job's exact `storage` path is what `media_probe` needs to inspect a download's real audio/subtitle tracks before import; see the `media-probe` skill.
 
 ## Diagnostic workflow
 

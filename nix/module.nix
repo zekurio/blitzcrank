@@ -90,6 +90,22 @@ in
       '';
     };
 
+    mediaRoots = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      example = [
+        "/mnt/media"
+        "/mnt/downloads/complete"
+      ];
+      description = ''
+        Absolute directories the read-only {command}`media_probe` tool may
+        inspect with ffprobe: the media library plus the download client's
+        completed directory, so a release's real audio/subtitle tracks can be
+        checked before import. Paths resolving outside these roots are
+        rejected. Empty (the default) disables the tool entirely.
+      '';
+    };
+
     automationsDir = lib.mkOption {
       type = lib.types.path;
       default = "${cfg.package}/lib/blitzcrank/automations";
@@ -126,6 +142,10 @@ in
         assertion = cfg.authSeedFile == null || lib.hasPrefix "${stateDir}/" cfg.authFile;
         message = "services.blitzcrank.authSeedFile requires authFile to live under ${stateDir}, the only path the sandboxed service can write.";
       }
+      {
+        assertion = lib.all (root: lib.hasPrefix "/" root) cfg.mediaRoots;
+        message = "services.blitzcrank.mediaRoots entries must be absolute paths.";
+      }
     ];
 
     systemd.services.blitzcrank = {
@@ -141,6 +161,10 @@ in
         BLITZCRANK_DATA_DIR = stateDir;
         BLITZCRANK_AUTOMATIONS_DIR = cfg.automationsDir;
         BLITZCRANK_AUTH_PATH = cfg.authFile;
+      }
+      // lib.optionalAttrs (cfg.mediaRoots != [ ]) {
+        BLITZCRANK_MEDIA_ROOTS = lib.concatStringsSep ":" cfg.mediaRoots;
+        BLITZCRANK_FFPROBE = lib.getExe' pkgs.ffmpeg-headless "ffprobe";
       }
       // cfg.settings;
 
