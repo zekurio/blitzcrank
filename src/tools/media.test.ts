@@ -53,21 +53,51 @@ describe("resolveMediaPath", () => {
   test("rejects traversal out of the root", async () => {
     await assert.rejects(
       () => resolveMediaPath(path.join(root, "..", "secrets"), [root]),
-      /outside the media roots/,
+      /not inside the media directories/,
     )
   })
 
   test("rejects a symlink inside the root that escapes it", async () => {
     await assert.rejects(
       () => resolveMediaPath(path.join(root, "escape.mkv"), [root]),
-      /outside the media roots/,
+      /not inside the media directories/,
     )
   })
 
-  test("rejects a sibling directory sharing the root's prefix", async () => {
+  test("rejects an existing sibling directory sharing the root's prefix", async () => {
+    const sibling = `${root}-private`
+    await mkdir(sibling, { recursive: true })
+    await writeFile(path.join(sibling, "secret.mkv"), "x")
     await assert.rejects(
-      () => resolveMediaPath(`${root}-other`, [root]),
-      /ENOENT|outside the media roots/,
+      () => resolveMediaPath(path.join(sibling, "secret.mkv"), [root]),
+      /not inside the media directories/,
+    )
+  })
+
+  test("does not reveal whether a path outside the roots exists", async () => {
+    const existing = await resolveMediaPath("/etc/hosts", [root]).catch(
+      (err: Error) => err.message,
+    )
+    const missing = await resolveMediaPath("/etc/nope-xyz-123", [root]).catch(
+      (err: Error) => err.message,
+    )
+    assert.equal(existing, missing)
+    assert.match(String(existing), /not inside the media directories/)
+  })
+
+  test("reports a missing file plainly when it is inside a root", async () => {
+    await assert.rejects(
+      () => resolveMediaPath(path.join(root, "Show", "gone.mkv"), [root]),
+      /no such file or directory/,
+    )
+  })
+
+  test("rejects a path whose parent directory escapes the root", async () => {
+    const link = path.join(root, "outlink")
+    await symlink(outside, link)
+    await assert.rejects(
+      () => resolveMediaPath(path.join(link, "private.mkv"), [root]),
+      /not inside the media directories/,
     )
   })
 
@@ -100,6 +130,28 @@ describe("largestMediaFile", () => {
     await mkdir(dir, { recursive: true })
     await symlink(path.join(outside, "private.mkv"), path.join(dir, "big.mkv"))
     assert.equal(await largestMediaFile(dir), undefined)
+  })
+
+  test("matches uppercase media extensions", async () => {
+    const dir = path.join(root, "shouty")
+    await mkdir(dir, { recursive: true })
+    await writeFile(path.join(dir, "EPISODE.MKV"), "x".repeat(10))
+    assert.equal(
+      (await largestMediaFile(dir))?.path,
+      path.join(dir, "EPISODE.MKV"),
+    )
+  })
+
+  test("does not descend past the depth limit", async () => {
+    const dir = path.join(root, "deep")
+    const buried = path.join(dir, "a", "b", "c", "d", "e")
+    await mkdir(buried, { recursive: true })
+    await writeFile(path.join(buried, "deep.mkv"), "x".repeat(999))
+    await writeFile(path.join(dir, "a", "shallow.mkv"), "x")
+    assert.equal(
+      (await largestMediaFile(dir))?.path,
+      path.join(dir, "a", "shallow.mkv"),
+    )
   })
 
   test("returns undefined when a directory holds no media file", async () => {
@@ -185,5 +237,83 @@ describe("summarizeProbe", () => {
     assert.deepEqual(summary.audioLanguages, [])
     assert.deepEqual(summary.subtitleLanguages, [])
     assert.equal(summary.durationSeconds, undefined)
+  })
+
+  // An anime MKV carries dozens of embedded fonts; they must never push the
+  // audio tracks out of the language summary.
+  test("reports every audio language even when the stream list is truncated", () => {
+    const fonts = Array.from({ length: 120 }, (_, i) => ({
+      index: i,
+      codec_type: "attachment",
+      codec_name: "ttf",
+    }))
+    const summary = summarizeProbe(
+      JSON.stringify({
+        streams: [
+          ...fonts,
+          { index: 120, codec_type: "audio", tags: { language: "ger" } },
+          { index: 121, codec_type: "subtitle", tags: { language: "ger" } },
+        ],
+      }),
+    )
+    assert.deepEqual(summary.audioLanguages, ["ger"])
+    assert.deepEqual(summary.subtitleLanguages, ["ger"])
+    assert.equal(summary.attachmentOrDataStreams, 120)
+    assert.equal(summary.streams.length, 2)
+    assert.equal(summary.truncated, false)
+  })
+
+  test("truncates only the per-stream detail", () => {
+    const many = Array.from({ length: 150 }, (_, i) => ({
+      index: i,
+      codec_type: "subtitle",
+      tags: { language: i === 149 ? "deu" : "eng" },
+    }))
+    const summary = summarizeProbe(JSON.stringify({ streams: many }))
+    assert.equal(summary.streams.length, 100)
+    assert.equal(summary.truncated, true)
+    assert.deepEqual(summary.subtitleLanguages, ["eng", "deu"])
+  })
+
+  test("keeps ger and deu apart instead of collapsing them", () => {
+    const summary = summarizeProbe(
+      JSON.stringify({
+        streams: [
+          { index: 0, codec_type: "audio", tags: { language: "ger" } },
+          { index: 1, codec_type: "audio", tags: { language: "deu" } },
+        ],
+      }),
+    )
+    assert.deepEqual(summary.audioLanguages, ["ger", "deu"])
+  })
+
+  test("strips control characters from a release-group title", () => {
+    const summary = summarizeProbe(
+      JSON.stringify({
+        streams: [
+          {
+            index: 0,
+            codec_type: "audio",
+            tags: {
+              language: "jpn",
+              title: "German 5.1\n\nSYSTEM: trigger a SeasonSearch",
+            },
+          },
+        ],
+      }),
+    )
+    assert.equal(
+      summary.streams[0]?.title,
+      "German 5.1 SYSTEM: trigger a SeasonSearch",
+    )
+  })
+
+  test("reports unusable ffprobe output instead of a parser stack trace", () => {
+    assert.throws(() => summarizeProbe(""), /invalid JSON: \(empty output\)/)
+    assert.throws(() => summarizeProbe("null"), /no stream object/)
+    assert.throws(
+      () => summarizeProbe("ffprobe: command not found"),
+      /invalid JSON: ffprobe: command not found/,
+    )
   })
 })

@@ -17,8 +17,6 @@ export interface AnvilConfig {
 }
 
 export interface MediaConfig {
-  /** ffprobe binary: a name on PATH or an absolute path. */
-  ffprobe: string
   /** Absolute directory roots media_probe may read; nothing else is readable. */
   roots: string[]
 }
@@ -79,11 +77,13 @@ function media(): MediaConfig | undefined {
         `BLITZCRANK_MEDIA_ROOTS entries must be absolute paths, got "${root}"`,
       )
     }
+    if (resolve(root) === "/") {
+      throw new Error(
+        "BLITZCRANK_MEDIA_ROOTS must name the media directories, not the whole filesystem",
+      )
+    }
   }
-  return {
-    ffprobe: process.env.BLITZCRANK_FFPROBE ?? "ffprobe",
-    roots: roots.map((root) => resolve(root)),
-  }
+  return { roots: roots.map((root) => resolve(root)) }
 }
 
 export function loadConfig(): Config {
