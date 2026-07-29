@@ -9,7 +9,10 @@ import { execFile } from "node:child_process"
 export function execFileText(
   file: string,
   args: string[],
-  opts: { signal?: AbortSignal | undefined; timeoutMs?: number } = {},
+  opts: {
+    signal?: AbortSignal | undefined
+    timeoutMs?: number | undefined
+  } = {},
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(

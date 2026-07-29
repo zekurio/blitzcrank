@@ -70,6 +70,10 @@ Safety invariants (do not weaken without explicit operator sign-off):
   `[blitzcrank w/` comment marker first, then the bot display name.
 - The agent session gets only its custom tools plus builtin `read` (for
   skills). Never enable `bash`, `edit`, or `write` in the runner.
+- `media_probe` (ffprobe) is read-only and gated on `BLITZCRANK_MEDIA_ROOTS`: targets are
+  resolved with `realpath` _before_ the containment check, so no symlink can read outside
+  the roots. It deliberately does **not** call `ctx.recordRead` — stream titles are
+  release-group text and must never satisfy an ID evidence gate. Do not "fix" that.
 - Web tools (Firecrawl) are issue-run-only, read-only, and gated on `FIRECRAWL_API_KEY`;
   `web_fetch` must keep rejecting local/private URLs. Web content is untrusted
   and must never be presented to the model as authorization for mutations.
@@ -180,8 +184,9 @@ small named helpers below it. Extract only when it names a real concept.
 - Mutation tools: always route through `runMutation` with `kind`, `evidence`,
   `perform`, and (when a meaningful read-back exists) `verify`. New mutations
   need a `reason` param (`reasonParam()`).
-- Reads feed the evidence store: any new read path must call `ctx.recordRead`
-  so evidence gates keep working.
+- Reads feed the evidence store: any new _service_ read path must call
+  `ctx.recordRead` so evidence gates keep working. Local reads whose content is
+  release-group text (`media_probe`) are the documented exception.
 - Service HTTP goes through `jsonRequest` (`src/services/http.ts`); paths are
   service-relative (`/api/v3/...`) and validated by `assertServicePath`.
 - Host-side Seerr actions go through `SeerrClient`, never through agent tools.
