@@ -7,9 +7,9 @@ import {
 import { Type } from "typebox"
 
 import type { AnvilConfig } from "../config.js"
-import { textResult } from "./common.js"
+import { reasonParam, runMutation, textResult } from "./common.js"
 import type { RunContext } from "./context.js"
-import { execFileText } from "./exec.js"
+import { ExecError, execFileText } from "./exec.js"
 
 /**
  * Anvil (transcode daemon) correlation tools, ported from the legacy
@@ -22,6 +22,34 @@ import { execFileText } from "./exec.js"
  * source, asset and destination paths and reports which side hit (`matched_on`),
  * so a miss is genuinely a miss — but only of that exact path, at that moment.
  */
+
+/** anvilctl's own deadline, kept under the exec timeout that kills it. */
+const CLIENT_TIMEOUT = "15s"
+const EXEC_TIMEOUT_MS = 20_000
+
+/**
+ * anvilctl's exit codes are part of its contract, and the difference between
+ * them is the difference between "no encode for this file" and "blitzcrank
+ * could not ask". Collapsing them would rebuild the false negative this whole
+ * tool set exists to prevent, one layer lower.
+ */
+function explainExit(error: unknown): never {
+  if (!(error instanceof ExecError)) throw error
+  if (error.exitCode === 3) {
+    throw new Error(
+      `Anvil is unreachable or speaks a different protocol (${error.message}). ` +
+        "This says nothing about whether anything is encoding: report the control plane " +
+        "as unavailable, never as 'no conversion job exists'.",
+    )
+  }
+  if (error.exitCode === 4) {
+    throw new Error(
+      `Anvil has no such job, library, or path (${error.message}). Re-read the job list ` +
+        "rather than guessing another reference.",
+    )
+  }
+  throw error
+}
 
 function parseAnvilResponse(stdout: string): Record<string, unknown> {
   let payload: unknown
@@ -70,6 +98,19 @@ export function interpretJobLookup(
 ): Record<string, unknown> {
   const jobs = jobsOf(response)
   if (jobs && jobs.length > 0) return response
+  // Anvil says so itself when the path resolved under no configured library
+  // root or handoff destination: the question was unanswerable, not answered.
+  if (response.path_outside_libraries === true) {
+    return {
+      ...response,
+      matched: "unanswerable",
+      conclusion:
+        "Anvil could not answer this: the path lies outside every configured library root " +
+        "and handoff destination, so it can never match a job, whatever is running. This is " +
+        "not evidence of absence — check the path against the read it came from.",
+      checked_path: absolutePath,
+    }
+  }
   return {
     ...response,
     matched: jobs ? 0 : "unknown",
@@ -106,7 +147,11 @@ export function buildAnvilTools(
   }
 
   const anvilctl = (args: string[], signal: AbortSignal | undefined) =>
-    execFileText(cfg.command, ["--socket", cfg.socket, ...args], { signal })
+    execFileText(
+      cfg.command,
+      ["--socket", cfg.socket, "--timeout", CLIENT_TIMEOUT, "--json", ...args],
+      { signal, timeoutMs: EXEC_TIMEOUT_MS },
+    ).catch(explainExit)
 
   /**
    * Job results are recorded as evidence so the converted-file path they carry
@@ -133,7 +178,7 @@ export function buildAnvilTools(
         }),
       }),
       async execute(_toolCallId, _params, signal) {
-        const stdout = await anvilctl(["status", "--json"], signal)
+        const stdout = await anvilctl(["status"], signal)
         return textResult(parseAnvilResponse(stdout), {
           action: "anvil_status",
         })
@@ -174,7 +219,6 @@ export function buildAnvilTools(
             "--limit",
             limit,
             ...(selection ? ["--with-selection"] : []),
-            "--json",
           ],
           signal,
         )
@@ -185,6 +229,64 @@ export function buildAnvilTools(
           ),
           { action: "anvil_job_list" },
         )
+      },
+    }),
+    defineTool({
+      name: "anvil_job_show",
+      label: "Show one Anvil job",
+      description:
+        "Read the full recorded history of one Anvil job by id or slug: state, attempts with their errors, publish " +
+        "operation, and the audio/subtitle stream decisions. Use it after a lookup or listing has identified the job " +
+        "— this is where a failed or stuck encode explains itself. The reference must come from an Anvil read this run.",
+      parameters: Type.Object({
+        purpose: Type.String({
+          description: "What this job's history must establish",
+        }),
+        job: Type.String({
+          minLength: 1,
+          description:
+            "Anvil job id or slug, exactly as an earlier Anvil read reported it",
+        }),
+      }),
+      async execute(_toolCallId, params, signal) {
+        const job = params.job.trim()
+        ctx.requireEvidence("anvil", job, "job id or slug")
+        const stdout = await anvilctl(["job", "show", job], signal)
+        return textResult(
+          recordJobs(`job show ${job}`, parseAnvilResponse(stdout)),
+          { action: "anvil_job_show", job },
+        )
+      },
+    }),
+    defineTool({
+      name: "anvil_retry_job",
+      label: "Anvil: requeue a job",
+      description:
+        "Requeue one Anvil job that will not finish on its own — a failed encode blocking an import, or a job canceled " +
+        "earlier. It re-runs the conversion from the start; it cannot recover the work already discarded. The job id or " +
+        "slug must come from an Anvil read this run. Only single jobs: there is no bulk retry here.",
+      parameters: Type.Object({
+        reason: reasonParam(),
+        job: Type.String({
+          minLength: 1,
+          description:
+            "Anvil job id or slug, exactly as an earlier Anvil read reported it",
+        }),
+      }),
+      async execute(_toolCallId, params, signal) {
+        const job = params.job.trim()
+        const outcome = await runMutation(ctx, {
+          kind: "mutate",
+          evidence: [{ service: "anvil", value: job, hint: "job id or slug" }],
+          perform: async () =>
+            parseAnvilResponse(await anvilctl(["job", "retry", job], signal)),
+          verify: async () =>
+            recordJobs(
+              `job show ${job}`,
+              parseAnvilResponse(await anvilctl(["job", "show", job], signal)),
+            ),
+        })
+        return textResult(outcome, { action: "anvil_retry_job", job })
       },
     }),
     defineTool({
@@ -222,7 +324,6 @@ export function buildAnvilTools(
             target,
             "--current-only",
             ...(selection ? ["--with-selection"] : []),
-            "--json",
           ],
           signal,
         )
