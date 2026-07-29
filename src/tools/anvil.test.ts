@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { describe, test } from "node:test"
 
 import { assertAnvilSourcePath, interpretJobLookup } from "./anvil.js"
+import { RunContext } from "./context.js"
 
 describe("assertAnvilSourcePath", () => {
   const roots = ["/mnt/downloads/converted"]
@@ -65,5 +66,38 @@ describe("interpretJobLookup", () => {
     const result = interpretJobLookup({ api_version: "v1" }, path)
     assert.equal(result.matched, "unknown")
     assert.match(String(result.conclusion), /UNKNOWN/)
+  })
+})
+
+describe("job evidence", () => {
+  test("a probed converted path must come from a recorded anvil read", () => {
+    const ctx = new RunContext()
+    ctx.recordRead(
+      "anvil",
+      "job list --absolute-path /mnt/downloads/complete/Show/e01.mkv",
+      JSON.stringify({
+        api_version: "v1",
+        jobs: [
+          {
+            id: 167,
+            source: "/mnt/downloads/complete/Show/e01.mkv",
+            destination: "/mnt/downloads/converted/Show/e01.mkv",
+          },
+        ],
+      }),
+    )
+    assert.equal(
+      ctx.sawPathInAnyRead("/mnt/downloads/converted/Show/e01.mkv"),
+      true,
+    )
+  })
+
+  test("anvil evidence cannot satisfy an Arr id gate", () => {
+    const ctx = new RunContext()
+    ctx.recordRead("anvil", "job list", JSON.stringify({ jobs: [{ id: 167 }] }))
+    assert.throws(
+      () => ctx.requireEvidence("sonarr", 167, "series id"),
+      /did not appear in any sonarr read/,
+    )
   })
 })

@@ -41,6 +41,26 @@ Never conclude that a track is missing, was lost during conversion, or exists in
 4. German audio present in the file but not offered in playback: the acquisition side is fine. Check Jellyfin streams, item refresh, and client/user audio preferences instead.
 5. Track present before import but absent after: compare the pre-import probe with the imported file and, when configured, check Anvil — that is a conversion problem, not a release problem, and a new grab will not fix it.
 
+## Was the track lost during conversion?
+
+The pipeline has three stages on disk, and a probe at each one turns the most common wrong diagnosis into a decided question:
+
+```
+SABnzbd completed  ──encoder reads──▶  converted  ──Arr imports/moves──▶  library
+```
+
+1. Probe the **source** in the download directory (SABnzbd `storage`, Arr queue `outputPath`).
+2. Probe the encoder's **output** in the converted directory, when a job result gives you its exact path.
+3. Probe the **imported file** in the library (`episodeFile.path`, `movieFile.path`).
+
+Read the result honestly:
+
+- Track present in the source, absent afterwards ⇒ the conversion dropped it. That is an encoder-side problem: report it, and say clearly that fetching the release again cannot fix it, because the same source will be converted the same way.
+- Track absent in the source ⇒ it was never there. The release name claimed it; the bytes did not. A replacement of the same release changes nothing, and only a genuinely different release could help.
+- Track present everywhere ⇒ acquisition and conversion are both fine; the problem is playback selection, and belongs in Jellyfin or the client.
+
+Probe one representative episode, not a whole season. If a stage's path is not available to you, say which stage could not be checked instead of assuming what it would have shown.
+
 ## Pitfalls
 
 - Do not report probe results as if they came from the Arr, and do not report Arr `languages` as if a file had been inspected.

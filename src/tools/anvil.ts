@@ -8,6 +8,7 @@ import { Type } from "typebox"
 
 import type { AnvilConfig } from "../config.js"
 import { textResult } from "./common.js"
+import type { RunContext } from "./context.js"
 import { execFileText } from "./exec.js"
 
 /**
@@ -103,7 +104,10 @@ export function interpretJobLookup(
   }
 }
 
-export function buildAnvilTools(cfg: AnvilConfig): ToolDefinition[] {
+export function buildAnvilTools(
+  cfg: AnvilConfig,
+  ctx: RunContext,
+): ToolDefinition[] {
   if (!path.isAbsolute(cfg.socket) || cfg.socket.includes("\0")) {
     throw new Error("ANVIL_CONTROL_SOCKET must be an absolute path")
   }
@@ -111,13 +115,25 @@ export function buildAnvilTools(cfg: AnvilConfig): ToolDefinition[] {
   const anvilctl = (args: string[], signal: AbortSignal | undefined) =>
     execFileText(cfg.command, ["--socket", cfg.socket, ...args], { signal })
 
+  /**
+   * Job results are recorded as evidence so the converted-file path they carry
+   * can be probed: anvil's output is the only place that path appears, and
+   * comparing it against the source is what settles "was the track lost during
+   * conversion?". Evidence is service-scoped, so this can never satisfy a
+   * Sonarr/Radarr id gate. Daemon health carries no paths and is not recorded.
+   */
+  const recordJobs = (query: string, response: Record<string, unknown>) => {
+    ctx.recordRead("anvil", query, JSON.stringify(response))
+    return response
+  }
+
   return [
     defineTool({
       name: "anvil_status",
       label: "Anvil daemon status",
       description:
         "Read factual Anvil daemon health and aggregate queue counts. This never proves that a specific media item is being encoded. " +
-        "The Anvil control API is read-only: there is no tool to cancel, pause, reprioritise, or retry an encode.",
+        "blitzcrank's Anvil tools are read-only: it has no way to cancel, pause, reprioritise, or retry an encode.",
       parameters: Type.Object({
         purpose: Type.String({
           description: "Why Anvil daemon health is needed for this diagnosis",
@@ -136,7 +152,7 @@ export function buildAnvilTools(cfg: AnvilConfig): ToolDefinition[] {
       description:
         "List all current Anvil jobs in one call, then filter them locally. Prefer this over repeated anvil_job_lookup calls: " +
         "it cannot produce the false negative a wrong path produces, and it is the only way to establish that an item has no job. " +
-        "Read-only; there is no cancel, pause, or retry operation.",
+        "Read-only: blitzcrank cannot cancel, pause, or retry an encode.",
       parameters: Type.Object({
         purpose: Type.String({
           description: "What this list of current Anvil jobs must establish",
@@ -161,9 +177,13 @@ export function buildAnvilTools(cfg: AnvilConfig): ToolDefinition[] {
           ],
           signal,
         )
-        return textResult(parseAnvilResponse(stdout), {
-          action: "anvil_job_list",
-        })
+        return textResult(
+          recordJobs(
+            `job list --current-only --limit ${params.limit ?? 200}`,
+            parseAnvilResponse(stdout),
+          ),
+          { action: "anvil_job_list" },
+        )
       },
     }),
     defineTool({
@@ -200,7 +220,13 @@ export function buildAnvilTools(cfg: AnvilConfig): ToolDefinition[] {
           signal,
         )
         return textResult(
-          interpretJobLookup(parseAnvilResponse(stdout), target),
+          interpretJobLookup(
+            recordJobs(
+              `job list --absolute-path ${target} --current-only`,
+              parseAnvilResponse(stdout),
+            ),
+            target,
+          ),
           { action: "anvil_job_lookup" },
         )
       },

@@ -81,9 +81,7 @@ function absoluteRoots(name: string, value: string | undefined): string[] {
       throw new Error(`${name} entries must be absolute paths, got "${root}"`)
     }
     if (resolve(root) === "/") {
-      throw new Error(
-        `${name} must name directories, not the whole filesystem`,
-      )
+      throw new Error(`${name} must name directories, not the whole filesystem`)
     }
   }
   return roots.map((root) => resolve(root))
