@@ -105,12 +105,8 @@ Safety invariants (do not weaken without explicit operator sign-off):
 
 - `pnpm dev` - run with `tsx watch`.
 - `pnpm fmt` / `pnpm lint` / `pnpm typecheck` - oxfmt, oxlint (type-aware), `tsc --noEmit`.
-- `pnpm test` - `node --test` over `src/**/*.test.ts` via tsx.
-- `pnpm verify` - fmt check + lint + typecheck + tests; must pass before a task
-  is done.
+- `pnpm verify` - fmt check + lint + typecheck; must pass before a task is done.
 - `pnpm build` / `pnpm start` - compile to `dist/` and run.
-- `pnpm e2e:issue` - end-to-end issue run against mock services; costs real
-  model tokens, run manually only.
 - `nix develop` (or direnv) - dev shell with Node 24, pnpm, TypeScript.
 - Config is env-only; see `.env.example`. Never commit `.env`.
 
@@ -225,19 +221,6 @@ small named helpers below it. Extract only when it names a real concept.
   strategy.
 - pi SDK packages are pinned exact (`@earendil-works/*@0.82.1`); bump them
   deliberately and re-verify against `docs/research/pi-sdk.md`.
-
-## Testing & QA
-
-Tests are `src/**/*.test.ts`, run with `node --test` via tsx (`pnpm test`, part
-of `pnpm verify`). Covered so far: `webhook/comment-gate.test.ts`,
-`webhook/loop-guard.test.ts`, `agent/runner.test.ts` (comment lifecycle).
-
-- Prefer pushing logic into pure functions and testing those; `directives.ts`,
-  `context.ts`, and `safety.ts` are pure and are the highest-value remaining
-  targets.
-- Avoid mocks as much as possible; never mock the safety layer to make a test
-  pass.
-- Test actual implementation, do not duplicate logic into tests.
 
 ## Task Completion Requirements
 
