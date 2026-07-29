@@ -60,26 +60,6 @@ in
       description = "Language for public comments and operations notes.";
     };
 
-    issueBudgetUsd = lib.mkOption {
-      type = lib.types.numbers.nonnegative;
-      default = 5;
-      description = ''
-        Cumulative model spend allowed per Seerr issue, in USD. Checked before
-        a run starts and enforced while it runs: reaching it aborts the agent
-        loop and posts one comment saying blitzcrank is stopping. Set to 0 to
-        disable the ceiling.
-      '';
-    };
-
-    maxRevisits = lib.mkOption {
-      type = lib.types.ints.unsigned;
-      default = 3;
-      description = ''
-        How many follow-ups the agent may schedule for itself between two user
-        messages. Beyond this it must resolve the issue or ask the reporter.
-      '';
-    };
-
     authFile = lib.mkOption {
       type = lib.types.str;
       default = "${stateDir}/auth.json";
@@ -191,8 +171,6 @@ in
         BLITZCRANK_DATA_DIR = stateDir;
         BLITZCRANK_AUTOMATIONS_DIR = cfg.automationsDir;
         BLITZCRANK_AUTH_PATH = cfg.authFile;
-        BLITZCRANK_ISSUE_BUDGET_USD = toString cfg.issueBudgetUsd;
-        BLITZCRANK_MAX_REVISITS = toString cfg.maxRevisits;
       }
       // lib.optionalAttrs (cfg.mediaRoots != [ ]) {
         BLITZCRANK_MEDIA_ROOTS = lib.concatStringsSep ":" cfg.mediaRoots;

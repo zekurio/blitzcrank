@@ -4,7 +4,7 @@ import type { ModelRuntime } from "@earendil-works/pi-coding-agent"
 
 import { CaseStore, clampEntry, type CaseFile } from "../casefile.js"
 import type { Config } from "../config.js"
-import { planRevisit } from "../revisits.js"
+import { MAX_REVISIT_CHAIN, planRevisit } from "../revisits.js"
 import { SeerrClient } from "../services/seerr.js"
 import { RunContext } from "../tools/context.js"
 import {
@@ -39,26 +39,6 @@ export interface RunOutcome {
   casefile: CaseFile
 }
 
-const noDirectives = (): Directives => ({
-  resolve: false,
-  revisitInMs: undefined,
-  revisitReason: undefined,
-  comment: "",
-  malformed: false,
-})
-
-/**
- * Pre-run gate: an issue at its ceiling never starts a session, and says so
- * exactly once. Pure so the decision is testable without a model.
- */
-export function budgetStop(
-  casefile: CaseFile,
-  budgetUsd: number,
-): { skip: boolean; notify: boolean } {
-  const skip = budgetUsd > 0 && casefile.spend.cost >= budgetUsd
-  return { skip, notify: skip && !casefile.budgetNotified }
-}
-
 export class IssueRunner {
   private readonly cases: CaseStore
 
@@ -78,22 +58,6 @@ export class IssueRunner {
     const { issueId } = event
     const seerr = new SeerrClient(this.config.seerr, this.config.seerrBotUserId)
     const casefile = await this.cases.load(issueId)
-    const budget = this.config.issueBudgetUsd
-
-    // Enforced before the spend: an exhausted issue never starts a session.
-    const stop = budgetStop(casefile, budget)
-    if (stop.skip) {
-      console.warn(
-        `[issue:${issueId}] budget exhausted ($${casefile.spend.cost.toFixed(2)} of $${budget.toFixed(2)}); skipping run`,
-      )
-      if (stop.notify) await seerr.postComment(issueId, this.budgetComment())
-      casefile.budgetNotified = true
-      // Never leave a follow-up armed for an issue that can no longer run.
-      casefile.revisit = undefined
-      await this.cases.save(casefile)
-      return { issueId, directives: noDirectives(), casefile }
-    }
-
     const ctx = new RunContext()
     const sessionFileRef: SessionFileRef = { current: undefined }
     // The agent's progress tool posts this once and edits it in place; the
@@ -101,7 +65,7 @@ export class IssueRunner {
     const status: StatusComment = { id: undefined }
     const revisitsLeft = Math.max(
       0,
-      this.config.maxRevisitChain -
+      MAX_REVISIT_CHAIN -
         (event.kind === "revisit" ? (casefile.revisit?.chain ?? 0) : 0),
     )
 
@@ -132,25 +96,18 @@ export class IssueRunner {
       sessionDir: path.join(this.config.dataDir, "sessions", "issues"),
       sessionFileRef,
       logPrefix: `issue:${issueId}`,
-      ...(budget > 0
-        ? { costCeiling: budget, costSpent: casefile.spend.cost }
-        : {}),
     })
 
-    // Spend is recorded before any Seerr call: a failure while commenting must
-    // not make an expensive run invisible to the budget.
+    // Usage is recorded before any Seerr call: a failure while commenting must
+    // not make a run invisible in the issue's running total.
     const { mutations, deletes } = ctx.counts
     casefile.spend = {
       runs: casefile.spend.runs + 1,
       tokens: casefile.spend.tokens + turn.usage.totalTokens,
-      cost: casefile.spend.cost + turn.usage.cost,
     }
     await this.cases.save(casefile)
 
-    const directives =
-      turn.stopped === "cost_ceiling"
-        ? noDirectives()
-        : parseDirectives(turn.text)
+    const directives = parseDirectives(turn.text)
 
     if (directives.malformed) {
       console.warn(
@@ -158,27 +115,15 @@ export class IssueRunner {
       )
     }
 
-    // A run stopped at the ceiling has no final answer: say so once, rather
-    // than leaving the reporter with a stale status line.
-    const comment =
-      turn.stopped === "cost_ceiling"
-        ? casefile.budgetNotified
-          ? undefined
-          : this.budgetComment()
-        : directives.malformed
-          ? undefined
-          : directives.comment
+    const comment = directives.malformed ? undefined : directives.comment
     await publishComment(
       seerr,
       issueId,
       status,
       comment
-        ? turn.stopped === "cost_ceiling"
-          ? comment
-          : `${comment}\n\n${usageAnchor(this.modelSpec, turn.usage)}`
+        ? `${comment}\n\n${usageAnchor(this.modelSpec, casefile.spend.tokens)}`
         : undefined,
     )
-    if (turn.stopped === "cost_ceiling") casefile.budgetNotified = true
 
     if (!directives.malformed && directives.resolve) {
       await seerr.setStatus(issueId, "resolved")
@@ -192,7 +137,6 @@ export class IssueRunner {
       mutations,
       deletes,
       tokens: turn.usage.totalTokens,
-      cost: turn.usage.cost,
       commented: comment !== undefined && comment.length > 0,
       resolved: directives.resolve,
     })
@@ -203,7 +147,7 @@ export class IssueRunner {
       previous: casefile.revisit,
       isRevisitRun: event.kind === "revisit",
       producedNews: mutations > 0 || (comment !== undefined && comment !== ""),
-      maxChain: this.config.maxRevisitChain,
+      maxChain: MAX_REVISIT_CHAIN,
       now: Date.now(),
     })
     if (plan.refused) console.warn(`[issue:${issueId}] ${plan.refused}`)
@@ -214,14 +158,9 @@ export class IssueRunner {
     console.log(
       `[issue:${issueId}] done resolve=${directives.resolve} revisit=${plan.revisit?.delayMs ?? "-"} ` +
         `mutations=${mutations} deletes=${deletes} tokens=${turn.usage.totalTokens} ` +
-        `cost=$${turn.usage.cost.toFixed(4)} issueTotal=$${casefile.spend.cost.toFixed(2)}` +
-        (turn.stopped ? ` stopped=${turn.stopped}` : ""),
+        `issueTotal=${casefile.spend.tokens} runs=${casefile.spend.runs}`,
     )
     return { issueId, directives, casefile }
-  }
-
-  private budgetComment(): string {
-    return `${this.config.budgetMessage}\n\n${this.anchor}`
   }
 }
 

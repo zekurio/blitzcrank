@@ -58,50 +58,6 @@ export function modelAnchor(spec: string): string {
 
 export interface RunUsage {
   totalTokens: number
-  cost: number
-}
-
-/**
- * Accumulates usage as assistant messages complete.
- *
- * Summing `session.messages` after the run does not work: auto-compaction
- * replaces that array with a summary plus the recent tail, so exactly the
- * expensive runs this exists to stop would under-report their own cost.
- */
-export class RunUsageTracker {
-  readonly usage: RunUsage = { totalTokens: 0, cost: 0 }
-  private tripped = false
-
-  constructor(
-    private readonly ceiling: number | undefined,
-    private readonly spent: number,
-  ) {}
-
-  /** Adds one message's usage; true the first time the ceiling is crossed. */
-  add(usage: { totalTokens: number; cost: { total: number } }): boolean {
-    this.usage.totalTokens += usage.totalTokens
-    this.usage.cost += usage.cost.total
-    if (this.ceiling === undefined || this.tripped) return false
-    if (this.spent + this.usage.cost < this.ceiling) return false
-    this.tripped = true
-    return true
-  }
-
-  get total(): number {
-    return this.spent + this.usage.cost
-  }
-}
-
-/**
- * Aborting is a request, not an outcome: a ceiling crossed on the run's final
- * message cuts nothing short. Only a genuinely interrupted run reports
- * `stopReason: "aborted"`, and only that run's answer is missing.
- */
-export function turnStopReason(
-  requestedAbort: boolean,
-  stopReason: string | undefined,
-): "cost_ceiling" | undefined {
-  return requestedAbort && stopReason === "aborted" ? "cost_ceiling" : undefined
 }
 
 function formatTokens(count: number): string {
@@ -110,10 +66,15 @@ function formatTokens(count: number): string {
   return String(count)
 }
 
-/** Anchor plus usage, e.g. "[blitzcrank w/ gpt-5.2-codex:high · 48.2k tokens · $0.19]". */
-export function usageAnchor(spec: string, usage: RunUsage): string {
-  const cost = `$${usage.cost.toFixed(usage.cost >= 0.1 ? 2 : 3)}`
-  return `${modelAnchor(spec).slice(0, -1)} · ${formatTokens(usage.totalTokens)} tokens · ${cost}]`
+/**
+ * Anchor plus usage, e.g. "[blitzcrank w/ gpt-5.2-codex:high · 132.4k tokens]".
+ *
+ * The count is everything the issue has cost so far, not this run alone: a run
+ * leaves exactly one comment and each comment replaces the last one, so a
+ * per-run number would silently understate an issue that took four runs.
+ */
+export function usageAnchor(spec: string, issueTokens: number): string {
+  return `${modelAnchor(spec).slice(0, -1)} · ${formatTokens(issueTokens)} tokens]`
 }
 
 /** Repo root (contains skills/): two levels up from dist/agent/. */
@@ -138,14 +99,6 @@ export interface AgentTurnOptions {
   /** Receives the session file path once known, for history self-exclusion. */
   sessionFileRef: { current: string | undefined } | undefined
   logPrefix: string
-  /**
-   * Hard spend ceiling in USD for this run, counted together with what the
-   * issue already cost. Reaching it aborts the agent loop mid-run: a ceiling
-   * that only reports after the fact is not a ceiling.
-   */
-  costCeiling?: number | undefined
-  /** Cost already attributed to this issue before the run. */
-  costSpent?: number | undefined
 }
 
 /**
@@ -156,8 +109,6 @@ export interface AgentTurnOptions {
 export interface AgentTurnResult {
   text: string
   usage: RunUsage
-  /** Set when the run was stopped by the host rather than by the model. */
-  stopped: "cost_ceiling" | undefined
 }
 
 export async function runAgentTurn(
@@ -202,10 +153,10 @@ export async function runAgentTurn(
 
   if (opts.sessionFileRef) opts.sessionFileRef.current = session.sessionFile
 
-  // Live cost tracking: assistant messages carry final usage as they complete,
-  // so the ceiling can stop the loop instead of describing the damage later.
-  const tracker = new RunUsageTracker(opts.costCeiling, opts.costSpent ?? 0)
-  let aborting: Promise<void> | undefined
+  // Usage is accumulated as assistant messages complete, not summed from
+  // `session.messages` afterwards: auto-compaction replaces that array with a
+  // summary plus the recent tail, so the longest runs would under-report most.
+  const usage: RunUsage = { totalTokens: 0 }
 
   const unsubscribe = session.subscribe((event) => {
     if (event.type === "tool_execution_start") {
@@ -219,20 +170,9 @@ export async function runAgentTurn(
       console.warn(`[${opts.logPrefix}] tool ${event.toolName} failed`)
       return
     }
-    if (event.type !== "message_end" || event.message.role !== "assistant") {
-      return
+    if (event.type === "message_end" && event.message.role === "assistant") {
+      usage.totalTokens += event.message.usage.totalTokens
     }
-    if (!tracker.add(event.message.usage)) return
-    console.warn(
-      `[${opts.logPrefix}] cost ceiling $${opts.costCeiling?.toFixed(2)} reached ` +
-        `(issue total $${tracker.total.toFixed(2)}); aborting run`,
-    )
-    // Compaction runs on its own controller and would keep spending after the
-    // agent loop stops, so it is cancelled too.
-    session.abortCompaction()
-    aborting = session.abort().catch((err: unknown) => {
-      console.warn(`[${opts.logPrefix}] abort failed:`, err)
-    })
   })
 
   try {
@@ -251,13 +191,9 @@ export async function runAgentTurn(
         .filter((b) => b.type === "text")
         .map((b) => b.text)
         .join(""),
-      usage: tracker.usage,
-      stopped: turnStopReason(aborting !== undefined, lastAssistant.stopReason),
+      usage,
     }
   } finally {
-    // The prompt resolves as soon as the loop stops; a requested abort still
-    // has to settle before the session is disposed.
-    if (aborting) await aborting
     unsubscribe()
     session.dispose()
   }
