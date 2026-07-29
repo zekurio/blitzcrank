@@ -44,7 +44,7 @@ describe("renderCase", () => {
       ruledOut: ["lost during conversion"],
       openQuestions: ["is there a German release date"],
     }
-    file.spend = { runs: 2, tokens: 1000, cost: 1.5 }
+    file.spend = { runs: 2, tokens: 1000 }
     file.runs = [
       {
         at: "2026-07-29T00:00:00.000Z",
@@ -52,7 +52,6 @@ describe("renderCase", () => {
         mutations: 1,
         deletes: 0,
         tokens: 500,
-        cost: 0.8,
         commented: true,
         resolved: false,
       },
@@ -73,14 +72,14 @@ describe("CaseStore", () => {
     const store = new CaseStore(dir)
     const file = await store.load("404")
     assert.equal(file.issueId, "404")
-    assert.deepEqual(file.spend, { runs: 0, tokens: 0, cost: 0 })
+    assert.deepEqual(file.spend, { runs: 0, tokens: 0 })
     assert.equal(file.revisit, undefined)
   })
 
-  test("round-trips spend, summary and the pending revisit", async () => {
+  test("round-trips usage, summary and the pending revisit", async () => {
     const store = new CaseStore(dir)
     const file = emptyCase("9")
-    file.spend = { runs: 3, tokens: 2000, cost: 4.2 }
+    file.spend = { runs: 3, tokens: 2000 }
     file.summary.facts = ["24 files, all jpn"]
     file.revisit = {
       dueAt: "2026-07-29T02:00:00.000Z",
@@ -92,7 +91,7 @@ describe("CaseStore", () => {
     await store.save(file)
 
     const loaded = await store.load("9")
-    assert.equal(loaded.spend.cost, 4.2)
+    assert.equal(loaded.spend.tokens, 2000)
     assert.deepEqual(loaded.summary.facts, ["24 files, all jpn"])
     assert.equal(loaded.revisit?.chain, 2)
   })
@@ -106,7 +105,6 @@ describe("CaseStore", () => {
       mutations: 0,
       deletes: 0,
       tokens: 1,
-      cost: 0.01,
       commented: false,
       resolved: false,
     }))

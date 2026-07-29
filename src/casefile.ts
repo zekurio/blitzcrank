@@ -12,9 +12,9 @@ import path from "node:path"
  * Two writers, deliberately separated:
  *  - the agent writes `summary` through the `update_case_file` tool (what is
  *    established, what is ruled out, what is still open),
- *  - the host writes everything factual: run records, cumulative spend, the
+ *  - the host writes everything factual: run records, cumulative usage, the
  *    pending revisit and its chain length. The agent cannot edit those, so it
- *    cannot talk itself past a budget or a revisit cap.
+ *    cannot talk itself past the revisit cap or understate what it used.
  */
 
 export type CaseMediaScope = "movie" | "tv" | undefined
@@ -34,7 +34,6 @@ export interface CaseRun {
   mutations: number
   deletes: number
   tokens: number
-  cost: number
   commented: boolean
   resolved: boolean
 }
@@ -60,10 +59,9 @@ export interface CaseFile {
    */
   lastAnswer: string | undefined
   runs: CaseRun[]
-  spend: { runs: number; tokens: number; cost: number }
+  /** Running totals for the whole issue; shown in the comment footer. */
+  spend: { runs: number; tokens: number }
   revisit: PendingRevisit | undefined
-  /** Set once the budget message was posted, so it is posted only once. */
-  budgetNotified: boolean
 }
 
 const MAX_ENTRIES = 12
@@ -82,9 +80,8 @@ export function emptyCase(issueId: string): CaseFile {
     },
     lastAnswer: undefined,
     runs: [],
-    spend: { runs: 0, tokens: 0, cost: 0 },
+    spend: { runs: 0, tokens: 0 },
     revisit: undefined,
-    budgetNotified: false,
   }
 }
 

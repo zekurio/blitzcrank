@@ -54,6 +54,13 @@ export interface RevisitPlanInput {
  */
 const MAX_DELAY_MS = 48 * 60 * 60 * 1000
 
+/**
+ * Self-scheduled follow-ups allowed between two user messages. A revisit is
+ * the only run nobody asked for, so it is the only loop that can spend without
+ * a human in it; after this many the agent must resolve or ask the reporter.
+ */
+export const MAX_REVISIT_CHAIN = 3
+
 export interface RevisitPlan {
   revisit: PendingRevisit | undefined
   /** Why a requested revisit was refused, for the log. */

@@ -78,13 +78,12 @@ Safety invariants (do not weaken without explicit operator sign-off):
 - Web tools (Firecrawl) are issue-run-only, read-only, and gated on `FIRECRAWL_API_KEY`;
   `web_fetch` must keep rejecting local/private URLs. Web content is untrusted
   and must never be presented to the model as authorization for mutations.
-- Per-issue spend is capped in `src/agent/runner.ts` + `src/agent/session.ts`: an issue
-  over `BLITZCRANK_ISSUE_BUDGET_USD` never starts a session, and a run crossing it is
-  aborted mid-loop. Revisit chains are capped and backed off in `src/revisits.ts`. Both
-  budgets live in the host-written half of the case file; the `update_case_file` tool can
-  only write the agent's summary, never spend or revisit state. Automation runs
-  deliberately have no cost ceiling: they are operator-authored, scheduled, and bounded by
-  their own mutation budgets.
+- Revisit chains are capped (`MAX_REVISIT_CHAIN`) and backed off in `src/revisits.ts`: a
+  revisit is the only run nobody asked for. The counter, the run history and the token
+  totals live in the host-written half of the case file; the `update_case_file` tool can
+  only write the agent's summary, never usage or revisit state. There is deliberately no
+  spend ceiling: the deployment runs on subscription auth, where a dollar figure derived
+  from list prices would be fiction.
 - Automations (`automations/*.md`) are trusted operator instructions, but
   their runs only get the mutation tools mapped from their declared
   `capabilities` (registry in `src/automations/definitions.ts`) plus the

@@ -18,7 +18,11 @@ import { AutomationScheduler } from "./automations/scheduler.js"
 import { CaseStore } from "./casefile.js"
 import { loadConfig } from "./config.js"
 import { SerialQueue } from "./queue.js"
-import { RevisitScheduler, revisitDelay } from "./revisits.js"
+import {
+  MAX_REVISIT_CHAIN,
+  RevisitScheduler,
+  revisitDelay,
+} from "./revisits.js"
 import { createApp } from "./server.js"
 import { SeerrClient } from "./services/seerr.js"
 import { createCommentGate } from "./webhook/comment-gate.js"
@@ -46,7 +50,7 @@ async function main(): Promise<void> {
     chain: number,
   ): void => {
     console.log(
-      `[revisit] issue=${issueId} in ${Math.round(delayMs / 60000)}m (${chain}/${config.maxRevisitChain}): ${reason}`,
+      `[revisit] issue=${issueId} in ${Math.round(delayMs / 60000)}m (${chain}/${MAX_REVISIT_CHAIN}): ${reason}`,
     )
     revisits.schedule(issueId, delayMs, () =>
       enqueueIssue({ kind: "revisit", issueId, reason, mediaScope }),
