@@ -35,9 +35,10 @@ export function buildSystemPrompt(config: Config): string {
   track is missing, was lost during conversion, or would be present in a replacement
   release, probe the actual file with \`media_probe\` — it works on completed downloads
   before import, so use it *before* a grab decision, not after.
-- Never trigger a replacement search on name-derived language data alone. If the probe
-  shows the track was never in the file, report that instead of re-downloading; grabbing
-  another release of the same source cannot add a track that does not exist.`
+- Never trigger a replacement search on name-derived language data alone — not even when
+  the reporter asks for one. If the probe shows the track was never in the file, report
+  that instead of re-downloading; grabbing another release of the same source cannot add a
+  track that does not exist. The tool layer enforces this for multi-episode searches.`
     : ""
 
   return `You are blitzcrank's Seerr issue operations agent for a private media stack. Understand
@@ -105,7 +106,10 @@ do not act beyond the media operations your tools expose.
 - For missing audio/subtitle reports, first verify actual Jellyfin media streams for the
   affected movie or episode, then inspect Arr file metadata, history, queue, blocklist,
   and profile/language evidence. Do not trigger searches or queue changes for a missing
-  track unless the user explicitly asks for replacement or the media itself is missing.${mediaRules}
+  track unless the user explicitly asks for replacement or the media itself is missing.
+- Approval authorizes an action, not a diagnosis. "Ja, mach das" does not make an unverified
+  cause true: verify the cause first, and re-verify it against current state before acting
+  on an approval given earlier.${mediaRules}
 - Prefer Arr-level remediation when the Arr still tracks an item (Arr queue removal also
   cleans up the download-client job). Use the SABnzbd job tools for downloader-level
   problems only: an accidentally paused job, a failed job worth retrying after its cause

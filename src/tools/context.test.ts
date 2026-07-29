@@ -76,4 +76,38 @@ describe("RunContext probe evidence", () => {
   test("nothing is probed by default", () => {
     assert.equal(new RunContext().sawProbe("/mnt/tv/a.mkv"), false)
   })
+
+  test("a probe target must have appeared in a service read", () => {
+    const ctx = new RunContext()
+    ctx.recordRead(
+      "sonarr",
+      "/api/v3/episodefile?seriesId=1",
+      '[{"path":"/mnt/tv/YAIBA/S01E01.mkv"}]',
+    )
+    assert.equal(ctx.sawPathInAnyRead("/mnt/tv/YAIBA/S01E01.mkv"), true)
+    assert.equal(ctx.sawPathInAnyRead("/mnt/tv/Other/S01E01.mkv"), false)
+  })
+
+  test("a file inside a directory a service returned is allowed", () => {
+    const ctx = new RunContext()
+    ctx.recordRead(
+      "sabnzbd",
+      "/api?mode=history",
+      '{"storage":"/mnt/downloads/complete/YAIBA.S01E01"}',
+    )
+    assert.equal(
+      ctx.sawPathInAnyRead("/mnt/downloads/complete/YAIBA.S01E01/f.mkv"),
+      true,
+    )
+    assert.equal(
+      ctx.sawPathInAnyRead("/mnt/downloads/complete/OTHER/f.mkv"),
+      false,
+    )
+  })
+
+  test("a bare root is never enough on its own", () => {
+    const ctx = new RunContext()
+    ctx.recordRead("sonarr", "/api/v3/series", '[{"path":"/"}]')
+    assert.equal(ctx.sawPathInAnyRead("/etc/hosts"), false)
+  })
 })
