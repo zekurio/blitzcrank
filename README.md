@@ -40,9 +40,9 @@ because enforcement now lives in-process:
   requires that one of them was inspected with `media_probe` this run. A season-wide
   re-grab can no longer ride on release-name metadata.
 - **No laundered negatives** — an empty `anvil_job_lookup` is returned as
-  `conclusion: UNKNOWN` with the reasons a correct-looking lookup misses, and Anvil output
-  paths (`ANVIL_DESTINATION_ROOTS`) are rejected outright instead of silently matching
-  nothing. `anvil_job_list` gives the one broad read that can establish absence.
+  `conclusion: UNKNOWN` with the reasons a correct-looking lookup still misses, never as
+  proof that no encode exists. `anvil_job_list` gives the one broad read that can
+  establish absence, and Anvil reports which path side matched (`matched_on`).
 - **Budgets** — max 5 mutations / 2 deletions per run.
 - **Built-in verification** — mutation tools perform the follow-up read themselves and
   return it in the result.

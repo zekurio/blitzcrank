@@ -43,7 +43,9 @@ Never conclude that a track is missing, was lost during conversion, or exists in
 
 ## Was the track lost during conversion?
 
-The pipeline has three stages on disk, and a probe at each one turns the most common wrong diagnosis into a decided question:
+**Ask the encoder first.** When the deployment runs Anvil, `anvil_job_lookup` with `includeStreamSelection` returns the streams it kept and dropped for that file, with a reason each, and `missing_languages` names languages the profile requested that the source never had. That is one call, it survives deletion of the source, and it separates _"the profile never asked for German"_ from _"German was requested and the source had none"_ — a distinction no probe of the output file can make. See the `anvil` skill.
+
+Probe when there is no job record, when the record is unreadable, or when you need to confirm what a file contains right now. The pipeline has three stages on disk, and a probe at each one turns the most common wrong diagnosis into a decided question:
 
 ```
 SABnzbd completed  ──encoder reads──▶  converted  ──Arr imports/moves──▶  library
@@ -55,7 +57,7 @@ SABnzbd completed  ──encoder reads──▶  converted  ──Arr imports/mo
 
 Read the result honestly:
 
-- Track present in the source, absent afterwards ⇒ the conversion dropped it. That is an encoder-side problem: report it, and say clearly that fetching the release again cannot fix it, because the same source will be converted the same way.
+- Track present in the source, absent afterwards ⇒ the conversion dropped it. Check the stream-selection record before calling that a bug: a drop with reason `language_not_requested` is the profile working as configured, and the fix is the profile, not another release. Either way, fetching the same release again cannot help.
 - Track absent in the source ⇒ it was never there. The release name claimed it; the bytes did not. A replacement of the same release changes nothing, and only a genuinely different release could help.
 - Track present everywhere ⇒ acquisition and conversion are both fine; the problem is playback selection, and belongs in Jellyfin or the client.
 

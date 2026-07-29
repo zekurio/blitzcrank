@@ -19,15 +19,25 @@ Speak about your own tools, not about the daemon. Whether Anvil itself supports 
 - All current jobs: `anvil_job_list`, then filter locally. One call, no false negatives; this is the only way to establish that an item has **no** job.
 - Exact item lookup: `anvil_job_lookup` with the exact absolute Sonarr/Radarr queue `outputPath`, or the SABnzbd `storage` path found by matching Arr `downloadId` to SABnzbd `nzo_id`.
 
-## Source paths, not destination paths
+## Which path side matched
 
-Anvil indexes jobs by the **source** path it reads, not by the converted file it writes. A lookup against an output/converted path (for example a `converted/` tree) returns zero jobs with no error, no matter how many jobs are running. When output roots are configured, `anvil_job_lookup` rejects such paths outright; when they are not, a wrong path is silently indistinguishable from "no job".
+`anvil_job_lookup` resolves a job's **source**, **asset**, **destination**, or **destination directory**, and every match reports which side hit in `matched_on`. So the encoder's input path (SABnzbd `storage`, Arr `outputPath`) and the converted file it wrote both correlate to the same job — state the side you matched on rather than assuming a hit means "this file is being encoded from here".
 
-Never construct or guess a path from a title, release name, or basename. If no exact source path is available, use `anvil_job_list` or skip Anvil correlation and rely on Arr/SAB evidence.
+Never construct or guess a path from a title, release name, or basename. If no exact path is available, use `anvil_job_list` or skip Anvil correlation and rely on Arr/SAB evidence.
+
+## Stream selection: why a language is missing
+
+Anvil records which audio and subtitle streams it kept and dropped, per attempt, with a reason for each. Pass `includeStreamSelection` to `anvil_job_lookup` or `anvil_job_list` for any missing-language report. It is the cheapest and most precise answer available, and it survives deletion of the source file.
+
+- `missing_languages` names languages the profile **requested** that the source did not contain. That is the direct answer to "why is there no German dub": the encoder wanted it and there was nothing to keep.
+- Each stream carries `kept` and a `reason`: `language_match`, `original_language`, and `unknown_as_original` are keeps; `language_not_requested`, `commentary`, `forced`, and `sdh` are drops.
+- `rule` explains the whole decision: `language_filter` is the normal path, `cleanup_disabled` means nothing was dropped, and the `fallback_*` rules mean no stream matched the configured languages.
+- This distinguishes **"the profile never asked for that language"** from **"the profile asked and the source had none"**. Probing the converted file cannot tell those apart; only this record can, and the difference decides whether a different release would help or a profile needs changing.
+- A job with **no** `stream_selection` field recorded no decision — that is not the same as a decision that kept everything, and it is not evidence that nothing was dropped. A `decision_error` means the record could not be read; treat it as unknown, never as "nothing was dropped".
 
 ## Zero results are unknown, not absence
 
-A zero-result lookup means only that no job is indexed under that exact source path. The item may not be queued yet, the path may be the destination side, or the source generation may differ. `anvil_job_lookup` therefore returns an explicit `conclusion: UNKNOWN` for empty results.
+A zero-result lookup means only that no job is indexed under that exact path right now. The item may not be queued yet, the source may have a newer generation, or the job may have been pruned. `anvil_job_lookup` therefore returns an explicit `conclusion: UNKNOWN` for empty results.
 
 - Never write "no conversion job exists / kein Konvertierungsjob zugeordnet" on the strength of empty lookups.
 - Before making any statement about whether an item is encoding, confirm with one `anvil_job_list` call and filter the result yourself.

@@ -141,7 +141,6 @@ in
       example = {
         SEERR_BOT_USERNAME = "blitzcrank";
         ANVIL_CONTROL_SOCKET = "/run/anvil/anvild.sock";
-        ANVIL_DESTINATION_ROOTS = "/mnt/downloads/converted";
       };
       description = "Extra non-secret environment variables.";
     };

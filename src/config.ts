@@ -14,12 +14,6 @@ export interface FirecrawlConfig {
 export interface AnvilConfig {
   command: string
   socket: string
-  /**
-   * Absolute roots that hold Anvil *output* (converted) files. Anvil indexes
-   * jobs by source path, so a lookup against a destination path returns zero
-   * rows with no error — the false negative that must be rejected loudly.
-   */
-  destinationRoots: string[]
 }
 
 export interface MediaConfig {
@@ -130,10 +124,6 @@ export function loadConfig(): Config {
       ? {
           command: process.env.ANVIL_COMMAND ?? "anvilctl",
           socket: process.env.ANVIL_CONTROL_SOCKET,
-          destinationRoots: absoluteRoots(
-            "ANVIL_DESTINATION_ROOTS",
-            process.env.ANVIL_DESTINATION_ROOTS,
-          ),
         }
       : undefined,
     media: media(),
