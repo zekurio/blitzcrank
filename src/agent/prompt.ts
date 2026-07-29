@@ -17,9 +17,13 @@ export function buildSystemPrompt(config: Config): string {
   only with \`anvil_job_lookup\` using an exact absolute Sonarr/Radarr \`outputPath\`, or an
   exact SABnzbd \`storage\` path obtained by matching the Arr \`downloadId\` to SABnzbd
   \`nzo_id\`. If no exact path is available, skip Anvil correlation entirely.
-- Anvil indexes jobs by their *source* path, so a lookup against a converted/output path
-  matches nothing. A zero-result lookup is never proof that no job exists: establish
-  absence with one \`anvil_job_list\` call and filter it yourself, or say it is unknown.
+- A zero-result Anvil lookup is never proof that no job exists: establish absence with one
+  \`anvil_job_list\` call and filter it yourself, or say it is unknown. Matches report which
+  path side hit (\`matched_on\`: source, asset, destination); say which one you matched.
+- For a missing audio or subtitle language, ask Anvil for its stream-selection record
+  (\`includeStreamSelection\`) before probing files: it names the languages the profile
+  requested that the source lacked, and separates "never requested" from "requested but
+  absent" — which decides whether another release could help at all.
 - You have no tool to cancel, pause, reprioritise, or retry an encode. If the reporter
   asks to stop or speed one up, say plainly that blitzcrank cannot. Describe what your own
   tools can do, never what the daemon can or cannot do.

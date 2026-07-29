@@ -1,42 +1,8 @@
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
 
-import { assertAnvilSourcePath, interpretJobLookup } from "./anvil.js"
+import { interpretJobLookup } from "./anvil.js"
 import { RunContext } from "./context.js"
-
-describe("assertAnvilSourcePath", () => {
-  const roots = ["/mnt/downloads/converted"]
-
-  test("accepts a source path", () => {
-    assertAnvilSourcePath("/mnt/downloads/complete/YAIBA.S01E01/f.mkv", roots)
-  })
-
-  test("rejects a converted destination path with the reason", () => {
-    assert.throws(
-      () =>
-        assertAnvilSourcePath(
-          "/mnt/downloads/converted/YAIBA.S01E01/f.mkv",
-          roots,
-        ),
-      /indexes jobs by their source path/,
-    )
-  })
-
-  test("rejects the destination root itself", () => {
-    assert.throws(
-      () => assertAnvilSourcePath("/mnt/downloads/converted", roots),
-      /Anvil output root/,
-    )
-  })
-
-  test("does not reject a sibling that merely shares the prefix", () => {
-    assertAnvilSourcePath("/mnt/downloads/converted-backup/f.mkv", roots)
-  })
-
-  test("accepts everything when no output roots are configured", () => {
-    assertAnvilSourcePath("/mnt/downloads/converted/f.mkv", [])
-  })
-})
 
 describe("interpretJobLookup", () => {
   const path = "/mnt/downloads/complete/YAIBA.S01E01/f.mkv"
@@ -46,12 +12,32 @@ describe("interpretJobLookup", () => {
     assert.equal(result.matched, 0)
     assert.match(String(result.conclusion), /UNKNOWN, not absence/)
     assert.match(String(result.next_step), /anvil_job_list/)
-    assert.equal(result.checked_source_path, path)
+    assert.equal(result.checked_path, path)
   })
 
   test("passes a non-empty result through untouched", () => {
     const response = { api_version: "v1", jobs: [{ id: 167 }] }
     assert.deepEqual(interpretJobLookup(response, path), response)
+  })
+
+  test("a destination-path match is a real match, not a miss", () => {
+    // Anvil resolves source, asset and destination paths and says which side
+    // hit, so the converted file correlates to its job like any other path.
+    const response = {
+      api_version: "v1",
+      jobs: [
+        {
+          id: 167,
+          state: "running",
+          matched_on: ["destination"],
+          destination_path: "/mnt/downloads/converted/Show/e01.mkv",
+        },
+      ],
+    }
+    assert.deepEqual(
+      interpretJobLookup(response, "/mnt/downloads/converted/Show/e01.mkv"),
+      response,
+    )
   })
 
   test("reads nested job arrays", () => {

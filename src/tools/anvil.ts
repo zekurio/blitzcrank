@@ -16,13 +16,11 @@ import { execFileText } from "./exec.js"
  * deployment. Read-only; job correlation is exact-absolute-path only — never
  * constructed from titles, release names, or basenames.
  *
- * Anvil indexes jobs by *source* path. A lookup against a converted/destination
- * path, or against an item that simply has no job queued yet, returns zero rows
- * with no error — and the legacy rule ("zero matches mean the item is not an
- * Anvil wait") turned that silent miss into a confident public claim. Both are
- * handled here in code: destination paths are rejected when the operator
- * configures the output roots, and an empty result is labelled "unknown"
- * instead of "none".
+ * An empty result is labelled "unknown" rather than "none": the legacy rule
+ * ("zero matches mean the item is not an Anvil wait") turned a silent miss into
+ * a confident public claim while eighteen jobs were running. Anvil matches
+ * source, asset and destination paths and reports which side hit (`matched_on`),
+ * so a miss is genuinely a miss — but only of that exact path, at that moment.
  */
 
 function parseAnvilResponse(stdout: string): Record<string, unknown> {
@@ -44,23 +42,6 @@ function parseAnvilResponse(stdout: string): Record<string, unknown> {
   return response
 }
 
-/** Rejects Anvil *output* paths, which always match zero jobs. */
-export function assertAnvilSourcePath(
-  absolutePath: string,
-  destinationRoots: string[],
-): void {
-  const hit = destinationRoots.find(
-    (root) => absolutePath === root || absolutePath.startsWith(root + path.sep),
-  )
-  if (!hit) return
-  throw new Error(
-    `${absolutePath} is under the Anvil output root ${hit}: Anvil indexes jobs by their ` +
-      "source path (the SABnzbd storage or Arr outputPath the encoder reads), so this " +
-      "lookup would return zero jobs whether or not one exists. Look up the source path, " +
-      "or list current jobs with anvil_job_list.",
-  )
-}
-
 /**
  * The jobs array, when the response shape makes it unambiguous. Returning
  * undefined means "cannot tell" and is never treated as an empty result.
@@ -80,8 +61,8 @@ function jobsOf(response: Record<string, unknown>): unknown[] | undefined {
 
 /**
  * Wraps a lookup response so a miss can never be read as proof of absence:
- * the model sees an explicit "unknown" conclusion plus the two reasons a
- * correct-looking lookup misses.
+ * the model sees an explicit "unknown" conclusion plus the reasons a
+ * correct-looking lookup still misses.
  */
 export function interpretJobLookup(
   response: Record<string, unknown>,
@@ -94,15 +75,27 @@ export function interpretJobLookup(
     matched: jobs ? 0 : "unknown",
     conclusion:
       "UNKNOWN, not absence. Zero matches only mean no job is indexed under this exact " +
-      "source path: the path may be an Anvil output/destination path, a different " +
-      "generation of the source, or the item may not be queued yet. Do not report " +
-      '"no conversion job exists" from this result.',
+      "path right now: the item may not be queued yet, the source may have a newer " +
+      'generation, or the job may have been pruned. Do not report "no conversion job ' +
+      'exists" from this result.',
     next_step:
       "Confirm with anvil_job_list (one call, all current jobs, filter locally) before " +
       "making any statement about whether this item is encoding.",
-    checked_source_path: absolutePath,
+    checked_path: absolutePath,
   }
 }
+
+/**
+ * Anvil records which streams it kept and dropped, and why, on the attempt — so
+ * it answers a language question even after the source file is gone, and it
+ * separates "the profile never asked for that language" from "the profile asked
+ * and the source had none". No probe of the output file can tell those apart.
+ */
+const SELECTION_PARAM =
+  "Include the audio/subtitle streams Anvil kept and dropped on its latest recorded attempt. Set this for " +
+  "any missing-language question: `missing_languages` names languages the profile requested that the source " +
+  "did not have, and each stream carries why it was kept or dropped. A job with no recorded decision has no " +
+  "stream_selection field at all, which is not the same as a decision that kept everything."
 
 export function buildAnvilTools(
   cfg: AnvilConfig,
@@ -164,22 +157,30 @@ export function buildAnvilTools(
             description: "Max jobs to return (default 200)",
           }),
         ),
+        includeStreamSelection: Type.Optional(
+          Type.Boolean({
+            description: SELECTION_PARAM,
+          }),
+        ),
       }),
       async execute(_toolCallId, params, signal) {
+        const limit = String(params.limit ?? 200)
+        const selection = params.includeStreamSelection === true
         const stdout = await anvilctl(
           [
             "job",
             "list",
             "--current-only",
             "--limit",
-            String(params.limit ?? 200),
+            limit,
+            ...(selection ? ["--with-selection"] : []),
             "--json",
           ],
           signal,
         )
         return textResult(
           recordJobs(
-            `job list --current-only --limit ${params.limit ?? 200}`,
+            `job list --current-only --limit ${limit}${selection ? " --with-selection" : ""}`,
             parseAnvilResponse(stdout),
           ),
           { action: "anvil_job_list" },
@@ -190,24 +191,29 @@ export function buildAnvilTools(
       name: "anvil_job_lookup",
       label: "Find exact Anvil jobs",
       description:
-        "Correlate one exact absolute *source* path (Sonarr/Radarr outputPath or SABnzbd storage) to current Anvil jobs. " +
-        "No fuzzy, basename, title, or substring matching is performed. Anvil indexes by source path, so a converted/output " +
-        "path matches nothing; an empty result means UNKNOWN, never 'no job exists' — use anvil_job_list to establish absence.",
+        "Correlate one exact absolute path to current Anvil jobs. Matches a job's source, asset or destination and reports which " +
+        "side hit in `matched_on`, so the encoder's input and its converted output both resolve. No fuzzy, basename, title, or " +
+        "substring matching. An empty result means UNKNOWN, never 'no job exists' — use anvil_job_list to establish absence.",
       parameters: Type.Object({
         purpose: Type.String({
           description: "Why this exact Anvil job correlation is needed",
         }),
         absolute_path: Type.String({
           description:
-            "Exact absolute Sonarr/Radarr outputPath or SABnzbd storage path that Anvil reads as its source; never a converted/output path, title, basename, or guessed path",
+            "Exact absolute path from a service read (Sonarr/Radarr outputPath or file path, SABnzbd storage, or a converted path from an earlier job result); never a title, basename, or guessed path",
         }),
+        includeStreamSelection: Type.Optional(
+          Type.Boolean({
+            description: SELECTION_PARAM,
+          }),
+        ),
       }),
       async execute(_toolCallId, params, signal) {
         const target = params.absolute_path.trim()
         if (!path.isAbsolute(target) || target.includes("\0")) {
           throw new Error("absolute_path must be an exact absolute path")
         }
-        assertAnvilSourcePath(target, cfg.destinationRoots)
+        const selection = params.includeStreamSelection === true
         const stdout = await anvilctl(
           [
             "job",
@@ -215,6 +221,7 @@ export function buildAnvilTools(
             "--absolute-path",
             target,
             "--current-only",
+            ...(selection ? ["--with-selection"] : []),
             "--json",
           ],
           signal,
@@ -222,7 +229,7 @@ export function buildAnvilTools(
         return textResult(
           interpretJobLookup(
             recordJobs(
-              `job list --absolute-path ${target} --current-only`,
+              `job list --absolute-path ${target} --current-only${selection ? " --with-selection" : ""}`,
               parseAnvilResponse(stdout),
             ),
             target,
