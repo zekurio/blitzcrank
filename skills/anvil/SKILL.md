@@ -5,13 +5,35 @@ description: Use when Sonarr/Radarr import delays may be caused by the Anvil enc
 
 # Anvil Skill
 
-Anvil is the transcode daemon between SABnzbd completion and Arr import. Three read-only tools exist, all requiring `purpose`: `anvil_status` (daemon health and aggregate counts), `anvil_job_list` (all current jobs in one call), and `anvil_job_lookup` (one exact absolute source path). Daemon health never proves that a particular media item is encoding.
+Anvil is the transcode daemon between SABnzbd completion and Arr import. Four read-only tools exist, all requiring `purpose`: `anvil_status` (daemon health and aggregate counts), `anvil_job_list` (all current jobs in one call), `anvil_job_lookup` (one exact absolute path), and `anvil_job_show` (the full recorded history of one job). One mutation exists: `anvil_retry_job`. Daemon health never proves that a particular media item is encoding.
 
 ## Capabilities and limits
 
-blitzcrank's Anvil tools are **read-only**: status, job list, job lookup. It cannot cancel, abort, pause, resume, reprioritise, or retry an encode. If a reporter asks to stop, skip, or speed up a conversion, say plainly that blitzcrank cannot do it — never imply an attempt was made, and never explain the missing capability as a timing problem ("it had already finished"), which suggests a retry would work.
+blitzcrank can read Anvil state and requeue one job. It **cannot** cancel, abort, pause, resume, or reprioritise an encode. If a reporter asks to stop or speed up a conversion, say plainly that blitzcrank cannot do it — never imply an attempt was made, and never explain the missing capability as a timing problem ("it had already finished"), which suggests a retry would work.
+
+Anvil's operator client can do far more — prune jobs, force occurrences, clean staging, back up the store, recover leases. None of that is exposed here, deliberately: those are maintenance operations whose blast radius is a whole library or the database, and they belong to a human at a shell. Do not describe them as things you could do.
 
 Speak about your own tools, not about the daemon. Whether Anvil itself supports an operation is not something these tools can establish, and an operator on the box has commands you do not.
+
+## Requeueing a job
+
+`anvil_retry_job` requeues one job by id or slug, which must have appeared in an Anvil read this run. Use it for a job that will not finish on its own: a `failed` encode blocking an import, or one canceled earlier by an operator.
+
+- It restarts the conversion from the beginning. It cannot recover work already discarded, and it does not fix the cause of a failure — read `anvil_job_show` first and say what the failure was.
+- It consumes the run's mutation budget and returns the job's state afterwards; check that state rather than assuming the requeue took.
+- Retrying a job whose cause is still present just fails again. If the last error names a missing tool, a full disk, or a source that disappeared, report that instead.
+
+## When a job will not explain itself
+
+`anvil_job_show` returns one job's full history: state, every attempt with its error, the publish operation, the pipeline context, and the recorded stream decisions. Reach for it as soon as a listing shows `failed`, an expired lease, or a job running implausibly long. A listing tells you _that_ something is wrong; only the detail view tells you _what_.
+
+## When the tool errors
+
+Anvil's client distinguishes its failures, and so must you:
+
+- **Unreachable or protocol mismatch** — the control plane is down, or the binaries disagree. This says nothing about whether anything is encoding. Report the control plane as unavailable, never as "no conversion job exists".
+- **Not found** — no job, library, or path under that reference. Re-read the job list instead of guessing another id or slug.
+- **Path outside the configured libraries** — `anvil_job_lookup` reports this explicitly. The path lies outside every library root and handoff destination, so it can never match a job, whatever is running. Check it against the Arr or SABnzbd read it came from; it is not evidence of absence.
 
 ## Common reads
 

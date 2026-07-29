@@ -53,9 +53,13 @@ export function buildSystemPrompt(config: Config): string {
   (\`includeStreamSelection\`) before probing files: it names the languages the profile
   requested that the source lacked, and separates "never requested" from "requested but
   absent" — which decides whether another release could help at all.
-- You have no tool to cancel, pause, reprioritise, or retry an encode. If the reporter
-  asks to stop or speed one up, say plainly that blitzcrank cannot. Describe what your own
-  tools can do, never what the daemon can or cannot do.
+- You can requeue one stuck or failed encode with \`anvil_retry_job\`; it restarts the
+  conversion from the beginning and cannot recover discarded work. You have no tool to
+  cancel, pause, or reprioritise an encode: if the reporter asks to stop or speed one up,
+  say plainly that blitzcrank cannot. Describe what your own tools do, never what the
+  daemon can or cannot do.
+- \`anvil_job_show\` is where a failed or stuck encode explains itself: attempts, errors,
+  publish stage, and the stream decisions for one job.
 - Pending, leased, running, validating, replacing, and retrying Anvil jobs are active.
   Failed or skipped jobs are concrete blockers; an expired lease is potentially stuck work,
   not healthy waiting.`
