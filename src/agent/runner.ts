@@ -2,7 +2,7 @@ import path from "node:path"
 
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent"
 
-import { CaseStore, type CaseFile } from "../casefile.js"
+import { CaseStore, clampEntry, type CaseFile } from "../casefile.js"
 import type { Config } from "../config.js"
 import { planRevisit } from "../revisits.js"
 import { SeerrClient } from "../services/seerr.js"
@@ -39,12 +39,24 @@ export interface RunOutcome {
   casefile: CaseFile
 }
 
-const NO_DIRECTIVES: Directives = {
+const noDirectives = (): Directives => ({
   resolve: false,
   revisitInMs: undefined,
   revisitReason: undefined,
   comment: "",
   malformed: false,
+})
+
+/**
+ * Pre-run gate: an issue at its ceiling never starts a session, and says so
+ * exactly once. Pure so the decision is testable without a model.
+ */
+export function budgetStop(
+  casefile: CaseFile,
+  budgetUsd: number,
+): { skip: boolean; notify: boolean } {
+  const skip = budgetUsd > 0 && casefile.spend.cost >= budgetUsd
+  return { skip, notify: skip && !casefile.budgetNotified }
 }
 
 export class IssueRunner {
@@ -69,17 +81,17 @@ export class IssueRunner {
     const budget = this.config.issueBudgetUsd
 
     // Enforced before the spend: an exhausted issue never starts a session.
-    if (budget > 0 && casefile.spend.cost >= budget) {
+    const stop = budgetStop(casefile, budget)
+    if (stop.skip) {
       console.warn(
         `[issue:${issueId}] budget exhausted ($${casefile.spend.cost.toFixed(2)} of $${budget.toFixed(2)}); skipping run`,
       )
-      if (!casefile.budgetNotified) {
-        await seerr.postComment(issueId, this.budgetComment())
-        casefile.budgetNotified = true
-        casefile.revisit = undefined
-        await this.cases.save(casefile)
-      }
-      return { issueId, directives: NO_DIRECTIVES, casefile }
+      if (stop.notify) await seerr.postComment(issueId, this.budgetComment())
+      casefile.budgetNotified = true
+      // Never leave a follow-up armed for an issue that can no longer run.
+      casefile.revisit = undefined
+      await this.cases.save(casefile)
+      return { issueId, directives: noDirectives(), casefile }
     }
 
     const ctx = new RunContext()
@@ -125,9 +137,19 @@ export class IssueRunner {
         : {}),
     })
 
+    // Spend is recorded before any Seerr call: a failure while commenting must
+    // not make an expensive run invisible to the budget.
+    const { mutations, deletes } = ctx.counts
+    casefile.spend = {
+      runs: casefile.spend.runs + 1,
+      tokens: casefile.spend.tokens + turn.usage.totalTokens,
+      cost: casefile.spend.cost + turn.usage.cost,
+    }
+    await this.cases.save(casefile)
+
     const directives =
       turn.stopped === "cost_ceiling"
-        ? NO_DIRECTIVES
+        ? noDirectives()
         : parseDirectives(turn.text)
 
     if (directives.malformed) {
@@ -162,7 +184,8 @@ export class IssueRunner {
       await seerr.setStatus(issueId, "resolved")
     }
 
-    const { mutations, deletes } = ctx.counts
+    // Host-written, so continuity survives a run that never called the tool.
+    if (comment) casefile.lastAnswer = clampEntry(comment)
     casefile.runs.push({
       at: new Date().toISOString(),
       trigger: event.kind === "revisit" ? "revisit" : "webhook",
@@ -173,12 +196,6 @@ export class IssueRunner {
       commented: comment !== undefined && comment.length > 0,
       resolved: directives.resolve,
     })
-    casefile.spend = {
-      runs: casefile.spend.runs + 1,
-      tokens: casefile.spend.tokens + turn.usage.totalTokens,
-      cost: casefile.spend.cost + turn.usage.cost,
-    }
-
     const plan = planRevisit({
       requestedMs: directives.revisitInMs,
       reason: directives.revisitReason,
@@ -190,7 +207,8 @@ export class IssueRunner {
       now: Date.now(),
     })
     if (plan.refused) console.warn(`[issue:${issueId}] ${plan.refused}`)
-    casefile.revisit = plan.revisit
+    // A resolved issue is closed: never wake it again on an old schedule.
+    casefile.revisit = directives.resolve ? undefined : plan.revisit
     await this.cases.save(casefile)
 
     console.log(

@@ -61,6 +61,49 @@ export interface RunUsage {
   cost: number
 }
 
+/**
+ * Accumulates usage as assistant messages complete.
+ *
+ * Summing `session.messages` after the run does not work: auto-compaction
+ * replaces that array with a summary plus the recent tail, so exactly the
+ * expensive runs this exists to stop would under-report their own cost.
+ */
+export class RunUsageTracker {
+  readonly usage: RunUsage = { totalTokens: 0, cost: 0 }
+  private tripped = false
+
+  constructor(
+    private readonly ceiling: number | undefined,
+    private readonly spent: number,
+  ) {}
+
+  /** Adds one message's usage; true the first time the ceiling is crossed. */
+  add(usage: { totalTokens: number; cost: { total: number } }): boolean {
+    this.usage.totalTokens += usage.totalTokens
+    this.usage.cost += usage.cost.total
+    if (this.ceiling === undefined || this.tripped) return false
+    if (this.spent + this.usage.cost < this.ceiling) return false
+    this.tripped = true
+    return true
+  }
+
+  get total(): number {
+    return this.spent + this.usage.cost
+  }
+}
+
+/**
+ * Aborting is a request, not an outcome: a ceiling crossed on the run's final
+ * message cuts nothing short. Only a genuinely interrupted run reports
+ * `stopReason: "aborted"`, and only that run's answer is missing.
+ */
+export function turnStopReason(
+  requestedAbort: boolean,
+  stopReason: string | undefined,
+): "cost_ceiling" | undefined {
+  return requestedAbort && stopReason === "aborted" ? "cost_ceiling" : undefined
+}
+
 function formatTokens(count: number): string {
   if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(2)}M`
   if (count >= 1_000) return `${(count / 1_000).toFixed(1)}k`
@@ -161,8 +204,7 @@ export async function runAgentTurn(
 
   // Live cost tracking: assistant messages carry final usage as they complete,
   // so the ceiling can stop the loop instead of describing the damage later.
-  const spent = opts.costSpent ?? 0
-  let runCost = 0
+  const tracker = new RunUsageTracker(opts.costCeiling, opts.costSpent ?? 0)
   let aborting: Promise<void> | undefined
 
   const unsubscribe = session.subscribe((event) => {
@@ -180,26 +222,21 @@ export async function runAgentTurn(
     if (event.type !== "message_end" || event.message.role !== "assistant") {
       return
     }
-    runCost += event.message.usage.cost.total
-    if (
-      opts.costCeiling === undefined ||
-      aborting ||
-      spent + runCost < opts.costCeiling
-    ) {
-      return
-    }
+    if (!tracker.add(event.message.usage)) return
     console.warn(
-      `[${opts.logPrefix}] cost ceiling $${opts.costCeiling.toFixed(2)} reached ` +
-        `(issue total $${(spent + runCost).toFixed(2)}); aborting run`,
+      `[${opts.logPrefix}] cost ceiling $${opts.costCeiling?.toFixed(2)} reached ` +
+        `(issue total $${tracker.total.toFixed(2)}); aborting run`,
     )
-    aborting = session.abort()
+    // Compaction runs on its own controller and would keep spending after the
+    // agent loop stops, so it is cancelled too.
+    session.abortCompaction()
+    aborting = session.abort().catch((err: unknown) => {
+      console.warn(`[${opts.logPrefix}] abort failed:`, err)
+    })
   })
 
   try {
     await session.prompt(opts.prompt)
-    // The prompt resolves as soon as the loop stops; the abort itself still
-    // has to settle before the session is disposed.
-    if (aborting) await aborting
 
     const lastAssistant = session.messages.findLast(
       (m): m is AssistantMessage => m.role === "assistant",
@@ -209,22 +246,18 @@ export async function runAgentTurn(
       throw new Error(lastAssistant.errorMessage ?? "model request failed")
     }
 
-    const usage: RunUsage = { totalTokens: 0, cost: 0 }
-    for (const message of session.messages) {
-      if (message.role !== "assistant") continue
-      usage.totalTokens += message.usage.totalTokens
-      usage.cost += message.usage.cost.total
-    }
-
     return {
       text: lastAssistant.content
         .filter((b) => b.type === "text")
         .map((b) => b.text)
         .join(""),
-      usage,
-      stopped: aborting ? "cost_ceiling" : undefined,
+      usage: tracker.usage,
+      stopped: turnStopReason(aborting !== undefined, lastAssistant.stopReason),
     }
   } finally {
+    // The prompt resolves as soon as the loop stops; a requested abort still
+    // has to settle before the session is disposed.
+    if (aborting) await aborting
     unsubscribe()
     session.dispose()
   }

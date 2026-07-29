@@ -53,6 +53,12 @@ export interface CaseFile {
   issueId: string
   updatedAt: string
   summary: CaseSummary
+  /**
+   * The last comment actually published, host-written. Continuity must not
+   * depend on the agent volunteering to call `update_case_file`, and repeating
+   * an earlier answer is the most common way a follow-up wastes a run.
+   */
+  lastAnswer: string | undefined
   runs: CaseRun[]
   spend: { runs: number; tokens: number; cost: number }
   revisit: PendingRevisit | undefined
@@ -74,6 +80,7 @@ export function emptyCase(issueId: string): CaseFile {
       ruledOut: [],
       openQuestions: [],
     },
+    lastAnswer: undefined,
     runs: [],
     spend: { runs: 0, tokens: 0, cost: 0 },
     revisit: undefined,
@@ -81,14 +88,32 @@ export function emptyCase(issueId: string): CaseFile {
   }
 }
 
-/** Model-supplied text is capped hard: this file is re-read every run. */
+/**
+ * Model-supplied text is capped hard and flattened to one line: this file is
+ * re-read as part of a later prompt, so multi-line text could otherwise forge
+ * the host-written structure around it.
+ */
+export function clampEntry(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined
+  const clamped = value.replace(/\s+/g, " ").trim().slice(0, MAX_ENTRY_CHARS)
+  return clamped.length > 0 ? clamped : undefined
+}
+
 export function clampEntries(values: unknown): string[] {
   if (!Array.isArray(values)) return []
   return values
-    .filter((value): value is string => typeof value === "string")
-    .map((value) => value.trim().replace(/\s+/g, " ").slice(0, MAX_ENTRY_CHARS))
-    .filter((value) => value.length > 0)
+    .map(clampEntry)
+    .filter((value): value is string => value !== undefined)
     .slice(0, MAX_ENTRIES)
+}
+
+function clampSummary(summary: Partial<CaseSummary> | undefined): CaseSummary {
+  return {
+    hypothesis: clampEntry(summary?.hypothesis),
+    facts: clampEntries(summary?.facts),
+    ruledOut: clampEntries(summary?.ruledOut),
+    openQuestions: clampEntries(summary?.openQuestions),
+  }
 }
 
 /** Compact prompt rendering; empty when there is nothing worth carrying. */
@@ -105,6 +130,9 @@ export function renderCase(file: CaseFile): string | undefined {
   section("Established", file.summary.facts)
   section("Ruled out", file.summary.ruledOut)
   section("Still open", file.summary.openQuestions)
+  if (file.lastAnswer) {
+    lines.push(`Last answer posted to the reporter: ${file.lastAnswer}`)
+  }
 
   const history = file.runs.slice(-4).map((run) => {
     const outcome = [
@@ -130,18 +158,31 @@ export class CaseStore {
     return path.join(this.dir, `${issueId}.json`)
   }
 
+  /**
+   * Never throws for a damaged file: losing the memory of an issue is
+   * recoverable, refusing to run it ever again is not.
+   */
   async load(issueId: string): Promise<CaseFile> {
     const raw = await readFile(this.file(issueId), "utf8").catch(
       () => undefined,
     )
     if (raw === undefined) return emptyCase(issueId)
-    const parsed = JSON.parse(raw) as Partial<CaseFile>
     const empty = emptyCase(issueId)
+    let parsed: Partial<CaseFile> | undefined
+    try {
+      parsed = JSON.parse(raw) as Partial<CaseFile>
+    } catch {
+      console.warn(`[case:${issueId}] unreadable case file; starting fresh`)
+      return empty
+    }
     return {
       ...empty,
       ...parsed,
       issueId,
-      summary: { ...empty.summary, ...parsed.summary },
+      // Re-clamped on the way in as well: the cap has to be a property of the
+      // prompt, not only of the write path.
+      summary: clampSummary(parsed.summary),
+      lastAnswer: clampEntry(parsed.lastAnswer),
       spend: { ...empty.spend, ...parsed.spend },
       runs: Array.isArray(parsed.runs) ? parsed.runs.slice(-MAX_RUNS) : [],
     }

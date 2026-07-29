@@ -86,6 +86,16 @@ describe("planRevisit", () => {
     assert.equal(plan.refused, undefined)
   })
 
+  test("the backoff cannot grow past what a timer can hold", () => {
+    const plan = planRevisit({
+      ...base,
+      isRevisitRun: true,
+      producedNews: false,
+      previous: armed(1, 40 * 60 * MINUTES),
+    })
+    assert.equal(plan.revisit?.delayMs, 48 * 60 * MINUTES)
+  })
+
   test("news keeps the delay the agent asked for", () => {
     const plan = planRevisit({
       ...base,
@@ -114,6 +124,13 @@ describe("revisitDelay", () => {
     file.revisit = armed(1, 30 * MINUTES)
     file.revisit.dueAt = new Date(NOW - 5 * 60 * MINUTES).toISOString()
     assert.equal(revisitDelay(file, NOW), 30_000)
+  })
+
+  test("a far-future due date is clamped to the maximum", () => {
+    const file = emptyCase("9")
+    file.revisit = armed(1, 30 * MINUTES)
+    file.revisit.dueAt = new Date(NOW + 3.2e12).toISOString()
+    assert.equal(revisitDelay(file, NOW), 48 * 60 * MINUTES)
   })
 
   test("an unparsable due date is dropped", () => {

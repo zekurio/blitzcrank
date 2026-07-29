@@ -1,9 +1,10 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
+import { emptyCase } from "../casefile.js"
 import type { SeerrClient } from "../services/seerr.js"
 import type { StatusComment } from "../tools/index.js"
-import { publishComment } from "./runner.js"
+import { budgetStop, publishComment } from "./runner.js"
 
 type CommentApi = Pick<
   SeerrClient,
@@ -57,4 +58,29 @@ test("stays silent when nothing was posted and nothing is to say", async () => {
   const status: StatusComment = { id: undefined }
   await publishComment(seerr.api, "9", status, undefined)
   assert.deepEqual(seerr.calls, [])
+})
+
+test("an issue below its budget runs normally", () => {
+  const file = emptyCase("9")
+  file.spend.cost = 4.99
+  assert.deepEqual(budgetStop(file, 5), { skip: false, notify: false })
+})
+
+test("an issue at its budget never starts a session", () => {
+  const file = emptyCase("9")
+  file.spend.cost = 5
+  assert.deepEqual(budgetStop(file, 5), { skip: true, notify: true })
+})
+
+test("the budget comment is posted once, not on every later trigger", () => {
+  const file = emptyCase("9")
+  file.spend.cost = 7.5
+  file.budgetNotified = true
+  assert.deepEqual(budgetStop(file, 5), { skip: true, notify: false })
+})
+
+test("a zero budget disables the ceiling", () => {
+  const file = emptyCase("9")
+  file.spend.cost = 999
+  assert.deepEqual(budgetStop(file, 0), { skip: false, notify: false })
 })

@@ -82,7 +82,9 @@ Safety invariants (do not weaken without explicit operator sign-off):
   over `BLITZCRANK_ISSUE_BUDGET_USD` never starts a session, and a run crossing it is
   aborted mid-loop. Revisit chains are capped and backed off in `src/revisits.ts`. Both
   budgets live in the host-written half of the case file; the `update_case_file` tool can
-  only write the agent's summary, never spend or revisit state.
+  only write the agent's summary, never spend or revisit state. Automation runs
+  deliberately have no cost ceiling: they are operator-authored, scheduled, and bounded by
+  their own mutation budgets.
 - Automations (`automations/*.md`) are trusted operator instructions, but
   their runs only get the mutation tools mapped from their declared
   `capabilities` (registry in `src/automations/definitions.ts`) plus the

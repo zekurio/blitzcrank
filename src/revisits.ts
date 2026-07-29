@@ -47,6 +47,13 @@ export interface RevisitPlanInput {
   now: number
 }
 
+/**
+ * Longest follow-up delay, matching the directive clamp. Beyond ~24.8 days a
+ * setTimeout overflows and fires immediately, which would turn the anti-poll
+ * backoff into a tight poll.
+ */
+const MAX_DELAY_MS = 48 * 60 * 60 * 1000
+
 export interface RevisitPlan {
   revisit: PendingRevisit | undefined
   /** Why a requested revisit was refused, for the log. */
@@ -79,7 +86,7 @@ export function planRevisit(input: RevisitPlanInput): RevisitPlan {
     input.isRevisitRun && !input.producedNews && input.previous
       ? input.previous.delayMs * 2
       : 0
-  const delayMs = Math.max(input.requestedMs, floor)
+  const delayMs = Math.min(Math.max(input.requestedMs, floor), MAX_DELAY_MS)
   return {
     revisit: {
       dueAt: new Date(input.now + delayMs).toISOString(),
@@ -101,5 +108,5 @@ export function revisitDelay(file: CaseFile, now: number): number | undefined {
   const due = Date.parse(file.revisit.dueAt)
   if (!Number.isFinite(due)) return undefined
   // Overdue follow-ups run soon, but not all at once during boot.
-  return Math.max(due - now, 30_000)
+  return Math.min(Math.max(due - now, 30_000), MAX_DELAY_MS)
 }

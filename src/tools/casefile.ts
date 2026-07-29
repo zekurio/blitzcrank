@@ -4,7 +4,7 @@ import {
 } from "@earendil-works/pi-coding-agent"
 import { Type } from "typebox"
 
-import { clampEntries, type CaseFile } from "../casefile.js"
+import { clampEntries, clampEntry, type CaseFile } from "../casefile.js"
 import { textResult } from "./common.js"
 
 /**
@@ -50,9 +50,8 @@ export function buildCaseFileTool(file: CaseFile): ToolDefinition {
       ),
     }),
     async execute(_toolCallId, params) {
-      const hypothesis = params.hypothesis?.trim()
       file.summary = {
-        hypothesis: hypothesis ? hypothesis.slice(0, 300) : undefined,
+        hypothesis: clampEntry(params.hypothesis),
         facts: clampEntries(params.facts),
         ruledOut: clampEntries(params.ruledOut),
         openQuestions: clampEntries(params.openQuestions),
