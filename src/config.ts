@@ -1,3 +1,5 @@
+import { isAbsolute, resolve } from "node:path"
+
 export interface ServiceConfig {
   url: string
   apiKey: string
@@ -12,6 +14,11 @@ export interface FirecrawlConfig {
 export interface AnvilConfig {
   command: string
   socket: string
+}
+
+export interface MediaConfig {
+  /** Absolute directory roots media_probe may read; nothing else is readable. */
+  roots: string[]
 }
 
 export interface Config {
@@ -46,6 +53,8 @@ export interface Config {
   sabnzbd: ServiceConfig | undefined
   jellyfin: ServiceConfig | undefined
   anvil: AnvilConfig | undefined
+  /** Enables the ffprobe-backed media_probe tool when media roots are set. */
+  media: MediaConfig | undefined
 }
 
 function service(prefix: string): ServiceConfig | undefined {
@@ -53,6 +62,28 @@ function service(prefix: string): ServiceConfig | undefined {
   const apiKey = process.env[`${prefix}_API_KEY`]
   if (!url || !apiKey) return undefined
   return { url: url.replace(/\/+$/, ""), apiKey }
+}
+
+/** Colon-separated absolute roots, PATH-style; unset means no probe tool. */
+function media(): MediaConfig | undefined {
+  const roots = (process.env.BLITZCRANK_MEDIA_ROOTS ?? "")
+    .split(":")
+    .map((root) => root.trim())
+    .filter((root) => root.length > 0)
+  if (roots.length === 0) return undefined
+  for (const root of roots) {
+    if (!isAbsolute(root) || root.includes("\0")) {
+      throw new Error(
+        `BLITZCRANK_MEDIA_ROOTS entries must be absolute paths, got "${root}"`,
+      )
+    }
+    if (resolve(root) === "/") {
+      throw new Error(
+        "BLITZCRANK_MEDIA_ROOTS must name the media directories, not the whole filesystem",
+      )
+    }
+  }
+  return { roots: roots.map((root) => resolve(root)) }
 }
 
 export function loadConfig(): Config {
@@ -90,5 +121,6 @@ export function loadConfig(): Config {
           socket: process.env.ANVIL_CONTROL_SOCKET,
         }
       : undefined,
+    media: media(),
   }
 }

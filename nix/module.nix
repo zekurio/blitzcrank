@@ -90,6 +90,32 @@ in
       '';
     };
 
+    mediaRoots = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      example = [
+        "/mnt/media"
+        "/mnt/downloads/complete"
+      ];
+      description = ''
+        Absolute directories the read-only {command}`media_probe` tool may
+        inspect with ffprobe: the media library plus the download client's
+        completed directory, so a release's real audio/subtitle tracks can be
+        checked before import. Paths resolving outside these roots are
+        rejected. Empty (the default) disables the tool entirely.
+
+        These must be the paths *as blitzcrank sees them*: if Sonarr runs in a
+        container with a different mapping, the probe needs the host path. They
+        are pulled in as mount dependencies, so the unit waits for a ZFS pool or
+        network share instead of starting on an empty mountpoint.
+
+        The service runs as a {option}`DynamicUser` with no supplementary
+        groups: the roots must be readable by `others`, or the unit needs
+        {option}`systemd.services.blitzcrank.serviceConfig.SupplementaryGroups`
+        and `DynamicUser = false`.
+      '';
+    };
+
     automationsDir = lib.mkOption {
       type = lib.types.path;
       default = "${cfg.package}/lib/blitzcrank/automations";
@@ -126,6 +152,10 @@ in
         assertion = cfg.authSeedFile == null || lib.hasPrefix "${stateDir}/" cfg.authFile;
         message = "services.blitzcrank.authSeedFile requires authFile to live under ${stateDir}, the only path the sandboxed service can write.";
       }
+      {
+        assertion = lib.all (root: lib.hasPrefix "/" root && root != "/") cfg.mediaRoots;
+        message = "services.blitzcrank.mediaRoots entries must be absolute paths below /.";
+      }
     ];
 
     systemd.services.blitzcrank = {
@@ -142,7 +172,19 @@ in
         BLITZCRANK_AUTOMATIONS_DIR = cfg.automationsDir;
         BLITZCRANK_AUTH_PATH = cfg.authFile;
       }
+      // lib.optionalAttrs (cfg.mediaRoots != [ ]) {
+        BLITZCRANK_MEDIA_ROOTS = lib.concatStringsSep ":" cfg.mediaRoots;
+      }
       // cfg.settings;
+
+      # ffprobe for media_probe; it is looked up on PATH.
+      path = lib.optional (cfg.mediaRoots != [ ]) pkgs.ffmpeg-headless;
+
+      # Media roots must exist before the probe can read them; without this a
+      # late NFS/CIFS mount is invisible inside the unit's mount namespace.
+      unitConfig = lib.mkIf (cfg.mediaRoots != [ ]) {
+        RequiresMountsFor = cfg.mediaRoots;
+      };
 
       serviceConfig = {
         ExecStart = lib.getExe cfg.package;
@@ -151,9 +193,12 @@ in
         Restart = "on-failure";
         RestartSec = 10;
 
-        # Hardening
+        # Hardening. ProtectSystem=strict already mounts every media root
+        # read-only; binding them in as well would pin the mount tree as it
+        # looks at unit start, which hides datasets mounted later.
         ProtectSystem = "strict";
-        ProtectHome = true;
+        # Media libraries under /home stay reachable; nothing is writable.
+        ProtectHome = if lib.any (lib.hasPrefix "/home") cfg.mediaRoots then "read-only" else true;
         PrivateTmp = true;
         NoNewPrivileges = true;
         RestrictSUIDSGID = true;

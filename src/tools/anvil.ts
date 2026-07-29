@@ -1,4 +1,3 @@
-import { execFile } from "node:child_process"
 import { isAbsolute } from "node:path"
 
 import {
@@ -9,38 +8,13 @@ import { Type } from "typebox"
 
 import type { AnvilConfig } from "../config.js"
 import { textResult } from "./common.js"
+import { execFileText } from "./exec.js"
 
 /**
  * Anvil (transcode daemon) correlation tools, ported from the legacy
  * deployment. Read-only; job correlation is exact-absolute-path only — never
  * constructed from titles, release names, or basenames.
  */
-
-function execFileText(
-  file: string,
-  args: string[],
-  signal: AbortSignal | undefined,
-): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      file,
-      args,
-      {
-        ...(signal ? { signal } : {}),
-        timeout: 10_000,
-        maxBuffer: 1024 * 1024,
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          const detail = String(stderr || stdout || error.message).trim()
-          reject(new Error(detail || error.message))
-          return
-        }
-        resolve(String(stdout))
-      },
-    )
-  })
-}
 
 function parseAnvilResponse(stdout: string): Record<string, unknown> {
   let payload: unknown
@@ -81,7 +55,7 @@ export function buildAnvilTools(cfg: AnvilConfig): ToolDefinition[] {
         const stdout = await execFileText(
           cfg.command,
           ["--socket", cfg.socket, "status", "--json"],
-          signal,
+          { signal },
         )
         return textResult(parseAnvilResponse(stdout), {
           action: "anvil_status",
@@ -119,7 +93,7 @@ export function buildAnvilTools(cfg: AnvilConfig): ToolDefinition[] {
             "--current-only",
             "--json",
           ],
-          signal,
+          { signal },
         )
         return textResult(parseAnvilResponse(stdout), {
           action: "anvil_job_lookup",

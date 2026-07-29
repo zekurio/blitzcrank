@@ -8,6 +8,7 @@ import { buildAnvilTools } from "./anvil.js"
 import { buildRadarrTools, buildSonarrTools } from "./arr.js"
 import type { RunContext } from "./context.js"
 import { buildHistoryTool } from "./history.js"
+import { buildMediaTools } from "./media.js"
 import {
   buildJellyfinTools,
   buildProgressTool,
@@ -38,6 +39,7 @@ export function buildServiceTools(
   if (config.jellyfin) tools.push(...buildJellyfinTools(config.jellyfin, ctx))
   if (config.sabnzbd) tools.push(...buildSabnzbdTools(config.sabnzbd, ctx))
   if (config.anvil) tools.push(...buildAnvilTools(config.anvil))
+  if (config.media) tools.push(...buildMediaTools(config.media))
   tools.push(
     buildHistoryTool(path.join(config.dataDir, "sessions"), sessionFileRef),
   )
@@ -49,6 +51,7 @@ export function isReadTool(name: string): boolean {
   return (
     name.endsWith("_request") ||
     name.startsWith("anvil_") ||
+    name === "media_probe" ||
     name === "thread_history_search"
   )
 }
