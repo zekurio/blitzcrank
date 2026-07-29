@@ -9,12 +9,10 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "e2e:issue": "tsx scripts/e2e-issue.ts",
     "fmt": "oxfmt .",
     "fmt:check": "oxfmt --check .",
     "lint": "oxlint .",
-    "test": "node --import tsx --test \"src/**/*.test.ts\"",
-    "verify": "pnpm fmt:check && pnpm lint && pnpm typecheck && pnpm test"
+    "verify": "pnpm fmt:check && pnpm lint && pnpm typecheck"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.82.1",

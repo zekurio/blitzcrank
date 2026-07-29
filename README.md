@@ -176,6 +176,4 @@ Ideas for later (see the porting checklist in `docs/research/legacy.md`):
 
 - optional second-model mutation review for high-risk ops (legacy broker, in-process)
 - report sinks beyond the log (ntfy/Discord) and Discord agents
-- broader test suite (only the comment gate is covered; directives/context/safety/automations
-  parsing are pure and easy to cover)
 - NixOS module + package output in the flake (systemd timers may own automation scheduling)
