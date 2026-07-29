@@ -9,7 +9,9 @@ Anvil is the transcode daemon between SABnzbd completion and Arr import. Three r
 
 ## Capabilities and limits
 
-The Anvil control API is **read-only**. There is no cancel, abort, pause, resume, reprioritise, or retry operation, and blitzcrank exposes none. If a reporter asks to stop, skip, or speed up a conversion, say plainly that this is not possible through blitzcrank — never imply an attempt was made, and never explain the missing capability as a timing problem ("it had already finished"), which suggests a retry would work.
+blitzcrank's Anvil tools are **read-only**: status, job list, job lookup. It cannot cancel, abort, pause, resume, reprioritise, or retry an encode. If a reporter asks to stop, skip, or speed up a conversion, say plainly that blitzcrank cannot do it — never imply an attempt was made, and never explain the missing capability as a timing problem ("it had already finished"), which suggests a retry would work.
+
+Speak about your own tools, not about the daemon. Whether Anvil itself supports an operation is not something these tools can establish, and an operator on the box has commands you do not.
 
 ## Common reads
 
@@ -36,6 +38,6 @@ A zero-result lookup means only that no job is indexed under that exact source p
 - Call `report_progress` as the first action for the overall issue; it is one rewritable status line, not a recurring Anvil status feed.
 - A SABnzbd job can be complete while Anvil is still encoding, so Sonarr/Radarr may temporarily report no importable file, a missing or unavailable path, a locked/in-use file, size changes, access/permission-like failures, or a waiting/delayed import state.
 - A unique active current job is correlated. Multiple jobs count as one package only when every job shares the same library, source path, and source generation; otherwise the result is ambiguous. Never decide from a truncated result.
-- Pending, leased, running, validating, replacing, and retrying are active states. Treat complete as requiring continued Arr/Jellyfin validation. Treat failed or skipped as concrete Anvil blockers. Compare leases and heartbeats to `server_time`; an expired lease is potentially stuck, not healthy waiting.
+- Pending, leased, running, validating, replacing, and retrying are active states. Treat complete as requiring continued Arr/Jellyfin validation. Treat failed, skipped, or canceled as terminal: the job is not coming back on its own. `skipped` means Anvil decided the job needed no work; `canceled` means someone stopped it deliberately, and no output was written for it. Compare leases and heartbeats to `server_time`; an expired lease is potentially stuck, not healthy waiting.
 - Only exact active job evidence plus file-not-ready Arr evidence establishes an Anvil wait. For that state, do not manual import, force import, remove, blocklist, retry, search, refresh, or call Seerr resolution/comment APIs.
 - `anvil_status` may explain control-plane unavailability, but its daemon or queue counts must never establish item-level waiting.

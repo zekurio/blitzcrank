@@ -42,7 +42,7 @@ export function buildServiceTools(
   if (config.radarr) tools.push(...buildRadarrTools(config.radarr, ctx))
   if (config.jellyfin) tools.push(...buildJellyfinTools(config.jellyfin, ctx))
   if (config.sabnzbd) tools.push(...buildSabnzbdTools(config.sabnzbd, ctx))
-  if (config.anvil) tools.push(...buildAnvilTools(config.anvil))
+  if (config.anvil) tools.push(...buildAnvilTools(config.anvil, ctx))
   if (config.media) tools.push(...buildMediaTools(config.media, ctx))
   tools.push(
     buildHistoryTool(path.join(config.dataDir, "sessions"), sessionFileRef),

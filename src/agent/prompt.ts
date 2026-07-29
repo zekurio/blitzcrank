@@ -20,8 +20,9 @@ export function buildSystemPrompt(config: Config): string {
 - Anvil indexes jobs by their *source* path, so a lookup against a converted/output path
   matches nothing. A zero-result lookup is never proof that no job exists: establish
   absence with one \`anvil_job_list\` call and filter it yourself, or say it is unknown.
-- The Anvil control surface is read-only. There is no cancel, pause, reprioritise, or
-  retry. If the reporter asks to stop or speed up an encode, say blitzcrank cannot do it.
+- You have no tool to cancel, pause, reprioritise, or retry an encode. If the reporter
+  asks to stop or speed one up, say plainly that blitzcrank cannot. Describe what your own
+  tools can do, never what the daemon can or cannot do.
 - Pending, leased, running, validating, replacing, and retrying Anvil jobs are active.
   Failed or skipped jobs are concrete blockers; an expired lease is potentially stuck work,
   not healthy waiting.`
