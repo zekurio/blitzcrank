@@ -91,7 +91,16 @@ export function buildMediaTools(
         }
         probes++
 
-        const target = await resolveMediaPath(params.path, cfg.roots)
+        const requested = params.path.trim()
+        if (!ctx.sawPathInAnyRead(requested)) {
+          throw new Error(
+            `evidence gate: ${requested} did not appear in any service read this run. ` +
+              "Probe only paths a service returned (Sonarr/Radarr file path or queue outputPath, " +
+              "SABnzbd storage, Jellyfin MediaSources Path); never a path taken from issue text, " +
+              "reconstructed from a title, or rewritten by hand.",
+          )
+        }
+        const target = await resolveMediaPath(requested, cfg.roots)
         const info = await stat(target)
         const file = info.isDirectory()
           ? await largestMediaFile(target)
@@ -118,7 +127,7 @@ export function buildMediaTools(
         // Both the path the model asked for and the file actually read: the
         // former is the Arr's own spelling (pre-symlink-resolution), which is
         // what a later scope gate compares against.
-        ctx.recordProbe(params.path.trim(), target, file.path)
+        ctx.recordProbe(requested, target, file.path)
 
         return textResult(
           {

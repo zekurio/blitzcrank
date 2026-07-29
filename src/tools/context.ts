@@ -80,6 +80,21 @@ export class RunContext {
     }
   }
 
+  /**
+   * True when a path, or the directory it sits in, appeared in a service read
+   * this run. Probing is filesystem access driven by model input, so the target
+   * must come from a service's own answer (Arr file path/outputPath, SABnzbd
+   * storage, Jellyfin Path) rather than from issue text or reconstruction.
+   */
+  sawPathInAnyRead(filePath: string): boolean {
+    const parent = filePath.slice(0, filePath.lastIndexOf("/"))
+    return [filePath, parent].some(
+      (candidate) =>
+        candidate.length > 1 &&
+        this.evidence.some((entry) => entry.body.includes(candidate)),
+    )
+  }
+
   /** True when this exact file, or a directory containing it, was probed. */
   sawProbe(filePath: string): boolean {
     return this.probed.some(
