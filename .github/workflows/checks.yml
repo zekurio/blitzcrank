@@ -46,6 +46,10 @@ jobs:
       - name: Run typecheck
         run: pnpm typecheck
 
+      # Prompts and skills name tools in prose, which the compiler cannot check.
+      - name: Check the documented tool surface
+        run: pnpm check:tools
+
       - name: Build
         run: pnpm build
 
