@@ -1,3 +1,4 @@
+import { stat } from "node:fs/promises"
 import path from "node:path"
 
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent"
@@ -58,7 +59,19 @@ export class IssueRunner {
     const { issueId } = event
     const seerr = new SeerrClient(this.config.seerr, this.config.seerrBotUserId)
     const casefile = await this.cases.load(issueId)
-    const ctx = new RunContext()
+    // Evidence carries across the runs of one issue, matching the session that
+    // is resumed alongside it: the gate exists to stop fabricated IDs, and a
+    // real ID does not become fabricated by being a day old. Deletions are the
+    // exception — their ceiling is issue-wide, so commenting again cannot
+    // reset it.
+    const ctx = new RunContext({
+      limits: {
+        maxMutations: undefined,
+        maxDeletes: this.config.maxDeletesPerIssue,
+      },
+      prior: await this.cases.loadEvidence(issueId),
+      priorDeletes: casefile.spend.deletes,
+    })
     const sessionFileRef: SessionFileRef = { current: undefined }
     // The agent's progress tool posts this once and edits it in place; the
     // final comment then overwrites it, so a run leaves one comment at most.
@@ -68,6 +81,16 @@ export class IssueRunner {
       MAX_REVISIT_CHAIN -
         (event.kind === "revisit" ? (casefile.revisit?.chain ?? 0) : 0),
     )
+    // Checked here, not just inside the session factory, because the prompt
+    // depends on the answer: a resumed run gets a short delta prompt, and
+    // sending that to a session that silently started blank would leave the
+    // agent working an issue it was never told about.
+    const resuming =
+      casefile.sessionFile !== undefined &&
+      (await stat(casefile.sessionFile).then(
+        (s) => s.isFile(),
+        () => false,
+      ))
 
     const tools = buildIssueTools({
       config: this.config,
@@ -93,14 +116,16 @@ export class IssueRunner {
       tools,
       prompt:
         event.kind === "webhook"
-          ? buildIssuePrompt(event.payload, casefile, revisitsLeft)
+          ? buildIssuePrompt(event.payload, casefile, revisitsLeft, resuming)
           : buildRevisitPrompt(
               event.issueId,
               event.reason,
               casefile,
               revisitsLeft,
+              resuming,
             ),
       sessionDir: path.join(this.config.dataDir, "sessions", "issues"),
+      resumeFile: resuming ? casefile.sessionFile : undefined,
       sessionFileRef,
       logPrefix: `issue:${issueId}`,
     })
@@ -111,8 +136,13 @@ export class IssueRunner {
     casefile.spend = {
       runs: casefile.spend.runs + 1,
       tokens: casefile.spend.tokens + turn.usage.newTokens,
+      deletes: casefile.spend.deletes + deletes,
     }
+    // Recorded before the directive block is even parsed: a run that mutated
+    // and then crashed must not hand the next run a fresh deletion budget.
+    casefile.sessionFile = turn.sessionFile
     await this.cases.save(casefile)
+    await this.cases.saveEvidence(issueId, ctx.snapshot)
 
     const directives = parseDirectives(turn.text)
 
@@ -134,6 +164,9 @@ export class IssueRunner {
 
     if (!directives.malformed && directives.resolve) {
       await seerr.setStatus(issueId, "resolved")
+      // A closed issue keeps its case file (audit trail, and `spend.deletes`
+      // must not reset if it is reopened) but drops the bulky raw evidence.
+      await this.cases.forgetEvidence(issueId)
     }
 
     // Host-written, so continuity survives a run that never called the tool.

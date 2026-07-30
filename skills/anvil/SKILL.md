@@ -20,7 +20,7 @@ Speak about your own tools, not about the daemon. Whether Anvil itself supports 
 `anvil_retry_job` requeues one job by id or slug, which must have appeared in an Anvil read this run. Use it for a job that will not finish on its own: a `failed` encode blocking an import, or one canceled earlier by an operator.
 
 - It restarts the conversion from the beginning. It cannot recover work already discarded, and it does not fix the cause of a failure — read `anvil_job_show` first and say what the failure was.
-- It consumes the run's mutation budget and returns the job's state afterwards; check that state rather than assuming the requeue took.
+- It returns the job's state afterwards; check that state rather than assuming the requeue took.
 - Retrying a job whose cause is still present just fails again. If the last error names a missing tool, a full disk, or a source that disappeared, report that instead.
 
 ## When a job will not explain itself

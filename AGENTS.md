@@ -48,10 +48,28 @@ Safety invariants (do not weaken without explicit operator sign-off):
 - Raw `*_request` tools are GET-only; every state change is a dedicated typed
   tool in `src/tools/`. Never add a generic write/mutation passthrough.
 - Mutations go through `runMutation` (`src/tools/common.ts`): evidence gates
-  (target IDs must appear in a prior read this run, `src/tools/context.ts`),
-  per-run budgets, built-in verification.
+  (target IDs must appear in a prior read on this issue, `src/tools/context.ts`),
+  the deletion budget, built-in verification.
+- Non-destructive mutations are deliberately **uncapped** for issue runs: no
+  single number fits both "wrong subtitle language" and "twelve episodes stuck
+  in the queue", and blast radius is bounded by the typed-tool surface and the
+  evidence gates, not by a counter. Deletions keep a ceiling
+  (`BLITZCRANK_MAX_DELETES_PER_ISSUE`, default 5) because they are the only
+  action with no undo, and it is counted **cumulatively per issue** in
+  `casefile.spend.deletes` so commenting again cannot reset it. Do not
+  reintroduce a per-run mutation cap; do not make the deletion cap per-run.
+- An issue's agent session is **resumed** across its events: the case file
+  stores `sessionFile` and `src/agent/session.ts` reopens it, so a follow-up
+  comment continues the same conversation. The evidence store is carried with
+  it (`CaseStore.loadEvidence`/`saveEvidence`) — the gate exists to stop
+  fabricated IDs, and service IDs here are not recycled. Two things must stay
+  true: the resumed run still builds its system prompt and tool list fresh
+  (the SDK never replays those), and the final assistant message is taken from
+  the live event stream, never `session.messages.findLast`, or a resumed run
+  that produced nothing would re-execute a previous run's directive block.
 - SABnzbd raw reads are limited to `queue`/`history`; SAB job control and all
-  file deletions exist only as typed tools with evidence gates and budgets.
+  file deletions exist only as typed tools with evidence gates and the
+  deletion budget.
 - Comment-triggered runs are authorized host-side by `src/webhook/comment-gate.ts`:
   only the issue reporter or a Seerr `ADMIN`/`MANAGE_ISSUES` user can drive the
   agent. The gate runs before the event handler (so a rejected comment cannot
@@ -272,6 +290,7 @@ be tracked by git for flakes to see them).
 
 ### Safety-Relevant Tasks
 
-Any change to `src/tools/safety.ts`, `src/tools/context.ts`, budgets, the
+Any change to `src/tools/safety.ts`, `src/tools/context.ts`, budgets, session
+resumption, the
 directive protocol, or the runner's tool allowlist must be called out
 explicitly in the summary, with the behavioral difference described.

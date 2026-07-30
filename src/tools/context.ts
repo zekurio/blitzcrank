@@ -1,13 +1,20 @@
 /**
- * Per-run state for one agent run against one issue.
+ * Evidence and limit state for one agent run.
  *
  * Because the tool layer runs in-process, we can *enforce* what the legacy
  * deployment could only ask a reviewer to check:
  *  - evidence gates: a mutation's target ID must have appeared in a GET
- *    response earlier in this run (no hallucinated/guessed IDs),
- *  - per-run mutation budgets (hard caps, deletions counted separately),
- *  - file-level evidence: which media files were actually probed this run, so
- *    a bulk replacement cannot be justified by release-name metadata alone.
+ *    response the agent actually made (no hallucinated/guessed IDs),
+ *  - a cumulative deletion ceiling,
+ *  - file-level evidence: which media files were actually probed, so a bulk
+ *    replacement cannot be justified by release-name metadata alone.
+ *
+ * For issue runs the evidence store is *carried across* the events of one
+ * issue, matching the agent session that is likewise resumed: the gate exists
+ * to stop fabricated IDs, and an ID that was real yesterday was not fabricated
+ * today. Arr IDs are autoincrement and are not recycled, SAB `nzo_id`s are
+ * random and Anvil job ids are UUIDs, so a stale ID resolves to the same
+ * object or 404s — it cannot silently address a different one.
  */
 
 const MAX_EVIDENCE_ENTRIES = 24
@@ -15,16 +22,44 @@ const MAX_EVIDENCE_BODY_CHARS = 80_000
 const MAX_PROBED_PATHS = 64
 
 export interface RunLimits {
-  maxMutations: number
+  /**
+   * Mutation ceiling, or undefined for none. Issue runs pass undefined: a
+   * fixed count cannot fit both "wrong subtitle language" and "twelve episodes
+   * stuck in the queue", and the real boundary is the typed-tool surface plus
+   * the evidence gates, not a counter. Automations keep a ceiling because
+   * nobody asked for that run.
+   */
+  maxMutations: number | undefined
+  /**
+   * Deletion ceiling. Counted cumulatively across every run on the same issue,
+   * because deletions are the one action with no undo: Arr file deletes remove
+   * the only copy and SAB `deleteFiles` throws away a finished download. A
+   * per-event cap reset on every comment, so the issue-wide total was
+   * unbounded — this is the axis where "stop and ask a human" is correct.
+   */
   maxDeletes: number
 }
 
-const DEFAULT_LIMITS: RunLimits = { maxMutations: 5, maxDeletes: 2 }
+const DEFAULT_LIMITS: RunLimits = { maxMutations: undefined, maxDeletes: 5 }
 
-interface EvidenceEntry {
+export interface EvidenceEntry {
   service: string
   path: string
   body: string
+}
+
+/** Evidence carried between the runs of one issue. */
+export interface EvidenceSnapshot {
+  evidence: EvidenceEntry[]
+  probed: string[]
+}
+
+export interface RunContextInit {
+  limits?: RunLimits | undefined
+  /** Reads and probes recorded by earlier runs on the same issue. */
+  prior?: EvidenceSnapshot | undefined
+  /** Deletions earlier runs on this issue already spent. */
+  priorDeletes?: number | undefined
 }
 
 function escapeRegExp(value: string): string {
@@ -32,12 +67,24 @@ function escapeRegExp(value: string): string {
 }
 
 export class RunContext {
-  private readonly evidence: EvidenceEntry[] = []
-  private readonly probed: string[] = []
+  private readonly evidence: EvidenceEntry[]
+  private readonly probed: string[]
+  private readonly limits: RunLimits
+  private readonly priorDeletes: number
   private mutations = 0
   private deletes = 0
 
-  constructor(private readonly limits: RunLimits = DEFAULT_LIMITS) {}
+  constructor(init: RunContextInit = {}) {
+    this.limits = init.limits ?? DEFAULT_LIMITS
+    this.evidence = [...(init.prior?.evidence ?? [])]
+    this.probed = [...(init.prior?.probed ?? [])]
+    this.priorDeletes = init.priorDeletes ?? 0
+  }
+
+  /** Everything worth carrying into the next run on this issue. */
+  get snapshot(): EvidenceSnapshot {
+    return { evidence: [...this.evidence], probed: [...this.probed] }
+  }
 
   recordRead(service: string, path: string, body: string): void {
     this.evidence.push({
@@ -82,7 +129,7 @@ export class RunContext {
 
   /**
    * True when a path, or the directory it sits in, appeared in a service read
-   * this run. Probing is filesystem access driven by model input, so the target
+   * on this issue. Probing is filesystem access driven by model input, so the target
    * must come from a service's own answer (Arr file path/outputPath, SABnzbd
    * storage, Jellyfin Path) rather than from issue text or reconstruction.
    */
@@ -105,19 +152,26 @@ export class RunContext {
   requireEvidence(service: string, value: string | number, hint: string): void {
     if (!this.sawValue(service, value)) {
       throw new Error(
-        `evidence gate: ${hint} ${value} did not appear in any ${service} read this run; ` +
+        `evidence gate: ${hint} ${value} did not appear in any ${service} read on this issue; ` +
           `fetch it first (do not guess IDs)`,
       )
     }
   }
 
   noteMutation(kind: "mutate" | "delete"): void {
-    if (kind === "delete" && this.deletes >= this.limits.maxDeletes) {
+    if (
+      kind === "delete" &&
+      this.priorDeletes + this.deletes >= this.limits.maxDeletes
+    ) {
       throw new Error(
-        `mutation budget: at most ${this.limits.maxDeletes} deletions per run; ask the operator instead`,
+        `deletion budget: at most ${this.limits.maxDeletes} deletions for this issue ` +
+          `(${this.priorDeletes} already spent by earlier runs); ask the operator instead`,
       )
     }
-    if (this.mutations >= this.limits.maxMutations) {
+    if (
+      this.limits.maxMutations !== undefined &&
+      this.mutations >= this.limits.maxMutations
+    ) {
       throw new Error(
         `mutation budget: at most ${this.limits.maxMutations} mutations per run; ask the operator instead`,
       )

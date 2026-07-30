@@ -48,7 +48,7 @@ Use read-only `sabnzbd_request` with `purpose` and a relative `path`. It remains
 Every call below requires a `reason`, and the `nzoId` must match an `nzo_id` fetched with `sabnzbd_request` this run.
 
 - Retry a failed history job: call `sabnzbd_retry_job` with the verified `nzoId`. The tool moves it back to the queue and verifies by reading the queue. Retry only after the failure's cause is fixed, such as disk space being freed.
-- Remove a job: call `sabnzbd_delete_job` with the verified `nzoId`, `from` set to `"queue"` or `"history"`, and explicit `deleteFiles`. With `deleteFiles: true`, downloaded data is also deleted and the deletion budget applies. Verification re-reads the selected list.
+- Remove a job: call `sabnzbd_delete_job` with the verified `nzoId`, `from` set to `"queue"` or `"history"`, and explicit `deleteFiles`. With `deleteFiles: true`, downloaded data is also deleted and the issue-wide deletion budget applies. Verification re-reads the selected list.
 - Pause one queue job: call `sabnzbd_pause_job` with the verified `nzoId`; verification reads the queue.
 - Resume one queue job: call `sabnzbd_resume_job` with the verified `nzoId`; verification reads the queue.
 

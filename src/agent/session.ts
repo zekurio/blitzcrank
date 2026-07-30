@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises"
+import { mkdir, stat } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 
@@ -109,6 +109,13 @@ export interface AgentTurnOptions {
   prompt: string
   /** Persist the session transcript (JSONL) into this directory when set. */
   sessionDir: string | undefined
+  /**
+   * Existing session JSONL to continue instead of starting a new one. The
+   * whole prior conversation is replayed into context; the system prompt and
+   * tool set are *not* replayed, so a resumed run still gets this run's
+   * prompt and this run's registry. Ignored when the file no longer exists.
+   */
+  resumeFile: string | undefined
   /** Receives the session file path once known, for history self-exclusion. */
   sessionFileRef: { current: string | undefined } | undefined
   logPrefix: string
@@ -122,6 +129,43 @@ export interface AgentTurnOptions {
 export interface AgentTurnResult {
   text: string
   usage: RunUsage
+  /** Where the transcript lives, so the next run can resume it. */
+  sessionFile: string | undefined
+  resumed: boolean
+}
+
+/**
+ * The session manager for this run: resume when we were handed a file that is
+ * still there, otherwise start fresh.
+ *
+ * The existence check is not optional. `SessionManager.open()` on a missing
+ * path silently starts an empty session pointed at that path instead of
+ * failing, so without the `stat` a deleted transcript would look like a
+ * successful resume and the run would quietly lose the issue's history.
+ */
+async function openSession(
+  resumeFile: string | undefined,
+  sessionDir: string | undefined,
+  cwd: string,
+): Promise<{ manager: SessionManager; resumed: boolean }> {
+  if (resumeFile !== undefined) {
+    const exists = await stat(resumeFile).then(
+      (s) => s.isFile(),
+      () => false,
+    )
+    if (exists) {
+      return {
+        manager: SessionManager.open(resumeFile, sessionDir),
+        resumed: true,
+      }
+    }
+  }
+  return {
+    manager: sessionDir
+      ? SessionManager.create(cwd, sessionDir)
+      : SessionManager.inMemory(cwd),
+    resumed: false,
+  }
 }
 
 export async function runAgentTurn(
@@ -130,6 +174,11 @@ export async function runAgentTurn(
   const cwd = path.join(os.tmpdir(), "blitzcrank-work")
   await mkdir(cwd, { recursive: true })
   if (opts.sessionDir) await mkdir(opts.sessionDir, { recursive: true })
+
+  const opened = await openSession(opts.resumeFile, opts.sessionDir, cwd)
+  if (opened.resumed) {
+    console.log(`[${opts.logPrefix}] resuming ${opts.resumeFile}`)
+  }
 
   const loader = new DefaultResourceLoader({
     cwd,
@@ -156,9 +205,7 @@ export async function runAgentTurn(
     resourceLoader: loader,
     customTools: opts.tools,
     tools: [...opts.tools.map((t) => t.name), "read"],
-    sessionManager: opts.sessionDir
-      ? SessionManager.create(cwd, opts.sessionDir)
-      : SessionManager.inMemory(cwd),
+    sessionManager: opened.manager,
     settingsManager: SettingsManager.inMemory({
       compaction: { enabled: true },
     }),
@@ -170,6 +217,13 @@ export async function runAgentTurn(
   // `session.messages` afterwards: auto-compaction replaces that array with a
   // summary plus the recent tail, so the longest runs would under-report most.
   const usage: RunUsage = { newTokens: 0, billedTokens: 0 }
+  // Captured from the event stream rather than read back off `session.messages`
+  // afterwards. On a resumed session that array opens already populated, so a
+  // `findLast` for an assistant message can return one from a *previous* run
+  // when this run produced none — and the caller parses that text as this
+  // run's directive block. A stale RESOLVE_ISSUE would then close an issue
+  // nobody looked at. Only messages seen live can belong to this run.
+  let final: AssistantMessage | undefined
 
   const unsubscribe = session.subscribe((event) => {
     if (event.type === "tool_execution_start") {
@@ -184,6 +238,7 @@ export async function runAgentTurn(
       return
     }
     if (event.type === "message_end" && event.message.role === "assistant") {
+      final = event.message
       const turn = event.message.usage
       // `reasoning` is already part of `output`; adding it would double-count.
       usage.newTokens += turn.input + turn.cacheWrite + turn.output
@@ -194,20 +249,19 @@ export async function runAgentTurn(
   try {
     await session.prompt(opts.prompt)
 
-    const lastAssistant = session.messages.findLast(
-      (m): m is AssistantMessage => m.role === "assistant",
-    )
-    if (!lastAssistant) throw new Error("agent produced no assistant message")
-    if (lastAssistant.stopReason === "error") {
-      throw new Error(lastAssistant.errorMessage ?? "model request failed")
+    if (!final) throw new Error("agent produced no assistant message")
+    if (final.stopReason === "error") {
+      throw new Error(final.errorMessage ?? "model request failed")
     }
 
     return {
-      text: lastAssistant.content
+      text: final.content
         .filter((b) => b.type === "text")
         .map((b) => b.text)
         .join(""),
       usage,
+      sessionFile: session.sessionFile,
+      resumed: opened.resumed,
     }
   } finally {
     unsubscribe()

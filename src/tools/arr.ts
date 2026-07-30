@@ -26,7 +26,7 @@ import type { RunContext } from "./context.js"
  *
  * Note: moviefile deletion was absent from the legacy allowlist (never
  * documented as an incident response); added deliberately — the evidence
- * gates and deletion budget apply.
+ * gates and the issue-wide deletion budget apply.
  *
  * Blocklisting a past grab was also absent, and its absence had teeth: the
  * only way to blocklist anything was to delete a *live* queue item, so a
@@ -311,7 +311,7 @@ function queueAndBlocklistTools(
     defineTool({
       name: `${service}_delete_queue_item`,
       label: `${service}: remove queue item`,
-      description: `Remove a stuck/failed download from the ${service} queue, optionally blocklisting the release and removing it from the download client. With removeFromClient=true the downloaded data is destroyed, so the call consumes the deletion budget rather than the plain mutation budget. The queue item id must come from a queue read this run.`,
+      description: `Remove a stuck/failed download from the ${service} queue, optionally blocklisting the release and removing it from the download client. With removeFromClient=true the downloaded data is destroyed, so the call counts against this issue's deletion budget. The queue item id must come from a queue read on this issue.`,
       parameters: Type.Object({
         reason: reasonParam(),
         queueId: Type.Integer({ minimum: 1 }),
@@ -321,15 +321,15 @@ function queueAndBlocklistTools(
         }),
         removeFromClient: Type.Boolean({
           description:
-            "Also remove the job from the download client, destroying the downloaded data (default true); consumes the deletion budget",
+            "Also remove the job from the download client, destroying the downloaded data (default true); counts against the issue's deletion budget",
         }),
       }),
       async execute(_toolCallId, params) {
         const outcome = await runMutation(ctx, {
           // Discarding a finished download is the same class of act as deleting
-          // the imported file: bytes someone waited for stop existing. It was
-          // budgeted as a plain mutation, which let one run throw away five
-          // downloads while the two-deletion cap never engaged.
+          // the imported file: bytes someone waited for stop existing. Counting
+          // it as a plain mutation would leave it entirely uncapped now that
+          // only deletions are budgeted.
           kind: params.removeFromClient ? "delete" : "mutate",
           evidence: [{ service, value: params.queueId, hint: "queue item id" }],
           perform: () =>
@@ -557,7 +557,7 @@ export function buildSonarrTools(
       name: "sonarr_delete_episode_file",
       label: "Sonarr: delete episode file",
       description:
-        "Delete one episode file from disk (e.g. verified corrupt), so a replacement can be searched. Deletion budget applies; the episodefile id must come from a Sonarr read this run.",
+        "Delete one episode file from disk (e.g. verified corrupt), so a replacement can be searched. The issue-wide deletion budget applies; the episodefile id must come from a Sonarr read on this issue.",
       parameters: Type.Object({
         reason: reasonParam(),
         episodeFileId: Type.Integer({ minimum: 1 }),
@@ -656,7 +656,7 @@ export function buildRadarrTools(
       name: "radarr_delete_movie_file",
       label: "Radarr: delete movie file",
       description:
-        "Delete one movie file from disk (e.g. verified corrupt), so a replacement can be searched. This removes the only copy of the movie — evidence must be strong. Deletion budget applies; the moviefile id must come from a Radarr read this run.",
+        "Delete one movie file from disk (e.g. verified corrupt), so a replacement can be searched. This removes the only copy of the movie — evidence must be strong. The issue-wide deletion budget applies; the moviefile id must come from a Radarr read on this issue.",
       parameters: Type.Object({
         reason: reasonParam(),
         movieFileId: Type.Integer({ minimum: 1 }),
