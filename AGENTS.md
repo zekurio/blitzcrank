@@ -124,9 +124,8 @@ Safety invariants (do not weaken without explicit operator sign-off):
 
 - `pnpm dev` - run with `tsx watch`.
 - `pnpm fmt` / `pnpm lint` / `pnpm typecheck` - oxfmt, oxlint (type-aware), `tsc --noEmit`.
-- `pnpm test` - unit tests for pure logic via Node's test runner (`tsx --test`).
-- `pnpm verify` - fmt check + lint + typecheck + `check:tools` + `test`; must pass before a
-  task is done.
+- `pnpm verify` - fmt check + lint + typecheck + `check:tools`; must pass before a task is
+  done.
 - `pnpm check:tools` - asserts the documented tool surface matches the registered one in
   both directions. Prose about which tools exist is behaviour, not documentation: the model
   reads it as the authority on its own capabilities.
@@ -239,7 +238,7 @@ small named helpers below it. Extract only when it names a real concept.
 - Memory/limits: `src/casefile.ts` (per-issue case file), `src/revisits.ts` (chain caps,
   backoff, restart re-arm).
 - Automation dispatch: `src/automations/dispatcher.ts` (one run per automation, report
-  hand-off), covered by `dispatcher.test.ts`.
+  hand-off).
 - Operator check: `scripts/discord-smoke.ts` validates the live Discord setup
   (permissions, threads, commands) without running an agent.
 - Agent: `src/agent/runner.ts` (session per run, locked-down resource loader),
