@@ -1,5 +1,6 @@
 import { Hono } from "hono"
 
+import type { AutomationInfo, TriggerResult } from "./automations/dispatcher.js"
 import type { Config } from "./config.js"
 import { isBotComment } from "./webhook/loop-guard.js"
 import {
@@ -7,18 +8,6 @@ import {
   issueIdOf,
   type SeerrWebhookPayload,
 } from "./webhook/types.js"
-
-export interface AutomationInfo {
-  name: string
-  description: string
-  schedule: string
-  enabled: boolean
-  capabilities: string[]
-  nextRun: string | undefined
-}
-
-/** `busy` means a run of that automation is already queued or in flight. */
-export type TriggerResult = "queued" | "busy" | "unknown"
 
 export interface ServerDeps {
   config: Config

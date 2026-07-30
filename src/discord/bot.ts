@@ -8,9 +8,12 @@ import {
   type ChatInputCommandInteraction,
 } from "discord.js"
 
+import type {
+  AutomationInfo,
+  TriggerResult,
+} from "../automations/dispatcher.js"
 import type { AutomationReport } from "../automations/runner.js"
 import type { Config, DiscordConfig } from "../config.js"
-import type { AutomationInfo, TriggerResult } from "../server.js"
 import { AUTOMATION_COMMAND, syncCommands } from "./commands.js"
 import { formatAutomationReport } from "./report.js"
 import { AutomationThreads } from "./threads.js"
