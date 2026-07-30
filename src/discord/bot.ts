@@ -64,8 +64,8 @@ export class DiscordBot {
     )
     const bot = new DiscordBot(logged, discord, threads, deps)
     // Login already opened the gateway socket, so from here on a failure must
-    // close it: the caller has no handle yet, and a short-lived one (the smoke
-    // script) would hang on a connection it cannot reach.
+    // close it: the caller has no handle yet, so the socket would leak and
+    // keep the process alive.
     await bot.finishStart().catch(async (err: unknown) => {
       await logged.destroy()
       throw err
