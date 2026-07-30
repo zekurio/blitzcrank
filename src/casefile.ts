@@ -1,13 +1,24 @@
-import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises"
+import {
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises"
 import path from "node:path"
 
+import type { EvidenceSnapshot } from "./tools/context.js"
+
 /**
- * Per-issue case file: the agent's memory between runs.
+ * Per-issue case file: the durable, host-owned record of one issue.
  *
- * Without it every trigger starts blank, repeats the same fifteen discovery
- * reads, and then pages through its own raw session transcripts to recover
- * what it already knew — the single most expensive run of the incident that
- * motivated this file produced no mutations and no new information.
+ * The agent's *conversation* now survives between runs (the pi session is
+ * resumed, see `sessionFile`), so this file is no longer the only thing
+ * standing between a follow-up comment and a blank slate. It stays because it
+ * outranks the transcript: it is the fallback when a session file is missing
+ * or unreadable, it survives compaction dropping the early turns, and it holds
+ * the counters the agent must not be able to edit.
  *
  * Two writers, deliberately separated:
  *  - the agent writes `summary` through the `update_case_file` tool (what is
@@ -59,6 +70,13 @@ export interface CaseFile {
    * an earlier answer is the most common way a follow-up wastes a run.
    */
   lastAnswer: string | undefined
+  /**
+   * The pi session JSONL to resume, so a follow-up comment continues the same
+   * conversation instead of re-deriving it from `summary`. Host-written and
+   * re-validated against the filesystem before use: a missing file makes the
+   * SDK start a blank session silently rather than fail.
+   */
+  sessionFile: string | undefined
   runs: CaseRun[]
   /**
    * Running totals for the whole issue; shown in the comment footer.
@@ -68,8 +86,12 @@ export interface CaseFile {
    * also counted cache reads; it stops growing wrongly rather than being
    * rewritten, because losing an issue's memory to a migration is worse than
    * one stale number.
+   *
+   * `deletes` is the only one of these that is *enforced*: it is the issue-wide
+   * deletion ceiling's running total, so the cap cannot be reset by commenting
+   * again. Written by the host from `RunContext.counts`, never by the agent.
    */
-  spend: { runs: number; tokens: number }
+  spend: { runs: number; tokens: number; deletes: number }
   revisit: PendingRevisit | undefined
 }
 
@@ -88,8 +110,9 @@ export function emptyCase(issueId: string): CaseFile {
       openQuestions: [],
     },
     lastAnswer: undefined,
+    sessionFile: undefined,
     runs: [],
-    spend: { runs: 0, tokens: 0 },
+    spend: { runs: 0, tokens: 0, deletes: 0 },
     revisit: undefined,
   }
 }
@@ -164,6 +187,10 @@ export class CaseStore {
     return path.join(this.dir, `${issueId}.json`)
   }
 
+  private evidenceFile(issueId: string): string {
+    return `${this.file(issueId).slice(0, -".json".length)}.evidence.json`
+  }
+
   /**
    * Never throws for a damaged file: losing the memory of an issue is
    * recoverable, refusing to run it ever again is not.
@@ -189,9 +216,58 @@ export class CaseStore {
       // prompt, not only of the write path.
       summary: clampSummary(parsed.summary),
       lastAnswer: clampEntry(parsed.lastAnswer),
+      sessionFile:
+        typeof parsed.sessionFile === "string" ? parsed.sessionFile : undefined,
       spend: { ...empty.spend, ...parsed.spend },
       runs: Array.isArray(parsed.runs) ? parsed.runs.slice(-MAX_RUNS) : [],
     }
+  }
+
+  /**
+   * Evidence from earlier runs on this issue, in a sidecar file: it is bulky
+   * raw service JSON, and the case file is re-read into a prompt where that
+   * would be both useless and enormous.
+   *
+   * A damaged or missing file yields no evidence rather than throwing. That
+   * fails in the safe direction — the agent must re-read before it can mutate,
+   * which is exactly what the gate asks for anyway.
+   */
+  async loadEvidence(issueId: string): Promise<EvidenceSnapshot | undefined> {
+    const raw = await readFile(this.evidenceFile(issueId), "utf8").catch(
+      () => undefined,
+    )
+    if (raw === undefined) return undefined
+    try {
+      const parsed = JSON.parse(raw) as Partial<EvidenceSnapshot>
+      if (!Array.isArray(parsed.evidence)) return undefined
+      return {
+        evidence: parsed.evidence,
+        probed: Array.isArray(parsed.probed) ? parsed.probed : [],
+      }
+    } catch {
+      console.warn(`[case:${issueId}] unreadable evidence file; ignoring it`)
+      return undefined
+    }
+  }
+
+  async saveEvidence(
+    issueId: string,
+    snapshot: EvidenceSnapshot,
+  ): Promise<void> {
+    const target = this.evidenceFile(issueId)
+    await mkdir(this.dir, { recursive: true })
+    const tmp = `${target}.tmp`
+    await writeFile(tmp, JSON.stringify(snapshot), "utf8")
+    await rename(tmp, target)
+  }
+
+  /**
+   * Drops the carried-over evidence for a closed issue. The case file itself
+   * stays: it is the issue's audit trail, and `spend.deletes` must survive so
+   * a reopened issue cannot start its deletion budget over.
+   */
+  async forgetEvidence(issueId: string): Promise<void> {
+    await rm(this.evidenceFile(issueId), { force: true })
   }
 
   async save(file: CaseFile): Promise<void> {

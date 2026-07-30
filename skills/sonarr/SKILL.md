@@ -60,7 +60,7 @@ Use the read-only `sonarr_request` with relative `/api/v3/...` paths; it accepts
 
 ## Allowed typed mutations
 
-Every call below requires a `reason`. Fetch the target IDs with `sonarr_request` first, and inspect the returned `verification` field.
+Every call below requires a `reason`. Fetch the target IDs with `sonarr_request` first, and inspect the returned `verification` field. There is no cap on non-destructive mutations: fix every episode the evidence covers rather than stopping at an arbitrary count.
 
 - Episode search: call `sonarr_search` with the verified `seriesId` and the exact `episodeIds` fetched this run. A single episode is the correct way to test a hypothesis.
 - Season search: call `sonarr_search` with the verified `seriesId` and `seasonNumber`.
@@ -68,11 +68,11 @@ Every call below requires a `reason`. Fetch the target IDs with `sonarr_request`
 - Scope is enforced in code for every search form. A search touching more than one episode must pass `expectedEpisodeCount` equal to the number Sonarr actually reports; a wrong or missing value is rejected with the true count, which is the number you must have told the reporter. Replacing two or more episode files additionally requires that at least one of those exact files was inspected with `media_probe` during this run — release-name `languages` never satisfies it. Missing episodes (no file) are unaffected.
 - Refresh one series: call `sonarr_refresh_series` with the verified `seriesId`.
 - Retry a known queue item: call `sonarr_grab_queue_item` with the verified `queueId`.
-- Remove a verified bad queue item: call `sonarr_delete_queue_item` with the verified `queueId` and explicit `blocklist` and `removeFromClient` booleans. With `removeFromClient: true` the downloaded data is destroyed, so it consumes the deletion budget; with `removeFromClient: false` it consumes only the mutation budget.
+- Remove a verified bad queue item: call `sonarr_delete_queue_item` with the verified `queueId` and explicit `blocklist` and `removeFromClient` booleans. With `removeFromClient: true` the downloaded data is destroyed, so it counts against the issue-wide deletion budget; with `removeFromClient: false` nothing is destroyed and it is uncapped.
 - Blocklist a release that is no longer in the queue: call `sonarr_blocklist_from_history` with the verified `historyId` of its `grabbed` record, taken from a Sonarr history read. Use it instead of searching first: the release that scored highest once scores highest again, so a bare search re-grabs the bad release. Sonarr starts its own replacement search in response, so do not add an episode search afterwards. Verification returns the newest blocklist entries plus the queue; confirm the release is blocked and see what replaced it.
 - Remove only a clearly matching blocklist entry: call `sonarr_remove_from_blocklist` with the verified `blocklistId`.
-- Delete one verified wrong episode file only after replacement is confirmed by the reporter: call `sonarr_delete_episode_file` with the verified `episodeFileId`. This consumes the deletion budget; preserve multi-episode relationships, then search only the affected episode.
-- Manually import verified candidates: call `sonarr_manual_import` with `importMode: "move"` and candidate objects returned by `GET /api/v3/manualimport?folder={folder}&downloadId={downloadId}`, trimmed to `path`, `folderName`, `seriesId`, `episodeIds`, `quality`, `languages`, `releaseGroup`, and `indexerFlags` when present. Every file path and ID submitted must have appeared in a Sonarr read this run. The tool consumes the mutation budget and verifies the resulting command status.
+- Delete one verified wrong episode file only after replacement is confirmed by the reporter: call `sonarr_delete_episode_file` with the verified `episodeFileId`. This counts against the issue-wide deletion budget; preserve multi-episode relationships, then search only the affected episode.
+- Manually import verified candidates: call `sonarr_manual_import` with `importMode: "move"` and candidate objects returned by `GET /api/v3/manualimport?folder={folder}&downloadId={downloadId}`, trimmed to `path`, `folderName`, `seriesId`, `episodeIds`, `quality`, `languages`, `releaseGroup`, and `indexerFlags` when present. Every file path and ID submitted must have appeared in a Sonarr read on this issue. The tool verifies the resulting command status.
 
 No generic force-import tool is exposed.
 
