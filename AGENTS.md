@@ -121,8 +121,9 @@ Safety invariants (do not weaken without explicit operator sign-off):
 
 - `pnpm dev` - run with `tsx watch`.
 - `pnpm fmt` / `pnpm lint` / `pnpm typecheck` - oxfmt, oxlint (type-aware), `tsc --noEmit`.
-- `pnpm verify` - fmt check + lint + typecheck + `check:tools`; must pass before a task is
-  done.
+- `pnpm test` - unit tests for pure logic via Node's test runner (`tsx --test`).
+- `pnpm verify` - fmt check + lint + typecheck + `check:tools` + `test`; must pass before a
+  task is done.
 - `pnpm check:tools` - asserts the documented tool surface matches the registered one in
   both directions. Prose about which tools exist is behaviour, not documentation: the model
   reads it as the authority on its own capabilities.
