@@ -239,8 +239,6 @@ small named helpers below it. Extract only when it names a real concept.
   backoff, restart re-arm).
 - Automation dispatch: `src/automations/dispatcher.ts` (one run per automation, report
   hand-off).
-- Operator check: `scripts/discord-smoke.ts` validates the live Discord setup
-  (permissions, threads, commands) without running an agent.
 - Agent: `src/agent/runner.ts` (session per run, locked-down resource loader),
   `src/agent/directives.ts` (final-response protocol).
 - Safety: `src/tools/context.ts`, `src/tools/safety.ts`, `src/tools/common.ts`.
