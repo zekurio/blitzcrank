@@ -91,6 +91,13 @@ Safety invariants (do not weaken without explicit operator sign-off):
   only write the agent's summary, never usage or revisit state. There is deliberately no
   spend ceiling: the deployment runs on subscription auth, where a dollar figure derived
   from list prices would be fiction.
+- Discord (`src/discord/`) is a host-side surface only: the host posts automation
+  reports, and no agent tool may write to Discord — never add one. The gateway client
+  declares **no intents**, so the bot cannot receive messages; the only inbound effect
+  is a signed slash-command interaction naming a checked-in automation, so no Discord
+  text ever reaches a model. Triggers are authorized against the configured guild plus
+  administrator or `DISCORD_ADMIN_ROLE_IDS`, fail closed, and the client sets
+  `allowedMentions: { parse: [] }` because report bodies are model output.
 - Automations (`automations/*.md`) are trusted operator instructions, but
   their runs only get the mutation tools mapped from their declared
   `capabilities` (registry in `src/automations/definitions.ts`) plus the
@@ -105,6 +112,8 @@ Safety invariants (do not weaken without explicit operator sign-off):
 - `src/services/` - HTTP helper and the host-side Seerr client.
 - `src/webhook/` - verified Seerr webhook payload types, comment authorization
   gate.
+- `src/discord/` - automation report threads (private, one per automation), the
+  `/automation` command and its bulk-overwrite registration. Host-side only.
 - `skills/` - agent skills (domain knowledge, playbooks); merged from the legacy production deployment. Frontmatter `name` must match the directory.
 - `docs/research/` - pi SDK integration guide, Seerr/service API references, legacy design reference. Consult before touching tool or API code.
 
@@ -204,7 +213,11 @@ small named helpers below it. Extract only when it names a real concept.
 - Service HTTP goes through `jsonRequest` (`src/services/http.ts`); paths are
   service-relative (`/api/v3/...`) and validated by `assertServicePath`.
 - Host-side Seerr actions go through `SeerrClient`, never through agent tools.
-- Fire-and-forget async is not allowed; the queue owns run lifecycles.
+- Fire-and-forget async is not allowed; the queue owns run lifecycles. The Discord
+  interaction listener is the one unawaited async path (an event emitter calls it); it
+  only enqueues and must contain its own failures.
+- One automation run at a time per automation: `enqueueAutomation` refuses a
+  `busy` name, so cron ticks, HTTP triggers and Discord triggers cannot stack.
 - Keep prompts (`src/agent/prompt.ts`) and skills consistent with the actual
   tool surface — when adding/renaming tools, update both plus the relevant
   `skills/*/SKILL.md`. `pnpm check:tools` enforces that a tool is described

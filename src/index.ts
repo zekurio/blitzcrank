@@ -17,13 +17,14 @@ import { AutomationRunner } from "./automations/runner.js"
 import { AutomationScheduler } from "./automations/scheduler.js"
 import { CaseStore } from "./casefile.js"
 import { loadConfig } from "./config.js"
+import { DiscordBot } from "./discord/bot.js"
 import { SerialQueue } from "./queue.js"
 import {
   MAX_REVISIT_CHAIN,
   RevisitScheduler,
   revisitDelay,
 } from "./revisits.js"
-import { createApp } from "./server.js"
+import { createApp, type AutomationInfo, type TriggerResult } from "./server.js"
 import { SeerrClient } from "./services/seerr.js"
 import { createCommentGate } from "./webhook/comment-gate.js"
 
@@ -75,14 +76,55 @@ async function main(): Promise<void> {
     })
   }
 
-  const enqueueAutomation = (def: AutomationDefinition): void => {
+  // One run per automation at a time: a cron tick or a Discord trigger that
+  // arrives while the same task is queued or in flight is refused, not stacked.
+  const inFlight = new Set<string>()
+  let discord: DiscordBot | undefined
+
+  const enqueueAutomation = (def: AutomationDefinition): TriggerResult => {
+    if (inFlight.has(def.name)) {
+      console.warn(
+        `[automation:${def.name}] already queued or running; skipped`,
+      )
+      return "busy"
+    }
+    inFlight.add(def.name)
     queue.enqueue(async () => {
-      await automationRunner.run(def)
+      try {
+        const report = await automationRunner.run(def)
+        await discord?.report(report)
+      } finally {
+        inFlight.delete(def.name)
+      }
     })
+    return "queued"
   }
 
   const scheduler = new AutomationScheduler(enqueueAutomation)
   scheduler.start(automations)
+
+  const listAutomations = (): AutomationInfo[] =>
+    automations.map((def) => ({
+      name: def.name,
+      description: def.description,
+      schedule: def.schedule,
+      enabled: def.enabled,
+      capabilities: def.capabilities,
+      nextRun: scheduler.nextRun(def.name),
+    }))
+
+  const triggerAutomation = (name: string): TriggerResult => {
+    const def = automations.find((d) => d.name === name)
+    if (!def) return "unknown"
+    return enqueueAutomation(def)
+  }
+
+  if (config.discord) {
+    discord = await DiscordBot.start(config, {
+      listAutomations,
+      triggerAutomation,
+    })
+  }
 
   const cases = new CaseStore(path.join(config.dataDir, "cases"))
   // Follow-ups survive a restart: pending revisits are re-armed from the case
@@ -118,21 +160,8 @@ async function main(): Promise<void> {
       await cases.save(file)
       console.log(`[revisit] issue=${issueId} resolved; follow-up dropped`)
     },
-    listAutomations: () =>
-      automations.map((def) => ({
-        name: def.name,
-        description: def.description,
-        schedule: def.schedule,
-        enabled: def.enabled,
-        capabilities: def.capabilities,
-        nextRun: scheduler.nextRun(def.name),
-      })),
-    triggerAutomation: (name) => {
-      const def = automations.find((d) => d.name === name)
-      if (!def) return false
-      enqueueAutomation(def)
-      return true
-    },
+    listAutomations,
+    triggerAutomation,
     stats: () => ({ queued: queue.size, pendingRevisits: revisits.pending }),
   })
 
@@ -151,6 +180,9 @@ async function main(): Promise<void> {
     console.log(
       `  services: seerr${enabled.length ? ", " + enabled.join(", ") : ""}`,
     )
+    if (config.discord) {
+      console.log(`  discord: channel ${config.discord.watchChannelId}`)
+    }
     for (const def of automations) {
       console.log(
         `  automation: ${def.name} (${def.schedule}${def.enabled ? "" : ", disabled"})` +
