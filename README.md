@@ -97,7 +97,6 @@ pnpm install
 cp .env.example .env   # fill in service URLs + API keys
 pnpm dev               # tsx watch
 pnpm typecheck
-pnpm test              # node:test via tsx
 pnpm build && pnpm start
 ```
 
@@ -234,8 +233,7 @@ revisits, tightened typed tool layer with evidence gates/budgets/verification, m
 production skills, ManualImport tools, scheduled automations (cron + manual trigger,
 capability-scoped tools, per-automation budgets, `STATUS:` protocol), persisted run
 transcripts + `thread_history_search`, Discord automation report threads + `/automation`
-trigger command, per-automation run dedupe, graceful shutdown, first unit tests
-(`pnpm test`).
+trigger command, per-automation run dedupe, graceful shutdown.
 
 Ideas for later (see the porting checklist in `docs/research/legacy.md`):
 
