@@ -43,11 +43,12 @@ because enforcement now lives in-process:
   `conclusion: UNKNOWN` with the reasons a correct-looking lookup still misses, never as
   proof that no encode exists. `anvil_job_list` gives the one broad read that can
   establish absence, and Anvil reports which path side matched (`matched_on`).
-- **Deletion budget** — at most 5 deletions per _issue_, counted across every run on it
-  (`BLITZCRANK_MAX_DELETES_PER_ISSUE`). Non-destructive mutations are uncapped: one
-  number cannot fit both a wrong subtitle track and twelve stuck episodes, and what
-  bounds the damage is the typed-tool surface, not a counter. Deleting is the only
-  action with no undo, so it is the only one that is rationed.
+- **No mutation quotas** — issue runs are uncapped, deletions included. One number cannot
+  fit both a wrong subtitle track and a season imported as the wrong show, and for
+  deletions a cap does not prevent the bad outcome — it creates one, because half a wrong
+  season deleted is a worse library than either finishing or not starting. What separates
+  justified work from the rest is the typed-tool surface, the evidence gate and the
+  per-call `reason`. Every mutation and deletion is still counted and reported.
 - **Built-in verification** — mutation tools perform the follow-up read themselves and
   return it in the result.
 - **Continuous sessions** — an issue's runs share one agent session: a follow-up comment
@@ -88,7 +89,7 @@ because enforcement now lives in-process:
 - `src/agent/` — pi SDK session factory, issue system prompt, directive parsing
 - `src/automations/` — automation definitions (frontmatter + trusted body), capability→tool mapping, cron scheduling, `STATUS:` report protocol
 - `automations/` — operator-authored scheduled tasks (e.g. the hourly stale-import handler)
-- `src/tools/` — run context (evidence/deletion budget), GET-only read tools, typed mutation tools, anvil, media probe
+- `src/tools/` — run context (evidence, counters), GET-only read tools, typed mutation tools, anvil, media probe
 - `src/services/` — HTTP helper + host-side Seerr client (comments, status)
 - `src/webhook/` — Seerr payload types + comment authorization gate
 - `src/discord/` — automation report threads + `/automation` trigger command (host-side only)
