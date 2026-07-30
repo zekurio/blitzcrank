@@ -79,5 +79,14 @@ test("truncates an oversized body and says so", () => {
   const message = formatAutomationReport(reportOf({ body: "y".repeat(5000) }))
   assert.ok(message.startsWith("🟢 **ok** ·"))
   assert.ok(message.endsWith("\n… (truncated)"))
-  assert.equal(message.length, MAX_MESSAGE + "\n… (truncated)".length)
+  assert.equal(message.length, MAX_MESSAGE)
+})
+
+test("never truncates in the middle of a surrogate pair", () => {
+  // Land the cut on the emoji straddling the budget boundary.
+  const message = formatAutomationReport(reportOf({ body: "🟢".repeat(2000) }))
+  assert.ok(message.length <= MAX_MESSAGE)
+  assert.ok(!message.includes("\uFFFD"))
+  const kept = message.replace(/\n… \(truncated\)$/, "")
+  assert.equal(Array.from(kept).at(-1), "🟢")
 })

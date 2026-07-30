@@ -9,8 +9,9 @@ const STATUS_EMOJI: Record<AutomationStatus, string> = {
   fehler: "🔴",
 }
 
-/** Discord hard-caps messages at 2000 characters; leave room for the header. */
+/** Discord rejects messages over 2000 characters; stay clear of that limit. */
 const MAX_MESSAGE = 1900
+const TRUNCATED = "\n… (truncated)"
 
 /**
  * Report bodies are model output, so the host caps their length here and the
@@ -26,5 +27,9 @@ export function formatAutomationReport(report: AutomationReport): string {
   const body = report.empty ? "_nothing to report_" : report.body
   const message = `${header}\n${body}`
   if (message.length <= MAX_MESSAGE) return message
-  return `${message.slice(0, MAX_MESSAGE)}\n… (truncated)`
+  // The suffix is inside the budget, so MAX_MESSAGE bounds what we return.
+  // Dropping a trailing lone surrogate keeps a split emoji from rendering as
+  // a replacement character.
+  const cut = message.slice(0, MAX_MESSAGE - TRUNCATED.length)
+  return `${cut.replace(/[\uD800-\uDBFF]$/, "")}${TRUNCATED}`
 }
