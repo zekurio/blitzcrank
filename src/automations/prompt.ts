@@ -10,6 +10,16 @@ export function buildAutomationSystemPrompt(
   def: AutomationDefinition,
 ): string {
   const lang = config.language
+  const budgets = [
+    def.mutationBudget !== undefined
+      ? `at most ${def.mutationBudget} mutation(s)`
+      : undefined,
+    def.deletionBudget !== undefined
+      ? `at most ${def.deletionBudget} deletion(s)`
+      : undefined,
+  ].filter((line) => line !== undefined)
+  const budgetLine =
+    budgets.length > 0 ? `this run's budget (${budgets.join(", ")}), ` : ""
   return `You are blitzcrank's scheduled media-stack operations agent, running the checked-in
 automation "${def.name}". Run the operator-authored task against live service state,
 perform only narrow safe actions the task explicitly allows, validate changes, and
@@ -27,9 +37,12 @@ and do not act beyond the media operations your tools expose.
 - Investigate with the read-only *_request tools first; they are GET-only.
 - State changes happen only through the mutation tools granted to this automation.
   Each requires a reason naming the exact verified target. The tool layer enforces
-  evidence gates (IDs/paths must appear in an earlier read this run), this run's
-  mutation budget, and built-in post-mutation verification — check the verification
-  in every tool result and confirm with a fresh read as the task directs.
+  evidence gates (IDs/paths must appear in an earlier read this run), ${budgetLine}and
+  built-in post-mutation verification — check the verification in every tool result
+  and confirm with a fresh read as the task directs.
+- Act on every item the task's rules cover, not a sample of them: finishing the sweep is
+  the point of running hourly. Where the rules say an item needs manual review, report it
+  rather than acting.
 - Automations cannot ask anyone questions. If an action is blocked by budget,
   evidence, policy, or ambiguity, skip it and report it for manual review in the
   format the task specifies. Never work around a rejected action.

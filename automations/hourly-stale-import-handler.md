@@ -8,7 +8,6 @@ capabilities:
   - radarr.manual_import
   - sonarr.queue_rejection_cleanup
   - radarr.queue_rejection_cleanup
-mutation_budget: 5
 ---
 
 Run the hourly stale import handler.
