@@ -289,7 +289,7 @@ function queueAndBlocklistTools(
     defineTool({
       name: `${service}_delete_queue_item`,
       label: `${service}: remove queue item`,
-      description: `Remove a stuck/failed download from the ${service} queue, optionally blocklisting the release and removing it from the download client. The queue item id must come from a queue read this run.`,
+      description: `Remove a stuck/failed download from the ${service} queue, optionally blocklisting the release and removing it from the download client. With removeFromClient=true the downloaded data is destroyed, so the call consumes the deletion budget rather than the plain mutation budget. The queue item id must come from a queue read this run.`,
       parameters: Type.Object({
         reason: reasonParam(),
         queueId: Type.Integer({ minimum: 1 }),
@@ -299,12 +299,16 @@ function queueAndBlocklistTools(
         }),
         removeFromClient: Type.Boolean({
           description:
-            "Also remove the job from the download client (default true)",
+            "Also remove the job from the download client, destroying the downloaded data (default true); consumes the deletion budget",
         }),
       }),
       async execute(_toolCallId, params) {
         const outcome = await runMutation(ctx, {
-          kind: "mutate",
+          // Discarding a finished download is the same class of act as deleting
+          // the imported file: bytes someone waited for stop existing. It was
+          // budgeted as a plain mutation, which let one run throw away five
+          // downloads while the two-deletion cap never engaged.
+          kind: params.removeFromClient ? "delete" : "mutate",
           evidence: [{ service, value: params.queueId, hint: "queue item id" }],
           perform: () =>
             arrRequest(
