@@ -13,13 +13,15 @@
     "fmt:check": "oxfmt --check .",
     "lint": "oxlint .",
     "check:tools": "tsx scripts/check-tools.ts",
-    "verify": "pnpm fmt:check && pnpm lint && pnpm typecheck && pnpm check:tools"
+    "test": "tsx --test \"src/**/*.test.ts\"",
+    "verify": "pnpm fmt:check && pnpm lint && pnpm typecheck && pnpm check:tools && pnpm test"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.82.1",
     "@earendil-works/pi-coding-agent": "0.82.1",
     "@hono/node-server": "^2.0.12",
     "croner": "^10.0.1",
+    "discord.js": "^14.27.0",
     "hono": "^4.9.0",
     "typebox": "1.1.38",
     "yaml": "^2.9.0"

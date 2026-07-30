@@ -1,5 +1,6 @@
 import { Hono } from "hono"
 
+import type { AutomationInfo, TriggerResult } from "./automations/dispatcher.js"
 import type { Config } from "./config.js"
 import { isBotComment } from "./webhook/loop-guard.js"
 import {
@@ -7,15 +8,6 @@ import {
   issueIdOf,
   type SeerrWebhookPayload,
 } from "./webhook/types.js"
-
-export interface AutomationInfo {
-  name: string
-  description: string
-  schedule: string
-  enabled: boolean
-  capabilities: string[]
-  nextRun: string | undefined
-}
 
 export interface ServerDeps {
   config: Config
@@ -26,8 +18,7 @@ export interface ServerDeps {
   /** Authorizes comment-triggered runs (reporter/admin policy). */
   allowComment: (payload: SeerrWebhookPayload) => Promise<boolean>
   listAutomations: () => AutomationInfo[]
-  /** Returns false when the automation is unknown. */
-  triggerAutomation: (name: string) => boolean
+  triggerAutomation: (name: string) => TriggerResult
   stats: () => { queued: number; pendingRevisits: number }
 }
 
@@ -54,8 +45,12 @@ export function createApp(deps: ServerDeps): Hono {
       return c.json({ error: "unauthorized" }, 401)
     }
     const name = c.req.param("name")
-    if (!deps.triggerAutomation(name)) {
+    const result = deps.triggerAutomation(name)
+    if (result === "unknown") {
       return c.json({ error: `unknown automation ${name}` }, 404)
+    }
+    if (result === "busy") {
+      return c.json({ error: `${name} is already queued or running` }, 409)
     }
     console.log(`[automations] manual trigger: ${name}`)
     return c.json({ ok: true, queued: name })
