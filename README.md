@@ -61,6 +61,12 @@ because enforcement now lives in-process:
   directory, before or after import. Arr `languages` is parsed from the release name
   (`MULTi` is a claim, not a fact), so language questions are answered from the file.
   Paths are resolved through `realpath` and must land inside a configured root.
+- **Discord is host-owned and inbound-inert** — automation reports are posted by the
+  host, never by an agent tool, and the gateway connection declares no intents, so the
+  bot cannot receive messages at all. The only inbound effect is a signed slash-command
+  interaction naming a checked-in automation; no Discord text ever reaches a model.
+  Triggers are authorized against the configured guild plus administrator or a configured
+  role, fail closed, and mentions are suppressed on every message the bot sends.
 - **Web tools** — optional Firecrawl `web_search`/`web_fetch` (issue runs only,
   when `FIRECRAWL_API_KEY` is set; `FIRECRAWL_API_URL` for self-hosted) for availability/context answers; fetch rejects
   local/private URLs and web content never justifies a mutation.
@@ -76,6 +82,7 @@ because enforcement now lives in-process:
 - `src/tools/` — run context (evidence/budgets), GET-only read tools, typed mutation tools, anvil, media probe
 - `src/services/` — HTTP helper + host-side Seerr client (comments, status)
 - `src/webhook/` — Seerr payload types + comment authorization gate
+- `src/discord/` — automation report threads + `/automation` trigger command (host-side only)
 - `skills/` — agent skills for Sonarr, Radarr, SABnzbd, Jellyfin, Seerr, Anvil, media-probe, filesystem
   (merged from the battle-tested legacy deployment)
 - `docs/research/` — pi-sdk guide, Seerr/service API references, legacy design reference
@@ -90,6 +97,7 @@ pnpm install
 cp .env.example .env   # fill in service URLs + API keys
 pnpm dev               # tsx watch
 pnpm typecheck
+pnpm test              # node:test via tsx
 pnpm build && pnpm start
 ```
 
@@ -164,16 +172,73 @@ Settings → Notifications → Webhook:
 - Payload: keep the default JSON template
 - Notification types: enable the Issue events
 
+### Discord monitoring & triggers
+
+Optional, off unless `DISCORD_BOT_TOKEN` is set (then `DISCORD_GUILD_ID` and
+`DISCORD_WATCH_CHANNEL_ID` are required too). Every automation run posts its
+`STATUS:` report — including "nothing to do" runs, as a heartbeat — into a
+private thread named `automation: <name>` inside the watch channel. Thread ids
+are remembered in `<data>/discord/threads.json`; an existing thread with a
+matching title is adopted, and archived threads are revived before posting.
+
+`/automation list` shows schedules and next runs, `/automation run name:<x>`
+queues one immediately. A run already queued or in flight is refused rather than
+stacked (the same applies to `POST /automations/:name/run`, which now answers
+`409`, and to cron ticks). The reply is ephemeral; the report itself lands in the
+thread.
+
+Setup:
+
+1. Create an application + bot, invite it with the `bot` and
+   `applications.commands` scopes.
+2. Bot permissions in the watch channel: View Channel, Send Messages, Send
+   Messages in Threads, Create Private Threads, Manage Threads, Read Message
+   History (that last one is how archived report threads are found again).
+3. Make the channel admin-only and deny `Send Messages` /
+   `Send Messages in Threads` to `@everyone` there. blitzcrank never edits
+   permissions itself — who may read and write is your server config. Private
+   threads are visible to invited members and to anyone with Manage Threads,
+   which is how they stay admin-visible.
+4. Optionally set `DISCORD_ADMIN_ROLE_IDS` to let non-administrator roles
+   trigger runs.
+
+Don't **lock** a report thread by hand: reviving a locked thread needs Manage
+Threads on the thread itself, which the bot deliberately does not rely on, so
+its reports would be logged as failures instead of posted. Delete the thread
+instead — the next run makes a new one.
+
+On startup blitzcrank **purges all global commands** of its application and
+bulk-overwrites the guild command set, so stale commands from an earlier
+deployment disappear. Don't share the application with another bot.
+
+**Smoke test the setup** before waiting for a 3am cron tick to find a wrong
+channel id or a missing permission:
+
+```
+npx tsx scripts/discord-smoke.ts [--cleanup]
+```
+
+It logs in, checks the guild's slash commands (and that no global ones
+remain), resolves the watch channel and prints a ✓/✗ line per required
+permission there, then creates or adopts an `automation: smoke-test` thread
+and posts one synthetic report through the real formatter — this thread is
+visible in the channel like any other automation's. Like a real boot, it
+re-registers the guild's slash commands. Pass `--cleanup` to delete the
+smoke-test thread afterwards; without it, the thread is left for you to
+inspect. Exits `0` only if every check passed.
+
 ## Status / roadmap
 
 Done: scaffolding, webhook intake, host-owned issue lifecycle with directives and
 revisits, tightened typed tool layer with evidence gates/budgets/verification, merged
 production skills, ManualImport tools, scheduled automations (cron + manual trigger,
 capability-scoped tools, per-automation budgets, `STATUS:` protocol), persisted run
-transcripts + `thread_history_search`.
+transcripts + `thread_history_search`, Discord automation report threads + `/automation`
+trigger command, per-automation run dedupe, graceful shutdown, first unit tests
+(`pnpm test`).
 
 Ideas for later (see the porting checklist in `docs/research/legacy.md`):
 
 - optional second-model mutation review for high-risk ops (legacy broker, in-process)
-- report sinks beyond the log (ntfy/Discord) and Discord agents
+- report sinks for issue runs, and Discord agents (conversational routes)
 - NixOS module + package output in the flake (systemd timers may own automation scheduling)
