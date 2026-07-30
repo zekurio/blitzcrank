@@ -33,6 +33,7 @@ export interface CaseRun {
   trigger: "webhook" | "revisit"
   mutations: number
   deletes: number
+  /** `RunUsage.newTokens`: input + cache writes + output, no cache reads. */
   tokens: number
   commented: boolean
   resolved: boolean
@@ -59,7 +60,15 @@ export interface CaseFile {
    */
   lastAnswer: string | undefined
   runs: CaseRun[]
-  /** Running totals for the whole issue; shown in the comment footer. */
+  /**
+   * Running totals for the whole issue; shown in the comment footer.
+   *
+   * `tokens` accumulates `RunUsage.newTokens`, so it stays proportional to the
+   * work done. Case files written before that fix carry an inflated total that
+   * also counted cache reads; it stops growing wrongly rather than being
+   * rewritten, because losing an issue's memory to a migration is worse than
+   * one stale number.
+   */
   spend: { runs: number; tokens: number }
   revisit: PendingRevisit | undefined
 }

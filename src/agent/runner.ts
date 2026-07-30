@@ -110,7 +110,7 @@ export class IssueRunner {
     const { mutations, deletes } = ctx.counts
     casefile.spend = {
       runs: casefile.spend.runs + 1,
-      tokens: casefile.spend.tokens + turn.usage.totalTokens,
+      tokens: casefile.spend.tokens + turn.usage.newTokens,
     }
     await this.cases.save(casefile)
 
@@ -143,7 +143,7 @@ export class IssueRunner {
       trigger: event.kind === "revisit" ? "revisit" : "webhook",
       mutations,
       deletes,
-      tokens: turn.usage.totalTokens,
+      tokens: turn.usage.newTokens,
       commented: comment !== undefined && comment.length > 0,
       resolved: directives.resolve,
     })
@@ -164,7 +164,8 @@ export class IssueRunner {
 
     console.log(
       `[issue:${issueId}] done resolve=${directives.resolve} revisit=${plan.revisit?.delayMs ?? "-"} ` +
-        `mutations=${mutations} deletes=${deletes} tokens=${turn.usage.totalTokens} ` +
+        `mutations=${mutations} deletes=${deletes} tokens=${turn.usage.newTokens} ` +
+        `billed=${turn.usage.billedTokens} ` +
         `issueTotal=${casefile.spend.tokens} runs=${casefile.spend.runs}`,
     )
     return { issueId, directives, casefile }
