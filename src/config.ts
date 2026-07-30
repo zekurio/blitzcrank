@@ -16,6 +16,19 @@ export interface AnvilConfig {
   socket: string
 }
 
+export interface DiscordConfig {
+  token: string
+  /** Guild whose commands are registered; interactions elsewhere are refused. */
+  guildId: string
+  /** Text channel the per-automation report threads live in. */
+  watchChannelId: string
+  /**
+   * Roles allowed to trigger automations, on top of guild administrators.
+   * Empty means administrators only.
+   */
+  adminRoleIds: string[]
+}
+
 export interface MediaConfig {
   /** Absolute directory roots media_probe may read; nothing else is readable. */
   roots: string[]
@@ -55,6 +68,8 @@ export interface Config {
   anvil: AnvilConfig | undefined
   /** Enables the ffprobe-backed media_probe tool when media roots are set. */
   media: MediaConfig | undefined
+  /** Automation report threads + trigger commands; host-side only. */
+  discord: DiscordConfig | undefined
 }
 
 function service(prefix: string): ServiceConfig | undefined {
@@ -93,6 +108,31 @@ function absoluteRoots(name: string, value: string | undefined): string[] {
     }
   }
   return roots.map((root) => resolve(root))
+}
+
+/**
+ * All three ids are required together: a bot that cannot find its channel
+ * would report into the void, so half a configuration is a startup error.
+ */
+function discord(): DiscordConfig | undefined {
+  const token = process.env.DISCORD_BOT_TOKEN
+  if (!token) return undefined
+  const guildId = process.env.DISCORD_GUILD_ID
+  const watchChannelId = process.env.DISCORD_WATCH_CHANNEL_ID
+  if (!guildId || !watchChannelId) {
+    throw new Error(
+      "DISCORD_BOT_TOKEN requires DISCORD_GUILD_ID and DISCORD_WATCH_CHANNEL_ID",
+    )
+  }
+  return {
+    token,
+    guildId,
+    watchChannelId,
+    adminRoleIds: (process.env.DISCORD_ADMIN_ROLE_IDS ?? "")
+      .split(",")
+      .map((id) => id.trim())
+      .filter((id) => id.length > 0),
+  }
 }
 
 /** Media roots unset means the probe tool is not registered at all. */
@@ -141,5 +181,6 @@ export function loadConfig(): Config {
         }
       : undefined,
     media: media(),
+    discord: discord(),
   }
 }
