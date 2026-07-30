@@ -192,7 +192,8 @@ Setup:
 1. Create an application + bot, invite it with the `bot` and
    `applications.commands` scopes.
 2. Bot permissions in the watch channel: View Channel, Send Messages, Send
-   Messages in Threads, Create Private Threads, Manage Threads.
+   Messages in Threads, Create Private Threads, Manage Threads, Read Message
+   History (that last one is how archived report threads are found again).
 3. Make the channel admin-only and deny `Send Messages` /
    `Send Messages in Threads` to `@everyone` there. blitzcrank never edits
    permissions itself — who may read and write is your server config. Private
@@ -200,6 +201,11 @@ Setup:
    which is how they stay admin-visible.
 4. Optionally set `DISCORD_ADMIN_ROLE_IDS` to let non-administrator roles
    trigger runs.
+
+Don't **lock** a report thread by hand: reviving a locked thread needs Manage
+Threads on the thread itself, which the bot deliberately does not rely on, so
+its reports would be logged as failures instead of posted. Delete the thread
+instead — the next run makes a new one.
 
 On startup blitzcrank **purges all global commands** of its application and
 bulk-overwrites the guild command set, so stale commands from an earlier
@@ -228,7 +234,8 @@ revisits, tightened typed tool layer with evidence gates/budgets/verification, m
 production skills, ManualImport tools, scheduled automations (cron + manual trigger,
 capability-scoped tools, per-automation budgets, `STATUS:` protocol), persisted run
 transcripts + `thread_history_search`, Discord automation report threads + `/automation`
-trigger command.
+trigger command, per-automation run dedupe, graceful shutdown, first unit tests
+(`pnpm test`).
 
 Ideas for later (see the porting checklist in `docs/research/legacy.md`):
 
