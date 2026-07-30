@@ -65,9 +65,9 @@ export class AutomationRunner {
   ) {}
 
   async run(def: AutomationDefinition): Promise<AutomationReport> {
-    // Automations keep a mutation ceiling that issue runs no longer have:
-    // nobody asked for this run, it repeats on a schedule, and the operator
-    // picked the number per task in the definition's frontmatter.
+    // Both are usually undefined, meaning no ceiling. An automation is bounded
+    // by the capability allowlist below and by the evidence gates; a budget is
+    // an extra brake an operator can write into one definition's frontmatter.
     const ctx = new RunContext({
       limits: {
         maxMutations: def.mutationBudget,

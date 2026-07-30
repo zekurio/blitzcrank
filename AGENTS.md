@@ -62,9 +62,13 @@ Safety invariants (do not weaken without explicit operator sign-off):
 - Because nothing caps an issue run, scope is enforced by the prompt's rule to
   establish the full extent, state it to the reporter, then act on exactly it.
   Keep that rule intact when editing `src/agent/prompt.ts`.
-- Automations keep their frontmatter `mutation_budget`/`deletion_budget`: those
-  runs are unattended, repeat on a schedule, and the operator picked the number
-  for that specific task.
+- Automations may declare `mutation_budget`/`deletion_budget` in frontmatter,
+  but **absent means unlimited**, as for issue runs. These used to default to 3
+  and 0, which silently disabled declared work: hourly-stale-import-handler
+  declared both `queue_rejection_cleanup` capabilities and could not use
+  either, because its cleanups pass `removeFromClient` and so count as
+  deletions against a budget of zero. Do not reintroduce numeric defaults — a
+  cap should exist only where an operator wrote one down.
 - An issue's agent session is **resumed** across its events: the case file
   stores `sessionFile` and `src/agent/session.ts` reopens it, so a follow-up
   comment continues the same conversation. The evidence store is carried with
@@ -128,14 +132,14 @@ Safety invariants (do not weaken without explicit operator sign-off):
 - Automations (`automations/*.md`) are trusted operator instructions, but
   their runs only get the mutation tools mapped from their declared
   `capabilities` (registry in `src/automations/definitions.ts`) plus the
-  always-on read tools, with per-automation budgets from frontmatter.
+  always-on read tools, plus any budgets the frontmatter explicitly declares.
 
 ## Key Directories
 
 - `src/tools/` - run context (evidence/budgets), safety guards, GET-only read tools, typed mutation tools per service, run-history search.
 - `src/agent/` - pi SDK session factory, issue prompt, directive parsing.
 - `src/automations/` - definition loading/validation, capability registry, cron scheduler, STATUS report parsing.
-- `automations/` - operator-authored scheduled tasks; frontmatter declares schedule, capabilities, and budgets.
+- `automations/` - operator-authored scheduled tasks; frontmatter declares schedule, capabilities, and optional budgets.
 - `src/services/` - HTTP helper and the host-side Seerr client.
 - `src/webhook/` - verified Seerr webhook payload types, comment authorization
   gate.
