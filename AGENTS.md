@@ -49,15 +49,22 @@ Safety invariants (do not weaken without explicit operator sign-off):
   tool in `src/tools/`. Never add a generic write/mutation passthrough.
 - Mutations go through `runMutation` (`src/tools/common.ts`): evidence gates
   (target IDs must appear in a prior read on this issue, `src/tools/context.ts`),
-  the deletion budget, built-in verification.
-- Non-destructive mutations are deliberately **uncapped** for issue runs: no
-  single number fits both "wrong subtitle language" and "twelve episodes stuck
-  in the queue", and blast radius is bounded by the typed-tool surface and the
-  evidence gates, not by a counter. Deletions keep a ceiling
-  (`BLITZCRANK_MAX_DELETES_PER_ISSUE`, default 5) because they are the only
-  action with no undo, and it is counted **cumulatively per issue** in
-  `casefile.spend.deletes` so commenting again cannot reset it. Do not
-  reintroduce a per-run mutation cap; do not make the deletion cap per-run.
+  built-in verification.
+- Issue runs are deliberately **uncapped**, for mutations and deletions alike.
+  No single number fits both "wrong subtitle language" and "a season imported
+  as the wrong show", and for deletions a cap does not prevent the bad outcome
+  — it manufactures one, since half a wrong season deleted leaves the library
+  worse than either finishing or never starting. What separates justified from
+  unjustified work is the typed-tool surface, the evidence gate and the
+  per-call `reason`, not a counter. `casefile.spend.deletes` still records what
+  was destroyed, for the audit trail and the next run's prompt; it does not
+  gate anything. Do not reintroduce per-run caps for issue runs.
+- Because nothing caps an issue run, scope is enforced by the prompt's rule to
+  establish the full extent, state it to the reporter, then act on exactly it.
+  Keep that rule intact when editing `src/agent/prompt.ts`.
+- Automations keep their frontmatter `mutation_budget`/`deletion_budget`: those
+  runs are unattended, repeat on a schedule, and the operator picked the number
+  for that specific task.
 - An issue's agent session is **resumed** across its events: the case file
   stores `sessionFile` and `src/agent/session.ts` reopens it, so a follow-up
   comment continues the same conversation. The evidence store is carried with
@@ -68,8 +75,7 @@ Safety invariants (do not weaken without explicit operator sign-off):
   the live event stream, never `session.messages.findLast`, or a resumed run
   that produced nothing would re-execute a previous run's directive block.
 - SABnzbd raw reads are limited to `queue`/`history`; SAB job control and all
-  file deletions exist only as typed tools with evidence gates and the
-  deletion budget.
+  file deletions exist only as typed tools with evidence gates.
 - Comment-triggered runs are authorized host-side by `src/webhook/comment-gate.ts`:
   only the issue reporter or a Seerr `ADMIN`/`MANAGE_ISSUES` user can drive the
   agent. The gate runs before the event handler (so a rejected comment cannot

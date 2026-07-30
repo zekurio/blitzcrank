@@ -40,16 +40,6 @@ export interface Config {
   dataDir: string
   /** Directory containing automation definition .md files. */
   automationsDir: string
-  /**
-   * Deletions one issue may accumulate across all its runs.
-   *
-   * There is deliberately no matching mutation ceiling. A fixed mutation count
-   * cannot fit both "wrong subtitle language" and "twelve episodes stuck in the
-   * queue", and what bounds blast radius is the typed-tool surface plus the
-   * evidence gates, not a counter. Deletions keep one because they are the only
-   * action with no undo.
-   */
-  maxDeletesPerIssue: number
   /** Shared secret checked against the Authorization header of incoming webhooks. */
   webhookSecret: string | undefined
   /** Model string for the agent, e.g. "anthropic/claude-sonnet-4-5". */
@@ -164,11 +154,6 @@ export function loadConfig(): Config {
     port: number("BLITZCRANK_PORT", process.env.BLITZCRANK_PORT, 8484),
     dataDir: process.env.BLITZCRANK_DATA_DIR ?? "data",
     automationsDir: process.env.BLITZCRANK_AUTOMATIONS_DIR ?? "automations",
-    maxDeletesPerIssue: number(
-      "BLITZCRANK_MAX_DELETES_PER_ISSUE",
-      process.env.BLITZCRANK_MAX_DELETES_PER_ISSUE,
-      5,
-    ),
     webhookSecret: process.env.BLITZCRANK_WEBHOOK_SECRET,
     model: process.env.BLITZCRANK_MODEL,
     authPath: process.env.BLITZCRANK_AUTH_PATH,

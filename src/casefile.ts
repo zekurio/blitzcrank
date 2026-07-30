@@ -87,9 +87,10 @@ export interface CaseFile {
    * rewritten, because losing an issue's memory to a migration is worse than
    * one stale number.
    *
-   * `deletes` is the only one of these that is *enforced*: it is the issue-wide
-   * deletion ceiling's running total, so the cap cannot be reset by commenting
-   * again. Written by the host from `RunContext.counts`, never by the agent.
+   * `deletes` counts what earlier runs destroyed. It gates nothing — issue runs
+   * are uncapped — but it is the audit trail for the one class of action that
+   * cannot be inspected after the fact, and it is shown to the next run.
+   * Written by the host from `RunContext.counts`, never by the agent.
    */
   spend: { runs: number; tokens: number; deletes: number }
   revisit: PendingRevisit | undefined
@@ -263,8 +264,8 @@ export class CaseStore {
 
   /**
    * Drops the carried-over evidence for a closed issue. The case file itself
-   * stays: it is the issue's audit trail, and `spend.deletes` must survive so
-   * a reopened issue cannot start its deletion budget over.
+   * stays: it is the issue's audit trail, and `spend.deletes` records what was
+   * destroyed even after the issue closes.
    */
   async forgetEvidence(issueId: string): Promise<void> {
     await rm(this.evidenceFile(issueId), { force: true })

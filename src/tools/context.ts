@@ -5,7 +5,7 @@
  * deployment could only ask a reviewer to check:
  *  - evidence gates: a mutation's target ID must have appeared in a GET
  *    response the agent actually made (no hallucinated/guessed IDs),
- *  - a cumulative deletion ceiling,
+ *  - the mutation counters the host records for the audit trail,
  *  - file-level evidence: which media files were actually probed, so a bulk
  *    replacement cannot be justified by release-name metadata alone.
  *
@@ -31,16 +31,24 @@ export interface RunLimits {
    */
   maxMutations: number | undefined
   /**
-   * Deletion ceiling. Counted cumulatively across every run on the same issue,
-   * because deletions are the one action with no undo: Arr file deletes remove
-   * the only copy and SAB `deleteFiles` throws away a finished download. A
-   * per-event cap reset on every comment, so the issue-wide total was
-   * unbounded — this is the axis where "stop and ask a human" is correct.
+   * Deletion ceiling, or undefined for none. Issue runs pass undefined for the
+   * same reason they pass it for mutations, and the counterexample is sharper:
+   * a season imported as the wrong show needs all thirteen files gone. A cap of
+   * five does not prevent a bad outcome there, it manufactures one — five
+   * deleted, eight wrong files still in the library, and a reporter told the
+   * issue is a third fixed. A half-deleted season is worse than either end.
+   *
+   * What separates thirteen justified deletions from thirteen unjustified ones
+   * is the evidence gate and the per-call `reason`, not a number. Automations
+   * still get one, from their definition's frontmatter.
    */
-  maxDeletes: number
+  maxDeletes: number | undefined
 }
 
-const DEFAULT_LIMITS: RunLimits = { maxMutations: undefined, maxDeletes: 5 }
+const DEFAULT_LIMITS: RunLimits = {
+  maxMutations: undefined,
+  maxDeletes: undefined,
+}
 
 export interface EvidenceEntry {
   service: string
@@ -58,8 +66,6 @@ export interface RunContextInit {
   limits?: RunLimits | undefined
   /** Reads and probes recorded by earlier runs on the same issue. */
   prior?: EvidenceSnapshot | undefined
-  /** Deletions earlier runs on this issue already spent. */
-  priorDeletes?: number | undefined
 }
 
 function escapeRegExp(value: string): string {
@@ -70,7 +76,6 @@ export class RunContext {
   private readonly evidence: EvidenceEntry[]
   private readonly probed: string[]
   private readonly limits: RunLimits
-  private readonly priorDeletes: number
   private mutations = 0
   private deletes = 0
 
@@ -78,7 +83,6 @@ export class RunContext {
     this.limits = init.limits ?? DEFAULT_LIMITS
     this.evidence = [...(init.prior?.evidence ?? [])]
     this.probed = [...(init.prior?.probed ?? [])]
-    this.priorDeletes = init.priorDeletes ?? 0
   }
 
   /** Everything worth carrying into the next run on this issue. */
@@ -161,11 +165,11 @@ export class RunContext {
   noteMutation(kind: "mutate" | "delete"): void {
     if (
       kind === "delete" &&
-      this.priorDeletes + this.deletes >= this.limits.maxDeletes
+      this.limits.maxDeletes !== undefined &&
+      this.deletes >= this.limits.maxDeletes
     ) {
       throw new Error(
-        `deletion budget: at most ${this.limits.maxDeletes} deletions for this issue ` +
-          `(${this.priorDeletes} already spent by earlier runs); ask the operator instead`,
+        `deletion budget: at most ${this.limits.maxDeletes} deletions per run; ask the operator instead`,
       )
     }
     if (

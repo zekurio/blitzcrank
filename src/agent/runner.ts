@@ -61,16 +61,11 @@ export class IssueRunner {
     const casefile = await this.cases.load(issueId)
     // Evidence carries across the runs of one issue, matching the session that
     // is resumed alongside it: the gate exists to stop fabricated IDs, and a
-    // real ID does not become fabricated by being a day old. Deletions are the
-    // exception — their ceiling is issue-wide, so commenting again cannot
-    // reset it.
+    // real ID does not become fabricated by being a day old. Neither counter is
+    // capped for issue runs — what an issue needs is set by the issue, and a
+    // season imported as the wrong show needs every one of its files gone.
     const ctx = new RunContext({
-      limits: {
-        maxMutations: undefined,
-        maxDeletes: this.config.maxDeletesPerIssue,
-      },
       prior: await this.cases.loadEvidence(issueId),
-      priorDeletes: casefile.spend.deletes,
     })
     const sessionFileRef: SessionFileRef = { current: undefined }
     // The agent's progress tool posts this once and edits it in place; the
@@ -139,7 +134,7 @@ export class IssueRunner {
       deletes: casefile.spend.deletes + deletes,
     }
     // Recorded before the directive block is even parsed: a run that mutated
-    // and then crashed must not hand the next run a fresh deletion budget.
+    // and then crashed still has to show what it did.
     casefile.sessionFile = turn.sessionFile
     await this.cases.save(casefile)
     await this.cases.saveEvidence(issueId, ctx.snapshot)

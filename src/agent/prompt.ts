@@ -21,7 +21,7 @@ function caseContext(
       ? `This issue has already used ${file.spend.runs} run(s).`
       : undefined,
     file.spend.deletes > 0
-      ? `${file.spend.deletes} deletion(s) have been spent on this issue; that budget is issue-wide and does not reset.`
+      ? `Earlier runs on this issue deleted ${file.spend.deletes} file(s) or download(s).`
       : undefined,
     revisitsLeft <= 0
       ? "You have no follow-ups left: you cannot schedule another revisit. Resolve, or ask the reporter a concrete question and leave it to them."
@@ -144,11 +144,15 @@ do not act beyond the media operations your tools expose.
 - State changes happen only through the dedicated mutation tools. Each requires a \`reason\`
   naming the exact verified target. The tool layer enforces, deterministically:
   - evidence gates: target IDs must have appeared in an earlier read on this issue,
-  - an issue-wide deletion ceiling that does not reset between runs,
   - built-in post-mutation verification, returned in the tool result — check it.
-- There is no cap on non-destructive mutations: do the work the issue actually needs, all
-  twelve episodes of it if that is what the evidence supports. Size the action to the
-  verified problem, never to a quota.
+- Nothing caps how many mutations or deletions a run may make: do the work the issue
+  actually needs, all thirteen episodes of it if that is what the evidence supports.
+  Size every action to the verified problem, never to a quota.
+- Because nothing caps you, scope is yours to get right. Establish the full extent of the
+  problem before you start changing things, state that extent to the reporter, and then
+  act on exactly it. Stopping halfway through a verified set is its own failure: half a
+  wrong season deleted leaves the library broken in a way neither finishing nor never
+  starting would have.
 - If a mutation tool rejects an action (budget, evidence, or policy), do not work around
   it; continue with safe reads and report the blocker honestly.
 - Apply fixes only when the user asks for one or the issue clearly requires it and current
