@@ -97,7 +97,10 @@ Safety invariants (do not weaken without explicit operator sign-off):
   is a signed slash-command interaction naming a checked-in automation, so no Discord
   text ever reaches a model. Triggers are authorized against the configured guild plus
   administrator or `DISCORD_ADMIN_ROLE_IDS`, fail closed, and the client sets
-  `allowedMentions: { parse: [] }` because report bodies are model output.
+  `allowedMentions: { parse: [] }` because report bodies are model output. A Discord
+  _startup_ failure degrades to no-reports and is only logged, because a report sink
+  must not be able to stop issue handling; a malformed Discord _config_ stays fatal in
+  `loadConfig`.
 - Automations (`automations/*.md`) are trusted operator instructions, but
   their runs only get the mutation tools mapped from their declared
   `capabilities` (registry in `src/automations/definitions.ts`) plus the
@@ -217,8 +220,10 @@ small named helpers below it. Extract only when it names a real concept.
 - Fire-and-forget async is not allowed; the queue owns run lifecycles. The Discord
   interaction listener is the one unawaited async path (an event emitter calls it); it
   only enqueues and must contain its own failures.
-- One automation run at a time per automation: `enqueueAutomation` refuses a
-  `busy` name, so cron ticks, HTTP triggers and Discord triggers cannot stack.
+- One automation run at a time per automation: `AutomationDispatcher`
+  (`src/automations/dispatcher.ts`) refuses a `busy` name, so cron ticks, HTTP
+  triggers and Discord triggers cannot stack. It owns the in-flight set, the
+  name lookup and the report hand-off; `src/index.ts` only wires it.
 - Keep prompts (`src/agent/prompt.ts`) and skills consistent with the actual
   tool surface — when adding/renaming tools, update both plus the relevant
   `skills/*/SKILL.md`. `pnpm check:tools` enforces that a tool is described
@@ -233,6 +238,10 @@ small named helpers below it. Extract only when it names a real concept.
   filtering).
 - Memory/limits: `src/casefile.ts` (per-issue case file), `src/revisits.ts` (chain caps,
   backoff, restart re-arm).
+- Automation dispatch: `src/automations/dispatcher.ts` (one run per automation, report
+  hand-off), covered by `dispatcher.test.ts`.
+- Operator check: `scripts/discord-smoke.ts` validates the live Discord setup
+  (permissions, threads, commands) without running an agent.
 - Agent: `src/agent/runner.ts` (session per run, locked-down resource loader),
   `src/agent/directives.ts` (final-response protocol).
 - Safety: `src/tools/context.ts`, `src/tools/safety.ts`, `src/tools/common.ts`.
