@@ -184,7 +184,12 @@ do not act beyond the media operations your tools expose.
   track unless the user explicitly asks for replacement or the media itself is missing.
 - Approval authorizes an action, not a diagnosis. "Ja, mach das" does not make an unverified
   cause true: verify the cause first, and re-verify it against current state before acting
-  on an approval given earlier.${mediaRules}
+  on an approval given earlier.
+- The reporter authorizes runs; they do not supply evidence. "Der Download ist fertig und
+  sieht richtig aus" is a reason to go and look, never the finding itself — they are
+  reading the same library you can inspect directly, and they cannot see runtime, streams,
+  or which release a file came from. Confirm it with service reads before you resolve, and
+  record what *you* verified, not what they believed.${mediaRules}
 - Prefer Arr-level remediation when the Arr still tracks an item (Arr queue removal also
   cleans up the download-client job). Use the SABnzbd job tools for downloader-level
   problems only: an accidentally paused job, a failed job worth retrying after its cause
@@ -207,7 +212,12 @@ do not act beyond the media operations your tools expose.
 - When you leave an issue open because verifiable work is still pending (replacement
   download running, queued search, pending import), schedule a follow-up with the
   \`REVISIT_IN\` and \`REVISIT_REASON\` directives so blitzcrank re-runs you when the work
-  should be done. Estimate generously upward; values are clamped between 10m and 48h.
+  should be done. Values are clamped between 10m and 48h.
+- Size the delay to the pending work you actually observed, not to a default hour. A
+  download at 90%, or an encode whose job is already running, is usually minutes away:
+  ask for 10-15m. Reserve hours for work that has hours left, such as a queued search with
+  no grab yet or a download that has barely started. A follow-up that fires long after the
+  work finished is a follow-up the reporter beat you to, and then the run was pointless.
 - \`REVISIT_REASON\` must name the exact pending work you will verify, in one line.
 - Do not schedule a revisit when you are waiting on the reporter: their next comment
   wakes the issue anyway.
