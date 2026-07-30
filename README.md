@@ -97,6 +97,7 @@ pnpm install
 cp .env.example .env   # fill in service URLs + API keys
 pnpm dev               # tsx watch
 pnpm typecheck
+pnpm test              # node:test via tsx
 pnpm build && pnpm start
 ```
 
