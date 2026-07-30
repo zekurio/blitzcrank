@@ -63,29 +63,46 @@ export class DiscordBot {
       path.join(config.dataDir, "discord", "threads.json"),
     )
     const bot = new DiscordBot(logged, discord, threads, deps)
+    // Login already opened the gateway socket, so from here on a failure must
+    // close it: the caller has no handle yet, and a short-lived one (the smoke
+    // script) would hang on a connection it cannot reach.
+    await bot.finishStart().catch(async (err: unknown) => {
+      await logged.destroy()
+      throw err
+    })
+    return bot
+  }
+
+  private async finishStart(): Promise<void> {
     await syncCommands(
-      logged,
-      discord.guildId,
-      deps.listAutomations().map((info) => info.name),
+      this.client,
+      this.discord.guildId,
+      this.deps.listAutomations().map((info) => info.name),
     )
-    logged.on(Events.InteractionCreate, async (interaction) => {
+    this.client.on(Events.InteractionCreate, async (interaction) => {
       // The listener only enqueues; run lifecycles stay with the serial queue.
       // Nothing awaits it, so it must contain its own failures.
       if (!interaction.isChatInputCommand()) return
-      await bot.onCommand(interaction).catch((err) => {
+      await this.onCommand(interaction).catch((err) => {
         console.error("[discord] interaction failed:", err)
       })
     })
     console.log(
-      `[discord] connected as ${logged.user.tag}, watching #${await threads.verify()}`,
+      `[discord] connected as ${this.client.user.tag},` +
+        ` watching #${await this.threads.verify()}`,
     )
-    return bot
   }
 
   /** A broken report sink must never fail the run it reports on. */
   async report(report: AutomationReport): Promise<void> {
     const thread = await this.threads.get(report.name).catch((err: unknown) => {
-      console.error(`[discord] thread for ${report.name}:`, err)
+      // A thread a human locked cannot be revived without ManageThreads, which
+      // the bot deliberately does not need; say so instead of a bare 403.
+      console.error(
+        `[discord] no thread for ${report.name}` +
+          ` (locked or deleted by hand?):`,
+        err,
+      )
       return undefined
     })
     if (!thread) return
