@@ -25,6 +25,11 @@ export interface AutomationReport {
   malformed: boolean
   mutations: number
   deletes: number
+  /**
+   * `RunUsage.newTokens`: input + cache writes + output, no cache reads. This
+   * one reaches a human through the Discord report, so it has to track the work
+   * done rather than how often the context was re-read.
+   */
   tokens: number
 }
 
@@ -94,12 +99,13 @@ export class AutomationRunner {
       ...parseAutomationOutput(turn.text),
       mutations: ctx.counts.mutations,
       deletes: ctx.counts.deletes,
-      tokens: turn.usage.totalTokens,
+      tokens: turn.usage.newTokens,
     }
     const log = report.status === "fehler" ? console.error : console.log
     log(
       `[automation:${def.name}] status=${report.status} mutations=${report.mutations} ` +
-        `deletes=${report.deletes} tokens=${report.tokens}` +
+        `deletes=${report.deletes} tokens=${report.tokens} ` +
+        `billed=${turn.usage.billedTokens}` +
         `${report.malformed ? " (malformed output)" : ""}${report.empty ? " (no report)" : ""}` +
         `${report.body ? `\n${report.body}` : ""}`,
     )

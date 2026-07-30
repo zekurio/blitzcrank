@@ -27,12 +27,15 @@ Use the read-only `jellyfin_request` with relative Jellyfin API paths; it accept
 - Search: `GET /Items?searchTerm={query}&recursive=true&limit=10`
 - Libraries: `GET /Library/VirtualFolders`
 - Children: `GET /Items?parentId={itemId}&recursive=true&limit=50`
-- Item with identity/media: `GET /Items/{itemId}?Fields=MediaSources,Path,ProviderIds`
+- Item with identity/media: `GET /Items?Ids={itemId}&Fields=MediaSources,Path,ProviderIds`
+- By provider identity, the most reliable way in from a `tmdbId`: `GET /Items?recursive=true&IncludeItemTypes=Movie&AnyProviderIdEquals=Tmdb.{tmdbId}&Fields=MediaSources,Path,ProviderIds&limit=10`
 - Users, when admin/operator context permits: `GET /Users`
 - User views: `GET /Users/{userId}/Views`
 - User item: `GET /Users/{userId}/Items/{itemId}`
 - User data: `GET /UserItems/{itemId}/UserData?userId={userId}`
 - Sessions: `GET /Sessions`
+
+Do not use bare `GET /Items/{itemId}`: without a user context this deployment answers HTTP 400, so it costs a call and tells you nothing. Use the `Ids=` list form above, which needs no user.
 
 ## Diagnostic workflow
 

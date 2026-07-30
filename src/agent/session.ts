@@ -57,7 +57,17 @@ export function modelAnchor(spec: string): string {
 }
 
 export interface RunUsage {
-  totalTokens: number
+  /**
+   * Tokens this run added to the conversation: prompt input, cache writes and
+   * output. Cache *reads* are excluded on purpose. Every turn re-reads the
+   * whole prefix, so summing `totalTokens` across turns counts the same
+   * context once per turn and grows with the square of the turn count: a
+   * 19-turn run measured 829k that way, of which 738k was one context read
+   * nineteen times. This is the number a human can act on.
+   */
+  newTokens: number
+  /** Sum of per-turn `totalTokens`, cache reads included: volume, not work. */
+  billedTokens: number
 }
 
 function formatTokens(count: number): string {
@@ -72,6 +82,9 @@ function formatTokens(count: number): string {
  * The count is everything the issue has cost so far, not this run alone: a run
  * leaves exactly one comment and each comment replaces the last one, so a
  * per-run number would silently understate an issue that took four runs.
+ *
+ * It counts `newTokens`, not billed volume. The reporter reads this figure as
+ * "how much work was this", and cache reads answer a different question.
  */
 export function usageAnchor(spec: string, issueTokens: number): string {
   return `${modelAnchor(spec).slice(0, -1)} · ${formatTokens(issueTokens)} tokens]`
@@ -156,7 +169,7 @@ export async function runAgentTurn(
   // Usage is accumulated as assistant messages complete, not summed from
   // `session.messages` afterwards: auto-compaction replaces that array with a
   // summary plus the recent tail, so the longest runs would under-report most.
-  const usage: RunUsage = { totalTokens: 0 }
+  const usage: RunUsage = { newTokens: 0, billedTokens: 0 }
 
   const unsubscribe = session.subscribe((event) => {
     if (event.type === "tool_execution_start") {
@@ -171,7 +184,10 @@ export async function runAgentTurn(
       return
     }
     if (event.type === "message_end" && event.message.role === "assistant") {
-      usage.totalTokens += event.message.usage.totalTokens
+      const turn = event.message.usage
+      // `reasoning` is already part of `output`; adding it would double-count.
+      usage.newTokens += turn.input + turn.cacheWrite + turn.output
+      usage.billedTokens += turn.totalTokens
     }
   })
 
