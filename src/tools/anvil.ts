@@ -171,7 +171,7 @@ export function buildAnvilTools(
       label: "Anvil daemon status",
       description:
         "Read factual Anvil daemon health and aggregate queue counts. This never proves that a specific media item is being encoded. " +
-        "blitzcrank's Anvil tools are read-only: it has no way to cancel, pause, reprioritise, or retry an encode.",
+        "blitzcrank can read Anvil state and requeue one job with anvil_retry_job; it has no way to cancel, pause, or reprioritise an encode.",
       parameters: Type.Object({
         purpose: Type.String({
           description: "Why Anvil daemon health is needed for this diagnosis",
@@ -190,7 +190,7 @@ export function buildAnvilTools(
       description:
         "List all current Anvil jobs in one call, then filter them locally. Prefer this over repeated anvil_job_lookup calls: " +
         "it cannot produce the false negative a wrong path produces, and it is the only way to establish that an item has no job. " +
-        "Read-only: blitzcrank cannot cancel, pause, or retry an encode.",
+        "Read-only: use anvil_job_show for one job's history, anvil_retry_job to requeue one. blitzcrank cannot cancel or pause an encode.",
       parameters: Type.Object({
         purpose: Type.String({
           description: "What this list of current Anvil jobs must establish",
