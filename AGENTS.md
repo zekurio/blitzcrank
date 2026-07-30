@@ -112,7 +112,11 @@ Safety invariants (do not weaken without explicit operator sign-off):
 
 - `pnpm dev` - run with `tsx watch`.
 - `pnpm fmt` / `pnpm lint` / `pnpm typecheck` - oxfmt, oxlint (type-aware), `tsc --noEmit`.
-- `pnpm verify` - fmt check + lint + typecheck; must pass before a task is done.
+- `pnpm verify` - fmt check + lint + typecheck + `check:tools`; must pass before a task is
+  done.
+- `pnpm check:tools` - asserts the documented tool surface matches the registered one in
+  both directions. Prose about which tools exist is behaviour, not documentation: the model
+  reads it as the authority on its own capabilities.
 - `pnpm build` / `pnpm start` - compile to `dist/` and run.
 - `nix develop` (or direnv) - dev shell with Node 24, pnpm, TypeScript.
 - Config is env-only; see `.env.example`. Never commit `.env`.
@@ -203,7 +207,11 @@ small named helpers below it. Extract only when it names a real concept.
 - Fire-and-forget async is not allowed; the queue owns run lifecycles.
 - Keep prompts (`src/agent/prompt.ts`) and skills consistent with the actual
   tool surface — when adding/renaming tools, update both plus the relevant
-  `skills/*/SKILL.md`.
+  `skills/*/SKILL.md`. `pnpm check:tools` enforces that a tool is described
+  somewhere and that nothing describes a tool that does not exist.
+- A tool description describes _that_ tool. Claims about which other tools exist
+  belong in `CAPABILITY_LINES` (`src/agent/prompt.ts`), which is filtered by the
+  run's registered tool names, so such a claim cannot outlive its tool.
 
 ## Important Files
 

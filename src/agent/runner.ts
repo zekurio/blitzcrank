@@ -69,21 +69,28 @@ export class IssueRunner {
         (event.kind === "revisit" ? (casefile.revisit?.chain ?? 0) : 0),
     )
 
+    const tools = buildIssueTools({
+      config: this.config,
+      ctx,
+      seerr,
+      issueId,
+      anchor: this.anchor,
+      sessionFileRef,
+      mediaScope: eventMediaScope(event),
+      status,
+      casefile,
+    })
+
     const turn = await runAgentTurn({
       modelRuntime: this.modelRuntime,
       modelSpec: this.modelSpec,
-      systemPrompt: buildSystemPrompt(this.config),
-      tools: buildIssueTools({
-        config: this.config,
-        ctx,
-        seerr,
-        issueId,
-        anchor: this.anchor,
-        sessionFileRef,
-        mediaScope: eventMediaScope(event),
-        status,
-        casefile,
-      }),
+      // Built from the tools themselves, so the prompt cannot claim a
+      // capability this run does not have, or deny one it does.
+      systemPrompt: buildSystemPrompt(
+        this.config,
+        tools.map((tool) => tool.name),
+      ),
+      tools,
       prompt:
         event.kind === "webhook"
           ? buildIssuePrompt(event.payload, casefile, revisitsLeft)

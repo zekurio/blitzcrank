@@ -37,8 +37,41 @@ ${allowance}`
  * tool with in-process evidence gates, budgets, and built-in verification —
  * so the legacy safety_level/review-broker ceremony is gone.
  */
-export function buildSystemPrompt(config: Config): string {
+/**
+ * Capability lines the model needs stated explicitly, each owned by the tool
+ * that provides it.
+ *
+ * These are derived from the run's registered tools rather than written out,
+ * because prose about which tools exist drifts the moment the tool set moves —
+ * twice in two days, most recently a description denying a retry tool that was
+ * sitting right beside it. What the agent can do is a fact about the registry,
+ * so the registry is what states it.
+ */
+const CAPABILITY_LINES: ReadonlyArray<readonly [string, string]> = [
+  [
+    "anvil_retry_job",
+    `- You can requeue one stuck or failed encode with \`anvil_retry_job\`; it restarts the
+  conversion from the beginning and cannot recover work already discarded. Read
+  \`anvil_job_show\` first and name the failure, because a requeue does not fix its cause.`,
+  ],
+  [
+    "anvil_job_show",
+    `- \`anvil_job_show\` is where a failed or stuck encode explains itself: attempts, errors,
+  publish stage, and the stream decisions for one job.`,
+  ],
+]
+
+export function buildSystemPrompt(
+  config: Config,
+  /** Names of the tools registered for this run; capability claims come from it. */
+  toolNames: readonly string[],
+): string {
   const lang = config.language
+  const capabilities = CAPABILITY_LINES.filter(([tool]) =>
+    toolNames.includes(tool),
+  )
+    .map(([, line]) => `\n${line}`)
+    .join("")
 
   const anvilRules = config.anvil
     ? `
@@ -53,16 +86,9 @@ export function buildSystemPrompt(config: Config): string {
   (\`includeStreamSelection\`) before probing files: it names the languages the profile
   requested that the source lacked, and separates "never requested" from "requested but
   absent" — which decides whether another release could help at all.
-- You can requeue one stuck or failed encode with \`anvil_retry_job\`; it restarts the
-  conversion from the beginning and cannot recover discarded work. You have no tool to
-  cancel, pause, or reprioritise an encode: if the reporter asks to stop or speed one up,
-  say plainly that blitzcrank cannot. Describe what your own tools do, never what the
-  daemon can or cannot do.
-- \`anvil_job_show\` is where a failed or stuck encode explains itself: attempts, errors,
-  publish stage, and the stream decisions for one job.
 - Pending, leased, running, validating, replacing, and retrying Anvil jobs are active.
   Failed or skipped jobs are concrete blockers; an expired lease is potentially stuck work,
-  not healthy waiting.`
+  not healthy waiting.${capabilities}`
     : ""
 
   const mediaRules = config.media
@@ -123,10 +149,12 @@ do not act beyond the media operations your tools expose.
   yourself, or state plainly that you could not determine it.
 - Prefer one broad read you can filter over many narrow lookups that can each silently
   miss. Repeating a failing query shape is not evidence.
-- If the reporter asks for something no tool of yours can do, say so plainly. Never
-  describe an attempt you did not make, and never explain a missing capability as bad
-  timing, a race, or "it was already too late": that hides the real limitation and implies
-  retrying would work.
+- Your tools are the complete list of what you can do; there is no other channel. If the
+  reporter asks for something none of them covers — stopping or reprioritising an encode,
+  editing a quality profile, touching a file directly — say plainly that blitzcrank cannot,
+  and say who can. Never describe an attempt you did not make, and never explain a missing
+  capability as bad timing, a race, or "it was already too late": that hides the real
+  limitation and implies retrying would work.
 - Name the true scope before acting. When an action affects several items, tell the
   reporter the number first; agreement to "fix it" is not agreement to re-download a whole
   season. Prefer the smallest reproducing scope — one episode — to test a hypothesis.

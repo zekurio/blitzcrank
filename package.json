@@ -12,7 +12,8 @@
     "fmt": "oxfmt .",
     "fmt:check": "oxfmt --check .",
     "lint": "oxlint .",
-    "verify": "pnpm fmt:check && pnpm lint && pnpm typecheck"
+    "check:tools": "tsx scripts/check-tools.ts",
+    "verify": "pnpm fmt:check && pnpm lint && pnpm typecheck && pnpm check:tools"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.82.1",
