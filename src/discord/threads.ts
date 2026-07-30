@@ -74,7 +74,10 @@ export class AutomationThreads {
     title: string,
   ): Promise<AnyThreadChannel | undefined> {
     const active = await channel.threads.fetch()
-    // Listing archived private threads needs MANAGE_THREADS; without it we
+    // fetchAll defaults to false, so this hits the "joined archived private
+    // threads" route (GET /channels/{id}/users/@me/threads/archived/private),
+    // which only needs READ_MESSAGE_HISTORY, not MANAGE_THREADS — fine, since
+    // the bot joins every thread it creates. Still `.catch()`d: without it we
     // would rather create a fresh thread than crash the report.
     const archived = await channel.threads
       .fetchArchived({ type: "private" })
