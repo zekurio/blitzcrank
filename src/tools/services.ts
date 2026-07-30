@@ -215,7 +215,7 @@ export function buildSabnzbdTools(
       name: "sabnzbd_delete_job",
       label: "SABnzbd: delete job",
       description:
-        "Remove one job from the SABnzbd queue or history. deleteFiles=true also deletes downloaded data (deletion budget applies). Prefer Arr-level queue removal when the Arr still tracks the item; never orphan an Arr that is waiting on this job. The nzo_id must come from a SABnzbd read this run.",
+        "Remove one job from the SABnzbd queue or history. deleteFiles=true also deletes downloaded data and is recorded as a deletion. Prefer Arr-level queue removal when the Arr still tracks the item; never orphan an Arr that is waiting on this job. The nzo_id must come from a SABnzbd read on this issue.",
       parameters: Type.Object({
         reason: reasonParam(),
         nzoId: Type.String({ minLength: 1 }),

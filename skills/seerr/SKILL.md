@@ -44,9 +44,9 @@ Use the read-only `seerr_request` with relative `/api/v1/...` paths; it accepts 
 
 Every trigger starts a fresh session, but not from zero: what earlier runs on this issue established is handed to you at the top of the prompt, from the issue's case file. Start there.
 
-- Do not re-derive facts that are already recorded, and never search or read old session transcripts to recover your own conclusions. `thread_history_search` is for _other_ items, and it returns snippets only.
+- Do not re-derive facts that are already recorded, and never search or read old session transcripts to recover your own conclusions. When a follow-up comment arrives your earlier work on that issue is already in context above — continue from it, but re-verify any state you are about to act on, because queues and downloads move between runs. `thread_history_search` is for _other_ items, and it returns snippets only.
 - Before the final response, call `update_case_file` with the verified facts and their evidence, the explanations you disproved, and what is still open. It replaces the previous summary: restate what still holds, drop what no longer does, and correct anything the earlier run got wrong.
-- Run count, spend, and the remaining follow-up budget are host facts shown in the prompt. When follow-ups are exhausted, resolve or ask the reporter one concrete question — you cannot schedule another check.
+- Run count, spend, deletions already used, and the remaining follow-up budget are host facts shown in the prompt. When follow-ups are exhausted, resolve or ask the reporter one concrete question — you cannot schedule another check.
 
 ## Ordering: does the thing even exist?
 
