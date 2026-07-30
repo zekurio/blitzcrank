@@ -20,13 +20,18 @@ import type { RunContext } from "./context.js"
 /**
  * Sonarr/Radarr tools. Mutation surface mirrors the legacy allowlist exactly:
  *  sonarr: EpisodeSearch/SeasonSearch/SeriesSearch/RefreshSeries commands,
- *          queue grab/delete, blocklist delete, episodefile delete
+ *          queue grab/delete, blocklist add/delete, episodefile delete
  *  radarr: MoviesSearch/RefreshMovie commands, queue grab/delete,
- *          blocklist delete, moviefile delete
+ *          blocklist add/delete, moviefile delete
  *
  * Note: moviefile deletion was absent from the legacy allowlist (never
  * documented as an incident response); added deliberately — the evidence
  * gates and deletion budget apply.
+ *
+ * Blocklisting a past grab was also absent, and its absence had teeth: the
+ * only way to blocklist anything was to delete a *live* queue item, so a
+ * replacement search fired against a known-bad release had to re-grab it
+ * before it could be excluded. See `blocklist_from_history`.
  */
 
 function arrRequest(
@@ -211,6 +216,23 @@ async function verifyQueue(
 }
 
 /**
+ * Newest blocklist entries plus the queue: marking a grab failed blocklists the
+ * release *and*, with the Arr's default `autoRedownloadFailed`, makes it search
+ * for a replacement on its own. Both halves have to be visible, or the model
+ * cannot tell an exclusion that worked from one that immediately re-grabbed.
+ */
+async function verifyBlocklistAndQueue(
+  cfg: ServiceConfig,
+  service: ServiceName,
+  ctx: RunContext,
+) {
+  const path = `/api/v3/blocklist?page=1&pageSize=20&sortKey=date&sortDirection=descending`
+  const blocklist = await arrRequest(cfg, path)
+  ctx.recordRead(service, path, JSON.stringify(blocklist))
+  return { blocklist, queue: await verifyQueue(cfg, service, ctx) }
+}
+
+/**
  * ManualImport command tool shared by both Arrs. `files` are candidate objects
  * the model takes from GET /api/v3/manualimport; every path and id in them is
  * evidence-gated so candidates cannot be invented.
@@ -322,6 +344,43 @@ function queueAndBlocklistTools(
           service,
           action: "delete_queue_item",
           queueId: params.queueId,
+        })
+      },
+    }),
+    defineTool({
+      name: `${service}_blocklist_from_history`,
+      label: `${service}: blocklist a past grab`,
+      description:
+        `Blocklist the release behind one ${service} history record, so it is never grabbed again. Marks that grab as failed ` +
+        `(POST /api/v3/history/failed/{id}), which is the only way to exclude a release that has left the queue. Use this on ` +
+        `the bad release when replacing a wrong or corrupt file: unblocked, it usually still scores highest and a plain ` +
+        `search just grabs it again. Two consequences to plan for: with the Arr's default autoRedownloadFailed it also ` +
+        `starts its own replacement search, so do not follow it with a separate search call — read the queue instead and ` +
+        `check which release it picked; and if that grab is still active in the download client it will be discarded, so ` +
+        `point this at a grab that is finished, not at the download you are waiting on. The history record id must come ` +
+        `from a ${service} history read this run.`,
+      parameters: Type.Object({
+        reason: reasonParam(),
+        historyId: Type.Integer({ minimum: 1 }),
+      }),
+      async execute(_toolCallId, params) {
+        const outcome = await runMutation(ctx, {
+          kind: "mutate",
+          evidence: [
+            { service, value: params.historyId, hint: "history record id" },
+          ],
+          perform: () =>
+            arrRequest(
+              cfg,
+              `/api/v3/history/failed/${params.historyId}`,
+              "POST",
+            ),
+          verify: () => verifyBlocklistAndQueue(cfg, service, ctx),
+        })
+        return textResult(outcome, {
+          service,
+          action: "blocklist_from_history",
+          historyId: params.historyId,
         })
       },
     }),
