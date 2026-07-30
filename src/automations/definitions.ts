@@ -9,8 +9,19 @@ export interface AutomationDefinition {
   schedule: string
   enabled: boolean
   capabilities: string[]
-  mutationBudget: number
-  deletionBudget: number
+  /**
+   * Optional per-run ceilings. Absent means unlimited, as for issue runs: an
+   * automation's real bound is its capability allowlist plus the evidence
+   * gates, and a number the operator did not choose is not a safety decision.
+   *
+   * These used to default to 3 and 0, which silently disabled work an
+   * automation had explicitly declared — hourly-stale-import-handler declared
+   * both queue_rejection_cleanup capabilities and could not use either, since
+   * its cleanups pass removeFromClient and so count as deletions against a
+   * budget of zero. A cap now exists only where someone wrote one down.
+   */
+  mutationBudget: number | undefined
+  deletionBudget: number | undefined
   body: string
   filePath: string
 }
@@ -87,11 +98,27 @@ function parseDefinition(filePath: string, raw: string): AutomationDefinition {
     schedule,
     enabled: meta.enabled !== false,
     capabilities,
-    mutationBudget: Number(meta.mutation_budget ?? 3),
-    deletionBudget: Number(meta.deletion_budget ?? 0),
+    mutationBudget: budget(filePath, "mutation_budget", meta.mutation_budget),
+    deletionBudget: budget(filePath, "deletion_budget", meta.deletion_budget),
     body,
     filePath,
   }
+}
+
+/** An optional frontmatter ceiling; a present-but-nonsensical value is fatal. */
+function budget(
+  filePath: string,
+  key: string,
+  value: unknown,
+): number | undefined {
+  if (value === undefined || value === null) return undefined
+  const parsed = Number(value)
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(
+      `${filePath}: ${key} must be a non-negative integer, got ${JSON.stringify(value)}`,
+    )
+  }
+  return parsed
 }
 
 export async function loadAutomations(
