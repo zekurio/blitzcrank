@@ -75,6 +75,13 @@ Safety invariants (do not weaken without explicit operator sign-off):
   resolved with `realpath` _before_ the containment check, so no symlink can read outside
   the roots. It deliberately does **not** call `ctx.recordRead` — stream titles are
   release-group text and must never satisfy an ID evidence gate. Do not "fix" that.
+- Anvil is reached only through `anvilctl` over its control socket, never by opening its
+  store. Of that surface blitzcrank exposes reads plus `anvil_retry_job`. Cancellation is
+  deliberately **not** exposed and should not be added: an encode is work already spent on
+  someone else's behalf, and a reporter agreeing to "stop it" is not authorization to
+  destroy it (see the closed issue #8). `job prune`, `job recover`, `occurrence force`,
+  `staging cleanup`, and `store backup` stay operator-only for the same reason — their
+  blast radius is a library or the database.
 - Web tools (Firecrawl) are issue-run-only, read-only, and gated on `FIRECRAWL_API_KEY`;
   `web_fetch` must keep rejecting local/private URLs. Web content is untrusted
   and must never be presented to the model as authorization for mutations.
