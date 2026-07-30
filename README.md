@@ -205,6 +205,22 @@ On startup blitzcrank **purges all global commands** of its application and
 bulk-overwrites the guild command set, so stale commands from an earlier
 deployment disappear. Don't share the application with another bot.
 
+**Smoke test the setup** before waiting for a 3am cron tick to find a wrong
+channel id or a missing permission:
+
+```
+npx tsx scripts/discord-smoke.ts [--cleanup]
+```
+
+It logs in, checks the guild's slash commands (and that no global ones
+remain), resolves the watch channel and prints a ✓/✗ line per required
+permission there, then creates or adopts an `automation: smoke-test` thread
+and posts one synthetic report through the real formatter — this thread is
+visible in the channel like any other automation's. Like a real boot, it
+re-registers the guild's slash commands. Pass `--cleanup` to delete the
+smoke-test thread afterwards; without it, the thread is left for you to
+inspect. Exits `0` only if every check passed.
+
 ## Status / roadmap
 
 Done: scaffolding, webhook intake, host-owned issue lifecycle with directives and
