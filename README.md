@@ -13,7 +13,7 @@ Jellyseerr issue ──webhook──▶ blitzcrank host ──▶ pi agent sessi
                               │    │                │  skills/   (domain knowledge)
                               │    │                │  reads:    *_request  (GET-only)
                               │    │                │  mutations: typed tools w/ evidence
-                              │    │                │             gates + budgets + verify
+                              │    │                │             gates + counters + verify
                               │    ◀─ directives ──┘  RESOLVE_ISSUE / REVISIT_IN/_REASON
                               ├── posts comments, resolves the issue (host-owned)
                               └── schedules revisits (10m–48h)
@@ -223,11 +223,12 @@ deployment disappear. Don't share the application with another bot.
 ## Status / roadmap
 
 Done: scaffolding, webhook intake, host-owned issue lifecycle with directives and
-revisits, tightened typed tool layer with evidence gates/budgets/verification, merged
+revisits, tightened typed tool layer with evidence gates/verification, merged
 production skills, ManualImport tools, scheduled automations (cron + manual trigger,
-capability-scoped tools, per-automation budgets, `STATUS:` protocol), persisted run
-transcripts + `thread_history_search`, Discord automation report threads + `/automation`
-trigger command, per-automation run dedupe, graceful shutdown.
+capability-scoped tools, optional per-automation budgets, `STATUS:` protocol), persisted
+run transcripts + `thread_history_search`, resumed per-issue sessions, Discord automation
+report threads + `/automation` trigger command, per-automation run dedupe, graceful
+shutdown.
 
 Ideas for later (see the porting checklist in `docs/research/legacy.md`):
 
