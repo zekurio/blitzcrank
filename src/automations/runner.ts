@@ -23,11 +23,22 @@ export interface AutomationReport {
   empty: boolean
   /** True when the output did not follow the STATUS protocol. */
   malformed: boolean
+  mutations: number
+  deletes: number
+  /**
+   * `RunUsage.newTokens`: input + cache writes + output, no cache reads. This
+   * one reaches a human through the Discord report, so it has to track the work
+   * done rather than how often the context was re-read.
+   */
+  tokens: number
 }
 
-export function parseAutomationOutput(
-  text: string,
-): Omit<AutomationReport, "name"> {
+type ParsedOutput = Pick<
+  AutomationReport,
+  "status" | "body" | "empty" | "malformed"
+>
+
+export function parseAutomationOutput(text: string): ParsedOutput {
   const trimmed = text.trim()
   if (trimmed === "")
     return { status: "ok", body: "", empty: true, malformed: false }
@@ -86,12 +97,15 @@ export class AutomationRunner {
     const report: AutomationReport = {
       name: def.name,
       ...parseAutomationOutput(turn.text),
+      mutations: ctx.counts.mutations,
+      deletes: ctx.counts.deletes,
+      tokens: turn.usage.newTokens,
     }
-    const { mutations, deletes } = ctx.counts
     const log = report.status === "fehler" ? console.error : console.log
     log(
-      `[automation:${def.name}] status=${report.status} mutations=${mutations} deletes=${deletes} ` +
-        `tokens=${turn.usage.newTokens} billed=${turn.usage.billedTokens}` +
+      `[automation:${def.name}] status=${report.status} mutations=${report.mutations} ` +
+        `deletes=${report.deletes} tokens=${report.tokens} ` +
+        `billed=${turn.usage.billedTokens}` +
         `${report.malformed ? " (malformed output)" : ""}${report.empty ? " (no report)" : ""}` +
         `${report.body ? `\n${report.body}` : ""}`,
     )

@@ -91,6 +91,16 @@ Safety invariants (do not weaken without explicit operator sign-off):
   only write the agent's summary, never usage or revisit state. There is deliberately no
   spend ceiling: the deployment runs on subscription auth, where a dollar figure derived
   from list prices would be fiction.
+- Discord (`src/discord/`) is a host-side surface only: the host posts automation
+  reports, and no agent tool may write to Discord — never add one. The gateway client
+  declares **no intents**, so the bot cannot receive messages; the only inbound effect
+  is a signed slash-command interaction naming a checked-in automation, so no Discord
+  text ever reaches a model. Triggers are authorized against the configured guild plus
+  administrator or `DISCORD_ADMIN_ROLE_IDS`, fail closed, and the client sets
+  `allowedMentions: { parse: [] }` because report bodies are model output. A Discord
+  _startup_ failure degrades to no-reports and is only logged, because a report sink
+  must not be able to stop issue handling; a malformed Discord _config_ stays fatal in
+  `loadConfig`.
 - Automations (`automations/*.md`) are trusted operator instructions, but
   their runs only get the mutation tools mapped from their declared
   `capabilities` (registry in `src/automations/definitions.ts`) plus the
@@ -105,6 +115,8 @@ Safety invariants (do not weaken without explicit operator sign-off):
 - `src/services/` - HTTP helper and the host-side Seerr client.
 - `src/webhook/` - verified Seerr webhook payload types, comment authorization
   gate.
+- `src/discord/` - automation report threads (private, one per automation), the
+  `/automation` command and its bulk-overwrite registration. Host-side only.
 - `skills/` - agent skills (domain knowledge, playbooks); merged from the legacy production deployment. Frontmatter `name` must match the directory.
 - `docs/research/` - pi SDK integration guide, Seerr/service API references, legacy design reference. Consult before touching tool or API code.
 
@@ -112,8 +124,9 @@ Safety invariants (do not weaken without explicit operator sign-off):
 
 - `pnpm dev` - run with `tsx watch`.
 - `pnpm fmt` / `pnpm lint` / `pnpm typecheck` - oxfmt, oxlint (type-aware), `tsc --noEmit`.
-- `pnpm verify` - fmt check + lint + typecheck + `check:tools`; must pass before a task is
-  done.
+- `pnpm test` - unit tests for pure logic via Node's test runner (`tsx --test`).
+- `pnpm verify` - fmt check + lint + typecheck + `check:tools` + `test`; must pass before a
+  task is done.
 - `pnpm check:tools` - asserts the documented tool surface matches the registered one in
   both directions. Prose about which tools exist is behaviour, not documentation: the model
   reads it as the authority on its own capabilities.
@@ -204,7 +217,13 @@ small named helpers below it. Extract only when it names a real concept.
 - Service HTTP goes through `jsonRequest` (`src/services/http.ts`); paths are
   service-relative (`/api/v3/...`) and validated by `assertServicePath`.
 - Host-side Seerr actions go through `SeerrClient`, never through agent tools.
-- Fire-and-forget async is not allowed; the queue owns run lifecycles.
+- Fire-and-forget async is not allowed; the queue owns run lifecycles. The Discord
+  interaction listener is the one unawaited async path (an event emitter calls it); it
+  only enqueues and must contain its own failures.
+- One automation run at a time per automation: `AutomationDispatcher`
+  (`src/automations/dispatcher.ts`) refuses a `busy` name, so cron ticks, HTTP
+  triggers and Discord triggers cannot stack. It owns the in-flight set, the
+  name lookup and the report hand-off; `src/index.ts` only wires it.
 - Keep prompts (`src/agent/prompt.ts`) and skills consistent with the actual
   tool surface — when adding/renaming tools, update both plus the relevant
   `skills/*/SKILL.md`. `pnpm check:tools` enforces that a tool is described
@@ -219,6 +238,10 @@ small named helpers below it. Extract only when it names a real concept.
   filtering).
 - Memory/limits: `src/casefile.ts` (per-issue case file), `src/revisits.ts` (chain caps,
   backoff, restart re-arm).
+- Automation dispatch: `src/automations/dispatcher.ts` (one run per automation, report
+  hand-off), covered by `dispatcher.test.ts`.
+- Operator check: `scripts/discord-smoke.ts` validates the live Discord setup
+  (permissions, threads, commands) without running an agent.
 - Agent: `src/agent/runner.ts` (session per run, locked-down resource loader),
   `src/agent/directives.ts` (final-response protocol).
 - Safety: `src/tools/context.ts`, `src/tools/safety.ts`, `src/tools/common.ts`.
