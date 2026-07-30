@@ -43,9 +43,19 @@ because enforcement now lives in-process:
   `conclusion: UNKNOWN` with the reasons a correct-looking lookup still misses, never as
   proof that no encode exists. `anvil_job_list` gives the one broad read that can
   establish absence, and Anvil reports which path side matched (`matched_on`).
-- **Budgets** — max 5 mutations / 2 deletions per run.
+- **No mutation quotas** — issue runs are uncapped, deletions included. One number cannot
+  fit both a wrong subtitle track and a season imported as the wrong show, and for
+  deletions a cap does not prevent the bad outcome — it creates one, because half a wrong
+  season deleted is a worse library than either finishing or not starting. What separates
+  justified work from the rest is the typed-tool surface, the evidence gate and the
+  per-call `reason`. Every mutation and deletion is still counted and reported.
 - **Built-in verification** — mutation tools perform the follow-up read themselves and
   return it in the result.
+- **Continuous sessions** — an issue's runs share one agent session: a follow-up comment
+  resumes the same conversation rather than restarting from a summary, and the carried
+  evidence store means IDs read earlier still satisfy the gates. The system prompt and
+  tool list are always rebuilt from the current registry, so a resumed run can never
+  inherit authority it no longer has.
 - **Loop guards** — the bot's own comment webhooks and `ISSUE_RESOLVED` events are
   dropped; new user activity cancels pending revisits.
 - **Bounded follow-ups** — at most 3 self-scheduled revisits between two user messages,
@@ -75,11 +85,11 @@ because enforcement now lives in-process:
 
 - `src/server.ts` — Hono webhook endpoint (`POST /webhook/seerr`), `GET /healthz`, `GET /automations`, `POST /automations/:name/run`, event filtering
 - `src/queue.ts` / `src/revisits.ts` — serial run queue + revisit scheduler (chain caps, backoff, restart re-arm)
-- `src/casefile.ts` — per-issue memory: agent-written findings, host-written run/spend/revisit facts
+- `src/casefile.ts` — per-issue record: agent-written findings, host-written run/spend/revisit/deletion facts, the session to resume, carried evidence
 - `src/agent/` — pi SDK session factory, issue system prompt, directive parsing
 - `src/automations/` — automation definitions (frontmatter + trusted body), capability→tool mapping, cron scheduling, `STATUS:` report protocol
 - `automations/` — operator-authored scheduled tasks (e.g. the hourly stale-import handler)
-- `src/tools/` — run context (evidence/budgets), GET-only read tools, typed mutation tools, anvil, media probe
+- `src/tools/` — run context (evidence, counters), GET-only read tools, typed mutation tools, anvil, media probe
 - `src/services/` — HTTP helper + host-side Seerr client (comments, status)
 - `src/webhook/` — Seerr payload types + comment authorization gate
 - `src/discord/` — automation report threads + `/automation` trigger command (host-side only)

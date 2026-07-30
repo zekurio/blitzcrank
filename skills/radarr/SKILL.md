@@ -56,16 +56,16 @@ Use the read-only `radarr_request` with relative `/api/v3/...` paths; it accepts
 
 ## Allowed typed mutations
 
-Every call below requires a `reason`. Fetch the target IDs with `radarr_request` first, and inspect the returned `verification` field.
+Every call below requires a `reason`. Fetch the target IDs with `radarr_request` first, and inspect the returned `verification` field. There is no cap on non-destructive mutations: size the action to the verified problem, not to a quota.
 
 - Search one movie: call `radarr_search` with the verified `movieId`.
 - Refresh one movie: call `radarr_refresh_movie` with the verified `movieId`.
 - Retry a known queue item: call `radarr_grab_queue_item` with the verified `queueId`.
-- Remove a verified bad queue item: call `radarr_delete_queue_item` with the verified `queueId` and explicit `blocklist` and `removeFromClient` booleans. With `removeFromClient: true` the downloaded data is destroyed, so it consumes the deletion budget; with `removeFromClient: false` it consumes only the mutation budget.
+- Remove a verified bad queue item: call `radarr_delete_queue_item` with the verified `queueId` and explicit `blocklist` and `removeFromClient` booleans. With `removeFromClient: true` the downloaded data is destroyed and the call is recorded as a deletion; with `removeFromClient: false` nothing is destroyed.
 - Blocklist a release that is no longer in the queue: call `radarr_blocklist_from_history` with the verified `historyId` of its `grabbed` record, taken from `GET /api/v3/history?movieId={movieId}&...`. Radarr also starts its own replacement search in response, so do not add a `radarr_search` call afterwards. Verification returns the newest blocklist entries plus the queue; confirm the release is blocked and see what replaced it.
 - Remove only a clearly matching blocklist entry: call `radarr_remove_from_blocklist` with the verified `blocklistId`.
-- Delete one verified corrupt or otherwise unusable movie file: call `radarr_delete_movie_file` with the verified `movieFileId`. This consumes the deletion budget and removes the only copy of the movie from disk. The `movieFileId` must come from a Radarr read this run, such as `GET /api/v3/moviefile?movieId={movieId}`; the tool re-reads the movie file and verification must confirm HTTP 404.
-- Manually import verified candidates: call `radarr_manual_import` with `importMode: "auto"` and candidate objects returned by `GET /api/v3/manualimport?folder={folder}&downloadId={downloadId}`, trimmed to `path`, `folderName`, `movieId`, `quality`, `languages`, `releaseGroup`, and `indexerFlags` when present. Every file path and ID submitted must have appeared in a Radarr read this run. The tool consumes the mutation budget and verifies the resulting command status.
+- Delete one verified corrupt or otherwise unusable movie file: call `radarr_delete_movie_file` with the verified `movieFileId`. This removes the only copy of the movie from disk. The `movieFileId` must come from a Radarr read on this issue, such as `GET /api/v3/moviefile?movieId={movieId}`; the tool re-reads the movie file and verification must confirm HTTP 404.
+- Manually import verified candidates: call `radarr_manual_import` with `importMode: "auto"` and candidate objects returned by `GET /api/v3/manualimport?folder={folder}&downloadId={downloadId}`, trimmed to `path`, `folderName`, `movieId`, `quality`, `languages`, `releaseGroup`, and `indexerFlags` when present. Every file path and ID submitted must have appeared in a Radarr read on this issue. The tool verifies the resulting command status.
 
 No generic force-import tool is exposed. Do not remove, blocklist, retry, search, refresh, manually import, or delete a movie file during an exact active Anvil wait.
 
@@ -88,7 +88,7 @@ Then repair in this order, which matters and costs two mutations:
 1. Read the history and identify the `grabbed` record the bad file was imported from.
 2. Call `radarr_delete_movie_file` and check that its `verification` reports HTTP 404. Do this first: while a file of the same quality is still in place, a replacement is not an upgrade and will not be grabbed.
 3. Call `radarr_blocklist_from_history` with that grab's `historyId`. This excludes the bad release _and_ makes Radarr search for a replacement itself, so do not call `radarr_search` on top — that is how one movie ends up with two competing grabs.
-4. Read the queue and confirm the new grab is a _different_ release than the one you blocklisted. If it is not, stop and report; do not spend the rest of the budget going round the same loop.
+4. Read the queue and confirm the new grab is a _different_ release than the one you blocklisted. If it is not, stop and report; repeating the same loop is not progress, however much room is left.
 
 Never search before blocklisting. A release that scored highest once scores highest again, so a bare `radarr_search` re-grabs the exact file you set out to remove — and if the run ends there it gets re-imported, leaving the issue looking repaired while nothing changed.
 

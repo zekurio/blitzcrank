@@ -65,9 +65,14 @@ export class AutomationRunner {
   ) {}
 
   async run(def: AutomationDefinition): Promise<AutomationReport> {
+    // Automations keep a mutation ceiling that issue runs no longer have:
+    // nobody asked for this run, it repeats on a schedule, and the operator
+    // picked the number per task in the definition's frontmatter.
     const ctx = new RunContext({
-      maxMutations: def.mutationBudget,
-      maxDeletes: def.deletionBudget,
+      limits: {
+        maxMutations: def.mutationBudget,
+        maxDeletes: def.deletionBudget,
+      },
     })
     const sessionFileRef: SessionFileRef = { current: undefined }
 
@@ -90,6 +95,9 @@ export class AutomationRunner {
       tools,
       prompt: def.body,
       sessionDir: path.join(this.config.dataDir, "sessions", "automations"),
+      // Automations never resume: each tick is a fresh sweep of current state,
+      // and carrying last hour's conclusions into it would be a liability.
+      resumeFile: undefined,
       sessionFileRef,
       logPrefix: `automation:${def.name}`,
     })
