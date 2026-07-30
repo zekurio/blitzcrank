@@ -26,17 +26,20 @@ function automationCommand(names: string[]): SlashCommandBuilder {
     sub
       .setName("run")
       .setDescription("Queue an automation run now")
-      .addStringOption((opt) =>
+      .addStringOption((opt) => {
         opt
           .setName("name")
           .setDescription("Automation to run")
           .setRequired(true)
-          .addChoices(
-            ...names
-              .slice(0, MAX_CHOICES)
-              .map((name) => ({ name, value: name })),
-          ),
-      ),
+        // Discord's option choices must be non-empty when present: an
+        // empty `choices: []` is a different (and broken) thing from no
+        // choices at all. With nothing checked in yet, fall back to a
+        // free-text option instead of attaching zero choices.
+        if (names.length === 0) return opt
+        return opt.addChoices(
+          ...names.slice(0, MAX_CHOICES).map((name) => ({ name, value: name })),
+        )
+      }),
   )
   return command
 }
