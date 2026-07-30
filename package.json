@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Agentic webhook gateway for the Seerr/Arr/Jellyfin homelab stack, built on the pi SDK",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",

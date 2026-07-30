@@ -44,6 +44,7 @@ stdenv.mkDerivation (finalAttrs: {
 
   meta = {
     description = "Agentic webhook gateway for the Seerr/Arr/Jellyfin homelab stack";
+    license = lib.licenses.mit;
     mainProgram = "blitzcrank";
     platforms = lib.platforms.linux;
   };
