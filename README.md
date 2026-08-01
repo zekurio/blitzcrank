@@ -144,7 +144,22 @@ the bot's own comments never trigger runs.
 `automations/*.md` are operator-authored tasks: frontmatter declares the cron
 schedule, the capabilities that map to mutation tools, and optional
 `mutation_budget`/`deletion_budget`; the body is the trusted instruction text.
-Runs are triggered by cron, `POST /automations/:name/run`, or Discord, and one
+They normally use `BLITZCRANK_MODEL`, but an automation can select its own
+authenticated model with `model: provider/model[:thinking]`, for example:
+
+```yaml
+---
+name: hourly-stale-import-handler
+schedule: "0 * * * *"
+model: openai-codex/gpt-5.6-terra:high
+capabilities:
+  - sonarr.queue_rejection_cleanup
+---
+```
+
+The model changes only that automation's fresh agent turn; it does not expand
+its service access, capabilities, budgets, or evidence gates. Runs are
+triggered by cron, `POST /automations/:name/run`, or Discord, and one
 automation never runs twice concurrently (a busy name is refused with `409`).
 
 Discord monitoring is optional and off unless `DISCORD_BOT_TOKEN` is set (then

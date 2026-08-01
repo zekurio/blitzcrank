@@ -46,6 +46,10 @@ export interface CaseRun {
   deletes: number
   /** `RunUsage.newTokens`: input + cache writes + output, no cache reads. */
   tokens: number
+  /** Undefined on runs recorded before split usage was introduced. */
+  inputTokens?: number
+  /** Undefined on runs recorded before split usage was introduced. */
+  outputTokens?: number
   commented: boolean
   resolved: boolean
 }
@@ -92,7 +96,17 @@ export interface CaseFile {
    * cannot be inspected after the fact, and it is shown to the next run.
    * Written by the host from `RunContext.counts`, never by the agent.
    */
-  spend: { runs: number; tokens: number; deletes: number }
+  spend: {
+    runs: number
+    tokens: number
+    /** Undefined on a legacy case whose historical usage cannot be split. */
+    inputTokens: number | undefined
+    /** Undefined on a legacy case whose historical usage cannot be split. */
+    outputTokens: number | undefined
+    /** Cumulative API-priced USD; undefined for legacy cases. */
+    costUsd: number | undefined
+    deletes: number
+  }
   revisit: PendingRevisit | undefined
 }
 
@@ -113,7 +127,14 @@ export function emptyCase(issueId: string): CaseFile {
     lastAnswer: undefined,
     sessionFile: undefined,
     runs: [],
-    spend: { runs: 0, tokens: 0, deletes: 0 },
+    spend: {
+      runs: 0,
+      tokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      costUsd: 0,
+      deletes: 0,
+    },
     revisit: undefined,
   }
 }
@@ -219,7 +240,23 @@ export class CaseStore {
       lastAnswer: clampEntry(parsed.lastAnswer),
       sessionFile:
         typeof parsed.sessionFile === "string" ? parsed.sessionFile : undefined,
-      spend: { ...empty.spend, ...parsed.spend },
+      spend: {
+        ...empty.spend,
+        ...parsed.spend,
+        // Do not pretend a legacy combined total was all input or all output.
+        inputTokens:
+          typeof parsed.spend?.inputTokens === "number"
+            ? parsed.spend.inputTokens
+            : undefined,
+        outputTokens:
+          typeof parsed.spend?.outputTokens === "number"
+            ? parsed.spend.outputTokens
+            : undefined,
+        costUsd:
+          typeof parsed.spend?.costUsd === "number"
+            ? parsed.spend.costUsd
+            : undefined,
+      },
       runs: Array.isArray(parsed.runs) ? parsed.runs.slice(-MAX_RUNS) : [],
     }
   }

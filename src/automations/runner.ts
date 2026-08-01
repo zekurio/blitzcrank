@@ -75,6 +75,7 @@ export class AutomationRunner {
       },
     })
     const sessionFileRef: SessionFileRef = { current: undefined }
+    const modelSpec = def.model ?? this.modelSpec
 
     const allowedMutations = capabilityTools(def.capabilities)
     const tools = buildServiceTools(this.config, ctx, sessionFileRef).filter(
@@ -90,7 +91,7 @@ export class AutomationRunner {
 
     const turn = await runAgentTurn({
       modelRuntime: this.modelRuntime,
-      modelSpec: this.modelSpec,
+      modelSpec,
       systemPrompt: buildAutomationSystemPrompt(this.config, def),
       tools,
       prompt: def.body,
@@ -113,7 +114,7 @@ export class AutomationRunner {
     log(
       `[automation:${def.name}] status=${report.status} mutations=${report.mutations} ` +
         `deletes=${report.deletes} tokens=${report.tokens} ` +
-        `billed=${turn.usage.billedTokens}` +
+        `billed=${turn.usage.billedTokens} model=${modelSpec}` +
         `${report.malformed ? " (malformed output)" : ""}${report.empty ? " (no report)" : ""}` +
         `${report.body ? `\n${report.body}` : ""}`,
     )
