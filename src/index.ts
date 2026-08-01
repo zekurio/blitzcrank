@@ -36,14 +36,19 @@ const SHUTDOWN_GRACE_MS = 30_000
 
 async function main(): Promise<void> {
   const config = loadConfig()
-  const modelSpec = config.model ?? DEFAULT_MODEL
+  const issueModelSpec = config.model ?? DEFAULT_MODEL
+  const automationModelSpec = config.automationModel ?? issueModelSpec
   const modelRuntime = await ModelRuntime.create({
     ...(config.authPath ? { authPath: config.authPath } : {}),
     ...(config.modelsPath ? { modelsPath: config.modelsPath } : {}),
   })
 
-  const issueRunner = new IssueRunner(config, modelRuntime, modelSpec)
-  const automationRunner = new AutomationRunner(config, modelRuntime, modelSpec)
+  const issueRunner = new IssueRunner(config, modelRuntime, issueModelSpec)
+  const automationRunner = new AutomationRunner(
+    config,
+    modelRuntime,
+    automationModelSpec,
+  )
   const automations = await loadAutomations(config.automationsDir)
 
   const queue = new SerialQueue()
@@ -171,7 +176,8 @@ async function main(): Promise<void> {
     const enabled = services.filter((s) => config[s])
     console.log(`blitzcrank listening on :${info.port}`)
     console.log(`  webhook: POST /webhook/seerr`)
-    console.log(`  model: ${modelSpec}`)
+    console.log(`  issue model: ${issueModelSpec}`)
+    console.log(`  automation model: ${automationModelSpec}`)
     console.log(
       `  services: seerr${enabled.length ? ", " + enabled.join(", ") : ""}`,
     )

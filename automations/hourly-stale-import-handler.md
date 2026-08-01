@@ -3,7 +3,7 @@ name: hourly-stale-import-handler
 description: Find Sonarr/Radarr queue entries where a download is complete but not imported, import only clearly safe manual-import candidates, requeue stalled Anvil encodes that block an import, remove only clearly rejected stale downloads without blocklisting, treat healthy Anvil encoding as a temporary wait, and report actions and manual-review blockers.
 schedule: "@hourly"
 enabled: true
-model: openai-codex/gpt-5.6-terra:high
+model: openai-codex/gpt-5.6-luna:max
 capabilities:
   - sonarr.manual_import
   - radarr.manual_import
@@ -148,9 +148,9 @@ Write a concise German operations note.
   - `Entfernt:`
   - `Manuell prüfen:`
 - Suppress empty sections completely.
-- Return an empty response when nothing was performed and there are no blockers.
+- Return no report body when nothing was performed and there are no blockers.
 - Bullets must be human-readable and include the service, title, season/episode or year, release/folder/file when useful, practical reason, and validation outcome for actions.
-- Every manual-review bullet must end with a searchable `MANUAL_INTERVENTION_REQUIRED` marker line identifying the service and exact known queue/download/release details.
+- After every manual-review bullet, emit a separate line beginning with `MANUAL_INTERVENTION_REQUIRED` and identifying the service and exact known queue/download/release details. This is internal transcript metadata that the host removes from the human-facing report, so the bullet must make sense without it.
 
 Example:
 
@@ -168,4 +168,5 @@ Entfernt:
 
 Manuell prüfen:
 
-- Sonarr: Example Show S01E03 wurde nicht importiert oder entfernt, weil der Queue-Eintrag und der manuelle Kandidat nicht sicher demselben Download zugeordnet werden konnten. MANUAL_INTERVENTION_REQUIRED Sonarr Example Show S01E03 queue=<id> download=<id> release=<name>
+- Sonarr: Example Show S01E03 wurde nicht importiert oder entfernt, weil der Queue-Eintrag und der manuelle Kandidat nicht sicher demselben Download zugeordnet werden konnten.
+  MANUAL_INTERVENTION_REQUIRED Sonarr Example Show S01E03 queue=<id> download=<id> release=<name>

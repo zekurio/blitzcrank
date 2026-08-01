@@ -31,6 +31,7 @@ const config: Config = {
   automationsDir: "automations",
   webhookSecret: undefined,
   model: undefined,
+  automationModel: undefined,
   authPath: undefined,
   modelsPath: undefined,
   firecrawl: { apiKey: "key", apiUrl: "https://api.firecrawl.dev" },

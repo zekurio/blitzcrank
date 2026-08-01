@@ -39,9 +39,7 @@ export function parseModelSpec(spec: string): ParsedModelSpec {
   const thinkingLevel = suffix ? (suffix[2] as ThinkingLevel) : "medium"
   const slash = base.indexOf("/")
   if (slash === -1) {
-    throw new Error(
-      `BLITZCRANK_MODEL must be "provider/model[:thinking]", got "${spec}"`,
-    )
+    throw new Error(`model must be "provider/model[:thinking]", got "${spec}"`)
   }
   return {
     provider: base.slice(0, slash),
