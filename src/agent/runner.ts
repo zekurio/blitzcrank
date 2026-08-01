@@ -131,6 +131,18 @@ export class IssueRunner {
     casefile.spend = {
       runs: casefile.spend.runs + 1,
       tokens: casefile.spend.tokens + turn.usage.newTokens,
+      inputTokens:
+        casefile.spend.inputTokens === undefined
+          ? undefined
+          : casefile.spend.inputTokens + turn.usage.inputTokens,
+      outputTokens:
+        casefile.spend.outputTokens === undefined
+          ? undefined
+          : casefile.spend.outputTokens + turn.usage.outputTokens,
+      costUsd:
+        casefile.spend.costUsd === undefined
+          ? undefined
+          : casefile.spend.costUsd + (turn.usage.costUsd ?? 0),
       deletes: casefile.spend.deletes + deletes,
     }
     // Recorded before the directive block is even parsed: a run that mutated
@@ -153,7 +165,15 @@ export class IssueRunner {
       issueId,
       status,
       comment
-        ? `${comment}\n\n${usageAnchor(this.modelSpec, casefile.spend.tokens)}`
+        ? `${comment}\n\n${usageAnchor(
+            this.modelSpec,
+            casefile.spend.tokens,
+            casefile.spend.inputTokens,
+            casefile.spend.outputTokens,
+            turn.usage.costUsd === undefined
+              ? undefined
+              : casefile.spend.costUsd,
+          )}`
         : undefined,
     )
 
@@ -172,6 +192,8 @@ export class IssueRunner {
       mutations,
       deletes,
       tokens: turn.usage.newTokens,
+      inputTokens: turn.usage.inputTokens,
+      outputTokens: turn.usage.outputTokens,
       commented: comment !== undefined && comment.length > 0,
       resolved: directives.resolve,
     })
@@ -192,8 +214,10 @@ export class IssueRunner {
 
     console.log(
       `[issue:${issueId}] done resolve=${directives.resolve} revisit=${plan.revisit?.delayMs ?? "-"} ` +
-        `mutations=${mutations} deletes=${deletes} tokens=${turn.usage.newTokens} ` +
-        `billed=${turn.usage.billedTokens} ` +
+        `mutations=${mutations} deletes=${deletes} ` +
+        `tokens=${turn.usage.newTokens} input=${turn.usage.inputTokens} ` +
+        `output=${turn.usage.outputTokens} billed=${turn.usage.billedTokens} ` +
+        `cost=${turn.usage.costUsd ?? "subscription"} ` +
         `issueTotal=${casefile.spend.tokens} runs=${casefile.spend.runs}`,
     )
     return { issueId, directives, casefile }

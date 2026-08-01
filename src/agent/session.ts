@@ -57,17 +57,16 @@ export function modelAnchor(spec: string): string {
 }
 
 export interface RunUsage {
-  /**
-   * Tokens this run added to the conversation: prompt input, cache writes and
-   * output. Cache *reads* are excluded on purpose. Every turn re-reads the
-   * whole prefix, so summing `totalTokens` across turns counts the same
-   * context once per turn and grows with the square of the turn count: a
-   * 19-turn run measured 829k that way, of which 738k was one context read
-   * nineteen times. This is the number a human can act on.
-   */
+  /** Prompt input plus cache writes; cache reads are excluded. */
+  inputTokens: number
+  /** Model output, including reasoning. */
+  outputTokens: number
+  /** `inputTokens + outputTokens`, retained for aggregate reporting. */
   newTokens: number
   /** Sum of per-turn `totalTokens`, cache reads included: volume, not work. */
   billedTokens: number
+  /** API-price estimate in USD; undefined when authenticated through OAuth. */
+  costUsd: number | undefined
 }
 
 function formatTokens(count: number): string {
@@ -76,18 +75,30 @@ function formatTokens(count: number): string {
   return String(count)
 }
 
+function formatCost(costUsd: number): string {
+  return `$${costUsd.toFixed(costUsd < 0.01 ? 4 : 2)}`
+}
+
 /**
- * Anchor plus usage, e.g. "[blitzcrank w/ gpt-5.2-codex:high · 132.4k tokens]".
+ * Anchor plus cumulative issue usage, e.g.
+ * "[blitzcrank w/ gpt-5.2-codex:high · 118.2k in · 14.2k out]".
  *
- * The count is everything the issue has cost so far, not this run alone: a run
- * leaves exactly one comment and each comment replaces the last one, so a
- * per-run number would silently understate an issue that took four runs.
- *
- * It counts `newTokens`, not billed volume. The reporter reads this figure as
- * "how much work was this", and cache reads answer a different question.
+ * Cache reads are excluded. Legacy case files only have a combined count, so
+ * they keep the old honest total rather than mislabeling historical tokens.
  */
-export function usageAnchor(spec: string, issueTokens: number): string {
-  return `${modelAnchor(spec).slice(0, -1)} · ${formatTokens(issueTokens)} tokens]`
+export function usageAnchor(
+  spec: string,
+  issueTokens: number,
+  inputTokens: number | undefined,
+  outputTokens: number | undefined,
+  costUsd: number | undefined,
+): string {
+  const prefix = modelAnchor(spec).slice(0, -1)
+  const cost = costUsd === undefined ? "" : ` · ${formatCost(costUsd)}`
+  if (inputTokens === undefined || outputTokens === undefined) {
+    return `${prefix} · ${formatTokens(issueTokens)} tokens${cost}]`
+  }
+  return `${prefix} · ${formatTokens(inputTokens)} in · ${formatTokens(outputTokens)} out${cost}]`
 }
 
 /** Repo root (contains skills/): two levels up from dist/agent/. */
@@ -216,7 +227,19 @@ export async function runAgentTurn(
   // Usage is accumulated as assistant messages complete, not summed from
   // `session.messages` afterwards: auto-compaction replaces that array with a
   // summary plus the recent tail, so the longest runs would under-report most.
-  const usage: RunUsage = { newTokens: 0, billedTokens: 0 }
+  const auth = await opts.modelRuntime.checkAuth(
+    parseModelSpec(opts.modelSpec).provider,
+  )
+  const usage: RunUsage = {
+    inputTokens: 0,
+    outputTokens: 0,
+    newTokens: 0,
+    billedTokens: 0,
+    // OAuth covers subscription-style authentication. If auth cannot be
+    // classified, omit dollars rather than present a potentially fictional
+    // list-price estimate as money actually spent.
+    costUsd: auth?.type === "api_key" ? 0 : undefined,
+  }
   // Captured from the event stream rather than read back off `session.messages`
   // afterwards. On a resumed session that array opens already populated, so a
   // `findLast` for an assistant message can return one from a *previous* run
@@ -241,8 +264,11 @@ export async function runAgentTurn(
       final = event.message
       const turn = event.message.usage
       // `reasoning` is already part of `output`; adding it would double-count.
+      usage.inputTokens += turn.input + turn.cacheWrite
+      usage.outputTokens += turn.output
       usage.newTokens += turn.input + turn.cacheWrite + turn.output
       usage.billedTokens += turn.totalTokens
+      if (usage.costUsd !== undefined) usage.costUsd += turn.cost.total
     }
   })
 

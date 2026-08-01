@@ -3,11 +3,15 @@ import path from "node:path"
 
 import { parse } from "yaml"
 
+import { parseModelSpec } from "../agent/session.js"
+
 export interface AutomationDefinition {
   name: string
   description: string
   schedule: string
   enabled: boolean
+  /** Optional model override; absent uses the deployment-wide model. */
+  model: string | undefined
   capabilities: string[]
   /**
    * Optional per-run ceilings. Absent means unlimited, as for issue runs: an
@@ -54,6 +58,11 @@ export const CAPABILITY_TOOLS: Record<string, string[]> = {
   "sabnzbd.job_deletion": ["sabnzbd_delete_job"],
   "jellyfin.refresh": ["jellyfin_refresh_item"],
   "seerr.request_creation": ["seerr_create_request"],
+  // Requeuing a stalled encode is how an Anvil-blocked import gets unblocked
+  // without touching the Arr queue entry at all. It reached automations before
+  // this entry existed, via the `anvil_` prefix in `isReadTool`; the mapping is
+  // what makes it a declared capability rather than an ambient one.
+  "anvil.job_retry": ["anvil_retry_job"],
 }
 
 export function capabilityTools(capabilities: string[]): string[] {
@@ -97,12 +106,31 @@ function parseDefinition(filePath: string, raw: string): AutomationDefinition {
     description: String(meta.description ?? ""),
     schedule,
     enabled: meta.enabled !== false,
+    model: modelSpec(filePath, meta.model),
     capabilities,
     mutationBudget: budget(filePath, "mutation_budget", meta.mutation_budget),
     deletionBudget: budget(filePath, "deletion_budget", meta.deletion_budget),
     body,
     filePath,
   }
+}
+
+/** An optional per-automation model override in the shared model-spec syntax. */
+function modelSpec(filePath: string, value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined
+  if (typeof value !== "string") {
+    throw new Error(
+      `${filePath}: model must be "provider/model[:thinking]", got ${JSON.stringify(value)}`,
+    )
+  }
+  try {
+    parseModelSpec(value)
+  } catch {
+    throw new Error(
+      `${filePath}: model must be "provider/model[:thinking]", got ${JSON.stringify(value)}`,
+    )
+  }
+  return value
 }
 
 /** An optional frontmatter ceiling; a present-but-nonsensical value is fatal. */

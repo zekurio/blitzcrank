@@ -129,7 +129,12 @@ behavioural difference described.
 - Automations (`automations/*.md`) are trusted operator instructions, but their
   runs get only the mutation tools mapped from their declared `capabilities`
   (`src/automations/definitions.ts`), the always-on read tools, and any budgets
-  the frontmatter declares.
+  the frontmatter declares. "Always-on read tools" means exactly `isReadTool`
+  (`src/tools/index.ts`), which the capability allowlist is added to — so a
+  mutation matching that predicate is granted to every automation, gate-free.
+  That happened: its `anvil_` prefix kept matching after `anvil_retry_job`
+  landed. Anvil reads are enumerated there now, and a new mutation tool must
+  never be matched by it.
 
 ## Branch Names
 

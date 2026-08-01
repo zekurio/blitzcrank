@@ -52,11 +52,30 @@ export function buildServiceTools(
   return tools
 }
 
-/** True for tools that cannot change service state. */
+/** The Anvil surface minus `anvil_retry_job`, enumerated deliberately. */
+const ANVIL_READS = new Set([
+  "anvil_status",
+  "anvil_job_list",
+  "anvil_job_show",
+  "anvil_job_lookup",
+])
+
+/**
+ * True for tools that cannot change service state. Automations register these
+ * unconditionally and subtract everything else from their declared
+ * capabilities, so this predicate is exactly as tight as that allowlist.
+ *
+ * The Anvil reads are listed one by one rather than matched on the `anvil_`
+ * prefix. That prefix predated `anvil_retry_job` and went on matching after it
+ * landed, which handed every automation a requeue tool none of them had
+ * declared, outside any capability mapping. An enumeration fails in the safe
+ * direction: a new read tool is withheld until someone lists it here, where a
+ * new mutation tool used to be granted silently.
+ */
 export function isReadTool(name: string): boolean {
   return (
     name.endsWith("_request") ||
-    name.startsWith("anvil_") ||
+    ANVIL_READS.has(name) ||
     name === "media_probe" ||
     name === "thread_history_search"
   )
