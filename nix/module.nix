@@ -45,12 +45,24 @@ in
     model = lib.mkOption {
       type = lib.types.str;
       default = "anthropic/claude-sonnet-4-5";
-      example = "openai-codex/gpt-5.2-codex";
+      example = "openai-codex/gpt-5.2-codex:high";
       description = ''
-        Model as provider/model. API-key providers (anthropic, openai, ...)
-        authenticate via environment variables from {option}`environmentFile`.
-        OAuth providers (openai-codex, ...) authenticate via the auth file,
-        see {option}`authFile`.
+        Model for issue runs as provider/model with an optional thinking suffix.
+        API-key providers (anthropic, openai, ...) authenticate via environment
+        variables from {option}`environmentFile`. OAuth providers
+        (openai-codex, ...) authenticate via the auth file, see
+        {option}`authFile`.
+      '';
+    };
+
+    automationModel = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "openai-codex/gpt-5.6-terra:high";
+      description = ''
+        Default model for automation runs as provider/model with an optional
+        thinking suffix. Null inherits {option}`model`. An automation may
+        override this default with `model` in its YAML frontmatter.
       '';
     };
 
@@ -173,6 +185,9 @@ in
         BLITZCRANK_DATA_DIR = stateDir;
         BLITZCRANK_AUTOMATIONS_DIR = cfg.automationsDir;
         BLITZCRANK_AUTH_PATH = cfg.authFile;
+      }
+      // lib.optionalAttrs (cfg.automationModel != null) {
+        BLITZCRANK_AUTOMATION_MODEL = cfg.automationModel;
       }
       // lib.optionalAttrs (cfg.mediaRoots != [ ]) {
         BLITZCRANK_MEDIA_ROOTS = lib.concatStringsSep ":" cfg.mediaRoots;

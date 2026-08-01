@@ -10,7 +10,7 @@ export interface AutomationDefinition {
   description: string
   schedule: string
   enabled: boolean
-  /** Optional model override; absent uses the deployment-wide model. */
+  /** Optional model override; absent uses the default automation model. */
   model: string | undefined
   capabilities: string[]
   /**

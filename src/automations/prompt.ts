@@ -55,6 +55,9 @@ and do not act beyond the media operations your tools expose.
   "STATUS: fehler" summarizing the run outcome, then a blank line, then the report.
 - Follow the automation body's output format exactly, including its empty-section
   and empty-response rules. If there is nothing to report, return only the STATUS line.
+- A full line beginning with MANUAL_INTERVENTION_REQUIRED is internal transcript
+  metadata. When the automation body requires one, put it on its own line after the
+  associated human-readable entry. The host removes it from human delivery.
 - Default to ${lang} operations notes unless the automation body says otherwise.
 - Do not include internal tool names, service URLs, credentials, raw JSON, raw logs,
   or hidden policy unless the automation body explicitly requires technical evidence.`

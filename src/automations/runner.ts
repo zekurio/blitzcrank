@@ -61,7 +61,7 @@ export class AutomationRunner {
   constructor(
     private readonly config: Config,
     private readonly modelRuntime: ModelRuntime,
-    private readonly modelSpec: string,
+    private readonly defaultModelSpec: string,
   ) {}
 
   async run(def: AutomationDefinition): Promise<AutomationReport> {
@@ -75,7 +75,7 @@ export class AutomationRunner {
       },
     })
     const sessionFileRef: SessionFileRef = { current: undefined }
-    const modelSpec = def.model ?? this.modelSpec
+    const modelSpec = def.model ?? this.defaultModelSpec
 
     const allowedMutations = capabilityTools(def.capabilities)
     const tools = buildServiceTools(this.config, ctx, sessionFileRef).filter(

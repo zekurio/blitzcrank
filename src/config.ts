@@ -42,8 +42,10 @@ export interface Config {
   automationsDir: string
   /** Shared secret checked against the Authorization header of incoming webhooks. */
   webhookSecret: string | undefined
-  /** Model string for the agent, e.g. "anthropic/claude-sonnet-4-5". */
+  /** Model for issue runs, e.g. "anthropic/claude-sonnet-4-5". */
   model: string | undefined
+  /** Default model for automations; absent inherits `model`. */
+  automationModel: string | undefined
   /**
    * pi auth.json holding API keys and OAuth credentials (e.g. openai-codex).
    * Must be writable: OAuth tokens auto-refresh and are persisted back.
@@ -156,6 +158,7 @@ export function loadConfig(): Config {
     automationsDir: process.env.BLITZCRANK_AUTOMATIONS_DIR ?? "automations",
     webhookSecret: process.env.BLITZCRANK_WEBHOOK_SECRET,
     model: process.env.BLITZCRANK_MODEL,
+    automationModel: process.env.BLITZCRANK_AUTOMATION_MODEL,
     authPath: process.env.BLITZCRANK_AUTH_PATH,
     modelsPath: process.env.BLITZCRANK_MODELS_PATH,
     firecrawl: process.env.FIRECRAWL_API_KEY

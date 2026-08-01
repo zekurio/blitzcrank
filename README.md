@@ -85,6 +85,7 @@ Then import and configure the module:
   services.blitzcrank = {
     enable = true;
     model = "openai-codex/gpt-5.2-codex";
+    automationModel = "openai-codex/gpt-5.6-terra:high"; # optional
     environmentFile = "/run/secrets/blitzcrank.env"; # SEERR_*, SONARR_*, ...
     authSeedFile = "/run/secrets/pi_auth_json";      # optional, OAuth providers
     settings.SEERR_BOT_USERNAME = "blitzcrank";
@@ -112,10 +113,13 @@ each one. `SEERR_URL`/`SEERR_API_KEY` are required. Sonarr, Radarr, SABnzbd,
 Jellyfin, Anvil, Firecrawl, media probing, and Discord are optional — their
 tools are registered only when configured.
 
-`BLITZCRANK_MODEL` is `provider/model[:thinking]` (default
-`anthropic/claude-sonnet-4-5:medium`). Authentication follows pi's resolution
-order: API-key providers read the usual env vars (`ANTHROPIC_API_KEY`,
-`OPENAI_API_KEY`, …), OAuth/subscription providers read a pi `auth.json` —
+`BLITZCRANK_MODEL` selects the issue-run model as
+`provider/model[:thinking]` (default
+`anthropic/claude-sonnet-4-5:medium`). `BLITZCRANK_AUTOMATION_MODEL` selects the
+default for automation runs and inherits `BLITZCRANK_MODEL` when unset.
+Authentication follows pi's resolution order: API-key providers read the usual
+env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …), OAuth/subscription
+providers read a pi `auth.json` —
 bootstrap it once with `pi` → `/login`, then point `BLITZCRANK_AUTH_PATH` at
 the file (default `~/.pi/agent/auth.json`) and keep it writable. Custom
 providers can be declared in a `models.json` via `BLITZCRANK_MODELS_PATH`.
@@ -144,8 +148,9 @@ the bot's own comments never trigger runs.
 `automations/*.md` are operator-authored tasks: frontmatter declares the cron
 schedule, the capabilities that map to mutation tools, and optional
 `mutation_budget`/`deletion_budget`; the body is the trusted instruction text.
-They normally use `BLITZCRANK_MODEL`, but an automation can select its own
-authenticated model with `model: provider/model[:thinking]`, for example:
+They normally use `BLITZCRANK_AUTOMATION_MODEL` (which falls back to
+`BLITZCRANK_MODEL`), but an automation can select its own authenticated model
+with `model: provider/model[:thinking]`, for example:
 
 ```yaml
 ---
@@ -164,8 +169,9 @@ automation never runs twice concurrently (a busy name is refused with `409`).
 
 Discord monitoring is optional and off unless `DISCORD_BOT_TOKEN` is set (then
 `DISCORD_GUILD_ID` and `DISCORD_WATCH_CHANNEL_ID` are required). Each run posts
-its `STATUS:` report — including "nothing to do" runs, as a heartbeat — into a
-private `automation: <name>` thread in the watch channel. `/automation list`
+its formatted report — including "nothing to do" runs, as a heartbeat — into a
+private `automation: <name>` thread in the watch channel. Internal status and
+history markers are removed before delivery. `/automation list`
 shows schedules and next runs, `/automation run name:<x>` queues one.
 
 Invite the bot with the `bot` and `applications.commands` scopes and grant it
