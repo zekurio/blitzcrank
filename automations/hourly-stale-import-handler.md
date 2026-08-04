@@ -3,7 +3,7 @@ name: hourly-stale-import-handler
 description: Find Sonarr/Radarr queue entries where a download is complete but not imported, import only clearly safe manual-import candidates, requeue stalled Anvil encodes that block an import, remove only clearly rejected stale downloads without blocklisting, treat healthy Anvil encoding as a temporary wait, and report actions and manual-review blockers.
 schedule: "@hourly"
 enabled: true
-model: openrouter/deepseek/deepseek-v4-flash
+model: openrouter/~deepseek/deepseek-v4-flash-latest
 capabilities:
   - sonarr.manual_import
   - radarr.manual_import
@@ -12,161 +12,93 @@ capabilities:
   - anvil.job_retry
 ---
 
-Run the hourly stale import handler.
+Run the hourly stale-import sweep. This runbook is self-contained; do not load the general service skills unless an API response raises a question this runbook does not answer.
 
-## Goal
+## Initial reads
 
-Find Sonarr/Radarr queue entries where a download is complete but not imported, typically because a worse-scored release downloaded before a better-scored one and now sits ignored on disk, or because the Anvil encode that owns the file stopped making progress. Import only clearly safe manual-import candidates. Requeue stalled Anvil jobs that block an import. Remove only clearly rejected stale downloads from Arr and the download client, never blocklisting the release. Treat healthy Anvil encoding between SABnzbd and Arr as a normal temporary wait. Report actions from this run and all current manual-review blockers.
+1. Search related automation history with `thread_history_search`. History is a clue only; validate it against live state.
+2. Read both queues:
+   - `sonarr_request`: `/api/v3/queue?page=1&pageSize=100&includeUnknownSeriesItems=true`
+   - `radarr_request`: `/api/v3/queue?page=1&pageSize=100&includeUnknownMovieItems=true`
+3. Read `anvil_status` for control-plane context only. It never proves an item is encoding.
+4. Take one `anvil_job_list` snapshot for `pending`, `leased`, `running`, `validating`, `replacing`, and `retrying`; reuse it for all candidates. Absence is meaningful only when `truncated: false`, there is no `output_complete: false`, and there is no blitzcrank truncation marker.
+5. Inspect only completed queue items whose import is blocked, delayed, failed, unknown, or still waiting. If none exist, return only `STATUS: ok`.
 
-## Required first checks
+Use an explicit `purpose` on every read. Read SABnzbd only when downloader confirmation is needed, and only through queue/history. Do not load broad skills or fetch unrelated service state pre-emptively.
 
-1. Use `thread_history_search` for related stale-import records, preferably with `source: "automations"`. Treat prior transcripts as clues only; live Arr evidence is authoritative.
-2. Use `sonarr_request` with an explicit purpose and GET path `/api/v3/queue?page=1&pageSize=100&includeUnknownSeriesItems=true`.
-3. Use `radarr_request` with an explicit purpose and GET path `/api/v3/queue?page=1&pageSize=100&includeUnknownMovieItems=true`.
-4. Use `anvil_status` with an explicit purpose. This is control-plane context only and never proves that a queue item is encoding.
-5. Use one `anvil_job_list` call with `states` set to `pending`, `leased`, `running`, `validating`, `replacing`, and `retrying`. Reuse this active-job snapshot for all candidates. It can establish that no matching job is active in that snapshot only with `truncated: false`, no `output_complete: false`, and no blitzcrank truncation marker.
-6. Consider only completed/stale candidates whose import is blocked, delayed, failed, unknown, or still waiting despite a completed download.
+## Inspect each candidate
 
-## Candidate inspection
+Read manual-import candidates when possible:
 
-- When available, inspect manual-import candidates with a GET read:
-  - Sonarr: `sonarr_request` path `/api/v3/manualimport?folder={folder}&downloadId={downloadId}`.
-  - Radarr: `radarr_request` path `/api/v3/manualimport?folder={folder}&downloadId={downloadId}`.
-- Inspect all candidate rejections before deciding, even when a candidate initially looks safe.
-- Read SABnzbd only when downloader confirmation is needed. `sabnzbd_request` may use only `/api?mode=queue` or `/api?mode=history&limit=N`.
-- Correlate Anvil per item:
-  1. Prefer the exact absolute `outputPath` from the Arr queue entry.
-  2. Otherwise, match the Arr `downloadId` to the SABnzbd `nzo_id`, then use that SABnzbd entry's exact absolute storage path.
-  3. Call `anvil_job_lookup` only with that exact `absolute_path` and an explicit purpose.
-  4. Never construct a path from a title, release name, basename, or substring.
-  5. Skip Anvil correlation when no exact path is available.
+- Sonarr: `/api/v3/manualimport?folder={folder}&downloadId={downloadId}`
+- Radarr: `/api/v3/manualimport?folder={folder}&downloadId={downloadId}`
 
-## Anvil wait rules
+Inspect every candidate rejection. Correlate Anvil only from an exact absolute Arr `outputPath`, or by matching Arr `downloadId` to SABnzbd `nzo_id` and using that entry's exact absolute storage path. Never construct a path from a title, release, basename, or substring. Call `anvil_job_lookup` only with that exact path.
 
-An item is an Anvil wait only when **both** conditions hold:
+A unique job is unambiguous. Multiple jobs are one package only when they share library path, source path, and source generation. Cross-source matches or `truncated: true` are ambiguous.
 
-1. Exact-path lookup returns active current jobs: pending, leased, running, validating, replacing, or actively retrying. A single job may be correlated. Multiple jobs may be correlated as one package only when they have the same library path, source path, and source generation. Cross-source multiple matches are ambiguous. A result with `truncated: true` is also ambiguous.
-2. Arr/manual-import evidence is only file-not-ready style: no importable files, missing or unavailable path, locked or in-use file, changing size, waiting or delayed import, or access/permission-like failures while Anvil owns the path.
+### Classify Anvil state
 
-Apply these rules exactly:
+An item is an **Anvil wait** only when unambiguous exact-path evidence shows an active current job and Arr shows only file-not-ready evidence: no importable file, unavailable/locked/changing path, delayed import, or access-like failure while Anvil owns it.
 
-- Compare lease and heartbeat timestamps with Anvil `server_time`. An expired lease in leased, running, validating, or replacing is not healthy waiting and cannot be passed to `anvil_retry_job`. Anvil normally recovers it to pending when attempts remain, failed at the attempt limit, or skipped when its source/asset occurrence is no longer current and active; re-read shortly. If the expired lease persists, or a job remains retrying, report it under `Manuell prüfen:` as an operator recovery problem.
-- Complete jobs are not an Anvil wait; continue normal validation.
-- Failed jobs are a requeue candidate under the Anvil recovery rules below. Skipped jobs are concrete blockers: inspect `last_error` because a skip may be a no-work decision or a source/asset occurrence that changed or is no longer current. Report them under `Manuell prüfen:`.
-- Zero exact-path matches are `UNKNOWN`, not proof that the item has no Anvil job. Cross-check the required active `anvil_job_list` snapshot by exact source, asset, destination, and destination-directory paths. A complete snapshot with no corresponding active job establishes only that the item is not an Anvil wait at that moment; an incomplete snapshot disqualifies import, cleanup, and requeue and requires manual review.
-- If no exact path exists, or a zero lookup and complete active snapshot concern an item completed less than 24 hours ago, give it a conservative generic grace period and perform no mutation. Do not call this an Anvil wait.
-- If there is no reliable age evidence, require manual review.
-- For Anvil waits, perform no Arr, SABnzbd, or Seerr mutations, and no Seerr activity. The only action an Anvil-owned item may receive is a requeue under the recovery rules below. Do not list healthy Anvil waits under `Manuell prüfen:`.
-- If all blockers are healthy Anvil waits and no action was taken, return no report body (while still following the required `STATUS` protocol).
-- An exact active job older than 24 hours whose lease and heartbeat are still current but which shows no credible progress, or ambiguous/unavailable correlation on an old item, must be reported under `Manuell prüfen:` and must never be auto-deleted or requeued. A live worker is holding that job, and named retry rejects active work.
+- Active: `pending`, `leased`, `running`, `validating`, `replacing`, `retrying`.
+- `complete`: not a wait; continue normal Arr validation.
+- `failed`: consider the retry rules below.
+- `skipped` or `canceled`: inspect `last_error` and report for manual review; never retry it.
+- Expired lease in `leased`, `running`, `validating`, or `replacing`: re-read shortly. If it persists, or `retrying` persists, report operator recovery under `Manuell prüfen:`; never retry it.
+- An exact active job older than 24 hours with current heartbeats but no credible progress requires manual review; never delete or retry work held by a live worker.
 
-## Anvil recovery rules
+A zero exact-path lookup is `UNKNOWN`, not proof of absence. Cross-check the complete active snapshot by exact source, asset, destination, and destination-directory paths. A complete snapshot with no match proves only that the item is not waiting at that moment. An incomplete snapshot disqualifies import, cleanup, and retry.
 
-A stale import is often an encode that failed: Anvil owned the path, Arr sees a file it cannot import, and nothing changes until the job runs again. Requeue such a terminal failed job instead of only reporting it — but the interrupted encode restarts even though reusable analysis checkpoints or a journaled publish may resume, so it needs the same certainty a deletion needs.
+With no exact path, or with zero lookup plus a complete snapshot, give items younger than 24 hours a generic grace period. Do not mutate or call them Anvil waits. Missing reliable age evidence requires manual review. Old ambiguous/unavailable correlation also requires manual review.
 
-Requeue with `anvil_retry_job` only when **all** of these are true:
+For a healthy Anvil wait, perform no Arr or SABnzbd mutation. Do not list it under manual review. If all candidates are healthy waits and nothing changed, return only the STATUS line.
 
-- Correlation was exact-path and unambiguous, by the same rules as an Anvil wait: a single job, or several jobs sharing library path, source path, and source generation. Cross-source matches and any result with `truncated: true` are ambiguous and disqualify the item.
-- The job id or slug comes verbatim from this run's `anvil_job_lookup`, `anvil_job_list`, or `anvil_job_show` output. Never construct one.
-- You read that job's compact diagnostic history with `anvil_job_show` first. It must have no `output_complete: false` marker and report `failed`, with a recorded attempt error a fresh run could plausibly clear — transient I/O, a recovered lost lease, or a worker that died mid-encode.
-- The blocked Arr evidence is file-not-ready style, exactly as in the wait rules above.
-- The job has not already been requeued in this run.
+### Retry one failed Anvil job
 
-For an approved requeue:
+Call `anvil_retry_job` only when all are true:
 
-- Call `anvil_retry_job` with that exact job id or slug, and a `reason` naming both the job and the Arr target it blocks.
-- Treat the tool's built-in verification as immediate evidence, then independently re-read with `anvil_job_show`. Pending, leased, running, validating, replacing, or complete confirms forward progress; retrying or a new terminal failure means the retry did not recover cleanly and must be reported under `Manuell prüfen:`.
-- Perform no further mutation for this item during this run, even if verification already reaches complete. Active forward states remain an Anvil wait; complete requires normal Arr validation on a later run.
-- Report it under `Neu eingereiht:`.
+- correlation is exact and unambiguous;
+- the id/slug appeared verbatim in an Anvil read this run;
+- `anvil_job_show` is complete and reports `failed` with a plausibly transient attempt error such as recovered I/O or a worker dying mid-encode;
+- Arr has only the file-not-ready evidence defined above;
+- history does not show this automation already retried the same job before it failed again;
+- the job was not retried this run.
 
-Never requeue when:
+Never retry active, `retrying`, `skipped`, `complete`, ambiguous, or unavailable jobs; profile/codec/stream-selection failures; repeated identical errors; missing tools/disks/sources; or jobs with incomplete diagnostic output.
 
-- The job is active, including an active job with an expired lease. Pending, leased, running, validating, and replacing are rejected by retry; `retrying` is already recovery in progress. Persistent stale recovery is operator-only.
-- The job is `skipped`. Inspect `last_error`; whether it records a no-work decision or an occurrence that changed/became inactive, this automation must not retry it.
-- The job is `complete`. A completed encode that still blocks an import is a different problem — continue normal validation.
-- The recorded error is a profile, codec, or stream-selection failure, or the same error appears on several attempts. A fresh run reproduces it; report under `Manuell prüfen:`.
-- `thread_history_search` shows this automation already requeued the same job on an earlier run and it failed again. One retry is a stalled worker; two is a real fault. Report it under `Manuell prüfen:`.
-- Correlation is ambiguous or unavailable, whatever the item's age.
+For an approved retry, name both job and Arr target in `reason`, inspect built-in verification, then re-read with `anvil_job_show`. A forward state (`pending`, `leased`, `running`, `validating`, `replacing`, `complete`) validates the action. `retrying` or a new terminal failure requires manual review. Report the action under `Neu eingereiht:` and perform no other mutation for that item this run.
 
-## Safe import rules
+## Import or cleanup
 
-Import only when **all** of these are true:
+### Safe manual import
 
-- The candidate resolves to the exact queued episode or movie.
-- Its file path and `downloadId` belong to the queued completed download.
-- Quality, language, and custom-format data are acceptable.
-- The item is not an Anvil wait.
-- There is no substantive rejection, including wrong target, sample, missing path, permissions, duplicate/existing-file conflict, unwanted language, low score, or profile cutoff.
+Import only when the candidate resolves exactly to the queued episode/movie; path and `downloadId` belong to that completed download; quality, language, and custom-format data are acceptable; correlation is complete; the item is not an Anvil wait; and there is no substantive rejection (wrong target, sample, unavailable path, permissions, duplicate, unwanted language, low score, or cutoff).
 
-For an approved import:
+Pass only fields returned by the manual-import read:
 
-- Use the candidate object from the manual-import GET response, trimmed to only the applicable fields: `path`, `folderName`, `seriesId`, `episodeIds`, `movieId`, `quality`, `languages`, `releaseGroup`, and `indexerFlags`.
-- For Sonarr, call `sonarr_manual_import` with `importMode: "move"`.
-- For Radarr, call `radarr_manual_import` with `importMode: "auto"`.
-- Set `reason` to a concise explanation naming the exact target being imported.
-- Treat the mutation tool's built-in verification as immediate evidence, then independently re-read the relevant Arr queue with the same queue GET used in the first checks. Confirm that the item disappeared or no longer reports the stale blocker.
+- Sonarr: `path`, `folderName`, `seriesId`, `episodeIds`, `quality`, `languages`, `releaseGroup`, `indexerFlags`; use `sonarr_manual_import` with `importMode: "move"`.
+- Radarr: `path`, `folderName`, `movieId`, `quality`, `languages`, `releaseGroup`, `indexerFlags`; use `radarr_manual_import` with `importMode: "auto"`.
 
-## Rejection cleanup rules
+Use a target-specific `reason`, inspect built-in verification, then re-read the relevant queue and confirm the stale blocker disappeared. Report under `Importiert:`.
 
-Remove a stale rejected download only when **all** of these are true:
+### Rejected-download cleanup
 
-- The candidate resolves to the exact queued target, or is clearly the wrong candidate for that target.
-- Its path and `downloadId` belong to the queued download.
-- Explicit rejection or candidate data makes it clearly not useful.
-- The item is not an Anvil wait, and was not requeued this run.
-- There is no ambiguity about which Arr queue item and download-client job will be removed.
+Remove only when the queued target, path, `downloadId`, Arr queue item, and downloader job are unambiguous; explicit rejection/candidate data proves this download is not useful; correlation is complete; and the item is neither an Anvil wait nor retried this run.
 
-For an approved cleanup:
+Use the current queue's exact `queueId` with `sonarr_delete_queue_item` or `radarr_delete_queue_item`, always `blocklist: false` and `removeFromClient: true`. Inspect verification, re-read the queue, and confirm removal. Report under `Entfernt:`.
 
-- Use the exact `queueId` established by the current queue read.
-- For Sonarr, call `sonarr_delete_queue_item` with `blocklist: false` and `removeFromClient: true`.
-- For Radarr, call `radarr_delete_queue_item` with `blocklist: false` and `removeFromClient: true`.
-- Set `reason` to a concise explanation naming the exact queue target being removed.
-- Treat the mutation tool's built-in verification as immediate evidence, then independently re-read the relevant Arr queue with the same queue GET used in the first checks. Confirm that the item disappeared.
+Never blocklist: evidence that one download instance is stale is not a verdict on its release. If history shows this automation already removed the same release for the same target and it returned, require manual review instead of deleting it again.
 
-Never blocklist from this automation. `blocklist` is always `false`. What this run establishes is that _this download instance_ is stale — it landed after a better-scored release, or Arr rejected this particular candidate. That is not a finding about the release itself, which may be perfectly good and, for a scarce title, may be the only copy anyone can get. A blocklist entry is permanent, unattended, and invisible at the point where a later search quietly returns nothing.
+## Hard limits
 
-Because nothing is blocklisted, Arr may grab the same release again. That is the accepted trade, with one guard: if `thread_history_search` shows this automation already removed the same release for the same target on an earlier run and it is stale again, do not remove it a second time. Report it under `Manuell prüfen:` — a repeat grab is a profile, scoring, or indexer problem, and deleting it every hour hides that instead of fixing it.
-
-## Do not do these
-
-- Do not mutate unsafe or ambiguous items.
-- Do not import uncertain matches.
-- Do not force-import candidates with substantive rejections.
-- Do not blocklist anything, and do not remove existing blocklist entries.
-- Do not trigger Arr searches, SABnzbd retries, or refreshes. The only retry this automation may perform is an Anvil requeue under the recovery rules.
-- Do not requeue an Anvil job to work around a rejection that has nothing to do with encoding.
-- Do not re-inspect or mutate unchanged prior manual-intervention items beyond confirming that they are still present.
+- Act on every safely covered item, not a sample; report ambiguous items.
+- Do not force imports, trigger Arr searches/refreshes, retry SABnzbd, alter blocklists, touch Seerr issues, or work around a rejected mutation.
+- Do not re-inspect or mutate unchanged prior manual-review items beyond confirming they remain present.
+- A mutation's `reason` must identify the exact verified target. Check every built-in verification and perform the fresh read required above.
 
 ## Output
 
-Write a concise German operations note.
+Write a concise German operations note. Start with exactly one of `STATUS: ok`, `STATUS: warnung`, or `STATUS: fehler`, followed by a blank line and the report. If there are no actions or blockers, return only the STATUS line.
 
-- Use only these sections, and only when they contain concrete entries:
-  - `Importiert:`
-  - `Neu eingereiht:`
-  - `Entfernt:`
-  - `Manuell prüfen:`
-- Suppress empty sections completely.
-- Return no report body when nothing was performed and there are no blockers.
-- Bullets must be human-readable and include the service, title, season/episode or year, release/folder/file when useful, practical reason, and validation outcome for actions.
-- After every manual-review bullet, emit a separate line beginning with `MANUAL_INTERVENTION_REQUIRED` and identifying the service and exact known queue/download/release details. This is internal transcript metadata that the host removes from the human-facing report, so the bullet must make sense without it.
-
-Example:
-
-Importiert:
-
-- Sonarr: Example Show S01E02 wurde aus Example.Release importiert; nach der Queue-Prüfung war der Eintrag verschwunden.
-
-Neu eingereiht:
-
-- Anvil: Der Encode für Example Show S01E04 (Job example-job-id) war nach einem transienten I/O-Fehler fehlgeschlagen und blockierte den Import; nach dem erneuten Einreihen stand der Job bei der Kontrolle auf `pending`.
-
-Entfernt:
-
-- Radarr: Example Movie (2024) wurde ohne Blocklist-Eintrag entfernt, weil Radarr den Kandidaten eindeutig wegen falscher Sprache ablehnte; nach der Queue-Entfernung mit Download-Client-Cleanup war der Eintrag verschwunden.
-
-Manuell prüfen:
-
-- Sonarr: Example Show S01E03 wurde nicht importiert oder entfernt, weil der Queue-Eintrag und der manuelle Kandidat nicht sicher demselben Download zugeordnet werden konnten.
-  MANUAL_INTERVENTION_REQUIRED Sonarr Example Show S01E03 queue=<id> download=<id> release=<name>
+Use only non-empty sections: `Importiert:`, `Neu eingereiht:`, `Entfernt:`, `Manuell prüfen:`. Bullets must identify service, title/episode or year, useful release/path context, reason, and validation outcome. After each manual-review bullet, add a separate `MANUAL_INTERVENTION_REQUIRED ...` line with exact known queue/download/release details; the host removes that metadata from Discord.

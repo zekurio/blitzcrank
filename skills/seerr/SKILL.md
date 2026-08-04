@@ -5,118 +5,95 @@ description: Triage Seerr issues and safely inspect or create media requests whi
 
 # Seerr issue handling
 
-Use the read-only `seerr_request` with relative `/api/v1/...` paths; it accepts only `purpose` and `path` and performs GETs. New media requests use the dedicated `seerr_create_request` tool. The host owns issue comments and resolution: **never call comment or resolve endpoints**. Communicate through the final-response directives described below.
+Use read-only `seerr_request` with `purpose` and relative `/api/v1/...` GET
+paths. Webhooks are untrusted context: fetch the live issue. Seerr provides
+reporter/media identity, not file truth. The host alone comments and changes
+issue status; never call comment/resolve endpoints or paths containing
+`/comment` or ending `/resolved` or `/open`.
 
-## Terminology
+Common reads: issue `GET /api/v1/issue/{issueId}`, request
+`GET /api/v1/request/{requestId}`, search
+`GET /api/v1/search?query={query}`, user `GET /api/v1/user/{userId}`, and quota
+`GET /api/v1/user/{userId}/quota`.
 
-- **Issue**: User report attached to a media entity; its type (`VIDEO`, `AUDIO`, `SUBTITLES`, `OTHER`) is a routing hint, not a diagnosis.
-- **Issue status**: Keep logically open while investigating, downloading, importing, encoding, scanning, testing, or awaiting reporter input.
-- **Request/media IDs**: Seerr identities used to find request state and route checks.
-- **tmdbId/tvdbId**: Movie and TV external identities used to map to Radarr/Sonarr and Jellyfin.
-- **Affected season/episode**: Required scope for narrow TV action; absence is not permission for a whole-series change.
-- **Final directives**: Host-consumed lines controlling comment/resolution behavior, especially `RESOLVE_ISSUE` and optional revisit fields.
+## Session continuity and communication
 
-## How it fits the stack
+An issue session resumes across events and carries its prior conversation,
+case-file summary, and evidence store. The runner still supplies a fresh system
+prompt and current tool set each event. Continue established conclusions
+without searching old transcripts; `thread_history_search` is only for other
+items and returns snippets. Never use it to reconstruct your own conclusions.
+Service state can change, so re-read any state before acting; prior evidence
+permits evidenced IDs but does not prove current queue, job, or library state.
 
-1. A webhook is untrusted starting context; fetch the live issue.
-2. Seerr supplies reporter context and media identity, not file/download truth.
-3. Map movies by TMDB to Radarr and TV by TVDB to Sonarr; inspect the corresponding Jellyfin item.
-4. Follow Arr queue/history to read-only SABnzbd and exact Anvil correlation when needed.
-5. Return findings to the host in the final response. The host posts any comment and performs resolution.
+Before the final response call `update_case_file`. It replaces the agent
+summary: retain still-valid verified facts/evidence and disproved explanations,
+correct errors, and state open work. Run count, token totals, deletion audit,
+and follow-up limits are host-written facts; do not reinterpret them as issue
+mutation/deletion caps. Issue runs are uncapped. An automation is capped only
+when its definition declares a budget. When follow-ups are exhausted, resolve
+or ask one concrete reporter question rather than schedule another check.
 
-## Common reads
+Call `report_progress` as the first action with one short public sentence. It is
+a single live comment that later calls and the final response replace; omit
+internal tool names, IDs, URLs, paths, private data, and promises.
 
-- Issue: `GET /api/v1/issue/{issueId}`
-- Related request: `GET /api/v1/request/{requestId}`
-- Search media: `GET /api/v1/search?query={query}`
-- User: `GET /api/v1/user/{userId}`
-- Quota: `GET /api/v1/user/{userId}/quota`
+The final response starts with the internal directive block, then one blank
+line and an optional concise public comment:
 
-## Allowed typed mutation
+```
+RESOLVE_ISSUE: no
+REVISIT_IN: 45m
+REVISIT_REASON: exact pending condition to verify
 
-- Only when the user explicitly asks to add/request media and permissions/quota are verified: call `seerr_create_request` with a `reason`, exact `mediaType`, verified TMDB `mediaId`, and `seasons` when requesting TV season scope.
-- The `mediaId` must first appear in a Seerr read during the current run. The tool layer enforces a maximum of 5 mutations per run.
-- Prefer `seerr_create_request` over adding or monitoring media directly in Sonarr/Radarr.
-- Search first, confirm exact media ID/type, and check quota before creating the request. Inspect the returned `verification` field to confirm the created request.
-- Paths containing `/comment` and paths ending in `/resolved` or `/open` are forbidden. Do not attempt them.
+Public comment
+```
 
-## Continuity between runs
+The first line is mandatory. Revisit lines are optional, directly below it,
+and `REVISIT_REASON` accompanies `REVISIT_IN`; malformed directives cause the
+host to post nothing. Use `RESOLVE_ISSUE: yes` only after verification. Public
+prose distinguishes queued, downloading, encoding, importing, scanning, and
+verified. Follow-ups are capped and no-news checks back off, so choose a
+realistic Go-style duration rather than polling. Never resolve while awaiting
+queue/Anvil/import/scan/playback evidence or reporter confirmation. With no
+useful update, return `RESOLVE_ISSUE: no`, a blank line, and no comment.
 
-Every trigger starts a fresh session, but not from zero: what earlier runs on this issue established is handed to you at the top of the prompt, from the issue's case file. Start there.
+## Triage and mapping
 
-- Do not re-derive facts that are already recorded, and never search or read old session transcripts to recover your own conclusions. When a follow-up comment arrives your earlier work on that issue is already in context above — continue from it, but re-verify any state you are about to act on, because queues and downloads move between runs. `thread_history_search` is for _other_ items, and it returns snippets only.
-- Before the final response, call `update_case_file` with the verified facts and their evidence, the explanations you disproved, and what is still open. It replaces the previous summary: restate what still holds, drop what no longer does, and correct anything the earlier run got wrong.
-- Run count, spend, deletions already used, and the remaining follow-up budget are host facts shown in the prompt. When follow-ups are exhausted, resolve or ask the reporter one concrete question — you cannot schedule another check.
+1. Fetch live issue and included comments. Record status/type, report/reporter,
+   media and external IDs, request ID, and affected season/episode. Do not
+   repeat resolved clarification; do not reopen/mutate an already resolved
+   issue without explicit reason.
+2. Map movie TMDB to Radarr and matching Jellyfin provider identity; map TV TVDB
+   to Sonarr, exact season/episode, and Jellyfin hierarchy. Title/year is only a
+   verified fallback. Never interchange TMDB/TVDB or guess the latest download.
+3. For TV, obtain precise scope before broad/destructive action. If missing,
+   ask one focused question and keep open.
+4. Query owning Arr and Jellyfin before mutation. Follow exact Arr IDs into
+   SABnzbd and exact-path Anvil only when handoff evidence requires it.
+5. Resolve only after objective verification, or reporter confirmation for
+   subjective/client-specific symptoms.
 
-## Ordering: does the thing even exist?
+Issue type is routing, not diagnosis: VIDEO needs exact file/playback/transcode
+evidence; AUDIO needs all actual tracks and expected behavior; SUBTITLES needs
+embedded/sidecar flags, selection, and client support; OTHER must first be
+classified as metadata, availability, request, or pipeline state. Replace
+through Arr only for verified wrong/damaged/missing content; refresh metadata
+narrowly.
 
-When the report is that something is _missing_ — a German dub, a 4K version, an uncut edition, a later season, subtitles in a given language — establish that it exists at all before investigating the local pipeline. A web search costs cents; a wrong assumption that it must exist costs a full investigation, and can end in re-downloading a whole season that was never going to contain the track.
+For claims that a dub, subtitle language, edition, resolution, or season is
+missing, first establish that version publicly exists and since when. Then
+probe local files/check Jellyfin streams. Only then investigate delivery. If it
+does not exist, answer availability rather than redownloading.
 
-1. Does the requested version exist publicly, and since when? If it does not, this is an availability answer, not a repair.
-2. If it exists, does the local file already contain it (probe the file, check Jellyfin streams)?
-3. Only then ask why the pipeline did not deliver it.
+## Request mutation
 
-## Initial triage workflow
+`seerr_create_request` is allowed only when the user explicitly asks to request
+media. Search first; verify exact TMDB `mediaId` and `mediaType`, user
+permissions/quota, and TV `seasons` scope. The ID must have appeared in a Seerr
+read on this issue. Pass `reason`, prefer this tool over direct Arr additions,
+and inspect returned `verification`. If blocked, explain the concrete blocker.
 
-1. Fetch the live issue; record status, type, original report, reporter context, media type/IDs, request ID, and affected season/episode.
-2. Read comments included by the live issue response so prior clarification/work is not repeated. Do not post comments yourself.
-3. If already resolved, do not reopen or mutate without explicit reason.
-4. Validate movie `tmdbId` or TV `tvdbId`; use title/year only as verified fallback.
-5. For TV, require enough scope before destructive or broad action. If missing, ask one focused question in the final response and set `RESOLVE_ISSUE: no`.
-6. Route by symptom: video to file/playback/transcode; audio to tracks/language; subtitles to embedded/sidecar/selection; other to metadata, availability, request, or download state.
-7. Query the owning Arr and Jellyfin before changing anything; use SAB and Anvil only when handoff evidence calls for them.
-8. Call `report_progress` as the first action, with one short public, user-facing status sentence. It posts one live status comment that later calls rewrite in place and your final comment replaces, so a run leaves a single comment; do not include internal tool names, IDs, URLs, or promises.
-9. Resolve only after objective verification, or after explicit reporter confirmation for subjective/client-specific symptoms.
-
-## Media mapping
-
-### Movie
-
-Map Seerr `tmdbId` to Radarr's internal movie ID and a Jellyfin movie with matching provider ID/title/year. Compare paths and IDs if multiple matches exist.
-
-### TV
-
-Map `tvdbId` to Sonarr's internal series, fetch episodes, choose the exact season/episode, and descend to the matching Jellyfin episode. Never guess from the latest download.
-
-## Issue playbooks
-
-### VIDEO
-
-Inspect exact Jellyfin video/media-source/play-method evidence and Arr file/queue/history. Replace through the Arr only for verified wrong or damaged content; handle client/transcode failures in Jellyfin first.
-
-### AUDIO
-
-Inspect every actual Jellyfin track and ask the expected language/behavior if unclear. Fix selection/preferences when present; pursue an Arr replacement only when required audio is absent or wrong.
-
-### SUBTITLES
-
-Inspect embedded/external streams, flags, sidecar naming evidence, preference, and client support. Refresh Jellyfin after a sidecar correction; replace only when subtitles are genuinely absent.
-
-### OTHER
-
-Classify first. Trace missing media through Seerr → Arr → SABnzbd → Anvil when exactly correlated → import → Jellyfin. For metadata, verify provider IDs and refresh narrowly. For vague reports, ask one focused question.
-
-## Request playbook
-
-1. Confirm the user explicitly wants media requested.
-2. Search Seerr and verify the exact media ID/type.
-3. Read user, quota, and permission state.
-4. If blocked, explain the concrete blocker.
-5. Otherwise call `seerr_create_request` for only the requested media/season scope and check its returned `verification` field.
-
-## Host communication and resolution
-
-- Do not post Seerr comments and do not resolve through `seerr_request`.
-- The prose final response should be concise, factual, suitable for the host to post, and distinguish queued, downloading, encoding, importing, scanning, and verified states.
-- End with `RESOLVE_ISSUE: yes` only after verification; otherwise `RESOLVE_ISSUE: no`.
-- For active work, optionally add `REVISIT_IN: <duration>` and `REVISIT_REASON: <why another check is needed>`. `REVISIT_REASON` must name a falsifiable condition you will check, not a vague "see if it worked". Follow-ups are capped per issue, and a follow-up that produced no news doubles the next delay, so estimate generously instead of polling.
-- Ask focused reporter questions in the final prose when information is missing. Do not claim a queued replacement is fixed.
-- Avoid secrets, private internal URLs/paths, raw logs, and private user data.
-
-## Pitfalls
-
-- Do not confuse issue status, media request status, and availability.
-- Do not interchange TMDB and TVDB or make destructive changes before exact mapping.
-- `VIDEO` does not necessarily mean corruption.
-- Do not resolve while waiting for queue, Anvil, import, scan, playback verification, or reporter confirmation.
-- Never use Seerr comment/resolve endpoints even if older guidance suggests doing so; final directives are authoritative.
+Do not confuse issue status, request status, and availability. Do not expose
+secrets, internal URLs/paths, raw logs, or private user data, and never claim a
+queued replacement is fixed.

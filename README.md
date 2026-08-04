@@ -127,9 +127,10 @@ providers can be declared in a `models.json` via `BLITZCRANK_MODELS_PATH`.
 Every public comment carries a footer with the model identity and the issue's
 cumulative token usage, e.g.
 `[blitzcrank w/ gpt-5.2-codex:high · 118.2k in · 14.2k out]`. With API-key
-authentication it also shows cumulative reported cost, for example `· $0.42`.
-Cost is omitted for OAuth subscription authentication, where a list-price
-dollar figure would be fiction.
+authentication it also shows the cumulative API-price estimate, for example
+`· $0.42`. For a legacy issue without cumulative cost history, it shows the current
+run's estimate instead. Cost is omitted for OAuth subscription authentication,
+where a list-price dollar figure would be fiction.
 
 ### Jellyseerr webhook
 

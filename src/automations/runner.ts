@@ -23,6 +23,8 @@ export interface AutomationReport {
   empty: boolean
   /** True when the output did not follow the STATUS protocol. */
   malformed: boolean
+  /** Successful read-only custom and builtin tool calls. */
+  reads: number
   mutations: number
   deletes: number
   /**
@@ -88,6 +90,11 @@ export class AutomationRunner {
         )
       }
     }
+    const readTools = new Set([
+      "read",
+      ...tools.filter((tool) => isReadTool(tool.name)).map((tool) => tool.name),
+    ])
+    const reads = { count: 0 }
 
     const turn = await runAgentTurn({
       modelRuntime: this.modelRuntime,
@@ -100,20 +107,24 @@ export class AutomationRunner {
       // and carrying last hour's conclusions into it would be a liability.
       resumeFile: undefined,
       sessionFileRef,
+      onToolExecutionEnd: (toolName, isError) => {
+        if (!isError && readTools.has(toolName)) reads.count += 1
+      },
       logPrefix: `automation:${def.name}`,
     })
 
     const report: AutomationReport = {
       name: def.name,
       ...parseAutomationOutput(turn.text),
+      reads: reads.count,
       mutations: ctx.counts.mutations,
       deletes: ctx.counts.deletes,
       tokens: turn.usage.newTokens,
     }
     const log = report.status === "fehler" ? console.error : console.log
     log(
-      `[automation:${def.name}] status=${report.status} mutations=${report.mutations} ` +
-        `deletes=${report.deletes} tokens=${report.tokens} ` +
+      `[automation:${def.name}] status=${report.status} reads=${report.reads} ` +
+        `mutations=${report.mutations} deletes=${report.deletes} tokens=${report.tokens} ` +
         `billed=${turn.usage.billedTokens} model=${modelSpec}` +
         `${report.malformed ? " (malformed output)" : ""}${report.empty ? " (no report)" : ""}` +
         `${report.body ? `\n${report.body}` : ""}`,

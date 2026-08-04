@@ -5,93 +5,78 @@ description: Diagnose and safely remediate SABnzbd queue, history, download, rep
 
 # SABnzbd
 
-Use read-only `sabnzbd_request` with `purpose` and a relative `path`. It remains restricted to `GET /api?mode=queue` and `GET /api?mode=history`, with optional `limit`; Blitzcrank injects `apikey` and `output=json`, so never include credentials. State changes use only the dedicated typed SABnzbd tools below. Each mutation requires a `reason`, and its `nzo_id` must first appear in a queue or history read during the current run. The tool layer enforces a maximum of 5 mutations and 2 deletions per run; inspect every mutation result's `verification` field.
+`sabnzbd_request` is read-only and accepts `purpose` plus relative GET paths
+limited to `GET /api?mode=queue` and `GET /api?mode=history` (optional `limit`).
+Blitzcrank injects credentials and JSON output; never include credentials.
+Mutations use only typed tools, require `reason` and an `nzoId` previously read
+as `nzo_id` on this issue, and return `verification` that must be inspected.
+Issue runs are uncapped; an automation is capped only when its definition
+declares a budget.
 
-## Terminology
+SAB downloads, verifies, repairs, unpacks, and writes output. Completion does
+not prove Arr import or Jellyfin playback; Anvil may intervene. Arr owns release
+suitability, blocklisting, replacement, import, and rename, so prefer Arr-level
+remediation while it tracks the release.
 
-- **Job / download ID**: One NZB and its stable correlation key (`nzo_id`) used by Sonarr/Radarr.
-- **Queue / history**: Downloading or waiting jobs versus post-processing/completed/failed jobs.
-- **Verifying/repairing/extracting/moving**: CPU/disk-heavy stages that may legitimately take time.
-- **Completed**: SAB processing ended; Arr import and Jellyfin availability remain separate.
-- **Category/storage**: Routing and output path evidence used by Arr and, when exact, Anvil correlation.
+## Diagnose
 
-## How it fits the stack
+1. Read Arr queue/history for exact `downloadId`, title/release, and category.
+2. Read SAB queue/history (`GET /api?mode=history&limit=20` when enough) and
+   match Arr `downloadId` to SAB `nzo_id`; title matching is weaker.
+3. Record status, progress/ETA, age, priority, global/job pause, category,
+   `storage`, and errors. Distinguish queued/downloading/paused from
+   verify/repair/extract/move, complete, and failed. Compare repeated reads
+   before calling CPU/disk-heavy work stalled.
+4. Use API evidence—not claimed filesystem access—for server/articles,
+   schedules, limits, disk thresholds, permissions, and post-processing.
+5. Return to Arr to classify downloader, import, or release failure. Apply the
+   narrowest action and verify it. Never delete a job Arr still awaits unless
+   its Arr state is also handled.
 
-1. Sonarr/Radarr chooses media and submits an NZB.
-2. SAB downloads, verifies, repairs, unpacks, and writes completed output.
-3. Anvil may encode that output before Sonarr/Radarr can import it.
-4. The Arr owns release suitability, blocklisting, replacement search, import, and rename.
-5. Prefer remediation through the owning Arr when it still tracks the item; use typed SAB tools only for downloader-level problems.
+For file-language questions, exact completed `storage` can feed `media_probe`.
+If SAB is complete but Arr reports files not ready, use `anvil_job_lookup` only
+with exact `storage` correlated by download ID or exact Arr `outputPath`.
+`anvil_status`, title, names, or guessed paths cannot correlate an item.
 
-## Common reads
+## Typed mutations
 
-- Queue: `GET /api?mode=queue`
-- History: `GET /api?mode=history&limit=20`
-- Prefer narrow limits; fetch full queue/history only when necessary.
-- Use `anvil_status` for daemon health and `anvil_job_lookup` for exact item correlation when configured.
-- A completed job's exact `storage` path is what `media_probe` needs to inspect a download's real audio/subtitle tracks before import; see the `media-probe` skill.
+- `sabnzbd_retry_job`: retry failed history only after the cause is fixed and
+  the same payload remains appropriate; verify it entered queue.
+- `sabnzbd_delete_job`: specify verified `nzoId`, `from: "queue"|"history"`,
+  and explicit `deleteFiles`. `true` destructively deletes downloaded data and
+  records a deletion. Verify absence from the selected list.
+- `sabnzbd_pause_job` / `sabnzbd_resume_job`: affect one verified queue job;
+  verify queue state. Pause only for a concrete downloader reason and resume
+  only when owning Arr state remains consistent.
 
-## Diagnostic workflow
+No global pause/resume, priority, category, or arbitrary-history mutation is
+exposed. Downloader tools suit an accidentally paused job, a corrected retry,
+or an orphan no Arr tracks. Arr removal with blocklisting/client removal is
+preferred for tracked releases because it preserves release policy and cleans
+SAB consistently.
 
-1. Start with Sonarr/Radarr queue or history and capture exact download ID, title, release, and category.
-2. Search SAB queue and history, matching Arr `downloadId` to SAB `nzo_id` whenever possible; title/NZB matching is weaker.
-3. Record status, percentage, remaining time, age, priority, global/job pause evidence, category, `storage`, and failure message.
-4. Distinguish downloading, queued, paused, verifying, repairing, extracting, moving, completed, and failed.
-5. Compare repeated reads before calling slow work stalled. `report_progress` rewrites one status line, so use it for phase changes, not for a running download-percentage commentary.
-6. Use service evidence for server errors, missing articles, scheduling, limits, disk thresholds, permissions, and post-processing failures; do not claim direct filesystem inspection.
-7. Return to the Arr to see whether it recognized completion/failure and whether the issue is downloader-side, import-side, or release-side.
-8. If SAB is complete but Arr says files are not ready, call `anvil_job_lookup` only with exact SAB `storage` linked to the Arr download ID, or exact Arr `outputPath`. Health alone is not item evidence.
-9. Apply the smallest targeted action and inspect the returned `verification` field. Never delete a SAB job that an Arr is still waiting on unless the Arr side is also handled.
+## Safety decisions
 
-## Allowed typed mutations
+Respect intentional schedules/global pauses. Retry cannot repair missing
+articles or irreparable archives; identify PAR/CRC/password/archive,
+permission, or space evidence first. Preserve failed history until Arr can
+observe and blocklist it.
 
-Every call below requires a `reason`, and the `nzoId` must match an `nzo_id` fetched with `sabnzbd_request` this run.
+For complete-but-missing media, compare category/storage with Arr import/path
+mapping and Anvil; do not redownload a valid payload that is inaccessible or
+encoding. For duplicates/orphans, compare IDs, category, title, and submitter;
+never delete the copy Arr expects. Delete only a confirmed orphan from the
+correct list, with `deleteFiles: true` solely when data destruction is intended
+and justified.
 
-- Retry a failed history job: call `sabnzbd_retry_job` with the verified `nzoId`. The tool moves it back to the queue and verifies by reading the queue. Retry only after the failure's cause is fixed, such as disk space being freed.
-- Remove a job: call `sabnzbd_delete_job` with the verified `nzoId`, `from` set to `"queue"` or `"history"`, and explicit `deleteFiles`. With `deleteFiles: true`, downloaded data is also deleted and the call is recorded as a deletion. Verification re-reads the selected list.
-- Pause one queue job: call `sabnzbd_pause_job` with the verified `nzoId`; verification reads the queue.
-- Resume one queue job: call `sabnzbd_resume_job` with the verified `nzoId`; verification reads the queue.
+Only exact active Anvil-job evidence plus Arr file-not-ready evidence proves an
+Anvil wait. While waiting, do not force/manual import, remove, blocklist, retry,
+search, or refresh. Failed/skipped Anvil work is a blocker; complete still
+needs Arr/Jellyfin verification.
 
-No typed tools are exposed for global pause/resume, priority, category, or arbitrary history changes. Prefer Arr-level remediation whenever Sonarr or Radarr still tracks the item: deleting an Arr queue item with blocklisting and client removal also cleans up the SAB job and preserves release-level policy. Use SAB mutations for downloader-level problems such as a job paused by accident, a failed job worth retrying after its cause is fixed, or an orphaned job no Arr tracks.
-
-## Playbooks
-
-### Queued, paused, or apparently stalled
-
-Read global and job state, priority, scheduling, server/connection errors, limits, disk evidence, and progress over time. Respect intentional global pauses and schedule policy. If one queue job was paused by accident and the owning Arr remains consistent with resuming it, call `sabnzbd_resume_job` and check queue verification. Pause a single job only for a concrete downloader-level reason; no reprioritization tool is exposed.
-
-### Verification, repair, unpack, or post-processing failure
-
-Identify the exact stage and message. Distinguish measurable progress from failure. Report missing PAR blocks, CRC damage, password protection, unsupported archives, permissions, or space evidence. Prefer letting the Arr consume a release failure and choose another release. Retry with `sabnzbd_retry_job` only when the job is in failed history, the cause has been fixed, and retrying the same payload is appropriate; then check that queue verification finds it.
-
-### Completed but absent from library
-
-Record exact category and `storage`, then inspect Arr queue/history. A recognizable payload, path mapping, permissions, naming, category, Anvil encoding, and import status are separate questions. Do not recommend redownload when a valid payload is merely inaccessible or still encoding.
-
-### Failed job blocking replacement
-
-Preserve history evidence so the Arr can observe and blocklist the failure. Verify ID/category correlation and report whether automatic replacement occurred. If the Arr still tracks or is waiting on the job, handle removal through the Arr with the appropriate blocklist/client-removal policy. Use `sabnzbd_delete_job` only when the Arr side is also handled or no Arr tracks the job, and check verification against the correct queue or history list.
-
-### Duplicate or orphaned job
-
-Compare IDs, titles, categories, and submitting application, and identify which job the Arr tracks. Do not delete a duplicate that an Arr still expects. For a confirmed orphan that no Arr tracks, call `sabnzbd_delete_job` from the correct list; use `deleteFiles: true` only when deleting its downloaded data is intended and justified, then check verification.
-
-## Anvil rules
-
-A completed SAB item may still be encoding. Only exact active `anvil_job_lookup` evidence plus Arr file-not-ready evidence establishes a wait. For such a wait, do not trigger Arr manual/force import, removal, blocklisting, retry, search, or refresh. Failed/skipped Anvil work is a concrete blocker; complete still requires Arr/Jellyfin validation.
-
-## Verification and communication
-
-- Call `report_progress` as the first action, with one short public, user-facing status sentence; do not include internal tool names, IDs, URLs, or promises. It is one live status line: later calls rewrite it in place and your final comment replaces it.
-- Claim a SAB mutation only when the typed tool succeeds and its `verification` field confirms the expected state.
-- Completed download does not prove Arr import or Jellyfin playback.
-- Do not call Seerr comment/resolve APIs. Use final directives `RESOLVE_ISSUE: yes|no`, optionally `REVISIT_IN` and `REVISIT_REASON` for active work.
-
-## Pitfalls
-
-- Do not clear failed history before the Arr observes it.
-- Never delete a SAB job an Arr is still waiting on unless also handling the Arr side.
-- Do not confuse SAB history deletion with Arr blocklisting; prefer Arr queue deletion with blocklisting and client removal for tracked releases.
-- Retrying cannot fix missing articles or irreparable archives.
-- Filesystem space can differ across mounts, but no direct filesystem tool exists; report only API evidence.
-- Never infer an Anvil wait from daemon health, title, release name, or guessed path.
+Call `report_progress` first with one short public status line; updates rewrite
+it rather than narrating percentages. Claim mutation only after successful
+verification. Never call Seerr comment/resolve APIs. Use the required final directive block
+beginning with `RESOLVE_ISSUE: yes|no`; active work may add `REVISIT_IN` and a
+falsifiable `REVISIT_REASON`. Keep the issue open while downloading, repairing,
+encoding, importing, scanning, or awaiting verification.
