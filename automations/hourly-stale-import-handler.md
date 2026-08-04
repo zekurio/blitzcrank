@@ -24,7 +24,8 @@ Find Sonarr/Radarr queue entries where a download is complete but not imported, 
 2. Use `sonarr_request` with an explicit purpose and GET path `/api/v3/queue?page=1&pageSize=100&includeUnknownSeriesItems=true`.
 3. Use `radarr_request` with an explicit purpose and GET path `/api/v3/queue?page=1&pageSize=100&includeUnknownMovieItems=true`.
 4. Use `anvil_status` with an explicit purpose. This is control-plane context only and never proves that a queue item is encoding.
-5. Consider only completed/stale candidates whose import is blocked, delayed, failed, unknown, or still waiting despite a completed download.
+5. Use one `anvil_job_list` call with `states` set to `pending`, `leased`, `running`, `validating`, `replacing`, and `retrying`. Reuse this active-job snapshot for all candidates. It can establish that no matching job is active in that snapshot only with `truncated: false`, no `output_complete: false`, and no blitzcrank truncation marker.
+6. Consider only completed/stale candidates whose import is blocked, delayed, failed, unknown, or still waiting despite a completed download.
 
 ## Candidate inspection
 
@@ -49,40 +50,39 @@ An item is an Anvil wait only when **both** conditions hold:
 
 Apply these rules exactly:
 
-- Compare lease and heartbeat timestamps with Anvil `server_time`. An expired lease is not healthy waiting: it is a requeue candidate under the Anvil recovery rules below.
+- Compare lease and heartbeat timestamps with Anvil `server_time`. An expired lease in leased, running, validating, or replacing is not healthy waiting and cannot be passed to `anvil_retry_job`. Anvil normally recovers it to pending when attempts remain, failed at the attempt limit, or skipped when its source/asset occurrence is no longer current and active; re-read shortly. If the expired lease persists, or a job remains retrying, report it under `Manuell prüfen:` as an operator recovery problem.
 - Complete jobs are not an Anvil wait; continue normal validation.
-- Failed jobs are a requeue candidate under the Anvil recovery rules below. Skipped jobs are concrete blockers and must be reported under `Manuell prüfen:`.
-- Zero exact-path matches means the item is not an Anvil wait.
-- If no exact path exists, a completed item less than 24 hours past the SABnzbd completion time or Arr queue timestamp may receive a conservative generic grace period. Do not call this an Anvil wait.
+- Failed jobs are a requeue candidate under the Anvil recovery rules below. Skipped jobs are concrete blockers: inspect `last_error` because a skip may be a no-work decision or a source/asset occurrence that changed or is no longer current. Report them under `Manuell prüfen:`.
+- Zero exact-path matches are `UNKNOWN`, not proof that the item has no Anvil job. Cross-check the required active `anvil_job_list` snapshot by exact source, asset, destination, and destination-directory paths. A complete snapshot with no corresponding active job establishes only that the item is not an Anvil wait at that moment; an incomplete snapshot disqualifies import, cleanup, and requeue and requires manual review.
+- If no exact path exists, or a zero lookup and complete active snapshot concern an item completed less than 24 hours ago, give it a conservative generic grace period and perform no mutation. Do not call this an Anvil wait.
 - If there is no reliable age evidence, require manual review.
 - For Anvil waits, perform no Arr, SABnzbd, or Seerr mutations, and no Seerr activity. The only action an Anvil-owned item may receive is a requeue under the recovery rules below. Do not list healthy Anvil waits under `Manuell prüfen:`.
-- If all blockers are healthy Anvil waits and no action was taken, return an empty response.
-- An exact active job older than 24 hours whose lease and heartbeat are still current but which shows no credible progress, or ambiguous/unavailable correlation on an old item, must be reported under `Manuell prüfen:` and must never be auto-deleted or requeued. A live worker is holding that job, and requeuing discards the work it has already done.
+- If all blockers are healthy Anvil waits and no action was taken, return no report body (while still following the required `STATUS` protocol).
+- An exact active job older than 24 hours whose lease and heartbeat are still current but which shows no credible progress, or ambiguous/unavailable correlation on an old item, must be reported under `Manuell prüfen:` and must never be auto-deleted or requeued. A live worker is holding that job, and named retry rejects active work.
 
 ## Anvil recovery rules
 
-A stale import is often an encode that stopped: Anvil owns the path, Arr sees a file it cannot import, and nothing changes until the job runs again. Requeue such a job instead of only reporting it — but a requeue restarts the conversion from the start and cannot recover discarded work, so it needs the same certainty a deletion needs.
+A stale import is often an encode that failed: Anvil owned the path, Arr sees a file it cannot import, and nothing changes until the job runs again. Requeue such a terminal failed job instead of only reporting it — but the interrupted encode restarts even though reusable analysis checkpoints or a journaled publish may resume, so it needs the same certainty a deletion needs.
 
 Requeue with `anvil_retry_job` only when **all** of these are true:
 
 - Correlation was exact-path and unambiguous, by the same rules as an Anvil wait: a single job, or several jobs sharing library path, source path, and source generation. Cross-source matches and any result with `truncated: true` are ambiguous and disqualify the item.
 - The job id or slug comes verbatim from this run's `anvil_job_lookup`, `anvil_job_list`, or `anvil_job_show` output. Never construct one.
-- You read that job's full history with `anvil_job_show` first, and it reports either:
-  - `failed`, with a recorded attempt error a fresh run could plausibly clear — transient I/O, a lost lease, a worker that died mid-encode; or
-  - active with a lease expired against `server_time` and no heartbeat progress.
+- You read that job's compact diagnostic history with `anvil_job_show` first. It must have no `output_complete: false` marker and report `failed`, with a recorded attempt error a fresh run could plausibly clear — transient I/O, a recovered lost lease, or a worker that died mid-encode.
 - The blocked Arr evidence is file-not-ready style, exactly as in the wait rules above.
 - The job has not already been requeued in this run.
 
 For an approved requeue:
 
 - Call `anvil_retry_job` with that exact job id or slug, and a `reason` naming both the job and the Arr target it blocks.
-- Treat the tool's built-in verification as immediate evidence, then independently re-read with `anvil_job_show` and confirm the job is pending or running again.
-- The item stays an Anvil wait for the rest of this run: do not import it, remove it, or otherwise mutate its Arr queue entry.
+- Treat the tool's built-in verification as immediate evidence, then independently re-read with `anvil_job_show`. Pending, leased, running, validating, replacing, or complete confirms forward progress; retrying or a new terminal failure means the retry did not recover cleanly and must be reported under `Manuell prüfen:`.
+- Perform no further mutation for this item during this run, even if verification already reaches complete. Active forward states remain an Anvil wait; complete requires normal Arr validation on a later run.
 - Report it under `Neu eingereiht:`.
 
 Never requeue when:
 
-- The job is `skipped`. A skip is a recorded decision, not a fault; re-running it just repeats the decision.
+- The job is active, including an active job with an expired lease. Pending, leased, running, validating, and replacing are rejected by retry; `retrying` is already recovery in progress. Persistent stale recovery is operator-only.
+- The job is `skipped`. Inspect `last_error`; whether it records a no-work decision or an occurrence that changed/became inactive, this automation must not retry it.
 - The job is `complete`. A completed encode that still blocks an import is a different problem — continue normal validation.
 - The recorded error is a profile, codec, or stream-selection failure, or the same error appears on several attempts. A fresh run reproduces it; report under `Manuell prüfen:`.
 - `thread_history_search` shows this automation already requeued the same job on an earlier run and it failed again. One retry is a stalled worker; two is a real fault. Report it under `Manuell prüfen:`.
@@ -160,7 +160,7 @@ Importiert:
 
 Neu eingereiht:
 
-- Anvil: Der Encode für Example Show S01E04 (Job example-job-id) hatte ein abgelaufenes Lease ohne Fortschritt und blockierte den Import; nach dem erneuten Einreihen läuft der Job wieder.
+- Anvil: Der Encode für Example Show S01E04 (Job example-job-id) war nach einem transienten I/O-Fehler fehlgeschlagen und blockierte den Import; nach dem erneuten Einreihen stand der Job bei der Kontrolle auf `pending`.
 
 Entfernt:
 

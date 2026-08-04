@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process"
 
+const MAX_ERROR_DETAIL_CHARS = 8_000
+
 /** Carries the helper's exit status, which is part of anvilctl's contract. */
 export class ExecError extends Error {
   constructor(
@@ -23,6 +25,7 @@ export function execFileText(
   opts: {
     signal?: AbortSignal | undefined
     timeoutMs?: number | undefined
+    maxBufferBytes?: number | undefined
   } = {},
 ): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -32,11 +35,15 @@ export function execFileText(
       {
         ...(opts.signal ? { signal: opts.signal } : {}),
         timeout: opts.timeoutMs ?? 10_000,
-        maxBuffer: 1024 * 1024,
+        maxBuffer: opts.maxBufferBytes ?? 1024 * 1024,
       },
       (error, stdout, stderr) => {
         if (error) {
-          const detail = String(stderr || stdout || error.message).trim()
+          const rawDetail = String(stderr || stdout || error.message).trim()
+          const detail =
+            rawDetail.length <= MAX_ERROR_DETAIL_CHARS
+              ? rawDetail
+              : `... [omitted ${rawDetail.length - MAX_ERROR_DETAIL_CHARS} chars]\n${rawDetail.slice(-MAX_ERROR_DETAIL_CHARS)}`
           const status = (error as { code?: number | string }).code
           reject(
             new ExecError(
