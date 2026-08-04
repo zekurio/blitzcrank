@@ -12,13 +12,15 @@
  * For issue runs the evidence store is *carried across* the events of one
  * issue, matching the agent session that is likewise resumed: the gate exists
  * to stop fabricated IDs, and an ID that was real yesterday was not fabricated
- * today. Arr IDs are autoincrement and are not recycled, SAB `nzo_id`s are
- * random and Anvil job ids are UUIDs, so a stale ID resolves to the same
- * object or 404s — it cannot silently address a different one.
+ * today. Arr and Anvil numeric IDs are autoincrement and are not recycled, and
+ * SAB `nzo_id`s are stable opaque values, so a stale carried identity resolves
+ * to the same object or 404s. Reusable Anvil slugs are deliberately not carried.
  */
 
 const MAX_EVIDENCE_ENTRIES = 24
 const MAX_EVIDENCE_BODY_CHARS = 80_000
+const MAX_IDENTITIES = 2_048
+const MAX_PATHS = 2_048
 const MAX_PROBED_PATHS = 64
 
 export interface RunLimits {
@@ -56,15 +58,27 @@ export interface EvidenceEntry {
   body: string
 }
 
+/** A schema-extracted identity that cannot alias an unrelated JSON field. */
+export interface EvidenceIdentity {
+  service: string
+  value: string
+}
+
+interface RecordedPath {
+  service: string
+  value: string
+}
+
 /** Evidence carried between the runs of one issue. */
 export interface EvidenceSnapshot {
   evidence: EvidenceEntry[]
+  identities: EvidenceIdentity[]
   probed: string[]
 }
 
 export interface RunContextInit {
   limits?: RunLimits | undefined
-  /** Reads and probes recorded by earlier runs on the same issue. */
+  /** Reads, typed identities, and probes from earlier issue runs. */
   prior?: EvidenceSnapshot | undefined
 }
 
@@ -74,6 +88,9 @@ function escapeRegExp(value: string): string {
 
 export class RunContext {
   private readonly evidence: EvidenceEntry[]
+  private readonly identities: EvidenceIdentity[]
+  /** Paths are intentionally current-run only: filenames can be reused. */
+  private readonly paths: RecordedPath[]
   private readonly probed: string[]
   private readonly limits: RunLimits
   private mutations = 0
@@ -82,12 +99,18 @@ export class RunContext {
   constructor(init: RunContextInit = {}) {
     this.limits = init.limits ?? DEFAULT_LIMITS
     this.evidence = [...(init.prior?.evidence ?? [])]
+    this.identities = (init.prior?.identities ?? []).slice(-MAX_IDENTITIES)
+    this.paths = []
     this.probed = [...(init.prior?.probed ?? [])]
   }
 
   /** Everything worth carrying into the next run on this issue. */
   get snapshot(): EvidenceSnapshot {
-    return { evidence: [...this.evidence], probed: [...this.probed] }
+    return {
+      evidence: [...this.evidence],
+      identities: [...this.identities],
+      probed: [...this.probed],
+    }
   }
 
   recordRead(service: string, path: string, body: string): void {
@@ -99,6 +122,51 @@ export class RunContext {
     if (this.evidence.length > MAX_EVIDENCE_ENTRIES) {
       this.evidence.splice(0, this.evidence.length - MAX_EVIDENCE_ENTRIES)
     }
+  }
+
+  /** Records a typed identifier without letting unrelated JSON fields alias it. */
+  recordIdentity(service: string, value: string | number): void {
+    const identity = { service, value: String(value) }
+    if (
+      identity.value.length === 0 ||
+      this.identities.some(
+        (entry) =>
+          entry.service === identity.service && entry.value === identity.value,
+      )
+    ) {
+      return
+    }
+    this.identities.push(identity)
+    if (this.identities.length > MAX_IDENTITIES) {
+      this.identities.splice(0, this.identities.length - MAX_IDENTITIES)
+    }
+  }
+
+  sawIdentity(service: string, value: string | number): boolean {
+    const text = String(value)
+    return this.identities.some(
+      (identity) => identity.service === service && identity.value === text,
+    )
+  }
+
+  /** Records a schema-extracted absolute path, preserving its exact spelling. */
+  recordPath(service: string, value: string): void {
+    if (
+      value.length === 0 ||
+      this.paths.some(
+        (entry) => entry.service === service && entry.value === value,
+      )
+    ) {
+      return
+    }
+    this.paths.push({ service, value })
+    if (this.paths.length > MAX_PATHS) {
+      this.paths.splice(0, this.paths.length - MAX_PATHS)
+    }
+  }
+
+  sawRecordedPath(value: string): boolean {
+    return this.paths.some((path) => path.value === value)
   }
 
   sawValue(service: string, value: string | number): boolean {
@@ -157,6 +225,15 @@ export class RunContext {
     if (!this.sawValue(service, value)) {
       throw new Error(
         `evidence gate: ${hint} ${value} did not appear in any ${service} read on this issue; ` +
+          `fetch it first (do not guess IDs)`,
+      )
+    }
+  }
+
+  requireIdentity(service: string, value: string | number, hint: string): void {
+    if (!this.sawIdentity(service, value)) {
+      throw new Error(
+        `evidence gate: ${hint} ${value} was not returned as a ${service} identity on this issue; ` +
           `fetch it first (do not guess IDs)`,
       )
     }

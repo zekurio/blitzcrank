@@ -8,7 +8,7 @@ import {
 } from "node:fs/promises"
 import path from "node:path"
 
-import type { EvidenceSnapshot } from "./tools/context.js"
+import type { EvidenceIdentity, EvidenceSnapshot } from "./tools/context.js"
 
 /**
  * Per-issue case file: the durable, host-owned record of one issue.
@@ -278,8 +278,19 @@ export class CaseStore {
     try {
       const parsed = JSON.parse(raw) as Partial<EvidenceSnapshot>
       if (!Array.isArray(parsed.evidence)) return undefined
+      const identities = Array.isArray(parsed.identities)
+        ? parsed.identities.filter(
+            (entry): entry is EvidenceIdentity =>
+              entry !== null &&
+              typeof entry === "object" &&
+              typeof (entry as Partial<EvidenceIdentity>).service ===
+                "string" &&
+              typeof (entry as Partial<EvidenceIdentity>).value === "string",
+          )
+        : []
       return {
         evidence: parsed.evidence,
+        identities,
         probed: Array.isArray(parsed.probed) ? parsed.probed : [],
       }
     } catch {

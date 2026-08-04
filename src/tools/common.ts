@@ -1,3 +1,5 @@
+import path from "node:path"
+
 import {
   defineTool,
   type ToolDefinition,
@@ -32,6 +34,44 @@ export type ServiceName =
   // Not an HTTP service: anvil is reached through anvilctl, but its reads feed
   // the same evidence store, so its job ids gate its own mutations.
   | "anvil"
+
+const SERVICE_PATH_FIELDS: Partial<Record<ServiceName, ReadonlySet<string>>> = {
+  sonarr: new Set(["path", "outputPath"]),
+  radarr: new Set(["path", "outputPath"]),
+  sabnzbd: new Set(["storage"]),
+  jellyfin: new Set(["Path", "path"]),
+}
+
+/** Records only absolute strings from fields declared to carry service paths. */
+function recordResponsePaths(
+  ctx: RunContext,
+  service: ServiceName,
+  data: unknown,
+  fields: ReadonlySet<string> = SERVICE_PATH_FIELDS[service] ?? new Set(),
+): void {
+  const pending: unknown[] = [data]
+  const seen = new WeakSet<object>()
+  while (pending.length > 0) {
+    const value = pending.pop()
+    if (!value || typeof value !== "object" || seen.has(value)) continue
+    seen.add(value)
+    if (Array.isArray(value)) {
+      pending.push(...value)
+      continue
+    }
+    for (const [key, child] of Object.entries(value)) {
+      if (
+        fields.has(key) &&
+        typeof child === "string" &&
+        path.isAbsolute(child) &&
+        !child.includes("\0")
+      ) {
+        ctx.recordPath(service, child)
+      }
+      if (child && typeof child === "object") pending.push(child)
+    }
+  }
+}
 
 export interface ReadToolSpec {
   service: ServiceName
@@ -70,6 +110,7 @@ export function makeReadTool(
         params.path,
         typeof data === "string" ? data : JSON.stringify(data),
       )
+      recordResponsePaths(ctx, spec.service, data)
       return textResult(data, {
         service: spec.service,
         method: "GET",
@@ -83,6 +124,8 @@ export interface EvidenceRequirement {
   service: ServiceName
   value: string | number
   hint: string
+  /** Require a typed identity record rather than a raw JSON substring. */
+  identity?: boolean
 }
 
 export interface MutationOutcome {
@@ -104,8 +147,13 @@ export async function runMutation(
     verify?: (result: unknown) => Promise<unknown>
   },
 ): Promise<MutationOutcome> {
-  for (const e of opts.evidence ?? [])
+  for (const e of opts.evidence ?? []) {
+    if (e.identity === true) {
+      ctx.requireIdentity(e.service, e.value, e.hint)
+      continue
+    }
     ctx.requireEvidence(e.service, e.value, e.hint)
+  }
   ctx.noteMutation(opts.kind)
   const result = await opts.perform()
   if (!opts.verify) return { result }

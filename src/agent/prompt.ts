@@ -62,14 +62,17 @@ ${allowance}`
 const CAPABILITY_LINES: ReadonlyArray<readonly [string, string]> = [
   [
     "anvil_retry_job",
-    `- You can requeue one stuck or failed encode with \`anvil_retry_job\`; it restarts the
-  conversion from the beginning and cannot recover work already discarded. Read
-  \`anvil_job_show\` first and name the failure, because a requeue does not fix its cause.`,
+    `- You can requeue one failed encode with \`anvil_retry_job\`. The interrupted encode
+  restarts, while reusable analysis checkpoints and a journaled publish may resume.
+  Canceled, active, complete, and skipped jobs are rejected. Read \`anvil_job_show\` first
+  and name the failure, because a requeue does not fix its cause.`,
   ],
   [
     "anvil_job_show",
-    `- \`anvil_job_show\` is where a failed or stuck encode explains itself: attempts, errors,
-  publish stage, and the stream decisions for one job.`,
+    `- \`anvil_job_show\` is where a failed encode explains itself: attempt states/errors,
+  failed events, resumable checkpoints, quality-search metric, publish/cleanup stage, and
+  stream decisions for one job. Routine event payloads are compacted; \`output_complete:
+  false\` means only recent attempts fit, blocks retry, and requires operator review.`,
   ],
 ]
 
@@ -87,20 +90,28 @@ export function buildSystemPrompt(
 
   const anvilRules = config.anvil
     ? `
-- Anvil daemon health never proves that a specific download is encoding. Correlate an item
-  only with \`anvil_job_lookup\` using an exact absolute Sonarr/Radarr \`outputPath\`, or an
-  exact SABnzbd \`storage\` path obtained by matching the Arr \`downloadId\` to SABnzbd
-  \`nzo_id\`. If no exact path is available, skip Anvil correlation entirely.
-- A zero-result Anvil lookup is never proof that no job exists: establish absence with one
-  \`anvil_job_list\` call and filter it yourself, or say it is unknown. Matches report which
-  path side hit (\`matched_on\`: source, asset, destination); say which one you matched.
-- For a missing audio or subtitle language, ask Anvil for its stream-selection record
-  (\`includeStreamSelection\`) before probing files: it names the languages the profile
-  requested that the source lacked, and separates "never requested" from "requested but
-  absent" — which decides whether another release could help at all.
+- Anvil daemon health never proves that a specific download is encoding. For a pre-import
+  wait, use \`anvil_job_lookup\` only with an exact absolute Sonarr/Radarr \`outputPath\`, or
+  exact SABnzbd \`storage\` obtained by matching Arr \`downloadId\` to SABnzbd \`nzo_id\`.
+  Other diagnostics may use an exact Arr/Jellyfin imported-file path or converted path from
+  an earlier Anvil result in this run. Paths are not carried across runs because filenames
+  can be reused; if no current service-returned exact path exists, skip correlation.
+- A zero-result Anvil lookup is never proof that no job exists. Cross-check with
+  \`anvil_job_list\`, narrowed to the relevant states, and say only that no matching job is
+  active in that snapshot when both Anvil and blitzcrank say the list is complete;
+  \`truncated: true\`, \`output_complete: false\`, or a local truncation marker means unknown.
+  Matches report which path side hit (\`matched_on\`: source, asset, destination,
+  destination_directory); say which one you matched.
+- For a missing audio or subtitle language, ask Anvil for stream selection before probing
+  when a current lookup/list finds the job, or use \`anvil_job_show\` for an already
+  evidenced id/slug. A normal language-filter record separates "never requested" from
+  "requested but absent"; \`cleanup_disabled\`, no matching current job, no record, or a
+  decision error remains unknown and requires probing when possible.
 - Pending, leased, running, validating, replacing, and retrying Anvil jobs are active.
-  Failed or skipped jobs are concrete blockers; an expired lease is potentially stuck work,
-  not healthy waiting.${capabilities}`
+  Failed or skipped jobs are concrete blockers. An expired lease in leased, running,
+  validating, or replacing is unhealthy; Anvil normally recovers it to pending, failed, or
+  skipped. A persistent expired lease or persistent retrying state requires operator
+  investigation, never \`anvil_retry_job\`.${capabilities}`
     : ""
 
   const mediaRules = config.media

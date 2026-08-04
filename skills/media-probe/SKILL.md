@@ -43,7 +43,7 @@ Never conclude that a track is missing, was lost during conversion, or exists in
 
 ## Was the track lost during conversion?
 
-**Ask the encoder first.** When the deployment runs Anvil, `anvil_job_lookup` with `includeStreamSelection` returns the streams it kept and dropped for that file, with a reason each, and `missing_languages` names languages the profile requested that the source never had. That is one call, it survives deletion of the source, and it separates _"the profile never asked for German"_ from _"German was requested and the source had none"_ — a distinction no probe of the output file can make. See the `anvil` skill.
+**Ask the encoder first.** When the deployment runs Anvil and a current job matches, `anvil_job_lookup` with `includeStreamSelection` returns its stream decisions; for an already evidenced historical job use `anvil_job_show`. A normal language-filter record uses `missing_languages` for requested languages the source never had, survives source deletion, and separates _"the profile never asked for German"_ from _"German was requested and the source had none"_ — a distinction no probe of the output file can make. `cleanup_disabled`, no record, or an unreadable decision remains unknown. See the `anvil` skill.
 
 Probe when there is no job record, when the record is unreadable, or when you need to confirm what a file contains right now. The pipeline has three stages on disk, and a probe at each one turns the most common wrong diagnosis into a decided question:
 

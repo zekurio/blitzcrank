@@ -1,5 +1,6 @@
 import path from "node:path"
 
+import { StringEnum } from "@earendil-works/pi-ai"
 import {
   defineTool,
   type ToolDefinition,
@@ -7,14 +8,20 @@ import {
 import { Type } from "typebox"
 
 import type { AnvilConfig } from "../config.js"
-import { reasonParam, runMutation, textResult } from "./common.js"
+import {
+  MAX_RESULT_CHARS,
+  reasonParam,
+  runMutation,
+  textResult,
+} from "./common.js"
 import type { RunContext } from "./context.js"
 import { ExecError, execFileText } from "./exec.js"
 
 /**
  * Anvil (transcode daemon) correlation tools, ported from the legacy
- * deployment. Read-only; job correlation is exact-absolute-path only — never
- * constructed from titles, release names, or basenames.
+ * deployment. Reads plus one evidence-gated retry are exposed; job correlation
+ * is exact-absolute-path only — never constructed from titles, release names,
+ * or basenames.
  *
  * An empty result is labelled "unknown" rather than "none": the legacy rule
  * ("zero matches mean the item is not an Anvil wait") turned a silent miss into
@@ -26,6 +33,25 @@ import { ExecError, execFileText } from "./exec.js"
 /** anvilctl's own deadline, kept under the exec timeout that kills it. */
 const CLIENT_TIMEOUT = "15s"
 const EXEC_TIMEOUT_MS = 20_000
+/** A 64 MiB Anvil frame can grow when anvilctl pretty-prints its JSON. */
+const ANVIL_MAX_BUFFER_BYTES = 128 * 1024 * 1024
+const DIAGNOSTIC_EVENT_CHARS = 10_000
+const FALLBACK_ATTEMPT_LIMIT = 20
+const PAYLOAD_SAMPLE_CHARS = 1_000
+const PUBLISH_MANIFEST_LIMIT = 20
+
+const JOB_STATES = [
+  "pending",
+  "leased",
+  "running",
+  "validating",
+  "replacing",
+  "complete",
+  "failed",
+  "retrying",
+  "skipped",
+  "canceled",
+] as const
 
 /**
  * anvilctl's exit codes are part of its contract, and the difference between
@@ -87,6 +113,84 @@ function jobsOf(response: Record<string, unknown>): unknown[] | undefined {
   return undefined
 }
 
+interface AnvilJobIdentity {
+  id: string
+  slug: string | undefined
+}
+
+/** Extract only the paired id/slug fields declared by Anvil's job schema. */
+function jobIdentitiesOf(
+  response: Record<string, unknown>,
+): AnvilJobIdentity[] {
+  const candidates = [...(jobsOf(response) ?? [])]
+  if (response.job !== undefined) candidates.push(response.job)
+  const identities = new Map<string, AnvilJobIdentity>()
+  for (const candidate of candidates) {
+    const job = recordOf(candidate)
+    if (!job) continue
+    const id = String(job.id)
+    if (!/^\d+$/.test(id)) continue
+    identities.set(id, {
+      id,
+      slug:
+        typeof job.slug === "string" && job.slug !== "" ? job.slug : undefined,
+    })
+  }
+  return [...identities.values()]
+}
+
+/** Extract only absolute paths from Anvil's declared job/publication fields. */
+function recordAnvilPaths(
+  ctx: RunContext,
+  response: Record<string, unknown>,
+): void {
+  for (const candidate of jobsOf(response) ?? []) {
+    const job = recordOf(candidate)
+    if (!job) continue
+    for (const occurrence of [job.source, job.asset]) {
+      const absolutePath = recordOf(occurrence)?.absolute_path
+      if (typeof absolutePath === "string" && path.isAbsolute(absolutePath)) {
+        ctx.recordPath("anvil", absolutePath)
+      }
+    }
+    if (
+      typeof job.destination_path === "string" &&
+      path.isAbsolute(job.destination_path)
+    ) {
+      ctx.recordPath("anvil", job.destination_path)
+    }
+  }
+
+  const operation = recordOf(response.publish_operation)
+  if (!operation) return
+  for (const field of [
+    "artifact_path",
+    "backup_path",
+    "cleanup_source_path",
+    "destination_path",
+  ] as const) {
+    const value = operation[field]
+    if (typeof value === "string" && path.isAbsolute(value)) {
+      ctx.recordPath("anvil", value)
+    }
+  }
+  for (const entry of Array.isArray(operation.cleanup_entries)
+    ? operation.cleanup_entries
+    : []) {
+    const value = recordOf(entry)?.path
+    if (typeof value === "string" && path.isAbsolute(value)) {
+      ctx.recordPath("anvil", value)
+    }
+  }
+  for (const value of Array.isArray(operation.cleanup_directories)
+    ? operation.cleanup_directories
+    : []) {
+    if (typeof value === "string" && path.isAbsolute(value)) {
+      ctx.recordPath("anvil", value)
+    }
+  }
+}
+
 /**
  * Wraps a lookup response so a miss can never be read as proof of absence:
  * the model sees an explicit "unknown" conclusion plus the reasons a
@@ -105,9 +209,9 @@ export function interpretJobLookup(
       ...response,
       matched: "unanswerable",
       conclusion:
-        "Anvil could not answer this: the path lies outside every configured library root " +
-        "and handoff destination, so it can never match a job, whatever is running. This is " +
-        "not evidence of absence — check the path against the read it came from.",
+        "Anvil could not answer this under its current library roots and handoff destinations. " +
+        "A historical job from a reconfigured library may still own the path. This is not " +
+        "evidence of absence — check the path against the read it came from.",
       checked_path: absolutePath,
     }
   }
@@ -120,9 +224,279 @@ export function interpretJobLookup(
       'generation, or the job may have been pruned. Do not report "no conversion job ' +
       'exists" from this result.',
     next_step:
-      "Confirm with anvil_job_list (one call, all current jobs, filter locally) before " +
-      "making any statement about whether this item is encoding.",
+      "Confirm with a non-truncated anvil_job_list result, narrowed by state when needed, " +
+      "before making any statement about whether this item is encoding.",
     checked_path: absolutePath,
+  }
+}
+
+/** Makes both Anvil's result cap and pi's text cap impossible to overlook. */
+function interpretJobList(
+  response: Record<string, unknown>,
+): Record<string, unknown> {
+  const renderedChars = JSON.stringify(response, null, 2).length
+  if (response.truncated !== true && renderedChars <= MAX_RESULT_CHARS) {
+    return response
+  }
+  return {
+    output_complete: false,
+    conclusion:
+      "INCOMPLETE LIST. This result cannot establish that a job is absent.",
+    next_step:
+      "Narrow another anvil_job_list call with states and/or a smaller limit. Never decide " +
+      "from a result with truncated: true or a blitzcrank output truncation marker.",
+    ...response,
+  }
+}
+
+function recordOf(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined
+  }
+  return value as Record<string, unknown>
+}
+
+function diagnosticEvent(value: unknown): boolean {
+  const event = recordOf(value)
+  if (!event) return false
+  if (event.type === "block_failed") return true
+  if (event.name === "failed-staging-cleanup") return true
+  if (
+    typeof event.payload_error === "string" &&
+    event.payload_error.trim() !== ""
+  ) {
+    return true
+  }
+  const processOutput = recordOf(event.process_output)
+  if (!processOutput) return false
+  if (
+    typeof processOutput.exit_code === "number" &&
+    processOutput.exit_code !== 0
+  ) {
+    return true
+  }
+  return (
+    typeof processOutput.error === "string" && processOutput.error.trim() !== ""
+  )
+}
+
+function compactPayload(value: unknown): Record<string, unknown> | undefined {
+  const payload = recordOf(value)
+  if (!payload) return undefined
+  const compact: Record<string, unknown> = {
+    kind: payload.kind,
+    size_bytes: payload.size_bytes,
+  }
+  for (const field of ["json", "text", "bytes_base64"] as const) {
+    if (payload[field] === undefined) continue
+    const rendered =
+      typeof payload[field] === "string"
+        ? payload[field]
+        : JSON.stringify(payload[field])
+    if (rendered === undefined) continue
+    compact[`${field}_sample`] = rendered.slice(0, PAYLOAD_SAMPLE_CHARS)
+    if (rendered.length > PAYLOAD_SAMPLE_CHARS) {
+      compact[`${field}_omitted_chars`] = rendered.length - PAYLOAD_SAMPLE_CHARS
+    }
+  }
+  return compact
+}
+
+function compactEvent(
+  value: unknown,
+  attempt: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const event = recordOf(value)
+  if (!event) return undefined
+  const compact = { ...event }
+  if (
+    typeof event.payload_error === "string" &&
+    event.payload_error.trim() !== ""
+  ) {
+    compact.payload = compactPayload(event.payload)
+  } else {
+    delete compact.payload
+  }
+  delete compact.stream_selection
+  return {
+    ...compact,
+    attempt_id: attempt.id,
+    attempt_number: attempt.number,
+  }
+}
+
+function compactPipelineContext(value: unknown): unknown {
+  const context = recordOf(value)
+  if (!context) return value
+  if (
+    context.search_metric !== "xpsnr" ||
+    context.search_xpsnr !== undefined ||
+    context.search_skip_reason !== undefined ||
+    typeof context.search_crf !== "number" ||
+    context.search_crf <= 0
+  ) {
+    return context
+  }
+  return {
+    ...context,
+    search_xpsnr: 0,
+    search_xpsnr_inferred_from_omitempty: true,
+  }
+}
+
+function compactPublishOperation(value: unknown): unknown {
+  const operation = recordOf(value)
+  if (!operation) return value
+  const compact = { ...operation }
+  const entries = Array.isArray(operation.cleanup_entries)
+    ? operation.cleanup_entries
+    : []
+  if (entries.length > PUBLISH_MANIFEST_LIMIT) {
+    compact.cleanup_entries = entries.slice(0, PUBLISH_MANIFEST_LIMIT)
+    compact.cleanup_entries_total = entries.length
+    compact.cleanup_entries_omitted = entries.length - PUBLISH_MANIFEST_LIMIT
+    compact.cleanup_entries_size_bytes = entries.reduce((total, entry) => {
+      const size = recordOf(entry)?.size_bytes
+      return total + (typeof size === "number" ? size : 0)
+    }, 0)
+  }
+  const directories = Array.isArray(operation.cleanup_directories)
+    ? operation.cleanup_directories
+    : []
+  if (directories.length > PUBLISH_MANIFEST_LIMIT) {
+    compact.cleanup_directories = directories.slice(0, PUBLISH_MANIFEST_LIMIT)
+    compact.cleanup_directories_total = directories.length
+    compact.cleanup_directories_omitted =
+      directories.length - PUBLISH_MANIFEST_LIMIT
+  }
+  return compact
+}
+
+/**
+ * `show` includes every event and may legally be 64 MiB. Keep every attempt's
+ * state/error first, then fit failure diagnostics into their own byte budget so
+ * routine event payloads can never hide the retry evidence behind pi's cap.
+ */
+function compactJobShow(
+  response: Record<string, unknown>,
+): Record<string, unknown> {
+  const attempts = Array.isArray(response.attempts) ? response.attempts : []
+  const summaries: unknown[] = []
+  const diagnostics: Record<string, unknown>[] = []
+
+  for (const value of attempts) {
+    const attempt = recordOf(value)
+    if (!attempt) {
+      summaries.push(value)
+      continue
+    }
+    const events = Array.isArray(attempt.events) ? attempt.events : []
+    const summary = { ...attempt }
+    delete summary.events
+    summary.event_count = events.length
+    summaries.push(summary)
+    for (const event of events.filter(diagnosticEvent)) {
+      const compact = compactEvent(event, attempt)
+      if (compact) diagnostics.push(compact)
+    }
+  }
+
+  const diagnosticEvents: Record<string, unknown>[] = []
+  let diagnosticChars = 0
+  for (const diagnostic of diagnostics.toReversed()) {
+    const chars = JSON.stringify(diagnostic).length
+    if (diagnosticChars + chars > DIAGNOSTIC_EVENT_CHARS) break
+    diagnosticEvents.unshift(diagnostic)
+    diagnosticChars += chars
+  }
+
+  const compact = {
+    api_version: response.api_version,
+    server_time: response.server_time,
+    job: response.job,
+    attempts: summaries,
+    pipeline_context: compactPipelineContext(response.pipeline_context),
+    publish_operation: compactPublishOperation(response.publish_operation),
+    stream_selection: response.stream_selection,
+    history_compacted: true,
+    history_note:
+      "Routine event payloads were omitted. Every attempt state/error is present; " +
+      "diagnostic_events contains failed blocks, failed staging cleanup, and process/payload errors.",
+    diagnostic_event_count: diagnostics.length,
+    diagnostic_events: diagnosticEvents,
+    ...(diagnostics.length > diagnosticEvents.length
+      ? {
+          diagnostic_events_omitted:
+            diagnostics.length - diagnosticEvents.length,
+        }
+      : {}),
+  }
+  if (JSON.stringify(compact, null, 2).length <= MAX_RESULT_CHARS) {
+    return compact
+  }
+
+  const recentAttempts = summaries
+    .slice(-FALLBACK_ATTEMPT_LIMIT)
+    .map(compactFallbackAttempt)
+  const operation = recordOf(response.publish_operation)
+  return {
+    api_version: response.api_version,
+    server_time: response.server_time,
+    output_complete: false,
+    conclusion:
+      "INCOMPLETE JOB HISTORY. Do not retry this job: the complete attempt diagnostics did not fit in one tool result.",
+    job: response.job,
+    attempt_count: summaries.length,
+    attempts_returned: recentAttempts.length,
+    attempts_omitted: summaries.length - recentAttempts.length,
+    attempts: recentAttempts,
+    pipeline_context_present: response.pipeline_context !== undefined,
+    publish_operation:
+      operation === undefined
+        ? undefined
+        : {
+            kind: operation.kind,
+            mode: operation.mode,
+            stage: operation.stage,
+            destination_path: operation.destination_path,
+            backup_path: operation.backup_path,
+            conflict_description: operation.conflict_description,
+            cleanup_entries_count: Array.isArray(operation.cleanup_entries)
+              ? operation.cleanup_entries.length
+              : 0,
+            cleanup_directories_count: Array.isArray(
+              operation.cleanup_directories,
+            )
+              ? operation.cleanup_directories.length
+              : 0,
+          },
+    stream_selection_count: Array.isArray(response.stream_selection)
+      ? response.stream_selection.length
+      : 0,
+    diagnostic_event_count: diagnostics.length,
+  }
+}
+
+function compactFallbackAttempt(value: unknown): unknown {
+  const attempt = recordOf(value)
+  if (!attempt) return value
+  const error =
+    typeof attempt.error === "string"
+      ? attempt.error.slice(0, PAYLOAD_SAMPLE_CHARS)
+      : attempt.error
+  return {
+    id: attempt.id,
+    number: attempt.number,
+    state: attempt.state,
+    worker_id: attempt.worker_id,
+    started_at: attempt.started_at,
+    finished_at: attempt.finished_at,
+    error,
+    ...(typeof attempt.error === "string" &&
+    attempt.error.length > PAYLOAD_SAMPLE_CHARS
+      ? { error_omitted_chars: attempt.error.length - PAYLOAD_SAMPLE_CHARS }
+      : {}),
+    event_count: attempt.event_count,
   }
 }
 
@@ -134,9 +508,10 @@ export function interpretJobLookup(
  */
 const SELECTION_PARAM =
   "Include the audio/subtitle streams Anvil kept and dropped on its latest recorded attempt. Set this for " +
-  "any missing-language question: `missing_languages` names languages the profile requested that the source " +
-  "did not have, and each stream carries why it was kept or dropped. A job with no recorded decision has no " +
-  "stream_selection field at all, which is not the same as a decision that kept everything."
+  "any missing-language question: a normal language-filter decision uses `missing_languages` for requested " +
+  "languages absent from the source, and each stream says why it was kept or dropped. `cleanup_disabled` may " +
+  "omit that computation. A job with no recorded decision has no `stream_selection` field at all, which is not " +
+  "the same as a decision that kept everything."
 
 export function buildAnvilTools(
   cfg: AnvilConfig,
@@ -146,12 +521,51 @@ export function buildAnvilTools(
     throw new Error("ANVIL_CONTROL_SOCKET must be an absolute path")
   }
 
+  // Numeric IDs are never reused and may survive issue resumption. Slugs have
+  // a finite namespace and may be reused after pruning, so they are current-run
+  // aliases only and are always canonicalized back to their paired numeric ID.
+  const jobSlugs = new Map<string, string>()
+
   const anvilctl = (args: string[], signal: AbortSignal | undefined) =>
     execFileText(
       cfg.command,
       ["--socket", cfg.socket, "--timeout", CLIENT_TIMEOUT, "--json", ...args],
-      { signal, timeoutMs: EXEC_TIMEOUT_MS },
+      {
+        signal,
+        timeoutMs: EXEC_TIMEOUT_MS,
+        maxBufferBytes: ANVIL_MAX_BUFFER_BYTES,
+      },
     ).catch(explainExit)
+
+  /**
+   * `jobs` and `retry` were aliases before Anvil flattened its CLI, but `show`
+   * has no spelling shared by both versions. Only the old client's exact
+   * unknown-command usage error activates this fallback, so daemon argument
+   * errors are never mistaken for a dialect change.
+   */
+  const showJob = async (
+    job: string,
+    signal: AbortSignal | undefined,
+  ): Promise<{ stdout: string; query: string }> => {
+    try {
+      return {
+        stdout: await anvilctl(["show", job], signal),
+        query: `show ${job}`,
+      }
+    } catch (error) {
+      if (
+        !(error instanceof ExecError) ||
+        error.exitCode !== 2 ||
+        !error.message.includes('unknown command "show"')
+      ) {
+        throw error
+      }
+    }
+    return {
+      stdout: await anvilctl(["job", "show", job], signal),
+      query: `job show ${job} (legacy fallback)`,
+    }
+  }
 
   /**
    * Job results are recorded as evidence so the converted-file path they carry
@@ -162,7 +576,33 @@ export function buildAnvilTools(
    */
   const recordJobs = (query: string, response: Record<string, unknown>) => {
     ctx.recordRead("anvil", query, JSON.stringify(response))
+    recordAnvilPaths(ctx, response)
+    for (const identity of jobIdentitiesOf(response)) {
+      ctx.recordIdentity("anvil", identity.id)
+      if (identity.slug !== undefined) {
+        const existing = jobSlugs.get(identity.slug)
+        if (existing !== undefined && existing !== identity.id) {
+          throw new Error(
+            `anvilctl returned slug ${identity.slug} for both job ${existing} and ${identity.id}`,
+          )
+        }
+        jobSlugs.set(identity.slug, identity.id)
+      }
+    }
     return response
+  }
+
+  const resolveJobReference = (reference: string): string => {
+    if (/^\d+$/.test(reference)) {
+      ctx.requireIdentity("anvil", reference, "job id")
+      return reference
+    }
+    const id = jobSlugs.get(reference)
+    if (id !== undefined) return id
+    throw new Error(
+      `evidence gate: Anvil job slug ${reference} was not returned this run. ` +
+        "Re-read the job list; slugs are not carried across runs because Anvil may reuse them after pruning.",
+    )
   }
 
   return [
@@ -188,12 +628,21 @@ export function buildAnvilTools(
       name: "anvil_job_list",
       label: "List current Anvil jobs",
       description:
-        "List all current Anvil jobs in one call, then filter them locally. Prefer this over repeated anvil_job_lookup calls: " +
-        "it cannot produce the false negative a wrong path produces, and it is the only way to establish that an item has no job. Read-only.",
+        "List a bounded view of current Anvil jobs and filter it locally. Narrow by state when possible. " +
+        "This avoids a wrong-path false negative only when both Anvil and blitzcrank report the output as complete; " +
+        "never establish absence from `truncated: true`, `output_complete: false`, or a local truncation marker. Read-only.",
       parameters: Type.Object({
         purpose: Type.String({
           description: "What this list of current Anvil jobs must establish",
         }),
+        states: Type.Optional(
+          Type.Array(StringEnum(JOB_STATES), {
+            minItems: 1,
+            uniqueItems: true,
+            description:
+              "Optional job states to include. Narrow to relevant states so a complete result fits in one response.",
+          }),
+        ),
         limit: Type.Optional(
           Type.Integer({
             minimum: 1,
@@ -209,34 +658,41 @@ export function buildAnvilTools(
       }),
       async execute(_toolCallId, params, signal) {
         const limit = String(params.limit ?? 200)
+        const states = params.states?.join(",")
         const selection = params.includeStreamSelection === true
-        const stdout = await anvilctl(
-          [
-            "job",
-            "list",
-            "--current-only",
-            "--limit",
-            limit,
-            ...(selection ? ["--with-selection"] : []),
-          ],
-          signal,
-        )
-        return textResult(
-          recordJobs(
-            `job list --current-only --limit ${limit}${selection ? " --with-selection" : ""}`,
-            parseAnvilResponse(stdout),
+        const query =
+          `jobs --current-only --limit ${limit}` +
+          `${states ? ` --state ${states}` : ""}` +
+          `${selection ? " --with-selection" : ""}`
+        const response = recordJobs(
+          query,
+          parseAnvilResponse(
+            await anvilctl(
+              [
+                "jobs",
+                "--current-only",
+                "--limit",
+                limit,
+                ...(states ? ["--state", states] : []),
+                ...(selection ? ["--with-selection"] : []),
+              ],
+              signal,
+            ),
           ),
-          { action: "anvil_job_list" },
         )
+        return textResult(interpretJobList(response), {
+          action: "anvil_job_list",
+        })
       },
     }),
     defineTool({
       name: "anvil_job_show",
       label: "Show one Anvil job",
       description:
-        "Read the full recorded history of one Anvil job by id or slug: state, attempts with their errors, publish " +
-        "operation, and the audio/subtitle stream decisions. Use it after a lookup or listing has identified the job " +
-        "— this is where a failed or stuck encode explains itself. The reference must come from an Anvil read this run.",
+        "Read a compact diagnostic history of one Anvil job by id or slug: current state and, when output is complete, every attempt state/error, " +
+        "failed events, resumable pipeline checkpoints, publish/cleanup operation, quality-search metric, and stream decisions. " +
+        "Routine event payloads are omitted so errors stay visible; `output_complete: false` means operator review and blocks retry. " +
+        "A numeric id may come from this issue's carried evidence; a slug must come from an Anvil read this run.",
       parameters: Type.Object({
         purpose: Type.String({
           description: "What this job's history must establish",
@@ -244,16 +700,18 @@ export function buildAnvilTools(
         job: Type.String({
           minLength: 1,
           description:
-            "Anvil job id or slug, exactly as an earlier Anvil read reported it",
+            "Anvil numeric job id from this issue, or slug exactly as an Anvil read reported it in this run",
         }),
       }),
       async execute(_toolCallId, params, signal) {
-        const job = params.job.trim()
-        ctx.requireEvidence("anvil", job, "job id or slug")
-        const stdout = await anvilctl(["job", "show", job], signal)
+        const reference = params.job.trim()
+        const job = resolveJobReference(reference)
+        const shown = await showJob(job, signal)
         return textResult(
-          recordJobs(`job show ${job}`, parseAnvilResponse(stdout)),
-          { action: "anvil_job_show", job },
+          compactJobShow(
+            recordJobs(shown.query, parseAnvilResponse(shown.stdout)),
+          ),
+          { action: "anvil_job_show", job, reference },
         )
       },
     }),
@@ -261,47 +719,82 @@ export function buildAnvilTools(
       name: "anvil_retry_job",
       label: "Anvil: requeue a job",
       description:
-        "Requeue one Anvil job that will not finish on its own — a failed encode blocking an import, or a job canceled " +
-        "earlier. It re-runs the conversion from the start; it cannot recover the work already discarded. The job id or " +
-        "slug must come from an Anvil read this run. Only single jobs: there is no bulk retry here.",
+        "Requeue one failed Anvil job that will not finish on its own, normally an encode blocking an import. " +
+        "The interrupted encode restarts, while reusable analysis checkpoints and a journaled publish may resume. " +
+        "Canceled, active, complete, and skipped jobs are rejected. A numeric id may come from this issue's carried evidence; " +
+        "a slug must come from an Anvil read this run. Only single jobs: there is no bulk retry here.",
       parameters: Type.Object({
         reason: reasonParam(),
         job: Type.String({
           minLength: 1,
           description:
-            "Anvil job id or slug, exactly as an earlier Anvil read reported it",
+            "Anvil numeric job id from this issue, or slug exactly as an Anvil read reported it in this run",
         }),
       }),
       async execute(_toolCallId, params, signal) {
-        const job = params.job.trim()
+        const reference = params.job.trim()
+        const job = resolveJobReference(reference)
+        const beforeShown = await showJob(job, signal)
+        const before = recordJobs(
+          beforeShown.query,
+          parseAnvilResponse(beforeShown.stdout),
+        )
+        const beforeDiagnostic = compactJobShow(before)
+        if (beforeDiagnostic.output_complete === false) {
+          throw new Error(
+            `Anvil job ${job} has an incomplete diagnostic history. ` +
+              "Refusing retry because prior attempt failures could be hidden; require operator review.",
+          )
+        }
+        const state = recordOf(before.job)?.state
+        if (state !== "failed") {
+          throw new Error(
+            `Anvil job ${job} is ${JSON.stringify(state)}, not failed. ` +
+              "blitzcrank retries only diagnosed failures. Do not retry canceled, active, complete, or skipped work; use operator review where the state remains unhealthy or ambiguous.",
+          )
+        }
         const outcome = await runMutation(ctx, {
           kind: "mutate",
-          evidence: [{ service: "anvil", value: job, hint: "job id or slug" }],
+          evidence: [
+            {
+              service: "anvil",
+              value: job,
+              hint: "job id or slug",
+              identity: true,
+            },
+          ],
           perform: async () =>
-            parseAnvilResponse(await anvilctl(["job", "retry", job], signal)),
-          verify: async () =>
-            recordJobs(
-              `job show ${job}`,
-              parseAnvilResponse(await anvilctl(["job", "show", job], signal)),
-            ),
+            parseAnvilResponse(await anvilctl(["retry", job], signal)),
+          verify: async () => {
+            const shown = await showJob(job, signal)
+            return compactJobShow(
+              recordJobs(shown.query, parseAnvilResponse(shown.stdout)),
+            )
+          },
         })
-        return textResult(outcome, { action: "anvil_retry_job", job })
+        return textResult(outcome, {
+          action: "anvil_retry_job",
+          job,
+          reference,
+        })
       },
     }),
     defineTool({
       name: "anvil_job_lookup",
       label: "Find exact Anvil jobs",
       description:
-        "Correlate one exact absolute path to current Anvil jobs. Matches a job's source, asset or destination and reports which " +
-        "side hit in `matched_on`, so the encoder's input and its converted output both resolve. No fuzzy, basename, title, or " +
-        "substring matching. An empty result means UNKNOWN, never 'no job exists' — use anvil_job_list to establish absence.",
+        "Correlate one exact absolute path to current Anvil jobs. Matches a job's source, asset, destination, or destination " +
+        "directory and reports which side hit in `matched_on`, so the encoder's input and converted output both resolve. " +
+        "No fuzzy, basename, title, or " +
+        "substring matching. An empty result means UNKNOWN, never 'no job exists' — use a complete anvil_job_list snapshot " +
+        "to establish only whether a matching job is active at that moment.",
       parameters: Type.Object({
         purpose: Type.String({
           description: "Why this exact Anvil job correlation is needed",
         }),
         absolute_path: Type.String({
           description:
-            "Exact absolute path from a service read (Sonarr/Radarr outputPath or file path, SABnzbd storage, or a converted path from an earlier job result); never a title, basename, or guessed path",
+            "Exact absolute path from a read this run (Sonarr/Radarr outputPath or file path, SABnzbd storage, or a converted path from an earlier job result); never a title, basename, or guessed path",
         }),
         includeStreamSelection: Type.Optional(
           Type.Boolean({
@@ -310,15 +803,21 @@ export function buildAnvilTools(
         ),
       }),
       async execute(_toolCallId, params, signal) {
-        const target = params.absolute_path.trim()
+        const target = params.absolute_path
         if (!path.isAbsolute(target) || target.includes("\0")) {
           throw new Error("absolute_path must be an exact absolute path")
+        }
+        if (!ctx.sawRecordedPath(target)) {
+          throw new Error(
+            `evidence gate: ${target} was not returned in a service or Anvil path field this run. ` +
+              "Look up only an exact path returned by Arr, SABnzbd, Jellyfin, or an earlier Anvil result; " +
+              "never use issue text or reconstruct a path.",
+          )
         }
         const selection = params.includeStreamSelection === true
         const stdout = await anvilctl(
           [
-            "job",
-            "list",
+            "jobs",
             "--absolute-path",
             target,
             "--current-only",
@@ -329,7 +828,7 @@ export function buildAnvilTools(
         return textResult(
           interpretJobLookup(
             recordJobs(
-              `job list --absolute-path ${target} --current-only${selection ? " --with-selection" : ""}`,
+              `jobs --absolute-path ${target} --current-only${selection ? " --with-selection" : ""}`,
               parseAnvilResponse(stdout),
             ),
             target,
