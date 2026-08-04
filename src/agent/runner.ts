@@ -173,6 +173,7 @@ export class IssueRunner {
             turn.usage.costUsd === undefined
               ? undefined
               : casefile.spend.costUsd,
+            turn.usage.costUsd,
           )}`
         : undefined,
     )

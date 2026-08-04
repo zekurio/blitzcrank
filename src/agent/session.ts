@@ -82,7 +82,8 @@ function formatCost(costUsd: number): string {
  * "[blitzcrank w/ gpt-5.2-codex:high · 118.2k in · 14.2k out]".
  *
  * Cache reads are excluded. Legacy case files only have a combined count, so
- * they keep the old honest total rather than mislabeling historical tokens.
+ * they keep the old honest total rather than mislabeling historical tokens or
+ * cost. When cumulative cost is unavailable, show this run's API-price estimate.
  */
 export function usageAnchor(
   spec: string,
@@ -90,9 +91,15 @@ export function usageAnchor(
   inputTokens: number | undefined,
   outputTokens: number | undefined,
   costUsd: number | undefined,
+  runCostUsd: number | undefined,
 ): string {
   const prefix = modelAnchor(spec).slice(0, -1)
-  const cost = costUsd === undefined ? "" : ` · ${formatCost(costUsd)}`
+  const cost =
+    costUsd !== undefined
+      ? ` · ${formatCost(costUsd)}`
+      : runCostUsd !== undefined
+        ? ` · ${formatCost(runCostUsd)} this run`
+        : ""
   if (inputTokens === undefined || outputTokens === undefined) {
     return `${prefix} · ${formatTokens(issueTokens)} tokens${cost}]`
   }
@@ -127,6 +134,8 @@ export interface AgentTurnOptions {
   resumeFile: string | undefined
   /** Receives the session file path once known, for history self-exclusion. */
   sessionFileRef: { current: string | undefined } | undefined
+  /** Observe completed tool calls without exposing their arguments or results. */
+  onToolExecutionEnd?: (toolName: string, isError: boolean) => void
   logPrefix: string
 }
 
@@ -254,8 +263,11 @@ export async function runAgentTurn(
       )
       return
     }
-    if (event.type === "tool_execution_end" && event.isError) {
-      console.warn(`[${opts.logPrefix}] tool ${event.toolName} failed`)
+    if (event.type === "tool_execution_end") {
+      opts.onToolExecutionEnd?.(event.toolName, event.isError)
+      if (event.isError) {
+        console.warn(`[${opts.logPrefix}] tool ${event.toolName} failed`)
+      }
       return
     }
     if (event.type === "message_end" && event.message.role === "assistant") {

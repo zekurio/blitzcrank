@@ -24,7 +24,8 @@ const INTERNAL_MARKER =
 export function formatAutomationReport(report: AutomationReport): string {
   const header =
     `${STATUS_EMOJI[report.status]} **${report.status}** · ` +
-    `mutations ${report.mutations} · deletes ${report.deletes} · ` +
+    `reads ${report.reads} · mutations ${report.mutations} · ` +
+    `deletes ${report.deletes} · ` +
     `tokens ${report.tokens}` +
     (report.malformed ? " · ⚠️ invalid report format" : "")
   const cleanedBody = publicReportBody(report.body)
