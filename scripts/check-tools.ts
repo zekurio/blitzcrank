@@ -18,6 +18,8 @@ import { readdir, readFile } from "node:fs/promises"
 import path from "node:path"
 
 import { buildSystemPrompt } from "../src/agent/prompt.js"
+import { buildAutomationSystemPrompt } from "../src/automations/prompt.js"
+import { buildAutomationReportTool } from "../src/automations/report.js"
 import { emptyCase } from "../src/casefile.js"
 import type { Config } from "../src/config.js"
 import { RunContext } from "../src/tools/context.js"
@@ -47,7 +49,7 @@ const config: Config = {
   media: { roots: ["/mnt/media"] },
 }
 
-const tools = buildIssueTools({
+const issueTools = buildIssueTools({
   config,
   ctx: new RunContext(),
   seerr: {} as never,
@@ -58,13 +60,32 @@ const tools = buildIssueTools({
   status: { id: undefined },
   casefile: emptyCase("0"),
 })
-const registered = new Set(tools.map((tool) => tool.name))
+const automation = {
+  name: "check-tools",
+  description: "Tool-surface check",
+  schedule: "@hourly",
+  enabled: true,
+  model: undefined,
+  capabilities: [],
+  mutationBudget: undefined,
+  deletionBudget: undefined,
+  body: "Check the tool surface.",
+  filePath: "automations/check-tools.md",
+}
+const automationTools = [buildAutomationReportTool({ submissions: [] })]
+const registered = new Set(
+  [...issueTools, ...automationTools].map((tool) => tool.name),
+)
 
 const skillsDir = path.join(import.meta.dirname, "..", "skills")
 const docs: Array<{ where: string; text: string }> = [
   {
     where: "src/agent/prompt.ts",
     text: buildSystemPrompt(config, [...registered]),
+  },
+  {
+    where: "src/automations/prompt.ts",
+    text: buildAutomationSystemPrompt(config, automation),
   },
 ]
 for (const entry of await readdir(skillsDir, { withFileTypes: true })) {
@@ -79,7 +100,7 @@ for (const entry of await readdir(skillsDir, { withFileTypes: true })) {
 // Only names carrying a tool prefix: `missing_languages` and `path_outside_libraries`
 // are payload fields, not tools, and must not be mistaken for them.
 const TOOL_SHAPED =
-  /\b(?:seerr|sonarr|radarr|jellyfin|sabnzbd|anvil|media|web|thread|report|update)_[a-z][a-z_]*\b/g
+  /\b(?:seerr|sonarr|radarr|jellyfin|sabnzbd|anvil|media|web|thread|report|submit|update)_[a-z][a-z_]*\b/g
 
 const problems: string[] = []
 

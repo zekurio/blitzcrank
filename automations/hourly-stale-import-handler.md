@@ -22,7 +22,7 @@ Run the hourly stale-import sweep. This runbook is self-contained; do not load t
    - `radarr_request`: `/api/v3/queue?page=1&pageSize=100&includeUnknownMovieItems=true`
 3. Read `anvil_status` for control-plane context only. It never proves an item is encoding.
 4. Take one `anvil_job_list` snapshot for `pending`, `leased`, `running`, `validating`, `replacing`, and `retrying`; reuse it for all candidates. Absence is meaningful only when `truncated: false`, there is no `output_complete: false`, and there is no blitzcrank truncation marker.
-5. Inspect only completed queue items whose import is blocked, delayed, failed, unknown, or still waiting. If none exist, return only `STATUS: ok`.
+5. Inspect only completed queue items whose import is blocked, delayed, failed, unknown, or still waiting. If none exist, finish with `submit_automation_report` using `status: "ok"` and an empty `body`.
 
 Use an explicit `purpose` on every read. Read SABnzbd only when downloader confirmation is needed, and only through queue/history. Do not load broad skills or fetch unrelated service state pre-emptively.
 
@@ -99,6 +99,6 @@ Never blocklist: evidence that one download instance is stale is not a verdict o
 
 ## Output
 
-Write a concise German operations note. Start with exactly one of `STATUS: ok`, `STATUS: warnung`, or `STATUS: fehler`, followed by a blank line and the report. If there are no actions or blockers, return only the STATUS line.
+Finish by calling `submit_automation_report` exactly once with the overall `status` and a concise German operations note in `body`. If there are no actions or blockers, use `status: "ok"` and an empty `body`.
 
 Use only non-empty sections: `Importiert:`, `Neu eingereiht:`, `Entfernt:`, `Manuell prüfen:`. Bullets must identify service, title/episode or year, useful release/path context, reason, and validation outcome. After each manual-review bullet, add a separate `MANUAL_INTERVENTION_REQUIRED ...` line with exact known queue/download/release details; the host removes that metadata from Discord.

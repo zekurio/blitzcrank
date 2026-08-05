@@ -146,6 +146,8 @@ export interface AgentTurnOptions {
  */
 export interface AgentTurnResult {
   text: string
+  /** Tool names in the final live assistant message, in source order. */
+  finalToolNames: string[]
   usage: RunUsage
   /** Where the transcript lives, so the next run can resume it. */
   sessionFile: string | undefined
@@ -295,6 +297,9 @@ export async function runAgentTurn(
         .filter((b) => b.type === "text")
         .map((b) => b.text)
         .join(""),
+      finalToolNames: final.content
+        .filter((b) => b.type === "toolCall")
+        .map((b) => b.name),
       usage,
       sessionFile: session.sessionFile,
       resumed: opened.resumed,

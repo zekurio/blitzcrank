@@ -167,12 +167,16 @@ The model changes only that automation's fresh agent turn; it does not expand
 its service access, capabilities, budgets, or evidence gates. Runs are
 triggered by cron, `POST /automations/:name/run`, or Discord, and one
 automation never runs twice concurrently (a busy name is refused with `409`).
+Every run finishes through the typed `submit_automation_report` tool. Its
+validated `status` and `body` arguments are the authoritative report; the host
+does not parse a status line from free-text model output.
 
 Discord monitoring is optional and off unless `DISCORD_BOT_TOKEN` is set (then
 `DISCORD_GUILD_ID` and `DISCORD_WATCH_CHANNEL_ID` are required). Each run posts
 its formatted report — including "nothing to do" runs, as a heartbeat — into a
-private `automation: <name>` thread in the watch channel. Internal status and
-history markers are removed before delivery. `/automation list`
+private `automation: <name>` thread in the watch channel. The structured status
+becomes the report header, and internal history markers are removed before
+delivery. `/automation list`
 shows schedules and next runs, `/automation run name:<x>` queues one.
 
 Invite the bot with the `bot` and `applications.commands` scopes and grant it

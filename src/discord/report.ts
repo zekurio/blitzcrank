@@ -27,7 +27,7 @@ export function formatAutomationReport(report: AutomationReport): string {
     `reads ${report.reads} · mutations ${report.mutations} · ` +
     `deletes ${report.deletes} · ` +
     `tokens ${report.tokens}` +
-    (report.malformed ? " · ⚠️ invalid report format" : "")
+    (report.malformed ? " · ⚠️ invalid structured report" : "")
   const cleanedBody = publicReportBody(report.body)
   const body =
     report.empty || cleanedBody === "" ? "_nothing to report_" : cleanedBody

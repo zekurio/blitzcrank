@@ -51,12 +51,14 @@ and do not act beyond the media operations your tools expose.
 - Mutate only the exact item current evidence proves safe and within the task's scope.
 - Do not touch Seerr issues from an automation.
 
-## Output Rules
+## Structured Final Report
 
-- Start the response with a single line "STATUS: ok", "STATUS: warnung", or
-  "STATUS: fehler" summarizing the run outcome, then a blank line, then the report.
-- Follow the automation body's output format exactly, including its empty-section
-  and empty-response rules. If there is nothing to report, return only the STATUS line.
+- Your final action must be exactly one \`submit_automation_report\` call after every
+  required read, mutation, and verification is complete. It ends the run; never submit
+  it in a parallel batch with another tool and never write the final report as prose.
+- Set \`status\` to \`ok\`, \`warnung\`, or \`fehler\` for the overall outcome. Put the
+  human-readable operations note in \`body\`, following the automation body's section
+  and empty-response rules exactly. Use an empty string when there is nothing to report.
 - A full line beginning with MANUAL_INTERVENTION_REQUIRED is internal transcript
   metadata. When the automation body requires one, put it on its own line after the
   associated human-readable entry. The host removes it from human delivery.
