@@ -12,8 +12,14 @@ import {
 } from "../tools/index.js"
 import { capabilityTools, type AutomationDefinition } from "./definitions.js"
 import { buildAutomationSystemPrompt } from "./prompt.js"
+import {
+  buildAutomationReportTool,
+  parseAutomationReport,
+  type AutomationReportCapture,
+  type AutomationStatus,
+} from "./report.js"
 
-export type AutomationStatus = "ok" | "warnung" | "fehler"
+export type { AutomationStatus } from "./report.js"
 
 export interface AutomationReport {
   name: string
@@ -21,7 +27,7 @@ export interface AutomationReport {
   body: string
   /** True when the run produced no report body (nothing to do). */
   empty: boolean
-  /** True when the output did not follow the STATUS protocol. */
+  /** True when the run did not finish with one valid structured report. */
   malformed: boolean
   /** Successful read-only custom and builtin tool calls. */
   reads: number
@@ -33,30 +39,6 @@ export interface AutomationReport {
    * done rather than how often the context was re-read.
    */
   tokens: number
-}
-
-type ParsedOutput = Pick<
-  AutomationReport,
-  "status" | "body" | "empty" | "malformed"
->
-
-export function parseAutomationOutput(text: string): ParsedOutput {
-  const trimmed = text.trim()
-  if (trimmed === "")
-    return { status: "ok", body: "", empty: true, malformed: false }
-
-  const lines = trimmed.split("\n")
-  const status = lines[0]!.trim().match(/^STATUS:\s*(ok|warnung|fehler)\s*$/i)
-  if (!status)
-    return { status: "fehler", body: trimmed, empty: false, malformed: true }
-
-  const body = lines.slice(1).join("\n").trim()
-  return {
-    status: status[1]!.toLowerCase() as AutomationStatus,
-    body,
-    empty: body === "",
-    malformed: false,
-  }
 }
 
 export class AutomationRunner {
@@ -90,6 +72,8 @@ export class AutomationRunner {
         )
       }
     }
+    const reportCapture: AutomationReportCapture = { submissions: [] }
+    tools.push(buildAutomationReportTool(reportCapture))
     const readTools = new Set([
       "read",
       ...tools.filter((tool) => isReadTool(tool.name)).map((tool) => tool.name),
@@ -115,7 +99,7 @@ export class AutomationRunner {
 
     const report: AutomationReport = {
       name: def.name,
-      ...parseAutomationOutput(turn.text),
+      ...parseAutomationReport(reportCapture, turn.finalToolNames),
       reads: reads.count,
       mutations: ctx.counts.mutations,
       deletes: ctx.counts.deletes,
@@ -126,7 +110,7 @@ export class AutomationRunner {
       `[automation:${def.name}] status=${report.status} reads=${report.reads} ` +
         `mutations=${report.mutations} deletes=${report.deletes} tokens=${report.tokens} ` +
         `billed=${turn.usage.billedTokens} model=${modelSpec}` +
-        `${report.malformed ? " (malformed output)" : ""}${report.empty ? " (no report)" : ""}` +
+        `${report.malformed ? " (invalid structured report)" : ""}${report.empty ? " (no report)" : ""}` +
         `${report.body ? `\n${report.body}` : ""}`,
     )
     return report
