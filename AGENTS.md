@@ -64,7 +64,7 @@ behavioural difference described.
   Keep that rule intact in `src/agent/prompt.ts`.
 - Automation budgets (`mutation_budget`/`deletion_budget` in frontmatter) are
   unlimited when absent. Numeric defaults (3 and 0) silently disabled declared
-  work: hourly-stale-import-handler declared both `queue_rejection_cleanup`
+  work: stale-import-handler declared both `queue_rejection_cleanup`
   capabilities and could use neither, because its cleanups pass
   `removeFromClient` and count as deletions. A cap exists only where an
   operator wrote one down.

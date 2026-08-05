@@ -1,7 +1,7 @@
 ---
-name: hourly-stale-import-handler
+name: stale-import-handler
 description: Find Sonarr/Radarr queue entries where a download is complete but not imported, import only clearly safe manual-import candidates, requeue stalled Anvil encodes that block an import, remove only clearly rejected stale downloads without blocklisting, treat healthy Anvil encoding as a temporary wait, and report actions and manual-review blockers.
-schedule: "@hourly"
+schedule: "0 */3 * * *"
 enabled: true
 model: openrouter/deepseek/deepseek-v4-flash-0731:high
 capabilities:
@@ -12,7 +12,7 @@ capabilities:
   - anvil.job_retry
 ---
 
-Run the hourly stale-import sweep. This runbook is self-contained; do not load the general service skills unless an API response raises a question this runbook does not answer.
+Run the three-hour stale-import sweep. This runbook is self-contained; do not load the general service skills unless an API response raises a question this runbook does not answer.
 
 ## Queue gate
 

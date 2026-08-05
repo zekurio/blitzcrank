@@ -155,8 +155,8 @@ with `model: provider/model[:thinking]`, for example:
 
 ```yaml
 ---
-name: hourly-stale-import-handler
-schedule: "0 * * * *"
+name: stale-import-handler
+schedule: "0 */3 * * *"
 model: openai-codex/gpt-5.6-terra:high
 capabilities:
   - sonarr.queue_rejection_cleanup
