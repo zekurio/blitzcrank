@@ -19,7 +19,7 @@ export interface AutomationDefinition {
    * gates, and a number the operator did not choose is not a safety decision.
    *
    * These used to default to 3 and 0, which silently disabled work an
-   * automation had explicitly declared — hourly-stale-import-handler declared
+   * automation had explicitly declared — stale-import-handler declared
    * both queue_rejection_cleanup capabilities and could not use either, since
    * its cleanups pass removeFromClient and so count as deletions against a
    * budget of zero. A cap now exists only where someone wrote one down.
