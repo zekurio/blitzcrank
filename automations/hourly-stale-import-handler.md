@@ -14,15 +14,22 @@ capabilities:
 
 Run the hourly stale-import sweep. This runbook is self-contained; do not load the general service skills unless an API response raises a question this runbook does not answer.
 
-## Initial reads
+## Queue gate
 
-1. Search related automation history with `thread_history_search`. History is a clue only; validate it against live state.
-2. Read both queues:
+1. Read both queues:
    - `sonarr_request`: `/api/v3/queue?page=1&pageSize=100&includeUnknownSeriesItems=true`
    - `radarr_request`: `/api/v3/queue?page=1&pageSize=100&includeUnknownMovieItems=true`
-3. Read `anvil_status` for control-plane context only. It never proves an item is encoding.
-4. Take one `anvil_job_list` snapshot for `pending`, `leased`, `running`, `validating`, `replacing`, and `retrying`; reuse it for all candidates. Absence is meaningful only when `truncated: false`, there is no `output_complete: false`, and there is no blitzcrank truncation marker.
-5. Inspect only completed queue items whose import is blocked, delayed, failed, unknown, or still waiting. If none exist, finish with `submit_automation_report` using `status: "ok"` and an empty `body`.
+2. Identify completed queue items whose import is blocked, delayed, failed, unknown, or still waiting. If neither queue contains one, immediately finish with `submit_automation_report` using `status: "ok"` and an empty `body`. Do not read automation history or Anvil state on this empty path.
+
+Wait for both queue results before continuing. Do not batch history or Anvil reads with the queue reads.
+
+## Candidate context
+
+Only when the queue gate finds at least one candidate:
+
+1. Search related automation history with `thread_history_search`, using exact candidate titles, release names, download IDs, or paths where available instead of a generic query. History is a clue only; validate it against live state.
+2. Read `anvil_status` for control-plane context only. It never proves an item is encoding.
+3. Take one `anvil_job_list` snapshot for `pending`, `leased`, `running`, `validating`, `replacing`, and `retrying`; reuse it for all candidates. Absence is meaningful only when `truncated: false`, there is no `output_complete: false`, and there is no blitzcrank truncation marker.
 
 Use an explicit `purpose` on every read. Read SABnzbd only when downloader confirmation is needed, and only through queue/history. Do not load broad skills or fetch unrelated service state pre-emptively.
 
