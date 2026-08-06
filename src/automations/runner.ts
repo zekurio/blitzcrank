@@ -11,6 +11,7 @@ import {
   type SessionFileRef,
 } from "../tools/index.js"
 import { capabilityTools, type AutomationDefinition } from "./definitions.js"
+import { modelSpecForAutomation } from "./models.js"
 import { buildAutomationSystemPrompt } from "./prompt.js"
 import {
   buildAutomationReportTool,
@@ -46,6 +47,7 @@ export class AutomationRunner {
     private readonly config: Config,
     private readonly modelRuntime: ModelRuntime,
     private readonly defaultModelSpec: string,
+    private readonly modelSpecs: Readonly<Record<string, string>>,
   ) {}
 
   async run(def: AutomationDefinition): Promise<AutomationReport> {
@@ -59,7 +61,11 @@ export class AutomationRunner {
       },
     })
     const sessionFileRef: SessionFileRef = { current: undefined }
-    const modelSpec = def.model ?? this.defaultModelSpec
+    const modelSpec = modelSpecForAutomation(
+      def.name,
+      this.defaultModelSpec,
+      this.modelSpecs,
+    )
 
     const allowedMutations = capabilityTools(def.capabilities)
     const tools = buildServiceTools(this.config, ctx, sessionFileRef).filter(

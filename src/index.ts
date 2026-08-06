@@ -8,9 +8,13 @@ import {
   IssueRunner,
   type IssueEvent,
 } from "./agent/runner.js"
-import { DEFAULT_MODEL } from "./agent/session.js"
+import { DEFAULT_MODEL, resolveModel } from "./agent/session.js"
 import { loadAutomations } from "./automations/definitions.js"
 import { AutomationDispatcher } from "./automations/dispatcher.js"
+import {
+  assertKnownAutomationModels,
+  modelSpecForAutomation,
+} from "./automations/models.js"
 import { AutomationRunner } from "./automations/runner.js"
 import { AutomationScheduler } from "./automations/scheduler.js"
 import { CaseStore } from "./casefile.js"
@@ -42,14 +46,30 @@ async function main(): Promise<void> {
     ...(config.authPath ? { authPath: config.authPath } : {}),
     ...(config.modelsPath ? { modelsPath: config.modelsPath } : {}),
   })
+  const automations = await loadAutomations(config.automationsDir)
+  assertKnownAutomationModels(automations, config.automationModels)
+  const configuredModelSpecs = new Set([
+    issueModelSpec,
+    automationModelSpec,
+    ...automations.map((automation) =>
+      modelSpecForAutomation(
+        automation.name,
+        automationModelSpec,
+        config.automationModels,
+      ),
+    ),
+  ])
+  for (const modelSpec of configuredModelSpecs) {
+    resolveModel(modelRuntime, modelSpec)
+  }
 
   const issueRunner = new IssueRunner(config, modelRuntime, issueModelSpec)
   const automationRunner = new AutomationRunner(
     config,
     modelRuntime,
     automationModelSpec,
+    config.automationModels,
   )
-  const automations = await loadAutomations(config.automationsDir)
 
   const queue = new SerialQueue()
   const revisits = new RevisitScheduler()
@@ -189,9 +209,14 @@ async function main(): Promise<void> {
       )
     }
     for (const def of automations) {
+      const modelSpec = modelSpecForAutomation(
+        def.name,
+        automationModelSpec,
+        config.automationModels,
+      )
       console.log(
         `  automation: ${def.name} (${def.schedule}${def.enabled ? "" : ", disabled"})` +
-          ` next=${scheduler.nextRun(def.name) ?? "-"}`,
+          ` model=${modelSpec} next=${scheduler.nextRun(def.name) ?? "-"}`,
       )
     }
   })

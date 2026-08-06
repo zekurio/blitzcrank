@@ -3,7 +3,6 @@ name: stale-import-handler
 description: Find Sonarr/Radarr queue entries where a download is complete but not imported, import only clearly safe manual-import candidates, requeue stalled Anvil encodes that block an import, remove only clearly rejected stale downloads without blocklisting, treat healthy Anvil encoding as a temporary wait, and report actions and manual-review blockers.
 schedule: "0 */3 * * *"
 enabled: true
-model: openrouter/deepseek/deepseek-v4-flash-0731:high
 capabilities:
   - sonarr.manual_import
   - radarr.manual_import

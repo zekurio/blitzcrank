@@ -3,15 +3,11 @@ import path from "node:path"
 
 import { parse } from "yaml"
 
-import { parseModelSpec } from "../agent/session.js"
-
 export interface AutomationDefinition {
   name: string
   description: string
   schedule: string
   enabled: boolean
-  /** Optional model override; absent uses the default automation model. */
-  model: string | undefined
   capabilities: string[]
   /**
    * Optional per-run ceilings. Absent means unlimited, as for issue runs: an
@@ -84,6 +80,13 @@ function parseDefinition(filePath: string, raw: string): AutomationDefinition {
   const meta = parse(match[1]!) as Record<string, unknown>
   const body = raw.slice(match[0].length).trim()
 
+  if (Object.hasOwn(meta, "model")) {
+    throw new Error(
+      `${filePath}: model is deployment configuration; use ` +
+        "BLITZCRANK_AUTOMATION_MODELS or BLITZCRANK_AUTOMATION_MODEL instead of frontmatter",
+    )
+  }
+
   const name = String(meta.name ?? "")
   if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(name)) {
     throw new Error(
@@ -107,31 +110,12 @@ function parseDefinition(filePath: string, raw: string): AutomationDefinition {
     description: String(meta.description ?? ""),
     schedule,
     enabled: meta.enabled !== false,
-    model: modelSpec(filePath, meta.model),
     capabilities,
     mutationBudget: budget(filePath, "mutation_budget", meta.mutation_budget),
     deletionBudget: budget(filePath, "deletion_budget", meta.deletion_budget),
     body,
     filePath,
   }
-}
-
-/** An optional per-automation model override in the shared model-spec syntax. */
-function modelSpec(filePath: string, value: unknown): string | undefined {
-  if (value === undefined || value === null) return undefined
-  if (typeof value !== "string") {
-    throw new Error(
-      `${filePath}: model must be "provider/model[:thinking]", got ${JSON.stringify(value)}`,
-    )
-  }
-  try {
-    parseModelSpec(value)
-  } catch {
-    throw new Error(
-      `${filePath}: model must be "provider/model[:thinking]", got ${JSON.stringify(value)}`,
-    )
-  }
-  return value
 }
 
 /** An optional frontmatter ceiling; a present-but-nonsensical value is fatal. */

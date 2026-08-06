@@ -46,6 +46,8 @@ export interface Config {
   model: string | undefined
   /** Default model for automations; absent inherits `model`. */
   automationModel: string | undefined
+  /** Per-automation model overrides, keyed by automation name. */
+  automationModels: Record<string, string>
   /**
    * pi auth.json holding API keys and OAuth credentials (e.g. openai-codex).
    * Must be writable: OAuth tokens auto-refresh and are persisted back.
@@ -93,6 +95,37 @@ function number(
     throw new Error(`${name} must be a non-negative number, got "${value}"`)
   }
   return parsed
+}
+
+/** A structured env value is strict: malformed routing must stop startup. */
+export function parseAutomationModels(
+  value: string | undefined,
+): Record<string, string> {
+  if (value === undefined || value.trim() === "") return {}
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    throw new Error(
+      "BLITZCRANK_AUTOMATION_MODELS must be a JSON object mapping automation names to model specs",
+    )
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(
+      "BLITZCRANK_AUTOMATION_MODELS must be a JSON object mapping automation names to model specs",
+    )
+  }
+
+  const entries = Object.entries(parsed)
+  for (const [name, model] of entries) {
+    if (typeof model !== "string" || model.trim() === "") {
+      throw new Error(
+        `BLITZCRANK_AUTOMATION_MODELS[${JSON.stringify(name)}] must be a non-empty model spec`,
+      )
+    }
+  }
+  return Object.fromEntries(entries) as Record<string, string>
 }
 
 /** Colon-separated absolute paths, PATH-style. */
@@ -159,6 +192,9 @@ export function loadConfig(): Config {
     webhookSecret: process.env.BLITZCRANK_WEBHOOK_SECRET,
     model: process.env.BLITZCRANK_MODEL,
     automationModel: process.env.BLITZCRANK_AUTOMATION_MODEL,
+    automationModels: parseAutomationModels(
+      process.env.BLITZCRANK_AUTOMATION_MODELS,
+    ),
     authPath: process.env.BLITZCRANK_AUTH_PATH,
     modelsPath: process.env.BLITZCRANK_MODELS_PATH,
     firecrawl: process.env.FIRECRAWL_API_KEY

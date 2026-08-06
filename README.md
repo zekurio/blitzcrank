@@ -85,7 +85,10 @@ Then import and configure the module:
   services.blitzcrank = {
     enable = true;
     model = "openai-codex/gpt-5.2-codex";
-    automationModel = "openai-codex/gpt-5.6-terra:high"; # optional
+    automationModel = "anthropic/claude-sonnet-4-5:medium"; # optional default
+    automationModels = {
+      stale-import-handler = "openai-codex/gpt-5.6-terra:high";
+    };
     environmentFile = "/run/secrets/blitzcrank.env"; # SEERR_*, SONARR_*, ...
     authSeedFile = "/run/secrets/pi_auth_json";      # optional, OAuth providers
     settings.SEERR_BOT_USERNAME = "blitzcrank";
@@ -117,6 +120,10 @@ tools are registered only when configured.
 `provider/model[:thinking]` (default
 `anthropic/claude-sonnet-4-5:medium`). `BLITZCRANK_AUTOMATION_MODEL` selects the
 default for automation runs and inherits `BLITZCRANK_MODEL` when unset.
+`BLITZCRANK_AUTOMATION_MODELS` is a JSON object of per-automation overrides,
+for example
+`{"stale-import-handler":"openai-codex/gpt-5.6-terra:high"}`. The Nix module
+exposes the same mapping as `services.blitzcrank.automationModels`.
 Authentication follows pi's resolution order: API-key providers read the usual
 env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …), OAuth/subscription
 providers read a pi `auth.json` —
@@ -149,27 +156,28 @@ the bot's own comments never trigger runs.
 `automations/*.md` are operator-authored tasks: frontmatter declares the cron
 schedule, the capabilities that map to mutation tools, and optional
 `mutation_budget`/`deletion_budget`; the body is the trusted instruction text.
-They normally use `BLITZCRANK_AUTOMATION_MODEL` (which falls back to
-`BLITZCRANK_MODEL`), but an automation can select its own authenticated model
-with `model: provider/model[:thinking]`, for example:
+Model selection is deployment configuration: a named entry in
+`BLITZCRANK_AUTOMATION_MODELS` wins, then `BLITZCRANK_AUTOMATION_MODEL`, then
+`BLITZCRANK_MODEL`. For example, an automation definition contains no model:
 
 ```yaml
 ---
 name: stale-import-handler
 schedule: "0 */3 * * *"
-model: openai-codex/gpt-5.6-terra:high
 capabilities:
   - sonarr.queue_rejection_cleanup
 ---
 ```
 
-The model changes only that automation's fresh agent turn; it does not expand
-its service access, capabilities, budgets, or evidence gates. Runs are
-triggered by cron, `POST /automations/:name/run`, or Discord, and one
-automation never runs twice concurrently (a busy name is refused with `409`).
-Every run finishes through the typed `submit_automation_report` tool. Its
-validated `status` and `body` arguments are the authoritative report; the host
-does not parse a status line from free-text model output.
+A model mapping changes only that automation's fresh agent turn; it does not
+expand its service access, capabilities, budgets, or evidence gates. Unknown
+automation names and unavailable models are startup errors, so renamed tasks
+cannot leave dead routing configuration behind. Runs are triggered by cron,
+`POST /automations/:name/run`, or Discord, and one automation never runs twice
+concurrently (a busy name is refused with `409`). Every run finishes through
+the typed `submit_automation_report` tool. Its validated `status` and `body`
+arguments are the authoritative report; the host does not parse a status line
+from free-text model output.
 
 Discord monitoring is optional and off unless `DISCORD_BOT_TOKEN` is set (then
 `DISCORD_GUILD_ID` and `DISCORD_WATCH_CHANNEL_ID` are required). Each run posts
