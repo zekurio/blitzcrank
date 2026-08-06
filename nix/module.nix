@@ -61,8 +61,20 @@ in
       example = "openai-codex/gpt-5.6-terra:high";
       description = ''
         Default model for automation runs as provider/model with an optional
-        thinking suffix. Null inherits {option}`model`. An automation may
-        override this default with `model` in its YAML frontmatter.
+        thinking suffix. Null inherits {option}`model`.
+      '';
+    };
+
+    automationModels = lib.mkOption {
+      type = lib.types.attrsOf lib.types.str;
+      default = { };
+      example = {
+        stale-import-handler = "openai-codex/gpt-5.6-terra:high";
+      };
+      description = ''
+        Per-automation model overrides keyed by automation name. Entries use
+        provider/model with an optional thinking suffix. Unknown automation
+        names or unavailable models stop the service at startup.
       '';
     };
 
@@ -188,6 +200,9 @@ in
       }
       // lib.optionalAttrs (cfg.automationModel != null) {
         BLITZCRANK_AUTOMATION_MODEL = cfg.automationModel;
+      }
+      // lib.optionalAttrs (cfg.automationModels != { }) {
+        BLITZCRANK_AUTOMATION_MODELS = builtins.toJSON cfg.automationModels;
       }
       // lib.optionalAttrs (cfg.mediaRoots != [ ]) {
         BLITZCRANK_MEDIA_ROOTS = lib.concatStringsSep ":" cfg.mediaRoots;
