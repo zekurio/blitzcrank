@@ -54,12 +54,6 @@ export const CAPABILITY_TOOLS: Record<string, string[]> = {
   "sabnzbd.job_deletion": ["sabnzbd_delete_job"],
   "jellyfin.refresh": ["jellyfin_refresh_item"],
   "seerr.request_creation": ["seerr_create_request"],
-  // Requeuing a diagnosed failed encode is how an Anvil-blocked import gets
-  // unblocked without touching the Arr queue entry at all. It reached
-  // automations before this entry existed, via the `anvil_` prefix in
-  // `isReadTool`; this mapping makes it a declared capability rather than an
-  // ambient one.
-  "anvil.job_retry": ["anvil_retry_job"],
 }
 
 export function capabilityTools(capabilities: string[]): string[] {

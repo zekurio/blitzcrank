@@ -5,7 +5,6 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent"
 import type { CaseFile } from "../casefile.js"
 import type { Config } from "../config.js"
 import type { SeerrClient } from "../services/seerr.js"
-import { buildAnvilTools } from "./anvil.js"
 import { buildRadarrTools, buildSonarrTools } from "./arr.js"
 import { buildCaseFileTool } from "./casefile.js"
 import type { RunContext } from "./context.js"
@@ -28,7 +27,7 @@ export interface SessionFileRef {
 
 /**
  * Service tool set shared by issue runs and automations: GET-only reads,
- * typed evidence-gated mutations, anvil correlation, run-history search.
+ * typed evidence-gated mutations, media probing, and run-history search.
  */
 export function buildServiceTools(
   config: Config,
@@ -44,7 +43,6 @@ export function buildServiceTools(
   if (config.radarr) tools.push(...buildRadarrTools(config.radarr, ctx))
   if (config.jellyfin) tools.push(...buildJellyfinTools(config.jellyfin, ctx))
   if (config.sabnzbd) tools.push(...buildSabnzbdTools(config.sabnzbd, ctx))
-  if (config.anvil) tools.push(...buildAnvilTools(config.anvil, ctx))
   if (config.media) tools.push(...buildMediaTools(config.media, ctx))
   tools.push(
     buildHistoryTool(path.join(config.dataDir, "sessions"), sessionFileRef),
@@ -61,10 +59,6 @@ export function buildServiceTools(
  * mutation can never be granted to every automation by accident.
  */
 const READ_TOOLS = new Set([
-  "anvil_job_list",
-  "anvil_job_lookup",
-  "anvil_job_show",
-  "anvil_status",
   "jellyfin_request",
   "media_probe",
   "radarr_request",

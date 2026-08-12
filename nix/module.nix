@@ -164,7 +164,6 @@ in
       default = { };
       example = {
         SEERR_BOT_USERNAME = "blitzcrank";
-        ANVIL_CONTROL_SOCKET = "/run/anvil/anvild.sock";
         DISCORD_GUILD_ID = "000000000000000000";
         DISCORD_WATCH_CHANNEL_ID = "000000000000000000";
       };

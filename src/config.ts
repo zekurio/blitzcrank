@@ -11,11 +11,6 @@ export interface FirecrawlConfig {
   apiUrl: string
 }
 
-export interface AnvilConfig {
-  command: string
-  socket: string
-}
-
 export interface DiscordConfig {
   token: string
   /** Guild whose commands are registered; interactions elsewhere are refused. */
@@ -69,7 +64,6 @@ export interface Config {
   radarr: ServiceConfig | undefined
   sabnzbd: ServiceConfig | undefined
   jellyfin: ServiceConfig | undefined
-  anvil: AnvilConfig | undefined
   /** Enables the ffprobe-backed media_probe tool when media roots are set. */
   media: MediaConfig | undefined
   /** Automation report threads + trigger commands; host-side only. */
@@ -213,12 +207,6 @@ export function loadConfig(): Config {
     radarr: service("RADARR"),
     sabnzbd: service("SABNZBD"),
     jellyfin: service("JELLYFIN"),
-    anvil: process.env.ANVIL_CONTROL_SOCKET
-      ? {
-          command: process.env.ANVIL_COMMAND ?? "anvilctl",
-          socket: process.env.ANVIL_CONTROL_SOCKET,
-        }
-      : undefined,
     media: media(),
     discord: discord(),
   }

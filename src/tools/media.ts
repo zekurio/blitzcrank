@@ -296,7 +296,7 @@ export function summarizeProbe(stdout: string) {
   }
 }
 
-/** Mirrors parseAnvilResponse: a useless stdout must say what it was. */
+/** A useless stdout must say what it was. */
 function parseFfprobeJson(stdout: string): {
   streams?: FfprobeStream[]
   format?: { duration?: string }

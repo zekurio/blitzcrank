@@ -60,7 +60,7 @@ preference symptoms; never expose private data.
   compatibility/transcode behavior.
 - **Missing after import:** verify the exact Arr path lies under a Jellyfin
   library as Jellyfin sees it, then search by provider/path and narrowly refresh
-  an existing item. If the Arr file is absent, return to Arr/SAB/Anvil.
+  an existing item. If the Arr file is absent, return to Arr/SAB.
 - **Wrong/stale metadata:** compare IDs, type, title/year, hierarchy, path, size,
   runtime, and streams. Refresh the affected item and re-fetch identity/media.
   Do not replace a correct file solely for metadata.

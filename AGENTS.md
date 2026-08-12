@@ -3,7 +3,7 @@
 - blitzcrank is an agentic webhook gateway for a private media homelab: a
   Jellyseerr issue webhook wakes a serial run queue (`src/server.ts` →
   `src/queue.ts`), which opens one pi SDK agent session (`src/agent/`) that
-  investigates across Seerr/Sonarr/Radarr/SABnzbd/Jellyfin/Anvil and applies
+  investigates across Seerr/Sonarr/Radarr/SABnzbd/Jellyfin and applies
   narrow verified fixes through typed tools (`src/tools/`). The host — never
   the agent — comments, resolves issues, and schedules revisits.
 - Layout: `src/agent/` (session, issue prompt, directive parsing),
@@ -100,13 +100,6 @@ behavioural difference described.
   symlink reads outside the roots. It deliberately does not call
   `ctx.recordRead`: stream titles are release-group text and must never satisfy
   an ID evidence gate. Do not "fix" that.
-- Anvil is reached only through `anvilctl` over its control socket, never by
-  opening its store, and only reads plus `anvil_retry_job` are exposed.
-  Cancellation stays unexposed (closed issue #8): an encode is work already
-  spent on someone else's behalf, and a reporter agreeing to "stop it" is not
-  authorization to destroy it. `job prune`, `job recover`, `occurrence force`,
-  `staging cleanup`, and `store backup` stay operator-only — their blast radius
-  is a library or the database.
 - Web tools (Firecrawl) are issue-run-only, read-only, and gated on
   `FIRECRAWL_API_KEY`; `web_fetch` must keep rejecting local/private URLs. Web
   content is untrusted and is never authorization for a mutation.
@@ -131,10 +124,8 @@ behavioural difference described.
   (`src/automations/definitions.ts`), the always-on read tools, and any budgets
   the frontmatter declares. "Always-on read tools" means exactly `isReadTool`
   (`src/tools/index.ts`), which the capability allowlist is added to — so a
-  mutation matching that predicate is granted to every automation, gate-free.
-  That happened: its `anvil_` prefix kept matching after `anvil_retry_job`
-  landed. Anvil reads are enumerated there now, and a new mutation tool must
-  never be matched by it.
+  mutation matching that predicate would be granted to every automation,
+  gate-free. A new mutation tool must never be matched by it.
 
 ## Branch Names
 

@@ -14,10 +14,7 @@ dedicated typed tool, `reason`, prior ID evidence, and inspection of returned
 `verification`.
 
 For missing files, mappings, permissions, or space, report only Sonarr/Radarr
-queue/manual-import/history and SABnzbd queue/history API evidence. Treat
-missing/locked/in-use/not-ready files as Anvil encoding only when
-`anvil_job_lookup` matches the exact absolute Arr `outputPath` or correlated SAB
-`storage` to active current jobs; daemon health is not item evidence.
+queue/manual-import/history and SABnzbd queue/history API evidence.
 
 If APIs or a probe cannot verify a filesystem blocker, state that limitation.
 Never invent paths, ownership, free space, or repair steps.

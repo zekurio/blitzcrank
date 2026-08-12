@@ -12,9 +12,9 @@
  * For issue runs the evidence store is *carried across* the events of one
  * issue, matching the agent session that is likewise resumed: the gate exists
  * to stop fabricated IDs, and an ID that was real yesterday was not fabricated
- * today. Arr and Anvil numeric IDs are autoincrement and are not recycled, and
- * SAB `nzo_id`s are stable opaque values, so a stale carried identity resolves
- * to the same object or 404s. Reusable Anvil slugs are deliberately not carried.
+ * today. Arr numeric IDs are autoincrement and are not recycled, and SAB
+ * `nzo_id`s are stable opaque values, so a stale carried identity resolves to
+ * the same object or 404s.
  */
 
 const MAX_EVIDENCE_ENTRIES = 24
