@@ -2,7 +2,7 @@ import { execFile } from "node:child_process"
 
 const MAX_ERROR_DETAIL_CHARS = 8_000
 
-/** Carries the helper's exit status, which is part of anvilctl's contract. */
+/** Carries the helper's exit status for useful tool errors. */
 export class ExecError extends Error {
   constructor(
     message: string,
@@ -14,7 +14,7 @@ export class ExecError extends Error {
 }
 
 /**
- * Runs a local helper binary (anvilctl, ffprobe) and returns stdout.
+ * Runs a local helper binary and returns stdout.
  * Never uses a shell: arguments are passed as an array, so nothing in a path
  * or id can be interpreted as a command. Failures throw with the tool's own
  * stderr, which pi hands back to the model as a tool error.

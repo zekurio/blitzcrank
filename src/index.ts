@@ -186,13 +186,7 @@ async function main(): Promise<void> {
   })
 
   const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
-    const services = [
-      "sonarr",
-      "radarr",
-      "sabnzbd",
-      "jellyfin",
-      "anvil",
-    ] as const
+    const services = ["sonarr", "radarr", "sabnzbd", "jellyfin"] as const
     const enabled = services.filter((s) => config[s])
     console.log(`blitzcrank listening on :${info.port}`)
     console.log(`  webhook: POST /webhook/seerr`)

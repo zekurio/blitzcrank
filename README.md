@@ -113,8 +113,8 @@ header when one is set.
 
 Everything is environment variables; [`.env.example`](.env.example) documents
 each one. `SEERR_URL`/`SEERR_API_KEY` are required. Sonarr, Radarr, SABnzbd,
-Jellyfin, Anvil, Firecrawl, media probing, and Discord are optional — their
-tools are registered only when configured.
+Jellyfin, Firecrawl, media probing, and Discord are optional — their tools are
+registered only when configured.
 
 `BLITZCRANK_MODEL` selects the issue-run model as
 `provider/model[:thinking]` (default

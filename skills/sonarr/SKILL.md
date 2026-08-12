@@ -27,8 +27,6 @@ Release/queue/history/file `languages` are release-name parsing (`MULTi`, `DL`, 
 
 Resolve `tvdbId` (never substitute IMDb or anime enrichment or construct unverified links), then record series ID, type, path, monitoring, profile, exact episode IDs, files, queue, newest history, blocklist, and profiles. Exhaust this local evidence and narrow search results before speculating about public availability. Prefer Sonarr `airDate`/`airDateUtc` and state timezone uncertainty. Correlate download IDs through read-only `sabnzbd_request`; SAB completion is not import.
 
-Anvil is item evidence only when `anvil_job_lookup` matches an exact absolute queue `outputPath`, or exact SAB `storage` linked by `downloadId`/`nzo_id`; `anvil_status`, guessed paths, and title matches are insufficient. Never remove, blocklist, retry, search, refresh, manual-import, or force-import an exact active Anvil wait.
-
 ## Typed mutations
 
 Inspect each result's `verification` and follow with narrow reads as needed.
@@ -50,8 +48,8 @@ If issue scope is absent, ask for clarification rather than making broad changes
 
 For corruption/wrong content, probe the file, inspect Jellyfin streams and shared-file impact, identify the originating history release, then make one targeted repair. Blocklist only with reliable release identity. For a missing track, search only when a genuinely different release is plausible; the same release cannot add a track absent from its file. If the track exists but playback omits it, investigate Jellyfin/client selection.
 
-For stalls/import failures, allow download/repair/unpack work and diagnose category, mapping, permissions, space, locks, naming, usable video, and exact Anvil ownership before retrying. Fix infrastructure before re-searching. For repeated upgrades, inspect history, cutoff, custom-format scores, language, naming, and parsed imported quality; correct the rule or parser cause before one verified search rather than accumulating blocklist entries.
+For stalls/import failures, allow download/repair/unpack work and diagnose category, mapping, permissions, space, locks, naming, and usable video before retrying. Fix infrastructure before re-searching. For repeated upgrades, inspect history, cutoff, custom-format scores, language, naming, and parsed imported quality; correct the rule or parser cause before one verified search rather than accumulating blocklist entries.
 
-For manual import, read the exact queue folder/download ID and candidate endpoint; inspect every `rejections` array. Import only candidates mapped to that queued episode and download with acceptable quality/language evidence. Reject wrong targets, samples, missing paths, permission or duplicate conflicts, unwanted language, and low score/cutoff. Never import while Anvil/transcode owns the path. Re-read queue and file state; use queue deletion with `blocklist: true` when cleanup, not import, is warranted.
+For manual import, read the exact queue folder/download ID and candidate endpoint; inspect every `rejections` array. Import only candidates mapped to that queued episode and download with acceptable quality/language evidence. Reject wrong targets, samples, missing paths, permission or duplicate conflicts, unwanted language, and low score/cutoff. Re-read queue and file state; use queue deletion with `blocklist: true` when cleanup, not import, is warranted.
 
 A search is not a grab; a grab is not a download; import is not Jellyfin playback. Verify queue/blocklist/episode/file state, ensure any replacement differs, and after import verify the file record and Jellyfin streams. Call `report_progress` first with one short public status sentence and no tools, IDs, URLs, or promises. Final output must include `RESOLVE_ISSUE: yes|no`; unresolved work may include `REVISIT_IN` and `REVISIT_REASON`. Resolve only when the reported symptom is objectively verified or required reporter confirmation is obtained.

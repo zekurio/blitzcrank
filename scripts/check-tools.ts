@@ -2,11 +2,9 @@
  * Checks that the documented tool surface matches the real one.
  *
  * Prompts and skills name tools in prose, so nothing in the type system stops
- * them drifting apart from the registry — and they did, twice: a description
- * claiming the Anvil surface was read-only after a retry tool landed, and one
- * denying that same tool while it sat beside it. The model reads those strings
- * as the authority on what it can do, which makes the drift a behaviour bug
- * rather than a documentation one.
+ * them drifting apart from the registry. The model reads those strings as the
+ * authority on what it can do, which makes drift a behaviour bug rather than a
+ * documentation one.
  *
  * Two directions, both cheap:
  *  - every registered tool is described in at least one skill or in the system
@@ -46,7 +44,6 @@ const config: Config = {
   radarr: service,
   sabnzbd: service,
   jellyfin: service,
-  anvil: { command: "anvilctl", socket: "/run/anvil/anvild.sock" },
   media: { roots: ["/mnt/media"] },
 }
 
@@ -81,7 +78,7 @@ const skillsDir = path.join(import.meta.dirname, "..", "skills")
 const docs: Array<{ where: string; text: string }> = [
   {
     where: "src/agent/prompt.ts",
-    text: buildSystemPrompt(config, [...registered]),
+    text: buildSystemPrompt(config),
   },
   {
     where: "src/automations/prompt.ts",
@@ -100,7 +97,7 @@ for (const entry of await readdir(skillsDir, { withFileTypes: true })) {
 // Only names carrying a tool prefix: `missing_languages` and `path_outside_libraries`
 // are payload fields, not tools, and must not be mistaken for them.
 const TOOL_SHAPED =
-  /\b(?:seerr|sonarr|radarr|jellyfin|sabnzbd|anvil|media|web|thread|report|submit|update)_[a-z][a-z_]*\b/g
+  /\b(?:seerr|sonarr|radarr|jellyfin|sabnzbd|media|web|thread|report|submit|update)_[a-z][a-z_]*\b/g
 
 const problems: string[] = []
 

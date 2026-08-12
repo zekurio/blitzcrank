@@ -25,15 +25,7 @@ export function textResult(
   return { content: [{ type: "text" as const, text: toText(data) }], details }
 }
 
-export type ServiceName =
-  | "seerr"
-  | "sonarr"
-  | "radarr"
-  | "jellyfin"
-  | "sabnzbd"
-  // Not an HTTP service: anvil is reached through anvilctl, but its reads feed
-  // the same evidence store, so its job ids gate its own mutations.
-  | "anvil"
+export type ServiceName = "seerr" | "sonarr" | "radarr" | "jellyfin" | "sabnzbd"
 
 const SERVICE_PATH_FIELDS: Partial<Record<ServiceName, ReadonlySet<string>>> = {
   sonarr: new Set(["path", "outputPath"]),

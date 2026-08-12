@@ -1,6 +1,6 @@
 ---
 name: sabnzbd
-description: Diagnose and safely remediate SABnzbd queue, history, download, repair, unpack, post-processing, and Arr handoff failures. Load when a Sonarr or Radarr job is stalled, failed, missing after grab, or waiting on downloader or Anvil state.
+description: Diagnose and safely remediate SABnzbd queue, history, download, repair, unpack, post-processing, and Arr handoff failures. Load when a Sonarr or Radarr job is stalled, failed, missing after grab, or waiting on downloader state.
 ---
 
 # SABnzbd
@@ -14,9 +14,9 @@ Issue runs are uncapped; an automation is capped only when its definition
 declares a budget.
 
 SAB downloads, verifies, repairs, unpacks, and writes output. Completion does
-not prove Arr import or Jellyfin playback; Anvil may intervene. Arr owns release
-suitability, blocklisting, replacement, import, and rename, so prefer Arr-level
-remediation while it tracks the release.
+not prove Arr import or Jellyfin playback. Arr owns release suitability,
+blocklisting, replacement, import, and rename, so prefer Arr-level remediation
+while it tracks the release.
 
 ## Diagnose
 
@@ -34,9 +34,6 @@ remediation while it tracks the release.
    its Arr state is also handled.
 
 For file-language questions, exact completed `storage` can feed `media_probe`.
-If SAB is complete but Arr reports files not ready, use `anvil_job_lookup` only
-with exact `storage` correlated by download ID or exact Arr `outputPath`.
-`anvil_status`, title, names, or guessed paths cannot correlate an item.
 
 ## Typed mutations
 
@@ -63,20 +60,14 @@ permission, or space evidence first. Preserve failed history until Arr can
 observe and blocklist it.
 
 For complete-but-missing media, compare category/storage with Arr import/path
-mapping and Anvil; do not redownload a valid payload that is inaccessible or
-encoding. For duplicates/orphans, compare IDs, category, title, and submitter;
-never delete the copy Arr expects. Delete only a confirmed orphan from the
-correct list, with `deleteFiles: true` solely when data destruction is intended
-and justified.
-
-Only exact active Anvil-job evidence plus Arr file-not-ready evidence proves an
-Anvil wait. While waiting, do not force/manual import, remove, blocklist, retry,
-search, or refresh. Failed/skipped Anvil work is a blocker; complete still
-needs Arr/Jellyfin verification.
+mapping; do not redownload a valid payload that is inaccessible. For
+duplicates/orphans, compare IDs, category, title, and submitter; never delete
+the copy Arr expects. Delete only a confirmed orphan from the correct list,
+with `deleteFiles: true` solely when data destruction is intended and justified.
 
 Call `report_progress` first with one short public status line; updates rewrite
 it rather than narrating percentages. Claim mutation only after successful
 verification. Never call Seerr comment/resolve APIs. Use the required final directive block
 beginning with `RESOLVE_ISSUE: yes|no`; active work may add `REVISIT_IN` and a
 falsifiable `REVISIT_REASON`. Keep the issue open while downloading, repairing,
-encoding, importing, scanning, or awaiting verification.
+importing, scanning, or awaiting verification.

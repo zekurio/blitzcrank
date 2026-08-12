@@ -102,12 +102,7 @@ export class IssueRunner {
     const turn = await runAgentTurn({
       modelRuntime: this.modelRuntime,
       modelSpec: this.modelSpec,
-      // Built from the tools themselves, so the prompt cannot claim a
-      // capability this run does not have, or deny one it does.
-      systemPrompt: buildSystemPrompt(
-        this.config,
-        tools.map((tool) => tool.name),
-      ),
+      systemPrompt: buildSystemPrompt(this.config),
       tools,
       prompt:
         event.kind === "webhook"
