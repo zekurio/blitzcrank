@@ -89,7 +89,10 @@ behavioural difference described.
   final comment overwrites it, and a run with no final comment deletes it —
   including a run that fails before its final comment, whose adopted queue
   notice or progress line is retracted on the way out (`src/agent/runner.ts`).
-  Comment edits and deletes emit no Seerr webhook, so this cannot loop.
+  Comment edits and deletes emit no Seerr webhook, so this cannot loop. Queue
+  notices are posted strictly serialized (`IssueRunner.notifyQueued`):
+  `postComment` infers the new comment's id from the issue's comment list, and
+  two racing posts could return the same handle.
 - Webhook fields are sanitized with `webhookText`/`issueIdOf`
   (`src/webhook/types.ts`): Seerr renders unset values as `""` and leaves
   unknown template placeholders literal, so `"{{...}}"` is never an identity.
