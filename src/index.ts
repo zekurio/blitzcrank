@@ -90,8 +90,26 @@ async function main(): Promise<void> {
   }
 
   const enqueueIssue = (event: IssueEvent): void => {
+    const runsAhead = queue.size
+    // Only user-driven runs get a public queue acknowledgement. Revisit runs
+    // were scheduled by blitzcrank itself and should not create extra chatter.
+    // The notification promise is created before enqueueing so it cannot wait
+    // behind the run it belongs to; the serial task adopts its comment handle.
+    const queuedStatus =
+      event.kind === "webhook" && runsAhead > 0
+        ? issueRunner.notifyQueued(event.issueId, runsAhead).catch((err) => {
+            console.error(
+              `[issue:${event.issueId}] queue notification failed; continuing:`,
+              err,
+            )
+            return { id: undefined }
+          })
+        : Promise.resolve({ id: undefined })
     queue.enqueue(async () => {
-      const { issueId, casefile } = await issueRunner.run(event)
+      const { issueId, casefile } = await issueRunner.run(
+        event,
+        await queuedStatus,
+      )
       // The runner persisted the plan; the timer only mirrors it, so a restart
       // re-arms from disk instead of silently dropping the follow-up.
       const revisit = casefile.revisit

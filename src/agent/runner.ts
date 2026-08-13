@@ -55,7 +55,25 @@ export class IssueRunner {
     return modelAnchor(this.modelSpec)
   }
 
-  async run(event: IssueEvent): Promise<RunOutcome> {
+  /**
+   * Posts the status line before a delayed webhook run reaches the front of the
+   * serial queue. The run adopts the returned handle, so its first progress
+   * update and final answer replace this comment instead of adding another.
+   */
+  async notifyQueued(
+    issueId: string,
+    runsAhead: number,
+  ): Promise<StatusComment> {
+    const seerr = new SeerrClient(this.config.seerr, this.config.seerrBotUserId)
+    const message = queuedMessage(this.config.language, runsAhead)
+    const id = await seerr.postComment(issueId, `${message}\n\n${this.anchor}`)
+    return { id }
+  }
+
+  async run(
+    event: IssueEvent,
+    status: StatusComment = { id: undefined },
+  ): Promise<RunOutcome> {
     const { issueId } = event
     const seerr = new SeerrClient(this.config.seerr, this.config.seerrBotUserId)
     const casefile = await this.cases.load(issueId)
@@ -68,9 +86,10 @@ export class IssueRunner {
       prior: await this.cases.loadEvidence(issueId),
     })
     const sessionFileRef: SessionFileRef = { current: undefined }
-    // The agent's progress tool posts this once and edits it in place; the
-    // final comment then overwrites it, so a run leaves one comment at most.
-    const status: StatusComment = { id: undefined }
+    // The agent's progress tool posts this once and edits it in place; when the
+    // host already posted a queue notice it adopts that comment instead. The
+    // final answer overwrites either status, so a run leaves one comment at
+    // most.
     const revisitsLeft = Math.max(
       0,
       MAX_REVISIT_CHAIN -
@@ -218,6 +237,22 @@ export class IssueRunner {
     )
     return { issueId, directives, casefile }
   }
+}
+
+function queuedMessage(language: string, runsAhead: number): string {
+  const german = /^(de|deutsch|german)(-|_|\b)/i.test(language.trim())
+  if (german) {
+    const ahead =
+      runsAhead === 1
+        ? "Eine Aufgabe ist noch vor ihr."
+        : `${runsAhead} Aufgaben sind noch vor ihr.`
+    return `⏳ Blitzcrank ist gerade beschäftigt. Deine Meldung ist eingereiht. ${ahead}`
+  }
+  const ahead =
+    runsAhead === 1
+      ? "One task is ahead of it."
+      : `${runsAhead} tasks are ahead of it.`
+  return `⏳ Blitzcrank is currently busy. Your issue is queued. ${ahead}`
 }
 
 /**
