@@ -50,16 +50,16 @@ let
         exit 1
       fi
 
-      was_running=0
-      if systemctl is-active --quiet blitzcrank.service; then
-        was_running=1
-      fi
+      restore_service=0
+      case "$(systemctl is-active blitzcrank.service || true)" in
+        active | activating | reloading) restore_service=1 ;;
+      esac
 
       cleanup() {
         status=$?
         trap - EXIT HUP INT TERM
         systemctl stop blitzcrank-login.service >/dev/null 2>&1 || true
-        if [ "$was_running" -eq 1 ] && ! systemctl start blitzcrank.service; then
+        if [ "$restore_service" -eq 1 ] && ! systemctl start blitzcrank.service; then
           echo "failed to restart blitzcrank.service" >&2
           status=1
         fi
