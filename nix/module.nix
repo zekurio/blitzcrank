@@ -26,6 +26,88 @@ let
     ${pkgs.coreutils}/bin/install -m 600 "$seed" "${cfg.authFile}"
     printf '%s\n' "$sum" > "$stamp"
   '';
+
+  login = pkgs.writeShellApplication {
+    name = "blitzcrank-login";
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.systemd
+      pkgs.util-linux
+    ];
+    text = ''
+      if [ "$(id -u)" -ne 0 ]; then
+        echo "blitzcrank-login must be run as root (try sudo)" >&2
+        exit 1
+      fi
+      if [ ! -t 0 ] || [ ! -t 1 ]; then
+        echo "blitzcrank-login requires an interactive terminal" >&2
+        exit 1
+      fi
+
+      exec 9>/run/blitzcrank-login.lock
+      if ! flock --nonblock 9; then
+        echo "another blitzcrank-login session is already running" >&2
+        exit 1
+      fi
+
+      # Recover a transient unit left behind if the previous helper was killed.
+      systemctl stop blitzcrank-login.service >/dev/null 2>&1 || true
+
+      restore_stamp=/run/blitzcrank-login.restore
+      restore_service=0
+      if [ -e "$restore_stamp" ]; then
+        restore_service=1
+      fi
+      case "$(systemctl is-active blitzcrank.service || true)" in
+        active | activating | reloading) restore_service=1 ;;
+      esac
+      if [ "$restore_service" -eq 1 ]; then
+        # Preserve restoration intent across SIGKILL, which cannot be trapped.
+        : > "$restore_stamp"
+      fi
+
+      cleanup() {
+        status=$?
+        trap - EXIT HUP INT TERM
+        systemctl stop blitzcrank-login.service >/dev/null 2>&1 || true
+        if [ "$restore_service" -eq 1 ]; then
+          if systemctl start blitzcrank.service; then
+            rm -f "$restore_stamp"
+          else
+            echo "failed to restart blitzcrank.service" >&2
+            status=1
+          fi
+        fi
+        exit "$status"
+      }
+      trap cleanup EXIT
+      trap 'exit 129' HUP
+      trap 'exit 130' INT
+      trap 'exit 143' TERM
+
+      # Stop even an activating unit so the login cannot race token refreshes.
+      systemctl stop blitzcrank.service
+
+      systemd-run \
+        --unit=blitzcrank-login.service \
+        --description="Interactive pi login for blitzcrank" \
+        --service-type=exec \
+        --property=Conflicts=blitzcrank.service \
+        --property=DynamicUser=yes \
+        --property=User=blitzcrank \
+        --property=StateDirectory=blitzcrank \
+        --property=NoNewPrivileges=yes \
+        --property=ProtectSystem=strict \
+        --property=PrivateTmp=yes \
+        --setenv=PI_CODING_AGENT_DIR=${stateDir} \
+        --working-directory=${stateDir} \
+        --pty \
+        --wait \
+        --collect \
+        ${lib.getExe' cfg.package "blitzcrank-pi"} \
+        --no-session
+    '';
+  };
 in
 {
   options.services.blitzcrank = {
@@ -89,11 +171,10 @@ in
       default = "${stateDir}/auth.json";
       description = ''
         pi auth.json with provider credentials. Required for OAuth providers
-        such as openai-codex: bootstrap by logging in once with pi
-        (`pi` -> `/login` -> OpenAI Codex) and copying the file here, owned by
-        the blitzcrank user, or declaratively via {option}`authSeedFile`. It
-        must stay writable because OAuth tokens auto-refresh and are persisted
-        back.
+        such as openai-codex. With the default path, bootstrap interactively
+        with {command}`sudo blitzcrank-login`, or declaratively via
+        {option}`authSeedFile`. It must stay writable because OAuth tokens
+        auto-refresh and are persisted back.
       '';
     };
 
@@ -172,6 +253,8 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    environment.systemPackages = [ login ];
+
     assertions = [
       {
         assertion = cfg.authSeedFile == null || lib.hasPrefix "${stateDir}/" cfg.authFile;

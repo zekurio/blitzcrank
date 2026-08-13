@@ -98,11 +98,27 @@ Then import and configure the module:
 
 State lives in `/var/lib/blitzcrank` (case files, session transcripts, Discord
 thread ids, and `auth.json` for OAuth providers — it must stay writable because
-tokens refresh in place). `authSeedFile` loads a read-only secret as a systemd
-credential and copies it to `authFile` only when the file is missing or the
-secret changed, so rebuilds never clobber refreshed tokens; it is a restore
-seed, not a live mirror. Automations default to the definitions shipped in the
-package; set `automationsDir` to manage your own.
+tokens refresh in place). To authenticate interactively on the deployed host,
+run:
+
+```bash
+sudo blitzcrank-login
+```
+
+At the pi prompt, enter `/login`, then select the provider (for example, OpenAI
+Codex). The helper stops `blitzcrank.service` while pi owns the auth file and
+restores its previous running or stopped state when pi exits or the helper is
+interrupted. It requires an interactive terminal and works over SSH. The
+bundled pi CLI is also exposed as `blitzcrank-pi`; use the helper for login so
+it runs with the service's dynamic identity and writable state directory.
+
+As a declarative alternative, `authSeedFile` loads a read-only secret as a
+systemd credential and copies it to `authFile` only when the file is missing or
+the secret changed, so rebuilds never clobber refreshed tokens; it is a restore
+seed, not a live mirror. The interactive helper writes the default
+`/var/lib/blitzcrank/auth.json`; use `authSeedFile` when `authFile` is
+customized. Automations default to the definitions shipped in the package; set
+`automationsDir` to manage your own.
 
 The server exposes `POST /webhook/seerr`, `GET /healthz`, `GET /automations`,
 and `POST /automations/:name/run` on `BLITZCRANK_PORT` (default `8484`). All
@@ -126,10 +142,11 @@ for example
 exposes the same mapping as `services.blitzcrank.automationModels`.
 Authentication follows pi's resolution order: API-key providers read the usual
 env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …), OAuth/subscription
-providers read a pi `auth.json` —
-bootstrap it once with `pi` → `/login`, then point `BLITZCRANK_AUTH_PATH` at
-the file (default `~/.pi/agent/auth.json`) and keep it writable. Custom
-providers can be declared in a `models.json` via `BLITZCRANK_MODELS_PATH`.
+providers read a pi `auth.json`. On NixOS, bootstrap the default auth path with
+`sudo blitzcrank-login` → `/login`; outside NixOS, bootstrap once with pi and
+point `BLITZCRANK_AUTH_PATH` at the writable file (default
+`~/.pi/agent/auth.json`). Custom providers can be declared in a `models.json`
+via `BLITZCRANK_MODELS_PATH`.
 
 Every public comment carries a footer with the model identity and the issue's
 cumulative token usage, e.g.
