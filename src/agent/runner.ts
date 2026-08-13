@@ -42,6 +42,8 @@ export interface RunOutcome {
 
 export class IssueRunner {
   private readonly cases: CaseStore
+  /** Serializes queue notices; see notifyQueued. */
+  private noticeChain: Promise<unknown> = Promise.resolve()
 
   constructor(
     private readonly config: Config,
@@ -56,18 +58,37 @@ export class IssueRunner {
   }
 
   /**
-   * Posts the status line before a delayed webhook run reaches the front of the
-   * serial queue. The run adopts the returned handle, so its first progress
-   * update and final answer replace this comment instead of adding another.
+   * Posts the status line before a delayed webhook run reaches the front of
+   * the serial queue. The run adopts the returned handle, so its first
+   * progress update and final answer replace this comment instead of adding
+   * another.
+   *
+   * Notices are posted one at a time: postComment infers the new comment's
+   * id as the max of the issue's comment list, so two notices for one issue
+   * in flight together could observe both POSTs and return the same handle —
+   * one run would then rewrite or delete the other's notice out from under
+   * it.
    */
   async notifyQueued(
     issueId: string,
     runsAhead: number,
   ): Promise<StatusComment> {
-    const seerr = new SeerrClient(this.config.seerr, this.config.seerrBotUserId)
-    const message = queuedMessage(this.config.language, runsAhead)
-    const id = await seerr.postComment(issueId, `${message}\n\n${this.anchor}`)
-    return { id }
+    const notice = this.noticeChain.then(async () => {
+      const seerr = new SeerrClient(
+        this.config.seerr,
+        this.config.seerrBotUserId,
+      )
+      const message = queuedMessage(this.config.language, runsAhead)
+      const id = await seerr.postComment(
+        issueId,
+        `${message}\n\n${this.anchor}`,
+      )
+      return { id }
+    })
+    // A failed notice must not wedge the chain; its caller already logs the
+    // failure and runs without a handle.
+    this.noticeChain = notice.catch(() => undefined)
+    return notice
   }
 
   async run(
