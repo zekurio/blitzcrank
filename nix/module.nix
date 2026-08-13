@@ -50,18 +50,33 @@ let
         exit 1
       fi
 
+      # Recover a transient unit left behind if the previous helper was killed.
+      systemctl stop blitzcrank-login.service >/dev/null 2>&1 || true
+
+      restore_stamp=/run/blitzcrank-login.restore
       restore_service=0
+      if [ -e "$restore_stamp" ]; then
+        restore_service=1
+      fi
       case "$(systemctl is-active blitzcrank.service || true)" in
         active | activating | reloading) restore_service=1 ;;
       esac
+      if [ "$restore_service" -eq 1 ]; then
+        # Preserve restoration intent across SIGKILL, which cannot be trapped.
+        : > "$restore_stamp"
+      fi
 
       cleanup() {
         status=$?
         trap - EXIT HUP INT TERM
         systemctl stop blitzcrank-login.service >/dev/null 2>&1 || true
-        if [ "$restore_service" -eq 1 ] && ! systemctl start blitzcrank.service; then
-          echo "failed to restart blitzcrank.service" >&2
-          status=1
+        if [ "$restore_service" -eq 1 ]; then
+          if systemctl start blitzcrank.service; then
+            rm -f "$restore_stamp"
+          else
+            echo "failed to restart blitzcrank.service" >&2
+            status=1
+          fi
         fi
         exit "$status"
       }
@@ -81,12 +96,16 @@ let
         --property=DynamicUser=yes \
         --property=User=blitzcrank \
         --property=StateDirectory=blitzcrank \
+        --property=NoNewPrivileges=yes \
+        --property=ProtectSystem=strict \
+        --property=PrivateTmp=yes \
         --setenv=PI_CODING_AGENT_DIR=${stateDir} \
         --working-directory=${stateDir} \
         --pty \
         --wait \
         --collect \
-        ${lib.getExe' cfg.package "blitzcrank-pi"}
+        ${lib.getExe' cfg.package "blitzcrank-pi"} \
+        --no-session
     '';
   };
 in
