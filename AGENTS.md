@@ -86,7 +86,9 @@ behavioural difference described.
   block (`src/agent/directives.ts`). Malformed directives ⇒ nothing is posted.
 - One run leaves at most one comment: `report_progress` rewrites a single live
   status comment in place (`PUT /issueComment/{id}`, max 4 calls), the host's
-  final comment overwrites it, and a run with no final comment deletes it.
+  final comment overwrites it, and a run with no final comment deletes it —
+  including a run that fails before its final comment, whose adopted queue
+  notice or progress line is retracted on the way out (`src/agent/runner.ts`).
   Comment edits and deletes emit no Seerr webhook, so this cannot loop.
 - Webhook fields are sanitized with `webhookText`/`issueIdOf`
   (`src/webhook/types.ts`): Seerr renders unset values as `""` and leaves
