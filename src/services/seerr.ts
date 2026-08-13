@@ -38,7 +38,11 @@ export class SeerrClient {
     return response.results ?? []
   }
 
-  /** Posts a comment; returns its id (newest of the returned issue comments). */
+  /**
+   * Posts a comment; returns its id (newest of the returned issue comments).
+   * The inference is ambiguous when two posts to one issue race, so posting
+   * must be serialized by the caller (see IssueRunner.notifyQueued).
+   */
   async postComment(
     issueId: string | number,
     message: string,
