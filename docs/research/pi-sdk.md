@@ -1,24 +1,40 @@
 # Pi SDK: headless Node integration guide
 
-Research date: 2026-07-28. Installed/published version inspected: **0.82.1**.
+Research date: 2026-08-14. Installed/published version inspected: **0.84.2**.
 
 ## Recommendation
 
 For a headless service, use the high-level SDK in **`@earendil-works/pi-coding-agent`**. It exposes `createAgentSession()`, resource/skill loading, model authentication, custom tools, events, and session persistence without requiring the TUI.
 
 ```bash
-npm install @earendil-works/pi-coding-agent@0.82.1 \
-  @earendil-works/pi-ai@0.82.1 \
+pnpm add @earendil-works/pi-coding-agent@0.84.2 \
+  @earendil-works/pi-ai@0.84.2 \
   typebox@1.1.38
 ```
 
-`@earendil-works/pi-coding-agent@0.82.1` already depends on `@earendil-works/pi-agent-core`, `@earendil-works/pi-ai`, and `typebox`. Declare `@earendil-works/pi-ai` and `typebox` directly because application code below imports them directly. Install `@earendil-works/pi-agent-core@0.82.1` directly only if application code imports its low-level `Agent` or types.
+`@earendil-works/pi-coding-agent@0.84.2` already depends on `@earendil-works/pi-agent-core`, `@earendil-works/pi-ai`, and `typebox`. Declare `@earendil-works/pi-ai` and `typebox` directly because application code below imports them directly. Install `@earendil-works/pi-agent-core@0.84.2` directly only if application code imports its low-level `Agent` or types.
 
 Confirmed with npm:
 
-- `@earendil-works/pi-coding-agent`: `0.82.1`
-- `@earendil-works/pi-agent-core`: `0.82.1`
-- `@earendil-works/pi-ai`: `0.82.1`
+- `@earendil-works/pi-coding-agent`: `0.84.2`
+- `@earendil-works/pi-agent-core`: `0.84.2`
+- `@earendil-works/pi-ai`: `0.84.2`
+
+### 0.84 upgrade check
+
+Version 0.84.0 changed `message_update` events to expose deltas through
+`assistantMessageEvent`. Blitzcrank already uses that form. It does not use the
+changed provider refresh APIs or the removed low-level session repository APIs.
+The 0.84.2 type check therefore needs no SDK call-site migration.
+
+Blitzcrank pins `pi-codex-search@0.1.6`. The runner loads its declared extension
+path only for issue runs while `noExtensions` stays enabled. The explicit tool
+allowlist includes `codex_search`; automations do not load or allow it. The
+extension reads the service's existing `openai-codex` OAuth credential and
+sends a separate hosted web-search request. Its `high` setting controls search
+context size, not model reasoning effort. Headless SDK sessions must call
+`session.bindExtensions()` so extension `session_start` handlers can register
+their tools before the first prompt.
 
 Important import paths at this version:
 
@@ -436,7 +452,7 @@ For replacing the active session at runtime (`newSession()`, `switchSession()`, 
 
 ### Node and modules
 
-- `@earendil-works/pi-coding-agent@0.82.1` declares **Node.js `>=22.19.0`**.
+- `@earendil-works/pi-coding-agent@0.84.2` declares **Node.js `>=22.19.0`**.
 - The package is ESM (`"type": "module"`) and only declares an `import` export. Use ESM TypeScript/JavaScript (`"type": "module"`, `module: "NodeNext"`/`"Node16"`, or equivalent). Do not assume `require()`/CommonJS support.
 - Extensions are loaded through `jiti`, so extension `.ts` files can be loaded without separately compiling them, but the host service itself should use its normal TypeScript build/runtime setup.
 

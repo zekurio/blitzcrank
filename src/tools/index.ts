@@ -19,7 +19,6 @@ import {
 } from "./services.js"
 
 export type { StatusComment } from "./services.js"
-import { buildWebTools } from "./web.js"
 
 export interface SessionFileRef {
   current: string | undefined
@@ -118,7 +117,5 @@ export function buildIssueTools(deps: IssueToolDeps): ToolDefinition[] {
     ),
     buildCaseFileTool(deps.casefile),
     ...tools,
-    // Issue runs only: availability/context lookups. Automations stay mechanical.
-    ...(deps.config.firecrawl ? buildWebTools(deps.config.firecrawl) : []),
   ]
 }

@@ -156,6 +156,7 @@ export class IssueRunner {
                 resuming,
               ),
         sessionDir: path.join(this.config.dataDir, "sessions", "issues"),
+        codexSearch: true,
         resumeFile: resuming ? casefile.sessionFile : undefined,
         sessionFileRef,
         logPrefix: `issue:${issueId}`,

@@ -279,6 +279,9 @@ in
         BLITZCRANK_DATA_DIR = stateDir;
         BLITZCRANK_AUTOMATIONS_DIR = cfg.automationsDir;
         BLITZCRANK_AUTH_PATH = cfg.authFile;
+        PI_CODEX_WEB_SEARCH_ENABLED = "true";
+        PI_CODEX_WEB_SEARCH_CONTEXT_SIZE = "high";
+        PI_CODEX_WEB_SEARCH_MODEL = "gpt-5.6-luna";
       }
       // lib.optionalAttrs (cfg.automationModel != null) {
         BLITZCRANK_AUTOMATION_MODEL = cfg.automationModel;

@@ -59,8 +59,8 @@ through a narrow typed surface, and returns directives.
   are persisted and re-armed after a restart.
 - **Read-only extras** — `media_probe` (ffprobe) answers language questions
   from the file rather than the release name, confined to
-  `BLITZCRANK_MEDIA_ROOTS` after `realpath`; Firecrawl `web_search`/`web_fetch`
-  are issue-run-only, reject local URLs, and never justify a mutation.
+  `BLITZCRANK_MEDIA_ROOTS` after `realpath`; subscription-backed Codex
+  `codex_search` is issue-run-only and never justifies a mutation.
 - **Discord is inbound-inert** — reports are posted by the host, never by an
   agent tool, and the bot declares no gateway intents, so no Discord text ever
   reaches a model.
@@ -129,7 +129,7 @@ header when one is set.
 
 Everything is environment variables; [`.env.example`](.env.example) documents
 each one. `SEERR_URL`/`SEERR_API_KEY` are required. Sonarr, Radarr, SABnzbd,
-Jellyfin, Firecrawl, media probing, and Discord are optional — their tools are
+Jellyfin, media probing, and Discord are optional — their tools are
 registered only when configured.
 
 `BLITZCRANK_MODEL` selects the issue-run model as
@@ -146,7 +146,11 @@ providers read a pi `auth.json`. On NixOS, bootstrap the default auth path with
 `sudo blitzcrank-login` → `/login`; outside NixOS, bootstrap once with pi and
 point `BLITZCRANK_AUTH_PATH` at the writable file (default
 `~/.pi/agent/auth.json`). Custom providers can be declared in a `models.json`
-via `BLITZCRANK_MODELS_PATH`.
+via `BLITZCRANK_MODELS_PATH`. Issue runs always include `codex_search`. It uses
+the `openai-codex` OAuth credential from that same auth file. The Nix module
+uses `gpt-5.6-luna` with high search context by default. Outside NixOS, the
+`PI_CODEX_WEB_SEARCH_MODEL` and `PI_CODEX_WEB_SEARCH_CONTEXT_SIZE` variables
+set those values.
 
 Every public comment carries a footer with the model identity and the issue's
 cumulative token usage, e.g.

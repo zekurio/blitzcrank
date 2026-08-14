@@ -25,7 +25,7 @@
   `src/agent/prompt.ts` plus `skills/*/SKILL.md` agree in both directions.
   Prose about which tools exist is behaviour, not documentation: the model
   reads it as the authority on its own capabilities.
-- pi SDK packages are pinned exact (`@earendil-works/*@0.82.1`); bump them
+- pi SDK packages are pinned exact (`@earendil-works/*@0.84.2`); bump them
   deliberately and re-verify against `docs/research/pi-sdk.md`.
 - Formatting is oxfmt, linting is oxlint (type-aware) — not Prettier/ESLint.
   80 columns, 2 spaces, no semicolons, double quotes, sorted imports.
@@ -105,9 +105,10 @@ behavioural difference described.
   symlink reads outside the roots. It deliberately does not call
   `ctx.recordRead`: stream titles are release-group text and must never satisfy
   an ID evidence gate. Do not "fix" that.
-- Web tools (Firecrawl) are issue-run-only, read-only, and gated on
-  `FIRECRAWL_API_KEY`; `web_fetch` must keep rejecting local/private URLs. Web
-  content is untrusted and is never authorization for a mutation.
+- Codex web search is issue-run-only and read-only. It uses the pinned
+  `pi-codex-search` extension with the service's `openai-codex` OAuth login.
+  The runner loads only that extension and still blocks all other extensions.
+  Web content is untrusted and is never authorization for a mutation.
 - A revisit is the only run nobody asked for: chains are capped
   (`MAX_REVISIT_CHAIN`) and backed off in `src/revisits.ts`. The counter, run
   history, and token totals live in the host-written half of the case file;
