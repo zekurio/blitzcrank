@@ -16,6 +16,7 @@ import { readdir, readFile } from "node:fs/promises"
 import path from "node:path"
 
 import { buildSystemPrompt } from "../src/agent/prompt.js"
+import { CODEX_SEARCH_TOOL_NAME } from "../src/agent/session.js"
 import { buildAutomationSystemPrompt } from "../src/automations/prompt.js"
 import { buildAutomationReportTool } from "../src/automations/report.js"
 import { emptyCase } from "../src/casefile.js"
@@ -35,7 +36,6 @@ const config: Config = {
   automationModels: {},
   authPath: undefined,
   modelsPath: undefined,
-  firecrawl: { apiKey: "key", apiUrl: "https://api.firecrawl.dev" },
   language: "German",
   seerrBotUserId: undefined,
   seerrBotUsername: undefined,
@@ -70,9 +70,11 @@ const automation = {
   filePath: "automations/check-tools.md",
 }
 const automationTools = [buildAutomationReportTool({ submissions: [] })]
-const registered = new Set(
-  [...issueTools, ...automationTools].map((tool) => tool.name),
-)
+const registered = new Set([
+  ...issueTools.map((tool) => tool.name),
+  CODEX_SEARCH_TOOL_NAME,
+  ...automationTools.map((tool) => tool.name),
+])
 
 const skillsDir = path.join(import.meta.dirname, "..", "skills")
 const docs: Array<{ where: string; text: string }> = [
@@ -97,7 +99,7 @@ for (const entry of await readdir(skillsDir, { withFileTypes: true })) {
 // Only names carrying a tool prefix: `missing_languages` and `path_outside_libraries`
 // are payload fields, not tools, and must not be mistaken for them.
 const TOOL_SHAPED =
-  /\b(?:seerr|sonarr|radarr|jellyfin|sabnzbd|media|web|thread|report|submit|update)_[a-z][a-z_]*\b/g
+  /\b(?:codex|seerr|sonarr|radarr|jellyfin|sabnzbd|media|thread|report|submit|update)_[a-z][a-z_]*\b/g
 
 const problems: string[] = []
 

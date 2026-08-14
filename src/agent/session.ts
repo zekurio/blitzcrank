@@ -109,6 +109,12 @@ export function usageAnchor(
 /** Repo root (contains skills/): two levels up from dist/agent/. */
 const projectRoot = path.resolve(new URL("../..", import.meta.url).pathname)
 const skillsDir = path.join(projectRoot, "skills")
+const codexSearchExtensionPath = path.join(
+  projectRoot,
+  "node_modules",
+  "pi-codex-search",
+)
+export const CODEX_SEARCH_TOOL_NAME = "codex_search"
 
 export function resolveModel(modelRuntime: ModelRuntime, spec: string) {
   const parsed = parseModelSpec(spec)
@@ -137,12 +143,14 @@ export interface AgentTurnOptions {
   /** Observe completed tool calls without exposing their arguments or results. */
   onToolExecutionEnd?: (toolName: string, isError: boolean) => void
   logPrefix: string
+  /** Add the pinned subscription-backed web search extension to this run. */
+  codexSearch?: boolean
 }
 
 /**
  * One locked-down agent turn: our skills only, our tools plus builtin `read`
- * (for SKILL.md loading), no extensions/context discovery, run to completion,
- * return the final assistant text plus aggregate token usage/cost.
+ * (for SKILL.md loading), no ambient extensions or context discovery, run to
+ * completion, return the final assistant text plus aggregate token usage/cost.
  */
 export interface AgentTurnResult {
   text: string
@@ -203,6 +211,9 @@ export async function runAgentTurn(
   const loader = new DefaultResourceLoader({
     cwd,
     agentDir: path.join(os.tmpdir(), "blitzcrank-agent-noop"),
+    additionalExtensionPaths: opts.codexSearch
+      ? [codexSearchExtensionPath]
+      : [],
     additionalSkillPaths: [skillsDir],
     noExtensions: true,
     noPromptTemplates: true,
@@ -216,6 +227,14 @@ export async function runAgentTurn(
     appendSystemPromptOverride: () => [],
   })
   await loader.reload()
+  const extensionErrors = loader.getExtensions().errors
+  if (extensionErrors.length > 0) {
+    throw new Error(
+      `failed to load Codex search extension: ${extensionErrors
+        .map((error) => `${error.path}: ${error.error}`)
+        .join("; ")}`,
+    )
+  }
 
   const { session } = await createAgentSession({
     cwd,
@@ -224,12 +243,17 @@ export async function runAgentTurn(
     modelRuntime: opts.modelRuntime,
     resourceLoader: loader,
     customTools: opts.tools,
-    tools: [...opts.tools.map((t) => t.name), "read"],
+    tools: [
+      ...opts.tools.map((t) => t.name),
+      ...(opts.codexSearch ? [CODEX_SEARCH_TOOL_NAME] : []),
+      "read",
+    ],
     sessionManager: opened.manager,
     settingsManager: SettingsManager.inMemory({
       compaction: { enabled: true },
     }),
   })
+  await session.bindExtensions({ mode: "print" })
 
   if (opts.sessionFileRef) opts.sessionFileRef.current = session.sessionFile
 

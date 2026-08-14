@@ -19,12 +19,13 @@
     "verify": "pnpm fmt:check && pnpm lint && pnpm typecheck && pnpm check:tools && pnpm check:automation-report && pnpm check:automation-models"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "0.82.1",
-    "@earendil-works/pi-coding-agent": "0.82.1",
+    "@earendil-works/pi-ai": "0.84.2",
+    "@earendil-works/pi-coding-agent": "0.84.2",
     "@hono/node-server": "^2.0.12",
     "croner": "^10.0.1",
     "discord.js": "^14.27.0",
     "hono": "^4.9.0",
+    "pi-codex-search": "0.1.6",
     "typebox": "1.1.38",
     "yaml": "^2.9.0"
   },
