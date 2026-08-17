@@ -104,7 +104,7 @@ let
         --pty \
         --wait \
         --collect \
-        ${lib.getExe' cfg.package "blitzcrank-pi"} \
+        ${lib.getExe' cfg.package "blitz-pi"} \
         --no-session
     '';
   };
