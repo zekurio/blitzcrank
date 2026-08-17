@@ -109,7 +109,7 @@ At the pi prompt, enter `/login`, then select the provider (for example, OpenAI
 Codex). The helper stops `blitzcrank.service` while pi owns the auth file and
 restores its previous running or stopped state when pi exits or the helper is
 interrupted. It requires an interactive terminal and works over SSH. The
-bundled pi CLI is also exposed as `blitzcrank-pi`; use the helper for login so
+bundled pi CLI is also exposed as `blitz-pi`; use the helper for login so
 it runs with the service's dynamic identity and writable state directory.
 
 As a declarative alternative, `authSeedFile` loads a read-only secret as a
@@ -229,6 +229,9 @@ pnpm install
 cp .env.example .env # fill in service URLs + API keys
 pnpm dev             # tsx watch
 ```
+
+The dev shell exposes the checkout's pinned Pi CLI as `blitz-pi`, avoiding a
+collision with any other `pi` installation.
 
 Without Nix: install Node >= 22.19.0 and pnpm, then the same steps. `pnpm
 build && pnpm start` compiles to `dist/` and runs it.
