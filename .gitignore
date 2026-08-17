@@ -18,6 +18,7 @@ tmp/
 *.log
 .DS_Store
 data/
+benchmark-results/
 
 # nix build output
 result
