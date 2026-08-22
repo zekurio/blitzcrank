@@ -9,6 +9,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "test": "tsx --test src/discord/discord.test.ts",
     "typecheck": "tsc --noEmit",
     "fmt": "oxfmt .",
     "fmt:check": "oxfmt --check .",

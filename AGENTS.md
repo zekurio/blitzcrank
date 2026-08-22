@@ -11,7 +11,7 @@
   `src/tools/` (run context, safety guards, GET-only reads, typed mutations),
   `src/services/` (HTTP helper, host-side Seerr client),
   `src/gateways/seerr/` (payload types, comment gate), `src/discord/` (report
-  threads, `/automation`),
+  threads, `/automation`, triaged private support conversations),
   `automations/*.md` (operator-authored tasks), `skills/` (agent domain
   knowledge), `docs/research/` (pi SDK, Seerr/service APIs, legacy design —
   consult before touching tool or API code).
@@ -90,8 +90,9 @@ behavioural difference described.
   unknown template placeholders literal, so `"{{...}}"` is never an identity.
   The own-comment guard (`src/gateways/seerr/loop-guard.ts`) matches the
   `[blitzcrank w/` comment marker first, then the bot display name.
-- The agent session gets its custom tools plus builtin `read` (for skills).
-  Never enable `bash`, `edit`, or `write` in the runner.
+- Operational agent sessions get their custom tools plus builtin `read` (for
+  skills). The Discord triage session gets only its typed terminal tool and no
+  builtin `read`. Never enable `bash`, `edit`, or `write` in the runner.
 - `media_probe` (ffprobe) is read-only, gated on `BLITZCRANK_MEDIA_ROOTS`, and
   resolves targets with `realpath` _before_ the containment check, so no
   symlink reads outside the roots. It deliberately does not call
@@ -107,16 +108,21 @@ behavioural difference described.
   `update_case_file` can write only the agent's summary. There is deliberately
   no spend ceiling — the deployment runs on subscription auth, where a dollar
   figure derived from list prices would be fiction.
-- Discord (`src/discord/`) is a host-side surface only; no agent tool may write
-  to it. The gateway client declares no intents, so the bot cannot receive
-  messages; the only inbound effect is a signed slash-command interaction
-  naming a checked-in automation, so no Discord text reaches a model. Triggers
-  are authorized against the configured guild plus administrator or
-  `DISCORD_ADMIN_ROLE_IDS`, fail closed, and the client sets
-  `allowedMentions: { parse: [] }` because report bodies are model output. A
-  Discord _startup_ failure degrades to no-reports and is only logged (a report
-  sink must not stop issue handling); a malformed Discord _config_ stays fatal
-  in `loadConfig`.
+- Discord (`src/discord/`) stays a host-side surface; no agent tool may write to
+  it. Without `DISCORD_INBOX_CHANNEL_ID`, the gateway still declares no intents.
+  With an inbox, it declares only Guilds, GuildMessages, and MessageContent. It
+  ignores other guilds/channels, bots, webhooks, and empty messages. A typed
+  triage pass with no service/read tools may create one private thread and add
+  the sender. The host then posts a bot-authored source card with the original
+  text, author tag, and message link. It never impersonates the sender. The
+  thread's durable agent session gets only `isReadTool` service tools except
+  `thread_history_search`; it gets no mutation tool, no cross-session history,
+  and no Codex search. The host posts replies and sets `allowedMentions: {
+parse: [] }`. Slash-command triggers remain authorized against the configured
+  guild plus administrator or
+  `DISCORD_ADMIN_ROLE_IDS`, and fail closed. A Discord _startup_ failure
+  degrades to no reports or conversations and is only logged; malformed
+  Discord config stays fatal in `loadConfig`.
 - Automations (`automations/*.md`) are trusted operator instructions, but their
   runs get only the exact tools in their declared `mutation_tools` allowlist,
   plus the always-on read tools. "Always-on read tools" means exactly

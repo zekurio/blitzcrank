@@ -63,9 +63,11 @@ through a narrow typed surface, and returns directives.
   from the file rather than the release name, confined to
   `BLITZCRANK_MEDIA_ROOTS` after `realpath`; subscription-backed Codex
   `codex_search` is issue-run-only and never justifies a mutation.
-- **Discord is inbound-inert** — reports are posted by the host, never by an
-  agent tool, and the bot declares no gateway intents, so no Discord text ever
-  reaches a model.
+- **Discord conversations are read-only** — the host receives text only from
+  one configured inbox. A classifier with no service/read tools can open a
+  private thread. Each thread has a durable session with read-only service
+  tools and no access to other conversation history. The host posts replies
+  and blocks mentions.
 
 Details and rationale live in [AGENTS.md](AGENTS.md); the legacy Go deployment
 this is distilled from is described in `docs/research/legacy.md`.
@@ -99,9 +101,9 @@ Then import and configure the module:
 ```
 
 State lives in `/var/lib/blitzcrank` (case files, session transcripts, Discord
-thread ids, and `auth.json` for OAuth providers — it must stay writable because
-tokens refresh in place). To authenticate interactively on the deployed host,
-run:
+thread sessions, and `auth.json` for OAuth providers — it must stay writable
+because tokens refresh in place). To authenticate interactively on the
+deployed host, run:
 
 ```bash
 sudo blitzcrank-login
@@ -210,16 +212,35 @@ becomes the report header, and internal history markers are removed before
 delivery. `/automation list`
 shows schedules and next runs, `/automation run name:<x>` queues one.
 
+Set `DISCORD_INBOX_CHANNEL_ID` to enable support conversations. Each plain-text
+message in that channel goes to a classifier with no service/read tools.
+Accepted messages open a private `blitzcrank: <topic>` thread and add the
+sender. The bot copies the accepted message into a source card that names its
+author and links to the original. It does not impersonate the author. Replies
+in that thread continue one persistent agent session. The conversation can
+inspect current media-service state with read-only tools. It cannot mutate
+services or search other issue, automation, or Discord transcripts.
+
+`BLITZCRANK_DISCORD_MODEL` selects the conversation model and falls back to
+`BLITZCRANK_MODEL`. `BLITZCRANK_DISCORD_TRIAGE_MODEL` selects the cheap triage
+model and falls back to the conversation model. Configure the latter to make
+the first pass cheap.
+
 Invite the bot with the `bot` and `applications.commands` scopes and grant it
 View Channel, Send Messages, Send Messages in Threads, Create Private Threads,
 Manage Threads, and Read Message History in that channel (the last is how
-archived report threads are found again). Keep the channel admin-only;
+archived report threads are found again). Keep the watch channel admin-only;
 blitzcrank never edits permissions itself. Optionally set
 `DISCORD_ADMIN_ROLE_IDS` to let non-administrator roles trigger runs. Don't
 lock a report thread by hand — reviving it would need Manage Threads on the
 thread itself; delete it instead and the next run makes a new one. On startup
 blitzcrank bulk-overwrites the configured guild's command set, so don't share
 the application with another bot.
+
+For the inbox, also enable **Message Content Intent** in the Discord developer
+portal. Grant the bot the same thread permissions in that channel. Channel
+access decides who may start a conversation. Private threads are visible to
+the invited sender and members with Discord's Manage Threads permission.
 
 ### Development
 

@@ -153,6 +153,8 @@ export interface AgentTurnOptions {
    * prompt and this run's registry. Ignored when the file no longer exists.
    */
   resumeFile: string | undefined
+  /** Continue the newest session in sessionDir, or create one when empty. */
+  continueSession?: boolean
   /** Receives the session file path once known, for history self-exclusion. */
   sessionFileRef: { current: string | undefined } | undefined
   /** Observe completed tool calls without exposing their arguments or results. */
@@ -160,12 +162,14 @@ export interface AgentTurnOptions {
   logPrefix: string
   /** Add the pinned subscription-backed web search extension to this run. */
   codexSearch?: boolean
+  /** Register builtin read for loading deployment skills. Default true. */
+  builtinRead?: boolean
 }
 
 /**
- * One locked-down agent turn: our skills only, our tools plus builtin `read`
- * (for SKILL.md loading), no ambient extensions or context discovery, run to
- * completion, return the final assistant text plus aggregate token usage/cost.
+ * One locked-down agent turn: our skills and tools, optional builtin `read`
+ * for SKILL.md loading, no ambient extensions or context discovery. Run to
+ * completion and return the final text plus aggregate token usage and cost.
  */
 export interface AgentTurnResult {
   text: string
@@ -178,8 +182,8 @@ export interface AgentTurnResult {
 }
 
 /**
- * The session manager for this run: resume when we were handed a file that is
- * still there, otherwise start fresh.
+ * Resume an exact file when supplied. A durable conversation can instead
+ * continue the newest session in its own directory. Other runs start fresh.
  *
  * The existence check is not optional. `SessionManager.open()` on a missing
  * path silently starts an empty session pointed at that path instead of
@@ -190,6 +194,7 @@ async function openSession(
   resumeFile: string | undefined,
   sessionDir: string | undefined,
   cwd: string,
+  continueSession: boolean,
 ): Promise<{ manager: SessionManager; resumed: boolean }> {
   if (resumeFile !== undefined) {
     const exists = await stat(resumeFile).then(
@@ -202,6 +207,13 @@ async function openSession(
         resumed: true,
       }
     }
+  }
+  if (continueSession) {
+    if (!sessionDir) {
+      throw new Error("continueSession requires sessionDir")
+    }
+    const manager = SessionManager.continueRecent(cwd, sessionDir)
+    return { manager, resumed: manager.getEntries().length > 0 }
   }
   return {
     manager: sessionDir
@@ -218,9 +230,16 @@ export async function runAgentTurn(
   await mkdir(cwd, { recursive: true })
   if (opts.sessionDir) await mkdir(opts.sessionDir, { recursive: true })
 
-  const opened = await openSession(opts.resumeFile, opts.sessionDir, cwd)
+  const opened = await openSession(
+    opts.resumeFile,
+    opts.sessionDir,
+    cwd,
+    opts.continueSession ?? false,
+  )
   if (opened.resumed) {
-    console.log(`[${opts.logPrefix}] resuming ${opts.resumeFile}`)
+    console.log(
+      `[${opts.logPrefix}] resuming ${opts.resumeFile ?? opts.sessionDir}`,
+    )
   }
 
   const loader = new DefaultResourceLoader({
@@ -261,7 +280,7 @@ export async function runAgentTurn(
     tools: [
       ...opts.tools.map((t) => t.name),
       ...(opts.codexSearch ? [CODEX_SEARCH_TOOL_NAME] : []),
-      "read",
+      ...(opts.builtinRead === false ? [] : ["read"]),
     ],
     sessionManager: opened.manager,
     settingsManager: SettingsManager.inMemory({
