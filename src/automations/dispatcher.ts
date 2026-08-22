@@ -7,7 +7,7 @@ export interface AutomationInfo {
   description: string
   schedule: string
   enabled: boolean
-  capabilities: string[]
+  mutationTools: string[]
   nextRun: string | undefined
 }
 
@@ -73,7 +73,7 @@ export class AutomationDispatcher {
       description: def.description,
       schedule: def.schedule,
       enabled: def.enabled,
-      capabilities: def.capabilities,
+      mutationTools: def.mutationTools,
       nextRun: this.deps.nextRun(def.name),
     }))
   }

@@ -1,7 +1,10 @@
+import { createServer, type Server } from "node:http"
 import path from "node:path"
 
-import { ModelRuntime } from "@earendil-works/pi-coding-agent"
-import { serve, type ServerType } from "@hono/node-server"
+import {
+  ModelRuntime,
+  type CreateModelRuntimeOptions,
+} from "@earendil-works/pi-coding-agent"
 
 import {
   eventMediaScope,
@@ -9,7 +12,10 @@ import {
   type IssueEvent,
 } from "./agent/runner.ts"
 import { DEFAULT_MODEL, resolveModel } from "./agent/session.ts"
-import { loadAutomations } from "./automations/definitions.ts"
+import {
+  loadAutomations,
+  type AutomationDefinition,
+} from "./automations/definitions.ts"
 import { AutomationDispatcher } from "./automations/dispatcher.ts"
 import {
   assertKnownAutomationModels,
@@ -18,86 +24,56 @@ import {
 import { AutomationRunner } from "./automations/runner.ts"
 import { AutomationScheduler } from "./automations/scheduler.ts"
 import { CaseStore } from "./casefile.ts"
-import { loadConfig } from "./config.ts"
+import { loadConfig, type Config } from "./config.ts"
 import { DiscordBot } from "./discord/bot.ts"
 import { createCommentGate } from "./gateways/seerr/comment-gate.ts"
 import { SerialQueue } from "./queue.ts"
-import {
-  MAX_REVISIT_CHAIN,
-  RevisitScheduler,
-  revisitDelay,
-} from "./revisits.ts"
+import { RevisitScheduler, revisitDelay } from "./revisits.ts"
 import { createApp } from "./server.ts"
 import { SeerrClient } from "./services/seerr.ts"
 
 /**
- * Total budget for shutdown: how long it waits for the HTTP server to let go
- * of its connections and for an in-flight agent run to finish, before exiting
- * anyway. A run that is mid-mutation deserves a chance to finish and report; a
- * stuck one must not keep the unit in `deactivating` until systemd SIGKILLs it.
+ * Total shutdown budget. An active mutation gets time to finish and report,
+ * but a stuck run cannot keep the service in `deactivating` indefinitely.
  */
 const SHUTDOWN_GRACE_MS = 30_000
 
-async function main(): Promise<void> {
-  const config = loadConfig()
-  const issueModelSpec = config.model ?? DEFAULT_MODEL
-  const automationModelSpec = config.automationModel ?? issueModelSpec
-  const modelRuntime = await ModelRuntime.create({
-    ...(config.authPath ? { authPath: config.authPath } : {}),
-    ...(config.modelsPath ? { modelsPath: config.modelsPath } : {}),
-  })
-  const automations = await loadAutomations(config.automationsDir)
-  assertKnownAutomationModels(automations, config.automationModels)
-  const configuredModelSpecs = new Set([
-    issueModelSpec,
-    automationModelSpec,
-    ...automations.map((automation) =>
-      modelSpecForAutomation(
-        automation.name,
-        automationModelSpec,
-        config.automationModels,
-      ),
-    ),
-  ])
-  for (const modelSpec of configuredModelSpecs) {
-    resolveModel(modelRuntime, modelSpec)
-  }
+interface Models {
+  runtime: ModelRuntime
+  issueSpec: string
+  automationSpec: string
+}
 
-  const issueRunner = new IssueRunner(config, modelRuntime, issueModelSpec)
-  const automationRunner = new AutomationRunner(
-    config,
-    modelRuntime,
-    automationModelSpec,
-    config.automationModels,
-  )
+interface AutomationWork {
+  dispatcher: AutomationDispatcher
+  scheduler: AutomationScheduler
+  discord: DiscordBot | undefined
+}
 
-  const queue = new SerialQueue()
-  const revisits = new RevisitScheduler()
+class IssueWork {
+  readonly queue = new SerialQueue()
+  readonly revisits = new RevisitScheduler()
 
-  const armRevisit = (
+  constructor(private readonly runner: IssueRunner) {}
+
+  armRevisit(
     issueId: string,
     delayMs: number,
     reason: string,
     mediaScope: ReturnType<typeof eventMediaScope>,
-    chain: number,
-  ): void => {
-    console.log(
-      `[revisit] issue=${issueId} in ${Math.round(delayMs / 60000)}m (${chain}/${MAX_REVISIT_CHAIN}): ${reason}`,
-    )
-    revisits.schedule(issueId, delayMs, () =>
-      enqueueIssue({ kind: "revisit", issueId, reason, mediaScope }),
+  ): void {
+    this.revisits.schedule(issueId, delayMs, () =>
+      this.enqueue({ kind: "revisit", issueId, reason, mediaScope }),
     )
   }
 
-  const enqueueIssue = (event: IssueEvent): void => {
-    const runsAhead = queue.size
-    // Only user-driven runs get a public queue acknowledgement. Revisit runs
-    // were scheduled by blitzcrank itself and should not create extra chatter.
-    // The notification promise is created before enqueueing so it cannot wait
-    // behind the run it belongs to; the serial task adopts its comment handle.
+  enqueue(event: IssueEvent): void {
+    const runsAhead = this.queue.size
+    // Only user-driven runs get a public queue notice. Create its promise
+    // before enqueueing so it cannot wait behind the run that will adopt it.
     const queuedStatus =
       event.kind === "webhook" && runsAhead > 0
-        ? issueRunner.notifyQueued(event.issueId, runsAhead).catch((err) => {
+        ? this.runner.notifyQueued(event.issueId, runsAhead).catch((err) => {
             console.error(
               `[issue:${event.issueId}] queue notification failed; continuing:`,
               err,
@@ -105,134 +81,189 @@ async function main(): Promise<void> {
             return { id: undefined }
           })
         : Promise.resolve({ id: undefined })
-    queue.enqueue(async () => {
-      const { issueId, casefile } = await issueRunner.run(
-        event,
-        await queuedStatus,
+    this.queue.enqueue(async () => {
+      const result = await this.runner.run(event, await queuedStatus)
+      const revisit = result.casefile.revisit
+      if (!revisit) return
+      // The case file owns the plan. The timer only mirrors the saved state.
+      this.armRevisit(
+        result.issueId,
+        revisit.delayMs,
+        revisit.reason,
+        revisit.mediaScope,
       )
-      // The runner persisted the plan; the timer only mirrors it, so a restart
-      // re-arms from disk instead of silently dropping the follow-up.
-      const revisit = casefile.revisit
-      if (revisit) {
-        armRevisit(
-          issueId,
-          revisit.delayMs,
-          revisit.reason,
-          revisit.mediaScope,
-          revisit.chain,
-        )
-      }
     })
   }
+}
 
-  // One run per automation at a time: a cron tick or a Discord trigger that
-  // arrives while the same task is queued or in flight is refused, not stacked.
+async function main(): Promise<void> {
+  const config = loadConfig()
+  const automations = await loadAutomations(config.automationsDir)
+  const models = await loadModels(config, automations)
+  const issueWork = new IssueWork(
+    new IssueRunner(config, models.runtime, models.issueSpec),
+  )
+  const automationWork = await startAutomations(
+    config,
+    automations,
+    models,
+    issueWork.queue,
+  )
+  const cases = new CaseStore(path.join(config.dataDir, "cases"))
+  await restoreRevisits(cases, issueWork)
+
+  const app = createGatewayApp(config, cases, issueWork, automationWork)
+  const server = createServer(app)
+  server.listen(config.port, () => {
+    if (!config.discord) return
+    console.error(
+      automationWork.discord
+        ? `  discord: channel ${config.discord.watchChannelId}`
+        : "  discord: DEGRADED (startup failed; reports disabled)",
+    )
+  })
+  installShutdown(server, issueWork, automationWork)
+}
+
+async function loadModels(
+  config: Config,
+  automations: AutomationDefinition[],
+): Promise<Models> {
+  const issueSpec = config.model ?? DEFAULT_MODEL
+  const automationSpec = config.automationModel ?? issueSpec
+  const runtimeOptions: CreateModelRuntimeOptions = {}
+  if (config.authPath) runtimeOptions.authPath = config.authPath
+  if (config.modelsPath) runtimeOptions.modelsPath = config.modelsPath
+  const runtime = await ModelRuntime.create(runtimeOptions)
+  assertKnownAutomationModels(automations, config.automationModels)
+  const configuredSpecs = new Set([
+    issueSpec,
+    automationSpec,
+    ...automations.map((automation) =>
+      modelSpecForAutomation(
+        automation.name,
+        automationSpec,
+        config.automationModels,
+      ),
+    ),
+  ])
+  for (const spec of configuredSpecs) resolveModel(runtime, spec)
+  return { runtime, issueSpec, automationSpec }
+}
+
+async function startAutomations(
+  config: Config,
+  definitions: AutomationDefinition[],
+  models: Models,
+  queue: SerialQueue,
+): Promise<AutomationWork> {
+  const runner = new AutomationRunner(
+    config,
+    models.runtime,
+    models.automationSpec,
+    config.automationModels,
+  )
   let discord: DiscordBot | undefined
   const dispatcher = new AutomationDispatcher({
-    definitions: automations,
+    definitions,
     queue,
-    run: (def) => automationRunner.run(def),
+    run: (definition) => runner.run(definition),
     publish: async (report) => {
       await discord?.report(report)
     },
     nextRun: (name) => scheduler.nextRun(name),
   })
+  const scheduler = new AutomationScheduler((definition) =>
+    dispatcher.dispatch(definition),
+  )
+  scheduler.start(definitions)
+  discord = await startDiscord(config, dispatcher)
+  return { dispatcher, scheduler, discord }
+}
 
-  const scheduler = new AutomationScheduler((def) => dispatcher.dispatch(def))
-  scheduler.start(automations)
+async function startDiscord(
+  config: Config,
+  dispatcher: AutomationDispatcher,
+): Promise<DiscordBot | undefined> {
+  if (!config.discord) return undefined
+  // Discord is a report sink. A startup failure must not stop issue handling
+  // or HTTP automation triggers. Invalid config still fails in loadConfig.
+  return DiscordBot.start(config, {
+    listAutomations: () => dispatcher.list(),
+    triggerAutomation: (name) => dispatcher.trigger(name),
+  }).catch((cause: unknown) => {
+    console.error(
+      `[discord] startup failed (guild=${config.discord?.guildId}` +
+        ` channel=${config.discord?.watchChannelId}); continuing WITHOUT` +
+        ` Discord: no automation reports, HTTP triggers still work:`,
+      cause,
+    )
+    return undefined
+  })
+}
 
-  const listAutomations = () => dispatcher.list()
-  const triggerAutomation = (name: string) => dispatcher.trigger(name)
-
-  if (config.discord) {
-    // Availability over visibility: Discord is a report sink, not the reason
-    // this process exists. A bad token or an unreachable gateway at boot must
-    // not stop Jellyseerr issues from being worked, so a startup failure is
-    // logged loudly and the gateway continues without reports (HTTP triggers
-    // keep working). A malformed *config* stays fatal, in loadConfig().
-    discord = await DiscordBot.start(config, {
-      listAutomations,
-      triggerAutomation,
-    }).catch((err: unknown) => {
-      console.error(
-        `[discord] startup failed (guild=${config.discord?.guildId}` +
-          ` channel=${config.discord?.watchChannelId}); continuing WITHOUT` +
-          ` Discord: no automation reports, HTTP triggers still work:`,
-        err,
-      )
-      return undefined
-    })
-  }
-
-  const cases = new CaseStore(path.join(config.dataDir, "cases"))
-  // Follow-ups survive a restart: pending revisits are re-armed from the case
-  // files, overdue ones shortly after boot rather than all at once.
+async function restoreRevisits(
+  cases: CaseStore,
+  issueWork: IssueWork,
+): Promise<void> {
+  // Re-arm saved follow-ups. Spread overdue runs through revisitDelay.
   for (const file of await cases.pendingRevisits()) {
     const delayMs = revisitDelay(file, Date.now())
     const revisit = file.revisit
     if (delayMs === undefined || !revisit) continue
-    armRevisit(
+    issueWork.armRevisit(
       file.issueId,
       delayMs,
       revisit.reason,
       revisit.mediaScope,
-      revisit.chain,
     )
   }
+}
 
-  const app = createApp({
+function createGatewayApp(
+  config: Config,
+  cases: CaseStore,
+  issueWork: IssueWork,
+  automationWork: AutomationWork,
+) {
+  return createApp({
     config,
     allowComment: createCommentGate(
       new SeerrClient(config.seerr, config.seerrBotUserId),
     ),
     onIssueEvent: (issueId, payload) => {
-      // New user activity supersedes any scheduled follow-up for this issue.
-      revisits.cancel(issueId)
-      enqueueIssue({ kind: "webhook", issueId, payload })
+      // New user activity replaces any pending follow-up for this issue.
+      issueWork.revisits.cancel(issueId)
+      issueWork.enqueue({ kind: "webhook", issueId, payload })
     },
-    onIssueClosed: async (issueId) => {
-      revisits.cancel(issueId)
-      const file = await cases.load(issueId)
-      if (!file.revisit) return
-      file.revisit = undefined
-      await cases.save(file)
-      console.log(`[revisit] issue=${issueId} resolved; follow-up dropped`)
-    },
-    listAutomations,
-    triggerAutomation,
-    stats: () => ({ queued: queue.size, pendingRevisits: revisits.pending }),
+    onIssueClosed: (issueId) => closeIssue(cases, issueWork, issueId),
+    listAutomations: () => automationWork.dispatcher.list(),
+    triggerAutomation: (name) => automationWork.dispatcher.trigger(name),
+    stats: () => ({
+      queued: issueWork.queue.size,
+      pendingRevisits: issueWork.revisits.pending,
+    }),
   })
+}
 
-  const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
-    const services = ["sonarr", "radarr", "sabnzbd", "jellyfin"] as const
-    const enabled = services.filter((s) => config[s])
-    console.log(`blitzcrank listening on :${info.port}`)
-    console.log(`  webhook: POST /webhook/seerr`)
-    console.log(`  issue model: ${issueModelSpec}`)
-    console.log(`  automation model: ${automationModelSpec}`)
-    console.log(
-      `  services: seerr${enabled.length ? ", " + enabled.join(", ") : ""}`,
-    )
-    if (config.discord) {
-      console.log(
-        discord
-          ? `  discord: channel ${config.discord.watchChannelId}`
-          : `  discord: DEGRADED (startup failed; reports disabled)`,
-      )
-    }
-    for (const def of automations) {
-      const modelSpec = modelSpecForAutomation(
-        def.name,
-        automationModelSpec,
-        config.automationModels,
-      )
-      console.log(
-        `  automation: ${def.name} (${def.schedule}${def.enabled ? "" : ", disabled"})` +
-          ` model=${modelSpec} next=${scheduler.nextRun(def.name) ?? "-"}`,
-      )
-    }
-  })
+async function closeIssue(
+  cases: CaseStore,
+  issueWork: IssueWork,
+  issueId: string,
+): Promise<void> {
+  issueWork.revisits.cancel(issueId)
+  const file = await cases.load(issueId)
+  if (!file.revisit) return
+  file.revisit = undefined
+  await cases.save(file)
+  console.log(`[revisit] issue=${issueId} resolved; follow-up dropped`)
+}
 
+function installShutdown(
+  server: Server,
+  issueWork: IssueWork,
+  automationWork: AutomationWork,
+): void {
   let shuttingDown = false
   const shutdown = async (signal: string): Promise<void> => {
     if (shuttingDown) {
@@ -241,37 +272,29 @@ async function main(): Promise<void> {
     }
     shuttingDown = true
     console.log(`[shutdown] ${signal} received; stopping`)
-
-    scheduler.stop()
+    automationWork.scheduler.stop()
     console.log("[shutdown] cron scheduler stopped")
-    // RevisitScheduler only cancels per issue, and its timers are unref'd with
-    // the plan behind them persisted in the case files, so pending follow-ups
-    // re-arm from disk on the next boot instead of being lost here.
-    if (revisits.pending > 0) {
-      console.log(
-        `[shutdown] ${revisits.pending} revisit timer(s) dropped;` +
-          ` re-armed from the case files on next boot`,
+    // Revisit plans remain in case files and return on the next start.
+    if (issueWork.revisits.pending > 0) {
+      console.warn(
+        `[shutdown] ${issueWork.revisits.pending} revisit timer(s) dropped;` +
+          " re-armed from the case files on next boot",
       )
     }
-
     const deadline = Date.now() + SHUTDOWN_GRACE_MS
     await closeServer(server, deadline)
-    await drainQueue(queue, dispatcher, deadline)
-    // Stopped last so a run finishing inside the grace period can still get
-    // its report out.
-    await discord?.stop().catch((err: unknown) => {
-      console.error("[shutdown] discord client:", err)
+    await drainQueue(issueWork.queue, deadline)
+    // Stop Discord last so a run can still publish during the grace period.
+    await automationWork.discord?.stop().catch((cause: unknown) => {
+      console.error("[shutdown] discord client:", cause)
     })
-
     console.log("[shutdown] bye")
     process.exit(0)
   }
-
-  // The signal emitter cannot await; this handler owns its awaits, contains
-  // its failures, and is the one that exits the process.
+  // Signal emitters cannot await. This handler owns and contains the promise.
   const onSignal = (signal: NodeJS.Signals): void => {
-    shutdown(signal).catch((err: unknown) => {
-      console.error("[shutdown] failed:", err)
+    shutdown(signal).catch((cause: unknown) => {
+      console.error("[shutdown] failed:", cause)
       process.exit(1)
     })
   }
@@ -279,11 +302,8 @@ async function main(): Promise<void> {
   process.on("SIGTERM", onSignal)
 }
 
-/** Stops accepting webhooks, bounded so a keep-alive client cannot hang us. */
-async function closeServer(
-  server: ServerType,
-  deadline: number,
-): Promise<void> {
+/** Stops accepting webhooks. A keep-alive client cannot pass the deadline. */
+async function closeServer(server: Server, deadline: number): Promise<void> {
   const closed = new Promise<void>((resolve) => {
     server.close(() => resolve())
   })
@@ -295,19 +315,9 @@ async function closeServer(
   console.log("[shutdown] http server closed")
 }
 
-/** Lets an in-flight agent run finish, but never waits past the deadline. */
-async function drainQueue(
-  queue: SerialQueue,
-  dispatcher: AutomationDispatcher,
-  deadline: number,
-): Promise<void> {
+/** Lets an active run finish, but never waits past the deadline. */
+async function drainQueue(queue: SerialQueue, deadline: number): Promise<void> {
   if (queue.size === 0) return
-  const active = dispatcher.active
-  console.log(
-    `[shutdown] ${queue.size} run(s) in flight` +
-      `${active.length > 0 ? ` (automations: ${active.join(", ")})` : ""};` +
-      ` finishing, up to ${Math.round((deadline - Date.now()) / 1000)}s`,
-  )
   const drained = (async () => {
     while (queue.size > 0) {
       await new Promise<void>((resolve) => {

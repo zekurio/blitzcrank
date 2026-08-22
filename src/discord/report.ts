@@ -3,16 +3,15 @@ import type {
   AutomationStatus,
 } from "../automations/runner.ts"
 
-const STATUS_EMOJI: Record<AutomationStatus, string> = {
+const STATUS_EMOJI = {
   ok: "🟢",
   warnung: "🟡",
   fehler: "🔴",
-}
+} satisfies Record<AutomationStatus, string>
 
 /** Discord rejects messages over 2000 characters; stay clear of that limit. */
 const MAX_MESSAGE = 1900
 const TRUNCATED = "\n… (truncated)"
-const INTERNAL_STATUS = /^[ \t]*STATUS:[^\r\n]*\r?$/gim
 const INTERNAL_MARKER =
   /^[ \t]*MANUAL_INTERVENTION_REQUIRED(?:[ \t]+[^\r\n]*)?\r?$/gm
 
@@ -43,7 +42,6 @@ export function formatAutomationReport(report: AutomationReport): string {
 /** Keep transcript-only breadcrumbs out of the human report and its budget. */
 function publicReportBody(body: string): string {
   return body
-    .replace(INTERNAL_STATUS, "")
     .replace(INTERNAL_MARKER, "")
     .replace(/[ \t]+$/gm, "")
     .replace(/\n{3,}/g, "\n\n")

@@ -1,6 +1,3 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises"
-import path from "node:path"
-
 import {
   ChannelType,
   ThreadAutoArchiveDuration,
@@ -18,13 +15,10 @@ const TITLE_PREFIX = "automation: "
  * Who may *post* is the channel's permission setup, i.e. operator config.
  */
 export class AutomationThreads {
-  private ids: Record<string, string> | undefined
-
   constructor(
     private readonly client: Client,
     private readonly guildId: string,
     private readonly channelId: string,
-    private readonly filePath: string,
   ) {}
 
   /** Boot check: a watch channel we cannot resolve is a config error. */
@@ -34,19 +28,9 @@ export class AutomationThreads {
 
   async get(name: string): Promise<AnyThreadChannel> {
     const channel = await this.channel()
-    const ids = await this.load()
-    const known = ids[name]
-    if (known) {
-      const thread = await this.client.channels
-        .fetch(known)
-        .catch(() => undefined)
-      if (thread?.isThread()) return this.usable(thread)
-    }
-
     const title = `${TITLE_PREFIX}${name}`
     const adopted = await this.find(channel, title)
     if (adopted) {
-      await this.remember(name, adopted.id)
       console.log(`[discord] adopted thread "${title}" (${adopted.id})`)
       return this.usable(adopted)
     }
@@ -58,7 +42,6 @@ export class AutomationThreads {
       autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
       reason: `blitzcrank automation reports for ${name}`,
     })
-    await this.remember(name, created.id)
     console.log(`[discord] created thread "${title}" (${created.id})`)
     return created
   }
@@ -102,19 +85,5 @@ export class AutomationThreads {
       )
     }
     return channel
-  }
-
-  private async load(): Promise<Record<string, string>> {
-    if (this.ids) return this.ids
-    const raw = await readFile(this.filePath, "utf8").catch(() => "{}")
-    this.ids = JSON.parse(raw) as Record<string, string>
-    return this.ids
-  }
-
-  private async remember(name: string, id: string): Promise<void> {
-    const ids = await this.load()
-    ids[name] = id
-    await mkdir(path.dirname(this.filePath), { recursive: true })
-    await writeFile(this.filePath, `${JSON.stringify(ids, null, 2)}\n`)
   }
 }

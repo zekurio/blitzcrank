@@ -1,5 +1,5 @@
 import type { ServiceConfig } from "../config.ts"
-import { jsonRequest } from "./http.ts"
+import { jsonRequest, type JsonValue } from "./http.ts"
 
 export interface SeerrUser {
   id?: number
@@ -9,6 +9,19 @@ export interface SeerrUser {
   permissions?: number
 }
 
+export interface SeerrIssue {
+  createdBy?: SeerrUser
+  media?: { mediaType?: string }
+}
+
+/** Reads the runtime Media.mediaType field from one Seerr issue response. */
+export function seerrIssueMediaType(
+  issue: SeerrIssue,
+): "movie" | "tv" | undefined {
+  const type = issue.media?.mediaType
+  return type === "movie" || type === "tv" ? type : undefined
+}
+
 /** Host-owned Seerr issue lifecycle: fetching, commenting, status changes. */
 export class SeerrClient {
   constructor(
@@ -16,15 +29,14 @@ export class SeerrClient {
     private readonly botUserId: string | undefined,
   ) {}
 
-  private headers(): Record<string, string> {
-    return {
-      "X-Api-Key": this.cfg.apiKey,
-      ...(this.botUserId ? { "X-Api-User": this.botUserId } : {}),
-    }
+  private headers(): Headers {
+    const headers = new Headers({ "X-Api-Key": this.cfg.apiKey })
+    if (this.botUserId) headers.set("X-Api-User", this.botUserId)
+    return headers
   }
 
-  getIssue(issueId: string | number): Promise<unknown> {
-    return jsonRequest(this.cfg.url, `/api/v1/issue/${issueId}`, {
+  getIssue(issueId: string | number): Promise<SeerrIssue> {
+    return jsonRequest<SeerrIssue>(this.cfg.url, `/api/v1/issue/${issueId}`, {
       headers: this.headers(),
     })
   }
@@ -59,7 +71,7 @@ export class SeerrClient {
   }
 
   /** Rewrites an existing comment in place (author or MANAGE_ISSUES only). */
-  updateComment(commentId: number, message: string): Promise<unknown> {
+  updateComment(commentId: number, message: string): Promise<JsonValue> {
     return jsonRequest(this.cfg.url, `/api/v1/issueComment/${commentId}`, {
       method: "PUT",
       headers: this.headers(),
@@ -67,7 +79,7 @@ export class SeerrClient {
     })
   }
 
-  deleteComment(commentId: number): Promise<unknown> {
+  deleteComment(commentId: number): Promise<JsonValue> {
     return jsonRequest(this.cfg.url, `/api/v1/issueComment/${commentId}`, {
       method: "DELETE",
       headers: this.headers(),
@@ -77,7 +89,7 @@ export class SeerrClient {
   setStatus(
     issueId: string | number,
     status: "open" | "resolved",
-  ): Promise<unknown> {
+  ): Promise<JsonValue> {
     return jsonRequest(this.cfg.url, `/api/v1/issue/${issueId}/${status}`, {
       method: "POST",
       headers: this.headers(),

@@ -1,4 +1,8 @@
-import { Hono } from "hono"
+import type {
+  IncomingMessage,
+  RequestListener,
+  ServerResponse,
+} from "node:http"
 
 import type { AutomationInfo, TriggerResult } from "./automations/dispatcher.ts"
 import type { Config } from "./config.ts"
@@ -22,96 +26,145 @@ export interface ServerDeps {
   stats: () => { queued: number; pendingRevisits: number }
 }
 
-export function createApp(deps: ServerDeps): Hono {
-  const { config, onIssueEvent, stats } = deps
-  const app = new Hono()
-
+export function createApp(deps: ServerDeps): RequestListener {
   const authorized = (auth: string | undefined): boolean =>
-    !config.webhookSecret ||
-    auth === config.webhookSecret ||
-    auth === `Bearer ${config.webhookSecret}`
+    !deps.config.webhookSecret ||
+    auth === deps.config.webhookSecret ||
+    auth === `Bearer ${deps.config.webhookSecret}`
 
-  app.get("/healthz", (c) => c.json({ status: "ok", ...stats() }))
+  return (request, response) => {
+    handleRequest(request, response, deps, authorized).catch(
+      (cause: unknown) => {
+        console.error("[http] request failed:", cause)
+        json(response, 500, { error: "internal server error" })
+      },
+    )
+  }
+}
 
-  app.get("/automations", (c) => {
-    if (!authorized(c.req.header("authorization"))) {
-      return c.json({ error: "unauthorized" }, 401)
+async function handleRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  deps: ServerDeps,
+  authorized: (auth: string | undefined) => boolean,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", "http://localhost")
+  if (request.method === "GET" && url.pathname === "/healthz") {
+    json(response, 200, { status: "ok", ...deps.stats() })
+    return
+  }
+  if (request.method === "GET" && url.pathname === "/automations") {
+    if (!authorized(request.headers.authorization)) {
+      json(response, 401, { error: "unauthorized" })
+      return
     }
-    return c.json({ automations: deps.listAutomations() })
-  })
+    json(response, 200, { automations: deps.listAutomations() })
+    return
+  }
 
-  app.post("/automations/:name/run", (c) => {
-    if (!authorized(c.req.header("authorization"))) {
-      return c.json({ error: "unauthorized" }, 401)
+  const automation = url.pathname.match(/^\/automations\/([^/]+)\/run$/)
+  if (request.method === "POST" && automation) {
+    if (!authorized(request.headers.authorization)) {
+      json(response, 401, { error: "unauthorized" })
+      return
     }
-    const name = c.req.param("name")
+    const name = automation[1]!
     const result = deps.triggerAutomation(name)
     if (result === "unknown") {
-      return c.json({ error: `unknown automation ${name}` }, 404)
+      json(response, 404, { error: `unknown automation ${name}` })
+      return
     }
     if (result === "busy") {
-      return c.json({ error: `${name} is already queued or running` }, 409)
+      json(response, 409, { error: `${name} is already queued or running` })
+      return
     }
     console.log(`[automations] manual trigger: ${name}`)
-    return c.json({ ok: true, queued: name })
-  })
+    json(response, 200, { ok: true, queued: name })
+    return
+  }
 
-  app.post("/webhook/seerr", async (c) => {
-    if (!authorized(c.req.header("authorization"))) {
-      return c.json({ error: "unauthorized" }, 401)
-    }
+  if (request.method === "POST" && url.pathname === "/webhook/seerr") {
+    await handleSeerrWebhook(request, response, deps, authorized)
+    return
+  }
+  json(response, 404, { error: "not found" })
+}
 
-    let payload: SeerrWebhookPayload
-    try {
-      payload = await c.req.json<SeerrWebhookPayload>()
-    } catch {
-      return c.json({ error: "invalid JSON" }, 400)
-    }
+async function handleSeerrWebhook(
+  request: IncomingMessage,
+  response: ServerResponse,
+  deps: ServerDeps,
+  authorized: (auth: string | undefined) => boolean,
+): Promise<void> {
+  if (!authorized(request.headers.authorization)) {
+    json(response, 401, { error: "unauthorized" })
+    return
+  }
 
-    if (payload.notification_type === "TEST_NOTIFICATION") {
-      console.log("[webhook] test notification received")
-      return c.json({ ok: true, test: true })
-    }
+  const payload = await readPayload(request).catch(() => undefined)
+  if (!payload) {
+    json(response, 400, { error: "invalid JSON" })
+    return
+  }
+  if (payload.notification_type === "TEST_NOTIFICATION") {
+    console.log("[webhook] test notification received")
+    json(response, 200, { ok: true, test: true })
+    return
+  }
+  if (!isIssueEvent(payload)) {
+    json(response, 200, { ok: true, ignored: "not an issue event" })
+    return
+  }
 
-    if (!isIssueEvent(payload)) {
-      return c.json({ ok: true, ignored: "not an issue event" })
-    }
-
-    // Seerr renders issue_id as a numeric string; anything else means a broken
-    // or customized template, not an issue we can act on.
-    const issueId = issueIdOf(payload)
-    if (issueId === undefined) {
-      console.warn(
-        `[webhook] ${payload.notification_type} without usable issue_id; ignoring`,
-      )
-      return c.json({ ok: true, ignored: "missing issue_id" })
-    }
-
-    // No run on resolution (our own resolutions fire this too), but a resolved
-    // issue must not be woken later by a follow-up that is still armed.
-    if (payload.notification_type === "ISSUE_RESOLVED") {
-      await deps.onIssueClosed(issueId)
-      return c.json({ ok: true, ignored: "issue resolved" })
-    }
-
-    if (payload.notification_type === "ISSUE_COMMENT") {
-      // Loop guard: ignore comment events caused by the bot's own comments.
-      if (isBotComment(payload, config.seerrBotUsername)) {
-        return c.json({ ok: true, ignored: "own comment" })
-      }
-      // Authorization gate. Runs before onIssueEvent so an unauthorized
-      // comment neither starts a run nor cancels a pending revisit.
-      if (!(await deps.allowComment(payload))) {
-        return c.json({ ok: true, ignored: "comment author not authorized" })
-      }
-    }
-
-    console.log(
-      `[webhook] ${payload.notification_type} issue=${issueId} subject=${payload.subject}`,
+  const issueId = issueIdOf(payload)
+  if (issueId === undefined) {
+    console.warn(
+      `[webhook] ${payload.notification_type} without usable issue_id; ignoring`,
     )
-    onIssueEvent(issueId, payload)
-    return c.json({ ok: true })
-  })
+    json(response, 200, { ok: true, ignored: "missing issue_id" })
+    return
+  }
+  if (payload.notification_type === "ISSUE_RESOLVED") {
+    await deps.onIssueClosed(issueId)
+    json(response, 200, { ok: true, ignored: "issue resolved" })
+    return
+  }
+  if (payload.notification_type === "ISSUE_COMMENT") {
+    if (isBotComment(payload, deps.config.seerrBotUsername)) {
+      json(response, 200, { ok: true, ignored: "own comment" })
+      return
+    }
+    if (!(await deps.allowComment(payload))) {
+      json(response, 200, {
+        ok: true,
+        ignored: "comment author not authorized",
+      })
+      return
+    }
+  }
 
-  return app
+  deps.onIssueEvent(issueId, payload)
+  json(response, 200, { ok: true })
+}
+
+async function readPayload(
+  request: IncomingMessage,
+): Promise<SeerrWebhookPayload> {
+  const chunks: Buffer[] = []
+  for await (const chunk of request) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)))
+  }
+  // SAFETY: Webhook fields stay optional and are sanitized before use.
+  return JSON.parse(
+    Buffer.concat(chunks).toString("utf8"),
+  ) as SeerrWebhookPayload
+}
+
+function json(response: ServerResponse, status: number, body: object): void {
+  const content = JSON.stringify(body)
+  response.writeHead(status, {
+    "content-length": Buffer.byteLength(content),
+    "content-type": "application/json; charset=UTF-8",
+  })
+  response.end(content)
 }

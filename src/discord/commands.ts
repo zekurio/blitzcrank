@@ -44,26 +44,11 @@ function automationCommand(names: string[]): SlashCommandBuilder {
   return command
 }
 
-/**
- * Bulk overwrite: the guild set becomes exactly what we declare, and global
- * commands are purged outright. The previous deployment registered globals;
- * a leftover one would shadow this command in every guild forever.
- */
+/** Bulk overwrite: the guild set becomes exactly what we declare. */
 export async function syncCommands(
   client: Client<true>,
   guildId: string,
   names: string[],
 ): Promise<void> {
-  const globals = await client.application.commands.fetch()
-  if (globals.size > 0) {
-    console.log(`[discord] purging ${globals.size} global command(s)`)
-    await client.application.commands.set([])
-  }
-  const registered = await client.application.commands.set(
-    [automationCommand(names)],
-    guildId,
-  )
-  console.log(
-    `[discord] guild commands: ${[...registered.values()].map((c) => `/${c.name}`).join(", ")}`,
-  )
+  await client.application.commands.set([automationCommand(names)], guildId)
 }

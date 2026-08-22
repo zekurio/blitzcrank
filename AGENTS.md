@@ -7,7 +7,7 @@
   narrow verified fixes through typed tools (`src/tools/`). The host — never
   the agent — comments, resolves issues, and schedules revisits.
 - Layout: `src/agent/` (session, issue prompt, directive parsing),
-  `src/automations/` (definitions, capability registry, cron, dispatcher),
+  `src/automations/` (definitions, tool allowlists, cron, dispatcher),
   `src/tools/` (run context, safety guards, GET-only reads, typed mutations),
   `src/services/` (HTTP helper, host-side Seerr client),
   `src/gateways/seerr/` (payload types, comment gate), `src/discord/` (report
@@ -19,13 +19,9 @@
   `exactOptionalPropertyTypes`), no build step in dev. Node >= 22.19.0 (dev
   shell ships 24), pnpm only — never npm, yarn, or Bun.
 - `pnpm dev` (tsx watch), `pnpm build` + `pnpm start` (tsc → `dist/`),
-  `pnpm fmt` / `pnpm lint` / `pnpm typecheck` / `pnpm check:tools`.
-- `pnpm verify` (fmt check, lint, typecheck, check:tools) must pass before a
-  coding task is complete.
-- `pnpm check:tools` asserts that the registered tool surface and the prose in
-  `src/agent/prompt.ts` plus `skills/*/SKILL.md` agree in both directions.
-  Prose about which tools exist is behaviour, not documentation: the model
-  reads it as the authority on its own capabilities.
+  `pnpm fmt` / `pnpm lint` / `pnpm typecheck`.
+- `pnpm verify` (format check, lint, and typecheck) must pass before a coding
+  task is complete.
 - pi SDK packages are pinned exact (`@earendil-works/*@0.84.2`); bump them
   deliberately and re-verify against `docs/research/pi-sdk.md`.
 - Formatting is oxfmt, linting is oxlint (type-aware) — not Prettier/ESLint.
@@ -44,7 +40,7 @@
 ## Safety Invariants
 
 Do not weaken these without explicit operator sign-off. Call out any change to
-`src/tools/safety.ts`, `src/tools/context.ts`, budgets, session resumption, the
+`src/tools/safety.ts`, `src/tools/context.ts`, session resumption, the
 directive protocol, or the runner's tool allowlist in your summary, with the
 behavioural difference described.
 
@@ -54,21 +50,13 @@ behavioural difference described.
 - Mutations route through `runMutation` (`src/tools/common.ts`): evidence gate
   (target IDs must appear in a prior read on this issue,
   `src/tools/context.ts`), a per-call `reason`, built-in verification read-back.
-- Issue runs are uncapped, mutations and deletions alike, and stay that way. No
+- Issue and automation runs have no mutation or deletion count quotas. No
   single number fits both "wrong subtitle language" and "a season imported as
-  the wrong show"; for deletions a cap manufactures the bad outcome it claims
-  to prevent, since half a wrong season deleted leaves the library worse than
-  either finishing or never starting. `casefile.spend.deletes` records for the
-  audit trail and the next run's prompt; it gates nothing.
+  the wrong show"; a deletion quota can leave half a wrong season behind.
+  Mutation and deletion counts remain audit data and gate nothing.
 - Because nothing caps an issue run, scope is enforced by the prompt rule to
   establish the full extent, state it to the reporter, then act on exactly it.
   Keep that rule intact in `src/agent/prompt.ts`.
-- Automation budgets (`mutation_budget`/`deletion_budget` in frontmatter) are
-  unlimited when absent. Numeric defaults (3 and 0) silently disabled declared
-  work: stale-import-handler declared both `queue_rejection_cleanup`
-  capabilities and could use neither, because its cleanups pass
-  `removeFromClient` and count as deletions. A cap exists only where an
-  operator wrote one down.
 - An issue's session is resumed across its events (`casefile.sessionFile`,
   `src/agent/session.ts`), carrying the evidence store
   (`CaseStore.loadEvidence`/`saveEvidence`) — the gate stops fabricated IDs,
@@ -77,6 +65,9 @@ behavioural difference described.
   final assistant message from the live event stream, never
   `session.messages.findLast`, or a run that produced nothing re-executes the
   previous directive block.
+- Issue runs grant Radarr tools for movies and Sonarr tools for TV shows. The
+  host uses the webhook media type, then falls back to the live Seerr issue.
+  An unknown type grants neither Arr, and revisits keep the resolved type.
 - Comment-triggered runs are authorized host-side by
   `src/gateways/seerr/comment-gate.ts`: only the issue reporter or a Seerr
   `ADMIN`/`MANAGE_ISSUES` user may drive the agent. It runs before the event
@@ -127,12 +118,11 @@ behavioural difference described.
   sink must not stop issue handling); a malformed Discord _config_ stays fatal
   in `loadConfig`.
 - Automations (`automations/*.md`) are trusted operator instructions, but their
-  runs get only the mutation tools mapped from their declared `capabilities`
-  (`src/automations/definitions.ts`), the always-on read tools, and any budgets
-  the frontmatter declares. "Always-on read tools" means exactly `isReadTool`
-  (`src/tools/index.ts`), which the capability allowlist is added to — so a
-  mutation matching that predicate would be granted to every automation,
-  gate-free. A new mutation tool must never be matched by it.
+  runs get only the exact tools in their declared `mutation_tools` allowlist,
+  plus the always-on read tools. "Always-on read tools" means exactly
+  `isReadTool` (`src/tools/index.ts`), which the mutation-tool allowlist is
+  added to. A mutation matching that predicate would be granted to every
+  automation, gate-free. A new mutation tool must never be matched by it.
 
 ## Branch Names
 
@@ -238,9 +228,9 @@ small named helpers below it. Extract only when it names a real concept.
 - Service HTTP goes through `jsonRequest` (`src/services/http.ts`); paths are
   service-relative (`/api/v3/...`) and validated by `assertServicePath`.
   Host-side Seerr actions go through `SeerrClient`, never through agent tools.
-- Fire-and-forget async is not allowed; the queue owns run lifecycles. The
-  Discord interaction listener is the one unawaited path (an event emitter
-  calls it); it only enqueues and contains its own failures.
+- Fire-and-forget async is not allowed; the queue owns run lifecycles. The HTTP
+  and Discord event listeners contain their own failures because event emitters
+  cannot await them.
 - One run at a time per automation: `AutomationDispatcher`
   (`src/automations/dispatcher.ts`) refuses a `busy` name, so cron ticks, HTTP
   triggers, and Discord triggers cannot stack; `src/index.ts` only wires it.

@@ -37,18 +37,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Check formatting
-        run: pnpm fmt:check
-
-      - name: Run lint
-        run: pnpm lint
-
-      - name: Run typecheck
-        run: pnpm typecheck
-
-      # Prompts and skills name tools in prose, which the compiler cannot check.
-      - name: Check the documented tool surface
-        run: pnpm check:tools
+      - name: Verify
+        run: pnpm verify
 
       - name: Build
         run: pnpm build

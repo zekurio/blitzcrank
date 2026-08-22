@@ -7,7 +7,7 @@ import { CaseStore, clampEntry, type CaseFile } from "../casefile.ts"
 import type { Config } from "../config.ts"
 import type { SeerrWebhookPayload } from "../gateways/seerr/types.ts"
 import { MAX_REVISIT_CHAIN, planRevisit } from "../revisits.ts"
-import { SeerrClient } from "../services/seerr.ts"
+import { SeerrClient, seerrIssueMediaType } from "../services/seerr.ts"
 import { RunContext } from "../tools/context.ts"
 import {
   buildIssueTools,
@@ -31,6 +31,15 @@ export function eventMediaScope(event: IssueEvent): MediaScope {
   if (event.kind === "revisit") return event.mediaScope
   const type = event.payload.media?.media_type
   return type === "movie" || type === "tv" ? type : undefined
+}
+
+async function resolveMediaScope(
+  event: IssueEvent,
+  seerr: Pick<SeerrClient, "getIssue">,
+): Promise<MediaScope> {
+  const scope = eventMediaScope(event)
+  if (scope !== undefined) return scope
+  return seerrIssueMediaType(await seerr.getIssue(event.issueId))
 }
 
 export interface RunOutcome {
@@ -98,12 +107,17 @@ export class IssueRunner {
     const { issueId } = event
     const seerr = new SeerrClient(this.config.seerr, this.config.seerrBotUserId)
     try {
+      const mediaScope = await resolveMediaScope(event, seerr)
+      if (mediaScope === undefined) {
+        console.warn(
+          `[issue:${issueId}] media type is unknown; no Arr tools granted`,
+        )
+      }
       const casefile = await this.cases.load(issueId)
       // Evidence carries across the runs of one issue, matching the session that
       // is resumed alongside it: the gate exists to stop fabricated IDs, and a
-      // real ID does not become fabricated by being a day old. Neither counter is
-      // capped for issue runs — what an issue needs is set by the issue, and a
-      // season imported as the wrong show needs every one of its files gone.
+      // real ID does not become fabricated by being a day old. Mutation and
+      // deletion counts are audit data only.
       const ctx = new RunContext({
         prior: await this.cases.loadEvidence(issueId),
       })
@@ -135,7 +149,7 @@ export class IssueRunner {
         issueId,
         anchor: this.anchor,
         sessionFileRef,
-        mediaScope: eventMediaScope(event),
+        mediaScope,
         status,
         casefile,
       })
@@ -238,7 +252,7 @@ export class IssueRunner {
       const plan = planRevisit({
         requestedMs: directives.revisitInMs,
         reason: directives.revisitReason,
-        mediaScope: eventMediaScope(event),
+        mediaScope,
         previous: casefile.revisit,
         isRevisitRun: event.kind === "revisit",
         producedNews:
@@ -251,14 +265,6 @@ export class IssueRunner {
       casefile.revisit = directives.resolve ? undefined : plan.revisit
       await this.cases.save(casefile)
 
-      console.log(
-        `[issue:${issueId}] done resolve=${directives.resolve} revisit=${plan.revisit?.delayMs ?? "-"} ` +
-          `mutations=${mutations} deletes=${deletes} ` +
-          `tokens=${turn.usage.newTokens} input=${turn.usage.inputTokens} ` +
-          `output=${turn.usage.outputTokens} billed=${turn.usage.billedTokens} ` +
-          `cost=${turn.usage.costUsd ?? "subscription"} ` +
-          `issueTotal=${casefile.spend.tokens} runs=${casefile.spend.runs}`,
-      )
       return { issueId, directives, casefile }
     } catch (err) {
       // The run died before its final comment, so the live status it adopted
@@ -268,10 +274,10 @@ export class IssueRunner {
       // be retracted. The queue logs the run's own failure; a failed
       // retraction only joins it there.
       await publishComment(seerr, issueId, status, undefined).catch(
-        (cleanupErr: unknown) => {
+        (cause: unknown) => {
           console.error(
             `[issue:${issueId}] failed to retract status comment:`,
-            cleanupErr,
+            cause,
           )
         },
       )

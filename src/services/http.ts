@@ -13,13 +13,21 @@ export class HttpError extends Error {
 
 export interface JsonRequestOptions {
   method?: "GET" | "POST" | "PUT" | "DELETE" | undefined
-  headers?: Record<string, string> | undefined
+  headers?: Headers | Record<string, string> | undefined
   query?: Record<string, string | number | boolean | undefined> | undefined
-  body?: unknown
+  body?: JsonValue | undefined
   timeoutMs?: number | undefined
 }
 
-export async function jsonRequest<T = unknown>(
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue | undefined }
+
+export async function jsonRequest<T = JsonValue>(
   baseUrl: string,
   path: string,
   opts: JsonRequestOptions = {},
@@ -32,27 +40,29 @@ export async function jsonRequest<T = unknown>(
     if (value !== undefined) url.searchParams.set(key, String(value))
   }
 
-  const res = await fetch(url, {
+  const headers = new Headers(opts.headers)
+  headers.set("accept", "application/json")
+  if (opts.body !== undefined) headers.set("content-type", "application/json")
+  const request: RequestInit = {
     method: opts.method ?? "GET",
-    headers: {
-      accept: "application/json",
-      ...(opts.body !== undefined
-        ? { "content-type": "application/json" }
-        : {}),
-      ...opts.headers,
-    },
-    ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
+    headers,
     signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000),
-  })
+  }
+  if (opts.body !== undefined) request.body = JSON.stringify(opts.body)
+  const res = await fetch(url, request)
 
   const text = await res.text()
   if (!res.ok) {
     throw new HttpError(res.status, url.toString(), text)
   }
-  if (!text) return undefined as T
+  if (!text) {
+    // SAFETY: Callers ignore the value for successful empty service responses.
+    return undefined as T
+  }
   try {
+    // SAFETY: Each typed caller owns the response contract for its fixed endpoint.
     return JSON.parse(text) as T
-  } catch {
-    return text as unknown as T
+  } catch (err) {
+    throw new Error(`Expected JSON from ${url}`, { cause: err })
   }
 }
