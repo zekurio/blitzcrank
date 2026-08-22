@@ -8,7 +8,7 @@ import {
 } from "@earendil-works/pi-coding-agent"
 import { Type } from "typebox"
 
-import { textResult } from "./common.js"
+import { textResult } from "./common.ts"
 
 /**
  * Search persisted run transcripts (issues + automations) for prior related

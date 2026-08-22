@@ -2,23 +2,23 @@ import path from "node:path"
 
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent"
 
-import type { CaseFile } from "../casefile.js"
-import type { Config } from "../config.js"
-import type { SeerrClient } from "../services/seerr.js"
-import { buildRadarrTools, buildSonarrTools } from "./arr.js"
-import { buildCaseFileTool } from "./casefile.js"
-import type { RunContext } from "./context.js"
-import { buildHistoryTool } from "./history.js"
-import { buildMediaTools } from "./media.js"
+import type { CaseFile } from "../casefile.ts"
+import type { Config } from "../config.ts"
+import type { SeerrClient } from "../services/seerr.ts"
+import { buildRadarrTools, buildSonarrTools } from "./arr.ts"
+import { buildCaseFileTool } from "./casefile.ts"
+import type { RunContext } from "./context.ts"
+import { buildHistoryTool } from "./history.ts"
+import { buildMediaTools } from "./media.ts"
 import {
   buildJellyfinTools,
   buildProgressTool,
   buildSabnzbdTools,
   buildSeerrTools,
   type StatusComment,
-} from "./services.js"
+} from "./services.ts"
 
-export type { StatusComment } from "./services.js"
+export type { StatusComment } from "./services.ts"
 
 export interface SessionFileRef {
   current: string | undefined

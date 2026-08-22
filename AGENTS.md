@@ -9,8 +9,9 @@
 - Layout: `src/agent/` (session, issue prompt, directive parsing),
   `src/automations/` (definitions, capability registry, cron, dispatcher),
   `src/tools/` (run context, safety guards, GET-only reads, typed mutations),
-  `src/services/` (HTTP helper, host-side Seerr client), `src/webhook/`
-  (payload types, comment gate), `src/discord/` (report threads, `/automation`),
+  `src/services/` (HTTP helper, host-side Seerr client),
+  `src/gateways/seerr/` (payload types, comment gate), `src/discord/` (report
+  threads, `/automation`),
   `automations/*.md` (operator-authored tasks), `skills/` (agent domain
   knowledge), `docs/research/` (pi SDK, Seerr/service APIs, legacy design —
   consult before touching tool or API code).
@@ -77,7 +78,7 @@ behavioural difference described.
   `session.messages.findLast`, or a run that produced nothing re-executes the
   previous directive block.
 - Comment-triggered runs are authorized host-side by
-  `src/webhook/comment-gate.ts`: only the issue reporter or a Seerr
+  `src/gateways/seerr/comment-gate.ts`: only the issue reporter or a Seerr
   `ADMIN`/`MANAGE_ISSUES` user may drive the agent. It runs before the event
   handler (a rejected comment must not cancel a revisit), fails closed when
   Seerr is unreachable, and has no opt-out.
@@ -94,9 +95,9 @@ behavioural difference described.
   `postComment` infers the new comment's id from the issue's comment list, and
   two racing posts could return the same handle.
 - Webhook fields are sanitized with `webhookText`/`issueIdOf`
-  (`src/webhook/types.ts`): Seerr renders unset values as `""` and leaves
+  (`src/gateways/seerr/types.ts`): Seerr renders unset values as `""` and leaves
   unknown template placeholders literal, so `"{{...}}"` is never an identity.
-  The own-comment guard (`src/webhook/loop-guard.ts`) matches the
+  The own-comment guard (`src/gateways/seerr/loop-guard.ts`) matches the
   `[blitzcrank w/` comment marker first, then the bot display name.
 - The agent session gets its custom tools plus builtin `read` (for skills).
   Never enable `bash`, `edit`, or `write` in the runner.

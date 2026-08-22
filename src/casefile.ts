@@ -8,7 +8,7 @@ import {
 } from "node:fs/promises"
 import path from "node:path"
 
-import type { EvidenceIdentity, EvidenceSnapshot } from "./tools/context.js"
+import type { EvidenceIdentity, EvidenceSnapshot } from "./tools/context.ts"
 
 /**
  * Per-issue case file: the durable, host-owned record of one issue.

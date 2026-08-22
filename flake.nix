@@ -74,7 +74,6 @@
               blitzPi
               nodejs_24
               pnpm
-              typescript
             ];
 
             shellHook = ''

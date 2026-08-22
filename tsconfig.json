@@ -6,6 +6,8 @@
     "lib": ["ES2023"],
     "outDir": "dist",
     "rootDir": "src",
+    "types": ["node"],
+    "rewriteRelativeImportExtensions": true,
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,

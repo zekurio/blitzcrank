@@ -1,13 +1,13 @@
 import { Hono } from "hono"
 
-import type { AutomationInfo, TriggerResult } from "./automations/dispatcher.js"
-import type { Config } from "./config.js"
-import { isBotComment } from "./webhook/loop-guard.js"
+import type { AutomationInfo, TriggerResult } from "./automations/dispatcher.ts"
+import type { Config } from "./config.ts"
+import { isBotComment } from "./gateways/seerr/loop-guard.ts"
 import {
   isIssueEvent,
   issueIdOf,
   type SeerrWebhookPayload,
-} from "./webhook/types.js"
+} from "./gateways/seerr/types.ts"
 
 export interface ServerDeps {
   config: Config

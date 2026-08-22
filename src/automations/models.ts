@@ -1,4 +1,4 @@
-import type { AutomationDefinition } from "./definitions.js"
+import type { AutomationDefinition } from "./definitions.ts"
 
 /** Resolve a deployment-owned override without making it task frontmatter. */
 export function modelSpecForAutomation(

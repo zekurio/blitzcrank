@@ -15,14 +15,14 @@
 import { readdir, readFile } from "node:fs/promises"
 import path from "node:path"
 
-import { buildSystemPrompt } from "../src/agent/prompt.js"
-import { CODEX_SEARCH_TOOL_NAME } from "../src/agent/session.js"
-import { buildAutomationSystemPrompt } from "../src/automations/prompt.js"
-import { buildAutomationReportTool } from "../src/automations/report.js"
-import { emptyCase } from "../src/casefile.js"
-import type { Config } from "../src/config.js"
-import { RunContext } from "../src/tools/context.js"
-import { buildIssueTools } from "../src/tools/index.js"
+import { buildSystemPrompt } from "../src/agent/prompt.ts"
+import { CODEX_SEARCH_TOOL_NAME } from "../src/agent/session.ts"
+import { buildAutomationSystemPrompt } from "../src/automations/prompt.ts"
+import { buildAutomationReportTool } from "../src/automations/report.ts"
+import { emptyCase } from "../src/casefile.ts"
+import type { Config } from "../src/config.ts"
+import { RunContext } from "../src/tools/context.ts"
+import { buildIssueTools } from "../src/tools/index.ts"
 
 /** Every optional service configured, so the full tool surface is registered. */
 const service = { url: "http://service.invalid", apiKey: "key" }

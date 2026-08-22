@@ -3,25 +3,25 @@ import path from "node:path"
 
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent"
 
-import { CaseStore, clampEntry, type CaseFile } from "../casefile.js"
-import type { Config } from "../config.js"
-import { MAX_REVISIT_CHAIN, planRevisit } from "../revisits.js"
-import { SeerrClient } from "../services/seerr.js"
-import { RunContext } from "../tools/context.js"
+import { CaseStore, clampEntry, type CaseFile } from "../casefile.ts"
+import type { Config } from "../config.ts"
+import type { SeerrWebhookPayload } from "../gateways/seerr/types.ts"
+import { MAX_REVISIT_CHAIN, planRevisit } from "../revisits.ts"
+import { SeerrClient } from "../services/seerr.ts"
+import { RunContext } from "../tools/context.ts"
 import {
   buildIssueTools,
   type MediaScope,
   type SessionFileRef,
   type StatusComment,
-} from "../tools/index.js"
-import type { SeerrWebhookPayload } from "../webhook/types.js"
-import { parseDirectives, type Directives } from "./directives.js"
+} from "../tools/index.ts"
+import { parseDirectives, type Directives } from "./directives.ts"
 import {
   buildIssuePrompt,
   buildRevisitPrompt,
   buildSystemPrompt,
-} from "./prompt.js"
-import { modelAnchor, runAgentTurn, usageAnchor } from "./session.js"
+} from "./prompt.ts"
+import { modelAnchor, runAgentTurn, usageAnchor } from "./session.ts"
 
 export type IssueEvent =
   | { kind: "webhook"; issueId: string; payload: SeerrWebhookPayload }

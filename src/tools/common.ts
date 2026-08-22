@@ -6,8 +6,8 @@ import {
 } from "@earendil-works/pi-coding-agent"
 import { Type } from "typebox"
 
-import type { RunContext } from "./context.js"
-import { assertServicePath } from "./safety.js"
+import type { RunContext } from "./context.ts"
+import { assertServicePath } from "./safety.ts"
 
 export const MAX_RESULT_CHARS = 30_000
 

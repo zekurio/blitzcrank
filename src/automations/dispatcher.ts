@@ -1,6 +1,6 @@
-import type { SerialQueue } from "../queue.js"
-import type { AutomationDefinition } from "./definitions.js"
-import type { AutomationReport } from "./runner.js"
+import type { SerialQueue } from "../queue.ts"
+import type { AutomationDefinition } from "./definitions.ts"
+import type { AutomationReport } from "./runner.ts"
 
 export interface AutomationInfo {
   name: string
