@@ -237,6 +237,7 @@ X-Api-Key: ...
   "issueType": 1,
   "media": {
     "id": 92,
+    "mediaType": "tv",
     "tmdbId": 95396,
     "tvdbId": 371980,
     "status": 5,
@@ -270,6 +271,9 @@ X-Api-Key: ...
 ```
 
 OpenAPI caveat: the `Issue` schema documents only `id`, `issueType`, `media`, `createdBy`, `modifiedBy`, and `comments`. Runtime entities also have `status`, `problemSeason`, `problemEpisode`, `createdAt`, and `updatedAt`, but those fields are **not declared in the current OpenAPI `Issue` schema**. Treat their presence in API responses as implementation behavior rather than a spec guarantee.
+
+The runtime `Media` entity includes `mediaType` as `movie` or `tv`. The host
+can use this field when a customized webhook omits `media.media_type`.
 
 Numeric issue enums from source:
 

@@ -3,11 +3,11 @@ name: stale-import-handler
 description: Find Sonarr/Radarr queue entries where a download is complete but not imported, import only clearly safe manual-import candidates, remove only clearly rejected stale downloads without blocklisting, and report actions and manual-review blockers.
 schedule: "0 */3 * * *"
 enabled: true
-capabilities:
-  - sonarr.manual_import
-  - radarr.manual_import
-  - sonarr.queue_rejection_cleanup
-  - radarr.queue_rejection_cleanup
+mutation_tools:
+  - sonarr_manual_import
+  - radarr_manual_import
+  - sonarr_delete_queue_item
+  - radarr_delete_queue_item
 ---
 
 Run the three-hour stale-import sweep. This runbook is self-contained; do not load the general service skills unless an API response raises a question this runbook does not answer.

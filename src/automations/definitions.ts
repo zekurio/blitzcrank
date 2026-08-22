@@ -8,78 +8,67 @@ export interface AutomationDefinition {
   description: string
   schedule: string
   enabled: boolean
-  capabilities: string[]
-  /**
-   * Optional per-run ceilings. Absent means unlimited, as for issue runs: an
-   * automation's real bound is its capability allowlist plus the evidence
-   * gates, and a number the operator did not choose is not a safety decision.
-   *
-   * These used to default to 3 and 0, which silently disabled work an
-   * automation had explicitly declared — stale-import-handler declared
-   * both queue_rejection_cleanup capabilities and could not use either, since
-   * its cleanups pass removeFromClient and so count as deletions against a
-   * budget of zero. A cap now exists only where someone wrote one down.
-   */
-  mutationBudget: number | undefined
-  deletionBudget: number | undefined
+  /** Exact mutation tools granted to this automation. Reads stay implicit. */
+  mutationTools: string[]
   body: string
   filePath: string
 }
 
-/**
- * Deterministic capability -> mutation tool mapping. An automation's
- * frontmatter declares capabilities; only the mapped tools (plus the always-on
- * read tools) are registered for its runs. Unknown capabilities fail loading.
- */
-export const CAPABILITY_TOOLS: Record<string, string[]> = {
-  "sonarr.manual_import": ["sonarr_manual_import"],
-  "radarr.manual_import": ["radarr_manual_import"],
-  "sonarr.queue_rejection_cleanup": ["sonarr_delete_queue_item"],
-  "radarr.queue_rejection_cleanup": ["radarr_delete_queue_item"],
-  "sonarr.search": ["sonarr_search"],
-  "radarr.search": ["radarr_search"],
-  "sonarr.refresh": ["sonarr_refresh_series"],
-  "radarr.refresh": ["radarr_refresh_movie"],
-  "sonarr.file_deletion": ["sonarr_delete_episode_file"],
-  "radarr.file_deletion": ["radarr_delete_movie_file"],
-  "sonarr.queue_grab": ["sonarr_grab_queue_item"],
-  "radarr.queue_grab": ["radarr_grab_queue_item"],
-  "sonarr.blocklist_cleanup": ["sonarr_remove_from_blocklist"],
-  "radarr.blocklist_cleanup": ["radarr_remove_from_blocklist"],
-  "sabnzbd.job_control": [
-    "sabnzbd_retry_job",
-    "sabnzbd_pause_job",
-    "sabnzbd_resume_job",
-  ],
-  "sabnzbd.job_deletion": ["sabnzbd_delete_job"],
-  "jellyfin.refresh": ["jellyfin_refresh_item"],
-  "seerr.request_creation": ["seerr_create_request"],
+type AutomationScalar = string | number | boolean | null
+
+interface AutomationMetadata {
+  name?: AutomationScalar
+  description?: AutomationScalar
+  schedule?: AutomationScalar
+  enabled?: AutomationScalar
+  mutation_tools?: AutomationScalar | AutomationScalar[]
 }
 
-export function capabilityTools(capabilities: string[]): string[] {
-  return capabilities.flatMap((capability) => {
-    const tools = CAPABILITY_TOOLS[capability]
-    if (!tools) {
+const AUTOMATION_FIELDS = new Set([
+  "name",
+  "description",
+  "schedule",
+  "enabled",
+  "mutation_tools",
+])
+
+/**
+ * A direct mutation-tool allowlist has no second naming system to keep in sync.
+ * Availability is checked when a run builds its configured service tool set.
+ */
+function mutationTools(
+  filePath: string,
+  value: AutomationMetadata["mutation_tools"],
+): string[] {
+  if (value === undefined || value === null) return []
+  if (!Array.isArray(value)) {
+    throw new Error(`${filePath}: mutation_tools must be a list`)
+  }
+  const tools = value.map(String)
+  for (const tool of tools) {
+    if (!/^[a-z][a-z0-9_]*$/.test(tool)) {
       throw new Error(
-        `unknown capability "${capability}"; known: ${Object.keys(CAPABILITY_TOOLS).join(", ")}`,
+        `${filePath}: mutation_tools contains invalid tool name ` +
+          JSON.stringify(tool),
       )
     }
-    return tools
-  })
+  }
+  if (new Set(tools).size !== tools.length) {
+    throw new Error(`${filePath}: mutation_tools contains a duplicate`)
+  }
+  return tools
 }
 
 function parseDefinition(filePath: string, raw: string): AutomationDefinition {
   const match = raw.match(/^---\n([\s\S]*?)\n---\n?/)
   if (!match) throw new Error(`${filePath}: missing YAML frontmatter`)
-  const meta = parse(match[1]!) as Record<string, unknown>
+  // SAFETY: All consumed frontmatter fields are normalized below before use.
+  const meta = parse(match[1]!) as AutomationMetadata
   const body = raw.slice(match[0].length).trim()
 
-  if (Object.hasOwn(meta, "model")) {
-    throw new Error(
-      `${filePath}: model is deployment configuration; use ` +
-        "BLITZCRANK_AUTOMATION_MODELS or BLITZCRANK_AUTOMATION_MODEL instead of frontmatter",
-    )
-  }
+  const unknown = Object.keys(meta).find((key) => !AUTOMATION_FIELDS.has(key))
+  if (unknown)
+    throw new Error(`${filePath}: unknown frontmatter field ${unknown}`)
 
   const name = String(meta.name ?? "")
   if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(name)) {
@@ -94,38 +83,15 @@ function parseDefinition(filePath: string, raw: string): AutomationDefinition {
   if (!schedule) throw new Error(`${filePath}: schedule is required`)
   if (!body) throw new Error(`${filePath}: automation body is empty`)
 
-  const capabilities = Array.isArray(meta.capabilities)
-    ? meta.capabilities.map(String)
-    : []
-  capabilityTools(capabilities) // validate eagerly
-
   return {
     name,
     description: String(meta.description ?? ""),
     schedule,
     enabled: meta.enabled !== false,
-    capabilities,
-    mutationBudget: budget(filePath, "mutation_budget", meta.mutation_budget),
-    deletionBudget: budget(filePath, "deletion_budget", meta.deletion_budget),
+    mutationTools: mutationTools(filePath, meta.mutation_tools),
     body,
     filePath,
   }
-}
-
-/** An optional frontmatter ceiling; a present-but-nonsensical value is fatal. */
-function budget(
-  filePath: string,
-  key: string,
-  value: unknown,
-): number | undefined {
-  if (value === undefined || value === null) return undefined
-  const parsed = Number(value)
-  if (!Number.isInteger(parsed) || parsed < 0) {
-    throw new Error(
-      `${filePath}: ${key} must be a non-negative integer, got ${JSON.stringify(value)}`,
-    )
-  }
-  return parsed
 }
 
 export async function loadAutomations(

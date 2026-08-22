@@ -6,61 +6,73 @@ import {
 } from "@earendil-works/pi-coding-agent"
 import { Type } from "typebox"
 
+import type { JsonValue } from "../services/http.ts"
 import type { RunContext } from "./context.ts"
 import { assertServicePath } from "./safety.ts"
 
 export const MAX_RESULT_CHARS = 30_000
 
-export function toText(data: unknown): string {
-  const text = typeof data === "string" ? data : JSON.stringify(data, null, 2)
+type TextResultValue = JsonValue | MutationOutcome
+
+export function toText(data: TextResultValue): string {
+  const text = isString(data) ? data : JSON.stringify(data, null, 2)
   if (text == null) return "null"
   if (text.length <= MAX_RESULT_CHARS) return text
   return `${text.slice(0, MAX_RESULT_CHARS)}\n... [truncated ${text.length - MAX_RESULT_CHARS} chars — narrow your query]`
 }
 
+export type ToolResultDetails = Record<
+  string,
+  string | number | boolean | null | undefined
+>
+
 export function textResult(
-  data: unknown,
-  details: Record<string, unknown> = {},
+  data: TextResultValue,
+  details: ToolResultDetails = {},
 ) {
   return { content: [{ type: "text" as const, text: toText(data) }], details }
 }
 
 export type ServiceName = "seerr" | "sonarr" | "radarr" | "jellyfin" | "sabnzbd"
 
-const SERVICE_PATH_FIELDS: Partial<Record<ServiceName, ReadonlySet<string>>> = {
-  sonarr: new Set(["path", "outputPath"]),
-  radarr: new Set(["path", "outputPath"]),
-  sabnzbd: new Set(["storage"]),
-  jellyfin: new Set(["Path", "path"]),
-}
+const SERVICE_PATH_FIELDS = new Map<ServiceName, ReadonlySet<string>>([
+  ["sonarr", new Set(["path", "outputPath"])],
+  ["radarr", new Set(["path", "outputPath"])],
+  ["sabnzbd", new Set(["storage"])],
+  ["jellyfin", new Set(["Path", "path"])],
+])
 
 /** Records only absolute strings from fields declared to carry service paths. */
 function recordResponsePaths(
   ctx: RunContext,
   service: ServiceName,
-  data: unknown,
-  fields: ReadonlySet<string> = SERVICE_PATH_FIELDS[service] ?? new Set(),
+  data: JsonValue,
+  fields: ReadonlySet<string> = SERVICE_PATH_FIELDS.get(service) ?? new Set(),
 ): void {
-  const pending: unknown[] = [data]
+  const pending: Array<JsonValue | undefined> = [data]
   const seen = new WeakSet<object>()
   while (pending.length > 0) {
     const value = pending.pop()
-    if (!value || typeof value !== "object" || seen.has(value)) continue
-    seen.add(value)
     if (Array.isArray(value)) {
+      if (seen.has(value)) continue
+      seen.add(value)
       pending.push(...value)
       continue
     }
+    if (!isJsonObject(value) || seen.has(value)) continue
+    seen.add(value)
     for (const [key, child] of Object.entries(value)) {
       if (
         fields.has(key) &&
-        typeof child === "string" &&
+        isString(child) &&
         path.isAbsolute(child) &&
         !child.includes("\0")
       ) {
         ctx.recordPath(service, child)
       }
-      if (child && typeof child === "object") pending.push(child)
+      if (child !== undefined && child !== null && !isString(child)) {
+        pending.push(child)
+      }
     }
   }
 }
@@ -71,7 +83,7 @@ export interface ReadToolSpec {
   description: string
   /** Extra deterministic guards beyond assertServicePath. */
   guards?: (path: string) => void
-  request: (path: string) => Promise<unknown>
+  request: (path: string) => Promise<JsonValue>
 }
 
 /** GET-only raw request tool for investigation. Every read is recorded as evidence. */
@@ -100,7 +112,7 @@ export function makeReadTool(
       ctx.recordRead(
         spec.service,
         params.path,
-        typeof data === "string" ? data : JSON.stringify(data),
+        isString(data) ? data : JSON.stringify(data),
       )
       recordResponsePaths(ctx, spec.service, data)
       return textResult(data, {
@@ -121,22 +133,23 @@ export interface EvidenceRequirement {
 }
 
 export interface MutationOutcome {
-  result: unknown
-  verification?: unknown
+  result: JsonValue
+  verification?: JsonValue
   verificationError?: string
 }
 
 /**
- * Shared mutation pipeline: evidence gates -> budget -> perform -> built-in
- * verification read. Verification failures never mask a completed mutation.
+ * Shared mutation pipeline: evidence gates -> audit counter -> perform ->
+ * built-in verification read. Verification failures never mask a completed
+ * mutation.
  */
 export async function runMutation(
   ctx: RunContext,
   opts: {
     kind: "mutate" | "delete"
     evidence?: EvidenceRequirement[]
-    perform: () => Promise<unknown>
-    verify?: (result: unknown) => Promise<unknown>
+    perform: () => Promise<JsonValue>
+    verify?: (result: JsonValue) => Promise<JsonValue>
   },
 ): Promise<MutationOutcome> {
   for (const e of opts.evidence ?? []) {
@@ -164,3 +177,18 @@ export const reasonParam = () =>
     description:
       "Why this exact action is needed and safe; name the exact verified target",
   })
+
+function isString<Value>(value: Value): value is Value & string {
+  return typeof value === "string"
+}
+
+function isJsonObject(
+  value: JsonValue | undefined,
+): value is { [key: string]: JsonValue | undefined } {
+  return (
+    value !== undefined &&
+    value !== null &&
+    Object(value) === value &&
+    !Array.isArray(value)
+  )
+}

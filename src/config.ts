@@ -23,6 +23,10 @@ export interface MediaConfig {
   roots: string[]
 }
 
+export interface AutomationModelMap {
+  [name: string]: string
+}
+
 export interface Config {
   port: number
   /** Persistent state (session transcripts) lives here. */
@@ -36,7 +40,7 @@ export interface Config {
   /** Default model for automations; absent inherits `model`. */
   automationModel: string | undefined
   /** Per-automation model overrides, keyed by automation name. */
-  automationModels: Record<string, string>
+  automationModels: AutomationModelMap
   /**
    * pi auth.json holding API keys and OAuth credentials (e.g. openai-codex).
    * Must be writable: OAuth tokens auto-refresh and are persisted back.
@@ -62,6 +66,14 @@ export interface Config {
   discord: DiscordConfig | undefined
 }
 
+type EnvJson =
+  | string
+  | number
+  | boolean
+  | null
+  | EnvJson[]
+  | { [key: string]: EnvJson }
+
 function service(prefix: string): ServiceConfig | undefined {
   const url = process.env[`${prefix}_URL`]
   const apiKey = process.env[`${prefix}_API_KEY`]
@@ -86,32 +98,43 @@ function number(
 /** A structured env value is strict: malformed routing must stop startup. */
 export function parseAutomationModels(
   value: string | undefined,
-): Record<string, string> {
+): AutomationModelMap {
   if (value === undefined || value.trim() === "") return {}
 
-  let parsed: unknown
+  let parsed: EnvJson
   try {
-    parsed = JSON.parse(value)
+    // SAFETY: JSON.parse can produce only values covered by EnvJson.
+    parsed = JSON.parse(value) as EnvJson
   } catch {
     throw new Error(
       "BLITZCRANK_AUTOMATION_MODELS must be a JSON object mapping automation names to model specs",
     )
   }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+  if (!isEnvObject(parsed)) {
     throw new Error(
       "BLITZCRANK_AUTOMATION_MODELS must be a JSON object mapping automation names to model specs",
     )
   }
 
   const entries = Object.entries(parsed)
+  const models: AutomationModelMap = {}
   for (const [name, model] of entries) {
-    if (typeof model !== "string" || model.trim() === "") {
+    if (!isString(model) || model.trim() === "") {
       throw new Error(
         `BLITZCRANK_AUTOMATION_MODELS[${JSON.stringify(name)}] must be a non-empty model spec`,
       )
     }
+    models[name] = model
   }
-  return Object.fromEntries(entries) as Record<string, string>
+  return models
+}
+
+function isEnvObject(value: EnvJson): value is { [key: string]: EnvJson } {
+  return value !== null && Object(value) === value && !Array.isArray(value)
+}
+
+function isString(value: EnvJson): value is string {
+  return typeof value === "string"
 }
 
 /** Colon-separated absolute paths, PATH-style. */

@@ -8,6 +8,7 @@ import {
 } from "node:fs/promises"
 import path from "node:path"
 
+import type { JsonValue } from "./services/http.ts"
 import type { EvidenceIdentity, EvidenceSnapshot } from "./tools/context.ts"
 
 /**
@@ -144,13 +145,13 @@ export function emptyCase(issueId: string): CaseFile {
  * re-read as part of a later prompt, so multi-line text could otherwise forge
  * the host-written structure around it.
  */
-export function clampEntry(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined
+export function clampEntry(value: JsonValue | undefined): string | undefined {
+  if (!isString(value)) return undefined
   const clamped = value.replace(/\s+/g, " ").trim().slice(0, MAX_ENTRY_CHARS)
   return clamped.length > 0 ? clamped : undefined
 }
 
-export function clampEntries(values: unknown): string[] {
+export function clampEntries(values: JsonValue | undefined): string[] {
   if (!Array.isArray(values)) return []
   return values
     .map(clampEntry)
@@ -225,6 +226,7 @@ export class CaseStore {
     const empty = emptyCase(issueId)
     let parsed: Partial<CaseFile> | undefined
     try {
+      // SAFETY: Every field used from this durable file is clamped below.
       parsed = JSON.parse(raw) as Partial<CaseFile>
     } catch {
       console.warn(`[case:${issueId}] unreadable case file; starting fresh`)
@@ -238,24 +240,22 @@ export class CaseStore {
       // prompt, not only of the write path.
       summary: clampSummary(parsed.summary),
       lastAnswer: clampEntry(parsed.lastAnswer),
-      sessionFile:
-        typeof parsed.sessionFile === "string" ? parsed.sessionFile : undefined,
+      sessionFile: isString(parsed.sessionFile)
+        ? parsed.sessionFile
+        : undefined,
       spend: {
         ...empty.spend,
         ...parsed.spend,
         // Do not pretend a legacy combined total was all input or all output.
-        inputTokens:
-          typeof parsed.spend?.inputTokens === "number"
-            ? parsed.spend.inputTokens
-            : undefined,
-        outputTokens:
-          typeof parsed.spend?.outputTokens === "number"
-            ? parsed.spend.outputTokens
-            : undefined,
-        costUsd:
-          typeof parsed.spend?.costUsd === "number"
-            ? parsed.spend.costUsd
-            : undefined,
+        inputTokens: isNumber(parsed.spend?.inputTokens)
+          ? parsed.spend.inputTokens
+          : undefined,
+        outputTokens: isNumber(parsed.spend?.outputTokens)
+          ? parsed.spend.outputTokens
+          : undefined,
+        costUsd: isNumber(parsed.spend?.costUsd)
+          ? parsed.spend.costUsd
+          : undefined,
       },
       runs: Array.isArray(parsed.runs) ? parsed.runs.slice(-MAX_RUNS) : [],
     }
@@ -276,17 +276,11 @@ export class CaseStore {
     )
     if (raw === undefined) return undefined
     try {
-      const parsed = JSON.parse(raw) as Partial<EvidenceSnapshot>
+      // SAFETY: Array presence and identity members are checked before use.
+      const parsed = JSON.parse(raw) as Partial<EvidenceFileData>
       if (!Array.isArray(parsed.evidence)) return undefined
       const identities = Array.isArray(parsed.identities)
-        ? parsed.identities.filter(
-            (entry): entry is EvidenceIdentity =>
-              entry !== null &&
-              typeof entry === "object" &&
-              typeof (entry as Partial<EvidenceIdentity>).service ===
-                "string" &&
-              typeof (entry as Partial<EvidenceIdentity>).value === "string",
-          )
+        ? parsed.identities.filter(isEvidenceIdentity)
         : []
       return {
         evidence: parsed.evidence,
@@ -351,4 +345,30 @@ export class CaseStore {
     }
     return files
   }
+}
+
+interface EvidenceFileData {
+  evidence: EvidenceSnapshot["evidence"]
+  identities: JsonValue[]
+  probed: string[]
+}
+
+function isEvidenceIdentity(
+  value: JsonValue,
+): value is JsonValue & EvidenceIdentity {
+  return isJsonObject(value) && isString(value.service) && isString(value.value)
+}
+
+function isJsonObject(
+  value: JsonValue,
+): value is { [key: string]: JsonValue | undefined } {
+  return value !== null && Object(value) === value && !Array.isArray(value)
+}
+
+function isString<Value>(value: Value): value is Value & string {
+  return typeof value === "string"
+}
+
+function isNumber<Value>(value: Value): value is Value & number {
+  return typeof value === "number"
 }

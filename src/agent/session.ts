@@ -36,7 +36,7 @@ export interface ParsedModelSpec {
 export function parseModelSpec(spec: string): ParsedModelSpec {
   const suffix = spec.match(THINKING_LEVELS)
   const base = suffix ? suffix[1]! : spec
-  const thinkingLevel = suffix ? (suffix[2] as ThinkingLevel) : "medium"
+  const thinkingLevel = thinkingLevelOf(suffix?.[2])
   const slash = base.indexOf("/")
   if (slash === -1) {
     throw new Error(`model must be "provider/model[:thinking]", got "${spec}"`)
@@ -45,6 +45,21 @@ export function parseModelSpec(spec: string): ParsedModelSpec {
     provider: base.slice(0, slash),
     modelId: base.slice(slash + 1),
     thinkingLevel,
+  }
+}
+
+function thinkingLevelOf(value: string | undefined): ThinkingLevel {
+  switch (value) {
+    case "off":
+    case "minimal":
+    case "low":
+    case "medium":
+    case "high":
+    case "xhigh":
+    case "max":
+      return value
+    default:
+      return "medium"
   }
 }
 
@@ -283,10 +298,6 @@ export async function runAgentTurn(
 
   const unsubscribe = session.subscribe((event) => {
     if (event.type === "tool_execution_start") {
-      console.log(
-        `[${opts.logPrefix}] tool ${event.toolName}`,
-        JSON.stringify(event.args),
-      )
       return
     }
     if (event.type === "tool_execution_end") {

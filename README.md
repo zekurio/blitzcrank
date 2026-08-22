@@ -41,10 +41,12 @@ through a narrow typed surface, and returns directives.
 - **Scope gates** — a multi-episode Sonarr search must state the true episode
   count, and replacing two or more existing files requires that one was
   inspected with `media_probe` this run.
-- **No mutation quotas** — issue runs are uncapped, deletions included: one
-  number cannot fit both a wrong subtitle track and a season imported as the
-  wrong show, and for deletions a cap creates the bad outcome it claims to
-  prevent. Everything is still counted, reported, and recorded in the case file.
+- **Media-specific tools** — movie issues get Radarr. TV issues get Sonarr. An
+  unknown media type gets neither. Other service tools stay available.
+- **No mutation quotas** — issue and automation runs are uncapped, deletions
+  included. One number cannot fit both a wrong subtitle track and a season
+  imported as the wrong show. A deletion cap can create the bad outcome it
+  claims to prevent. Everything stays counted, reported, and recorded.
 - **Continuous sessions** — an issue's runs share one agent session, so a
   follow-up comment continues the conversation with its evidence intact, while
   the system prompt and tool list are always rebuilt from the current registry.
@@ -175,8 +177,8 @@ the bot's own comments never trigger runs.
 ### Automations
 
 `automations/*.md` are operator-authored tasks: frontmatter declares the cron
-schedule, the capabilities that map to mutation tools, and optional
-`mutation_budget`/`deletion_budget`; the body is the trusted instruction text.
+schedule and the exact mutation tools the task may use. The body is the trusted
+instruction text.
 Model selection is deployment configuration: a named entry in
 `BLITZCRANK_AUTOMATION_MODELS` wins, then `BLITZCRANK_AUTOMATION_MODEL`, then
 `BLITZCRANK_MODEL`. For example, an automation definition contains no model:
@@ -185,13 +187,13 @@ Model selection is deployment configuration: a named entry in
 ---
 name: stale-import-handler
 schedule: "0 */3 * * *"
-capabilities:
-  - sonarr.queue_rejection_cleanup
+mutation_tools:
+  - sonarr_delete_queue_item
 ---
 ```
 
 A model mapping changes only that automation's fresh agent turn; it does not
-expand its service access, capabilities, budgets, or evidence gates. Unknown
+expand its service access, mutation tools, or evidence gates. Unknown
 automation names and unavailable models are startup errors, so renamed tasks
 cannot leave dead routing configuration behind. Runs are triggered by cron,
 `POST /automations/:name/run`, or Discord, and one automation never runs twice
@@ -216,8 +218,8 @@ blitzcrank never edits permissions itself. Optionally set
 `DISCORD_ADMIN_ROLE_IDS` to let non-administrator roles trigger runs. Don't
 lock a report thread by hand — reviving it would need Manage Threads on the
 thread itself; delete it instead and the next run makes a new one. On startup
-blitzcrank purges its application's global commands and bulk-overwrites the
-guild command set, so don't share the application with another bot.
+blitzcrank bulk-overwrites the configured guild's command set, so don't share
+the application with another bot.
 
 ### Development
 
@@ -245,7 +247,7 @@ invariants, branch/commit conventions, and code style; `skills/` and
 
 Found a bug or have an idea?
 [Open an issue](https://github.com/zekurio/blitzcrank/issues/new). Changes that
-touch the tool surface, evidence gates, budgets, session resumption, or the
+touch the tool surface, evidence gates, session resumption, or the
 directive protocol must say so explicitly in the pull request.
 
 ### License

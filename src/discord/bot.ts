@@ -1,5 +1,3 @@
-import path from "node:path"
-
 import {
   Client,
   Events,
@@ -60,15 +58,14 @@ export class DiscordBot {
       logged,
       discord.guildId,
       discord.watchChannelId,
-      path.join(config.dataDir, "discord", "threads.json"),
     )
     const bot = new DiscordBot(logged, discord, threads, deps)
     // Login already opened the gateway socket, so from here on a failure must
     // close it: the caller has no handle yet, so the socket would leak and
     // keep the process alive.
-    await bot.finishStart().catch(async (err: unknown) => {
+    await bot.finishStart().catch(async (cause: unknown) => {
       await logged.destroy()
-      throw err
+      throw cause
     })
     return bot
   }
@@ -87,28 +84,28 @@ export class DiscordBot {
         console.error("[discord] interaction failed:", err)
       })
     })
-    console.log(
-      `[discord] connected as ${this.client.user.tag},` +
-        ` watching #${await this.threads.verify()}`,
-    )
   }
 
   /** A broken report sink must never fail the run it reports on. */
   async report(report: AutomationReport): Promise<void> {
-    const thread = await this.threads.get(report.name).catch((err: unknown) => {
-      // A thread a human locked cannot be revived without ManageThreads, which
-      // the bot deliberately does not need; say so instead of a bare 403.
-      console.error(
-        `[discord] no thread for ${report.name}` +
-          ` (locked or deleted by hand?):`,
-        err,
-      )
-      return undefined
-    })
+    const thread = await this.threads
+      .get(report.name)
+      .catch((cause: unknown) => {
+        // A thread a human locked cannot be revived without ManageThreads, which
+        // the bot deliberately does not need; say so instead of a bare 403.
+        console.error(
+          `[discord] no thread for ${report.name}` +
+            ` (locked or deleted by hand?):`,
+          cause,
+        )
+        return undefined
+      })
     if (!thread) return
-    await thread.send(formatAutomationReport(report)).catch((err: unknown) => {
-      console.error(`[discord] report for ${report.name}:`, err)
-    })
+    await thread
+      .send(formatAutomationReport(report))
+      .catch((cause: unknown) => {
+        console.error(`[discord] report for ${report.name}:`, cause)
+      })
   }
 
   async stop(): Promise<void> {
@@ -141,9 +138,6 @@ export class DiscordBot {
 
     const name = interaction.options.getString("name", true)
     const result = this.deps.triggerAutomation(name)
-    console.log(
-      `[discord] /${AUTOMATION_COMMAND} run ${name} by ${interaction.user.tag}: ${result}`,
-    )
     await interaction.reply({
       content: {
         queued: `Queued **${name}**. The report lands in its thread.`,
@@ -180,9 +174,9 @@ export class DiscordBot {
         (info) =>
           `**${info.name}**${info.enabled ? "" : " (disabled)"} · \`${info.schedule}\`` +
           ` · next ${info.nextRun ?? "-"}` +
-          (info.capabilities.length > 0
-            ? `\n  caps: ${info.capabilities.join(", ")}`
-            : "\n  caps: none (read-only)"),
+          (info.mutationTools.length > 0
+            ? `\n  mutations: ${info.mutationTools.join(", ")}`
+            : "\n  mutations: none (read-only)"),
       )
       .join("\n")
       .slice(0, 1900)

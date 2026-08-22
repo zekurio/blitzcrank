@@ -10,7 +10,7 @@ import {
   isReadTool,
   type SessionFileRef,
 } from "../tools/index.ts"
-import { capabilityTools, type AutomationDefinition } from "./definitions.ts"
+import type { AutomationDefinition } from "./definitions.ts"
 import { modelSpecForAutomation } from "./models.ts"
 import { buildAutomationSystemPrompt } from "./prompt.ts"
 import {
@@ -51,15 +51,7 @@ export class AutomationRunner {
   ) {}
 
   async run(def: AutomationDefinition): Promise<AutomationReport> {
-    // Both are usually undefined, meaning no ceiling. An automation is bounded
-    // by the capability allowlist below and by the evidence gates; a budget is
-    // an extra brake an operator can write into one definition's frontmatter.
-    const ctx = new RunContext({
-      limits: {
-        maxMutations: def.mutationBudget,
-        maxDeletes: def.deletionBudget,
-      },
-    })
+    const ctx = new RunContext()
     const sessionFileRef: SessionFileRef = { current: undefined }
     const modelSpec = modelSpecForAutomation(
       def.name,
@@ -67,17 +59,26 @@ export class AutomationRunner {
       this.modelSpecs,
     )
 
-    const allowedMutations = capabilityTools(def.capabilities)
-    const tools = buildServiceTools(this.config, ctx, sessionFileRef).filter(
-      (tool) => isReadTool(tool.name) || allowedMutations.includes(tool.name),
-    )
-    for (const name of allowedMutations) {
-      if (!tools.some((tool) => tool.name === name)) {
+    const serviceTools = buildServiceTools(this.config, ctx, sessionFileRef)
+    for (const name of def.mutationTools) {
+      const tool = serviceTools.find((candidate) => candidate.name === name)
+      if (!tool) {
         throw new Error(
-          `automation ${def.name} requires tool ${name}, but its service is not configured`,
+          `automation ${def.name} requires unknown or unavailable ` +
+            `mutation tool ${name}`,
+        )
+      }
+      if (isReadTool(tool.name)) {
+        throw new Error(
+          `automation ${def.name} lists read tool ${name} in ` +
+            "mutation_tools; reads are always available",
         )
       }
     }
+    const allowedMutations = new Set(def.mutationTools)
+    const tools = serviceTools.filter(
+      (tool) => isReadTool(tool.name) || allowedMutations.has(tool.name),
+    )
     const reportCapture: AutomationReportCapture = { submissions: [] }
     tools.push(buildAutomationReportTool(reportCapture))
     const readTools = new Set([

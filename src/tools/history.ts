@@ -10,6 +10,12 @@ import { Type } from "typebox"
 
 import { textResult } from "./common.ts"
 
+type HistoryMatch = {
+  score: number
+  modified: string | undefined
+  snippet: string
+}
+
 /**
  * Search persisted run transcripts (issues + automations) for prior related
  * investigations. Ported from the legacy thread_history_search: results are
@@ -87,7 +93,7 @@ export function buildHistoryTool(
       const files: string[] = []
       for (const root of roots) await collectFiles(root, files)
 
-      const results: Array<Record<string, unknown>> = []
+      const results: HistoryMatch[] = []
       for (const file of files) {
         if (currentSessionFile.current && file === currentSessionFile.current)
           continue

@@ -33,7 +33,7 @@ export function createCommentGate(
     }
 
     try {
-      const issue = (await seerr.getIssue(issueId)) as { createdBy?: SeerrUser }
+      const issue = await seerr.getIssue(issueId)
       if (matchesUser(issue.createdBy, who)) return true
 
       const users = await seerr.listUsers()
@@ -41,7 +41,7 @@ export function createCommentGate(
       const permissions = commenter?.permissions ?? 0
       const allowed = (permissions & (ADMIN | MANAGE_ISSUES)) !== 0
       if (!allowed) {
-        console.log(
+        console.warn(
           `[comment-gate] issue=${issueId} comment by "${who.email ?? who.name}"` +
             ` is neither reporter nor admin; ignoring`,
         )

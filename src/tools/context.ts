@@ -1,5 +1,5 @@
 /**
- * Evidence and limit state for one agent run.
+ * Evidence and audit state for one agent run.
  *
  * Because the tool layer runs in-process, we can *enforce* what the legacy
  * deployment could only ask a reviewer to check:
@@ -22,35 +22,6 @@ const MAX_EVIDENCE_BODY_CHARS = 80_000
 const MAX_IDENTITIES = 2_048
 const MAX_PATHS = 2_048
 const MAX_PROBED_PATHS = 64
-
-export interface RunLimits {
-  /**
-   * Mutation ceiling, or undefined for none. Issue runs pass undefined: a
-   * fixed count cannot fit both "wrong subtitle language" and "twelve episodes
-   * stuck in the queue", and the real boundary is the typed-tool surface plus
-   * the evidence gates, not a counter. Automations keep a ceiling because
-   * nobody asked for that run.
-   */
-  maxMutations: number | undefined
-  /**
-   * Deletion ceiling, or undefined for none. Issue runs pass undefined for the
-   * same reason they pass it for mutations, and the counterexample is sharper:
-   * a season imported as the wrong show needs all thirteen files gone. A cap of
-   * five does not prevent a bad outcome there, it manufactures one — five
-   * deleted, eight wrong files still in the library, and a reporter told the
-   * issue is a third fixed. A half-deleted season is worse than either end.
-   *
-   * What separates thirteen justified deletions from thirteen unjustified ones
-   * is the evidence gate and the per-call `reason`, not a number. Automations
-   * still get one, from their definition's frontmatter.
-   */
-  maxDeletes: number | undefined
-}
-
-const DEFAULT_LIMITS: RunLimits = {
-  maxMutations: undefined,
-  maxDeletes: undefined,
-}
 
 export interface EvidenceEntry {
   service: string
@@ -77,7 +48,6 @@ export interface EvidenceSnapshot {
 }
 
 export interface RunContextInit {
-  limits?: RunLimits | undefined
   /** Reads, typed identities, and probes from earlier issue runs. */
   prior?: EvidenceSnapshot | undefined
 }
@@ -92,12 +62,10 @@ export class RunContext {
   /** Paths are intentionally current-run only: filenames can be reused. */
   private readonly paths: RecordedPath[]
   private readonly probed: string[]
-  private readonly limits: RunLimits
   private mutations = 0
   private deletes = 0
 
   constructor(init: RunContextInit = {}) {
-    this.limits = init.limits ?? DEFAULT_LIMITS
     this.evidence = [...(init.prior?.evidence ?? [])]
     this.identities = (init.prior?.identities ?? []).slice(-MAX_IDENTITIES)
     this.paths = []
@@ -240,28 +208,11 @@ export class RunContext {
   }
 
   noteMutation(kind: "mutate" | "delete"): void {
-    if (
-      kind === "delete" &&
-      this.limits.maxDeletes !== undefined &&
-      this.deletes >= this.limits.maxDeletes
-    ) {
-      throw new Error(
-        `deletion budget: at most ${this.limits.maxDeletes} deletions per run; ask the operator instead`,
-      )
-    }
-    if (
-      this.limits.maxMutations !== undefined &&
-      this.mutations >= this.limits.maxMutations
-    ) {
-      throw new Error(
-        `mutation budget: at most ${this.limits.maxMutations} mutations per run; ask the operator instead`,
-      )
-    }
     this.mutations += 1
     if (kind === "delete") this.deletes += 1
   }
 
-  get counts(): { mutations: number; deletes: number } {
+  get counts() {
     return { mutations: this.mutations, deletes: this.deletes }
   }
 }
