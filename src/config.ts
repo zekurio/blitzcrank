@@ -11,6 +11,12 @@ export interface DiscordConfig {
   guildId: string
   /** Text channel the per-automation report threads live in. */
   watchChannelId: string
+  /** Text channel whose messages are triaged into private conversations. */
+  inboxChannelId: string | undefined
+  /** Model for accepted private conversations. */
+  model: string | undefined
+  /** Cheap model that decides whether an inbox message needs a response. */
+  triageModel: string | undefined
   /**
    * Roles allowed to trigger automations, on top of guild administrators.
    * Empty means administrators only.
@@ -62,7 +68,7 @@ export interface Config {
   jellyfin: ServiceConfig | undefined
   /** Enables the ffprobe-backed media_probe tool when media roots are set. */
   media: MediaConfig | undefined
-  /** Automation report threads + trigger commands; host-side only. */
+  /** Reports, commands, and optional triaged private support threads. */
   discord: DiscordConfig | undefined
 }
 
@@ -172,6 +178,9 @@ function discord(): DiscordConfig | undefined {
     token,
     guildId,
     watchChannelId,
+    inboxChannelId: process.env.DISCORD_INBOX_CHANNEL_ID,
+    model: process.env.BLITZCRANK_DISCORD_MODEL,
+    triageModel: process.env.BLITZCRANK_DISCORD_TRIAGE_MODEL,
     adminRoleIds: (process.env.DISCORD_ADMIN_ROLE_IDS ?? "")
       .split(",")
       .map((id) => id.trim())

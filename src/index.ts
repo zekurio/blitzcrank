@@ -25,6 +25,7 @@ import { AutomationRunner } from "./automations/runner.ts"
 import { AutomationScheduler } from "./automations/scheduler.ts"
 import { CaseStore } from "./casefile.ts"
 import { loadConfig, type Config } from "./config.ts"
+import { DiscordAgent } from "./discord/agent.ts"
 import { DiscordBot } from "./discord/bot.ts"
 import { createCommentGate } from "./gateways/seerr/comment-gate.ts"
 import { SerialQueue } from "./queue.ts"
@@ -42,6 +43,8 @@ interface Models {
   runtime: ModelRuntime
   issueSpec: string
   automationSpec: string
+  discordSpec: string
+  discordTriageSpec: string
 }
 
 interface AutomationWork {
@@ -118,8 +121,11 @@ async function main(): Promise<void> {
     if (!config.discord) return
     console.error(
       automationWork.discord
-        ? `  discord: channel ${config.discord.watchChannelId}`
-        : "  discord: DEGRADED (startup failed; reports disabled)",
+        ? `  discord: watch ${config.discord.watchChannelId}` +
+            (config.discord.inboxChannelId
+              ? `, inbox ${config.discord.inboxChannelId}`
+              : "")
+        : "  discord: DEGRADED (startup failed; reports and conversations disabled)",
     )
   })
   installShutdown(server, issueWork, automationWork)
@@ -131,6 +137,8 @@ async function loadModels(
 ): Promise<Models> {
   const issueSpec = config.model ?? DEFAULT_MODEL
   const automationSpec = config.automationModel ?? issueSpec
+  const discordSpec = config.discord?.model ?? issueSpec
+  const discordTriageSpec = config.discord?.triageModel ?? discordSpec
   const runtimeOptions: CreateModelRuntimeOptions = {}
   if (config.authPath) runtimeOptions.authPath = config.authPath
   if (config.modelsPath) runtimeOptions.modelsPath = config.modelsPath
@@ -146,9 +154,16 @@ async function loadModels(
         config.automationModels,
       ),
     ),
+    ...(config.discord?.inboxChannelId ? [discordSpec, discordTriageSpec] : []),
   ])
   for (const spec of configuredSpecs) resolveModel(runtime, spec)
-  return { runtime, issueSpec, automationSpec }
+  return {
+    runtime,
+    issueSpec,
+    automationSpec,
+    discordSpec,
+    discordTriageSpec,
+  }
 }
 
 async function startAutomations(
@@ -177,25 +192,38 @@ async function startAutomations(
     dispatcher.dispatch(definition),
   )
   scheduler.start(definitions)
-  discord = await startDiscord(config, dispatcher)
+  discord = await startDiscord(config, dispatcher, models, queue)
   return { dispatcher, scheduler, discord }
 }
 
 async function startDiscord(
   config: Config,
   dispatcher: AutomationDispatcher,
+  models: Models,
+  queue: SerialQueue,
 ): Promise<DiscordBot | undefined> {
   if (!config.discord) return undefined
-  // Discord is a report sink. A startup failure must not stop issue handling
-  // or HTTP automation triggers. Invalid config still fails in loadConfig.
+  const chat = config.discord.inboxChannelId
+    ? new DiscordAgent(
+        config,
+        models.runtime,
+        models.discordSpec,
+        models.discordTriageSpec,
+        queue,
+      )
+    : undefined
+  // Discord is an optional surface. A startup failure must not stop issue
+  // handling or HTTP automation triggers. Invalid config fails in loadConfig.
   return DiscordBot.start(config, {
     listAutomations: () => dispatcher.list(),
     triggerAutomation: (name) => dispatcher.trigger(name),
+    chat,
   }).catch((cause: unknown) => {
     console.error(
       `[discord] startup failed (guild=${config.discord?.guildId}` +
-        ` channel=${config.discord?.watchChannelId}); continuing WITHOUT` +
-        ` Discord: no automation reports, HTTP triggers still work:`,
+        ` watch=${config.discord?.watchChannelId}` +
+        ` inbox=${config.discord?.inboxChannelId ?? "-"}); continuing WITHOUT` +
+        ` Discord: no reports or conversations, HTTP triggers still work:`,
       cause,
     )
     return undefined
