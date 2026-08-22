@@ -5,12 +5,12 @@ import {
 } from "@earendil-works/pi-coding-agent"
 import { Type } from "typebox"
 
-import type { ServiceConfig } from "../config.js"
-import { jsonRequest } from "../services/http.js"
-import type { SeerrClient } from "../services/seerr.js"
-import { makeReadTool, reasonParam, runMutation, textResult } from "./common.js"
-import type { RunContext } from "./context.js"
-import { assertSabReadAllowed, assertSeerrLifecycleOwned } from "./safety.js"
+import type { ServiceConfig } from "../config.ts"
+import { jsonRequest } from "../services/http.ts"
+import type { SeerrClient } from "../services/seerr.ts"
+import { makeReadTool, reasonParam, runMutation, textResult } from "./common.ts"
+import type { RunContext } from "./context.ts"
+import { assertSabReadAllowed, assertSeerrLifecycleOwned } from "./safety.ts"
 
 export function buildJellyfinTools(
   cfg: ServiceConfig,

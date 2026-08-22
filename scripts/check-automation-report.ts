@@ -4,7 +4,7 @@ import {
   AUTOMATION_REPORT_TOOL,
   buildAutomationReportTool,
   parseAutomationReport,
-} from "../src/automations/report.js"
+} from "../src/automations/report.ts"
 
 const accepted = parseAutomationReport(
   { submissions: [{ status: "ok", body: "  Fertig.  " }] },

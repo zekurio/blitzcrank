@@ -1,6 +1,6 @@
 import { Cron } from "croner"
 
-import type { AutomationDefinition } from "./definitions.js"
+import type { AutomationDefinition } from "./definitions.ts"
 
 export class AutomationScheduler {
   private readonly jobs = new Map<string, Cron>()

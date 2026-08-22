@@ -1,11 +1,11 @@
 import assert from "node:assert/strict"
 
-import { loadAutomations } from "../src/automations/definitions.js"
+import { loadAutomations } from "../src/automations/definitions.ts"
 import {
   assertKnownAutomationModels,
   modelSpecForAutomation,
-} from "../src/automations/models.js"
-import { parseAutomationModels } from "../src/config.js"
+} from "../src/automations/models.ts"
+import { parseAutomationModels } from "../src/config.ts"
 
 assert.deepEqual(parseAutomationModels(undefined), {})
 assert.deepEqual(parseAutomationModels("  "), {})

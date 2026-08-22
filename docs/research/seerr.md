@@ -96,7 +96,7 @@ Verified rendered values:
 - `media_type`: `movie` or `tv`.
 - `media_status` / `media_status4k`: enum name such as `UNKNOWN`, `PENDING`, `PROCESSING`, `PARTIALLY_AVAILABLE`, `AVAILABLE`, or `DELETED` (the webhook documentation omits `DELETED`, but the current enum/API includes it).
 - Missing values render as the empty string (`get(payload, path) ?? ''` in `server/lib/notifications/agents/webhook.ts`), so e.g. `commentedBy_email` is `""` for Jellyfin-backed users without an email.
-- Placeholders Seerr does not know are **left verbatim** in the payload: substitution only replaces keys present in that file's `KeyMap`. A customized template using the singular `{{commentedBy_settings_discordId}}` (the key map has the plural `discordIds`) therefore delivers the literal string `"{{commentedBy_settings_discordId}}"`. Never treat a `{{...}}` value as data — see `webhookText` in `src/webhook/types.ts`.
+- Placeholders Seerr does not know are **left verbatim** in the payload: substitution only replaces keys present in that file's `KeyMap`. A customized template using the singular `{{commentedBy_settings_discordId}}` (the key map has the plural `discordIds`) therefore delivers the literal string `"{{commentedBy_settings_discordId}}"`. Never treat a `{{...}}` value as data — see `webhookText` in `src/gateways/seerr/types.ts`.
 - Discord-ID variables originate as arrays but, in the default template, are substituted into quoted strings. Their exact resulting string serialization is not documented and should not be treated as a native JSON array unless the receiver verifies actual behavior. The special full entity objects are not exposed; the nested objects shown above are template-authored projections.
 
 ## 2. Concrete issue-event webhook payloads

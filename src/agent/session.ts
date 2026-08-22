@@ -12,7 +12,7 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent"
 
-import { BOT_COMMENT_MARKER } from "../webhook/loop-guard.js"
+import { BOT_COMMENT_MARKER } from "../gateways/seerr/loop-guard.ts"
 
 export const DEFAULT_MODEL = "anthropic/claude-sonnet-4-5"
 

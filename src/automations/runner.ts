@@ -2,25 +2,25 @@ import path from "node:path"
 
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent"
 
-import { runAgentTurn } from "../agent/session.js"
-import type { Config } from "../config.js"
-import { RunContext } from "../tools/context.js"
+import { runAgentTurn } from "../agent/session.ts"
+import type { Config } from "../config.ts"
+import { RunContext } from "../tools/context.ts"
 import {
   buildServiceTools,
   isReadTool,
   type SessionFileRef,
-} from "../tools/index.js"
-import { capabilityTools, type AutomationDefinition } from "./definitions.js"
-import { modelSpecForAutomation } from "./models.js"
-import { buildAutomationSystemPrompt } from "./prompt.js"
+} from "../tools/index.ts"
+import { capabilityTools, type AutomationDefinition } from "./definitions.ts"
+import { modelSpecForAutomation } from "./models.ts"
+import { buildAutomationSystemPrompt } from "./prompt.ts"
 import {
   buildAutomationReportTool,
   parseAutomationReport,
   type AutomationReportCapture,
   type AutomationStatus,
-} from "./report.js"
+} from "./report.ts"
 
-export type { AutomationStatus } from "./report.js"
+export type { AutomationStatus } from "./report.ts"
 
 export interface AutomationReport {
   name: string

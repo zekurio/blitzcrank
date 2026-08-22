@@ -1,6 +1,9 @@
-import { renderCase, type CaseFile } from "../casefile.js"
-import type { Config } from "../config.js"
-import { webhookText, type SeerrWebhookPayload } from "../webhook/types.js"
+import { renderCase, type CaseFile } from "../casefile.ts"
+import type { Config } from "../config.ts"
+import {
+  webhookText,
+  type SeerrWebhookPayload,
+} from "../gateways/seerr/types.ts"
 
 /** Host-owned history and follow-up allowance. */
 function caseContext(

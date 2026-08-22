@@ -7,28 +7,28 @@ import {
   eventMediaScope,
   IssueRunner,
   type IssueEvent,
-} from "./agent/runner.js"
-import { DEFAULT_MODEL, resolveModel } from "./agent/session.js"
-import { loadAutomations } from "./automations/definitions.js"
-import { AutomationDispatcher } from "./automations/dispatcher.js"
+} from "./agent/runner.ts"
+import { DEFAULT_MODEL, resolveModel } from "./agent/session.ts"
+import { loadAutomations } from "./automations/definitions.ts"
+import { AutomationDispatcher } from "./automations/dispatcher.ts"
 import {
   assertKnownAutomationModels,
   modelSpecForAutomation,
-} from "./automations/models.js"
-import { AutomationRunner } from "./automations/runner.js"
-import { AutomationScheduler } from "./automations/scheduler.js"
-import { CaseStore } from "./casefile.js"
-import { loadConfig } from "./config.js"
-import { DiscordBot } from "./discord/bot.js"
-import { SerialQueue } from "./queue.js"
+} from "./automations/models.ts"
+import { AutomationRunner } from "./automations/runner.ts"
+import { AutomationScheduler } from "./automations/scheduler.ts"
+import { CaseStore } from "./casefile.ts"
+import { loadConfig } from "./config.ts"
+import { DiscordBot } from "./discord/bot.ts"
+import { createCommentGate } from "./gateways/seerr/comment-gate.ts"
+import { SerialQueue } from "./queue.ts"
 import {
   MAX_REVISIT_CHAIN,
   RevisitScheduler,
   revisitDelay,
-} from "./revisits.js"
-import { createApp } from "./server.js"
-import { SeerrClient } from "./services/seerr.js"
-import { createCommentGate } from "./webhook/comment-gate.js"
+} from "./revisits.ts"
+import { createApp } from "./server.ts"
+import { SeerrClient } from "./services/seerr.ts"
 
 /**
  * Total budget for shutdown: how long it waits for the HTTP server to let go

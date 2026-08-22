@@ -7,10 +7,10 @@ import {
 } from "@earendil-works/pi-coding-agent"
 import { Type } from "typebox"
 
-import type { MediaConfig } from "../config.js"
-import { textResult } from "./common.js"
-import type { RunContext } from "./context.js"
-import { execFileText } from "./exec.js"
+import type { MediaConfig } from "../config.ts"
+import { textResult } from "./common.ts"
+import type { RunContext } from "./context.ts"
+import { execFileText } from "./exec.ts"
 
 /**
  * ffprobe-backed media inspection: the only source of file truth about audio

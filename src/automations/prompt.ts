@@ -1,5 +1,5 @@
-import type { Config } from "../config.js"
-import type { AutomationDefinition } from "./definitions.js"
+import type { Config } from "../config.ts"
+import type { AutomationDefinition } from "./definitions.ts"
 
 /**
  * Automation system prompt, ported from the legacy deployment (see

@@ -1,7 +1,7 @@
 import type {
   AutomationReport,
   AutomationStatus,
-} from "../automations/runner.js"
+} from "../automations/runner.ts"
 
 const STATUS_EMOJI: Record<AutomationStatus, string> = {
   ok: "🟢",

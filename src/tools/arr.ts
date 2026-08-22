@@ -5,8 +5,8 @@ import {
 } from "@earendil-works/pi-coding-agent"
 import { Type } from "typebox"
 
-import type { ServiceConfig } from "../config.js"
-import { jsonRequest, HttpError } from "../services/http.js"
+import type { ServiceConfig } from "../config.ts"
+import { jsonRequest, HttpError } from "../services/http.ts"
 import {
   makeReadTool,
   reasonParam,
@@ -14,8 +14,8 @@ import {
   textResult,
   type EvidenceRequirement,
   type ServiceName,
-} from "./common.js"
-import type { RunContext } from "./context.js"
+} from "./common.ts"
+import type { RunContext } from "./context.ts"
 
 /**
  * Sonarr/Radarr tools. Mutation surface mirrors the legacy allowlist exactly:

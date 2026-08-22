@@ -11,12 +11,12 @@ import {
 import type {
   AutomationInfo,
   TriggerResult,
-} from "../automations/dispatcher.js"
-import type { AutomationReport } from "../automations/runner.js"
-import type { Config, DiscordConfig } from "../config.js"
-import { AUTOMATION_COMMAND, syncCommands } from "./commands.js"
-import { formatAutomationReport } from "./report.js"
-import { AutomationThreads } from "./threads.js"
+} from "../automations/dispatcher.ts"
+import type { AutomationReport } from "../automations/runner.ts"
+import type { Config, DiscordConfig } from "../config.ts"
+import { AUTOMATION_COMMAND, syncCommands } from "./commands.ts"
+import { formatAutomationReport } from "./report.ts"
+import { AutomationThreads } from "./threads.ts"
 
 export interface DiscordDeps {
   listAutomations: () => AutomationInfo[]

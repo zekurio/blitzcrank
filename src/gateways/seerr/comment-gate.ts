@@ -1,5 +1,5 @@
-import type { SeerrClient, SeerrUser } from "../services/seerr.js"
-import { issueIdOf, webhookText, type SeerrWebhookPayload } from "./types.js"
+import type { SeerrClient, SeerrUser } from "../../services/seerr.ts"
+import { issueIdOf, webhookText, type SeerrWebhookPayload } from "./types.ts"
 
 /**
  * Host-side authorization for comment-triggered runs: only the issue's

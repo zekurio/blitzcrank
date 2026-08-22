@@ -1,5 +1,5 @@
-import type { ServiceConfig } from "../config.js"
-import { jsonRequest } from "./http.js"
+import type { ServiceConfig } from "../config.ts"
+import { jsonRequest } from "./http.ts"
 
 export interface SeerrUser {
   id?: number

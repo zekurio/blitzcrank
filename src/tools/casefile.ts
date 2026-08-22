@@ -4,8 +4,8 @@ import {
 } from "@earendil-works/pi-coding-agent"
 import { Type } from "typebox"
 
-import { clampEntries, clampEntry, type CaseFile } from "../casefile.js"
-import { textResult } from "./common.js"
+import { clampEntries, clampEntry, type CaseFile } from "../casefile.ts"
+import { textResult } from "./common.ts"
 
 /**
  * The agent's own memory between runs. It replaces the stored summary

@@ -1,4 +1,4 @@
-import type { CaseFile, CaseMediaScope, PendingRevisit } from "./casefile.js"
+import type { CaseFile, CaseMediaScope, PendingRevisit } from "./casefile.ts"
 
 /**
  * In-process revisit scheduler. One pending revisit per issue; a new webhook
