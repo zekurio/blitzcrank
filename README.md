@@ -61,13 +61,14 @@ through a narrow typed surface, and returns directives.
   are persisted and re-armed after a restart.
 - **Read-only extras** — `media_probe` (ffprobe) answers language questions
   from the file rather than the release name, confined to
-  `BLITZCRANK_MEDIA_ROOTS` after `realpath`; subscription-backed Codex
-  `codex_search` is issue-run-only and never justifies a mutation.
+  `BLITZCRANK_MEDIA_ROOTS` after `realpath`; the optional `web_search` /
+  `web_extract` tools never justify a mutation, and `web_extract` only opens
+  URLs `web_search` returned during the same run.
 - **Discord conversations are read-only** — the host receives text only from
   one configured inbox. A classifier with no service/read tools can open a
   private thread. Each thread has a durable session with read-only service
-  tools and no access to other conversation history. The host posts replies
-  and blocks mentions.
+  tools, the configured web tools, and no access to other conversation
+  history. The host posts replies and blocks mentions.
 
 Details and rationale live in [AGENTS.md](AGENTS.md); the legacy Go deployment
 this is distilled from is described in `docs/research/legacy.md`.
@@ -150,11 +151,13 @@ providers read a pi `auth.json`. On NixOS, bootstrap the default auth path with
 `sudo blitzcrank-login` → `/login`; outside NixOS, bootstrap once with pi and
 point `BLITZCRANK_AUTH_PATH` at the writable file (default
 `~/.pi/agent/auth.json`). Custom providers can be declared in a `models.json`
-via `BLITZCRANK_MODELS_PATH`. Issue runs always include `codex_search`. It uses
-the `openai-codex` OAuth credential from that same auth file. The Nix module
-uses `gpt-5.6-luna` with high search context by default. Outside NixOS, the
-`PI_CODEX_WEB_SEARCH_MODEL` and `PI_CODEX_WEB_SEARCH_CONTEXT_SIZE` variables
-set those values.
+via `BLITZCRANK_MODELS_PATH`. Issue runs and Discord conversations can get
+external web tools through `BLITZCRANK_WEB_PROVIDER` (default `none`):
+`firecrawl` adds `web_search`
+(snippets) and `web_extract` (one page per call, gated to URLs the same run's
+search returned) backed by `FIRECRAWL_API_KEY` and optionally `FIRECRAWL_URL`
+for a self-hosted instance. The Nix module exposes this as
+`services.blitzcrank.webProvider`.
 
 Every public comment carries a footer with the model identity and the issue's
 cumulative token usage, e.g.

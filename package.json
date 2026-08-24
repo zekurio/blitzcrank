@@ -21,7 +21,6 @@
     "@earendil-works/pi-coding-agent": "0.84.2",
     "croner": "^10.0.1",
     "discord.js": "^14.27.0",
-    "pi-codex-search": "0.1.6",
     "typebox": "1.1.38",
     "yaml": "^2.9.0"
   },
