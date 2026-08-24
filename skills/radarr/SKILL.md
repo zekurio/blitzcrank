@@ -5,7 +5,7 @@ description: Diagnose and safely remediate Radarr-managed movies, releases, queu
 
 # Radarr
 
-`radarr_request` is GET-only and accepts `purpose` and a relative `/api/v3/...` `path`. Mutations use the typed tools, require `reason`, and require every target ID to have appeared in a Radarr read on this issue. Issue runs are uncapped; an automation is capped only when its checked-in definition declares a budget.
+`radarr_request` is GET-only and accepts `purpose` and a relative `/api/v3/...` `path`. Mutations use the typed tools, require `reason`, and require every target ID to have appeared in a Radarr read on this issue. Issue and automation runs are uncapped; automation scope comes from its exact mutation-tool allowlist.
 
 ## Identity and evidence
 
@@ -27,6 +27,8 @@ Release/queue/history/file `languages` are release-name parsing (`MULTi`, `DL`, 
 - Cross-movie missing-file events: `GET /api/v3/history?page=1&pageSize=100&eventType=6&sortKey=date&sortDirection=descending`
 
 Resolve `tmdbId`, then record movie ID, year, path, monitoring, minimum availability, profile, file state, release title, quality, size, custom formats, edition, and `mediaInfo`. Inspect queue, newest history, blocklist, and profiles. Prefer Radarr calendar/movie dates, naming cinema (`inCinemas`), digital, or physical and stating uncertainty. Correlate download IDs with read-only `sabnzbd_request`; SAB completion is not import.
+
+Anvil is item evidence only when `anvil_job_lookup` matches an exact absolute Radarr `outputPath`, or exact SAB `storage` linked by `downloadId`/`nzo_id`, to an active current job while Radarr reports file-not-ready. `anvil_status`, guessed paths, and title matches are insufficient. Never remove, blocklist, retry, search, refresh, manually import, or delete a movie file during an exact active Anvil wait.
 
 ## Typed mutations
 
@@ -54,9 +56,9 @@ For corrupt, unplayable, wrong-cut, or wrong-language media, require item-specif
 
 Never search before blocklisting: the same highest-scoring release can be re-grabbed and re-imported. If a file merely disappeared, use the cross-movie eventType=6 history read: tightly clustered `MissingFromDisk` events indicate infrastructure, not one release.
 
-For missing movies, inspect monitoring, availability, file, queue, history, and SAB. Respect monitoring and minimum availability. Search once only when missing, after a failed release is cleared, or when explicitly asked for replacement/fix. For stalls/import failures, allow download/verification/repair/unpack work; diagnose path mapping, permissions, space, locks, category, naming, and recognized-video failures before retrying. For upgrade loops, inspect repeated events, quality, custom-format score, cutoff, language, edition, and naming; correct the rule or parser cause before one verified search. If a file exists but Radarr says missing, confirm path/runtime visibility and naming, refresh, and inspect rejection evidence before creating a duplicate.
+For missing movies, inspect monitoring, availability, file, queue, history, SAB, and exact Anvil correlation. Respect monitoring and minimum availability. Search once only when missing, after a failed release is cleared, or when explicitly asked for replacement/fix. For stalls/import failures, allow download/verification/repair/unpack work; diagnose path mapping, permissions, space, locks, category, naming, and recognized-video failures before retrying. For upgrade loops, inspect repeated events, quality, custom-format score, cutoff, language, edition, and naming; correct the rule or parser cause before one verified search. If a file exists but Radarr says missing, confirm path/runtime visibility and naming, refresh, and inspect rejection evidence before creating a duplicate.
 
-For manual import, read the exact queue folder/download ID and candidate endpoint; inspect every `rejections` array. Import only candidates mapped to that queued movie and download with acceptable quality/language evidence. Reject wrong targets, samples, missing paths, permission or duplicate conflicts, unwanted language, and low score/cutoff. Re-read queue and movie-file state; use queue deletion with `blocklist: true` when cleanup, not import, is warranted.
+For manual import, read the exact queue folder/download ID and candidate endpoint; inspect every `rejections` array. Import only candidates mapped to that queued movie and download with acceptable quality/language evidence. Reject wrong targets, samples, missing paths, permission or duplicate conflicts, unwanted language, and low score/cutoff. Never import while Anvil/transcode owns the path. Re-read queue and movie-file state; use queue deletion with `blocklist: true` when cleanup, not import, is warranted.
 
 ## Verification and directives
 

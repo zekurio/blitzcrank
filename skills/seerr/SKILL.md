@@ -1,6 +1,6 @@
 ---
 name: seerr
-description: Triage Seerr issues and safely inspect or create media requests while routing diagnosis to Sonarr, Radarr, Jellyfin, and SABnzbd. Load for every Seerr webhook or when issue, request, media, user, quota, or final resolution state is involved.
+description: Triage Seerr issues and safely inspect or create media requests while routing diagnosis to Sonarr, Radarr, Jellyfin, SABnzbd, and Anvil. Load for every Seerr webhook or when issue, request, media, user, quota, or final resolution state is involved.
 ---
 
 # Seerr issue handling
@@ -30,8 +30,8 @@ Before the final response call `update_case_file`. It replaces the agent
 summary: retain still-valid verified facts/evidence and disproved explanations,
 correct errors, and state open work. Run count, token totals, deletion audit,
 and follow-up limits are host-written facts; do not reinterpret them as issue
-mutation/deletion caps. Issue runs are uncapped. An automation is capped only
-when its definition declares a budget. When follow-ups are exhausted, resolve
+mutation/deletion caps. Issue and automation runs are uncapped; an automation's
+exact mutation-tool allowlist defines its scope. When follow-ups are exhausted, resolve
 or ask one concrete reporter question rather than schedule another check.
 
 Call `report_progress` as the first action with one short public sentence. It is
@@ -52,10 +52,10 @@ Public comment
 The first line is mandatory. Revisit lines are optional, directly below it,
 and `REVISIT_REASON` accompanies `REVISIT_IN`; malformed directives cause the
 host to post nothing. Use `RESOLVE_ISSUE: yes` only after verification. Public
-prose distinguishes queued, downloading, importing, scanning, and
+prose distinguishes queued, downloading, encoding, importing, scanning, and
 verified. Follow-ups are capped and no-news checks back off, so choose a
 realistic Go-style duration rather than polling. Never resolve while awaiting
-queue/import/scan/playback evidence or reporter confirmation. With no
+queue/Anvil/import/scan/playback evidence or reporter confirmation. With no
 useful update, return `RESOLVE_ISSUE: no`, a blank line, and no comment.
 
 ## Triage and mapping
@@ -70,7 +70,7 @@ useful update, return `RESOLVE_ISSUE: no`, a blank line, and no comment.
 3. For TV, obtain precise scope before broad/destructive action. If missing,
    ask one focused question and keep open.
 4. Query owning Arr and Jellyfin before mutation. Follow exact Arr IDs into
-   SABnzbd only when handoff evidence requires it.
+   SABnzbd and exact-path Anvil only when handoff evidence requires it.
 5. Resolve only after objective verification, or reporter confirmation for
    subjective/client-specific symptoms.
 

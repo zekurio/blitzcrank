@@ -59,6 +59,10 @@ through a narrow typed surface, and returns directives.
 - **Bounded follow-ups** — at most 3 self-scheduled revisits between two user
   messages, doubling delays when a revisit produced no news. Pending revisits
   are persisted and re-armed after a restart.
+- **Anvil-aware imports** — optional Anvil tools correlate only exact paths,
+  treat incomplete/empty lookups as unknown, and expose just one mutation:
+  evidence-gated retry of a diagnosed failed encode. Cancellation and
+  library/store maintenance remain operator-only.
 - **Read-only extras** — `media_probe` (ffprobe) answers language questions
   from the file rather than the release name, confined to
   `BLITZCRANK_MEDIA_ROOTS` after `realpath`; the optional `web_search` /
@@ -134,8 +138,8 @@ header when one is set.
 
 Everything is environment variables; [`.env.example`](.env.example) documents
 each one. `SEERR_URL`/`SEERR_API_KEY` are required. Sonarr, Radarr, SABnzbd,
-Jellyfin, media probing, and Discord are optional — their tools are
-registered only when configured.
+Jellyfin, Anvil, media probing, web access, and Discord are optional — their
+tools are registered only when configured.
 
 `BLITZCRANK_MODEL` selects the issue-run model as
 `provider/model[:thinking]` (default
@@ -159,6 +163,22 @@ search returned) backed by `FIRECRAWL_API_KEY` through Firecrawl's hosted API.
 Custom Firecrawl endpoints are rejected because Blitzcrank cannot enforce the
 DNS and redirect policy of a remote fetcher. The Nix module exposes this as
 `services.blitzcrank.webProvider`.
+
+Set `ANVIL_CONTROL_SOCKET` to enable Anvil status, exact-path job correlation,
+compact job diagnostics, and evidence-gated retry of one diagnosed failed job.
+`ANVIL_COMMAND` defaults to `anvilctl`; set it to an absolute executable path
+when the daemon client is not on the service's `PATH`. On NixOS, point it at
+Anvil's standalone `anvilctl` package and grant the service access to Anvil's
+socket group:
+
+```nix
+services.blitzcrank.settings = {
+  ANVIL_CONTROL_SOCKET = "/run/anvil/anvild.sock";
+  ANVIL_COMMAND =
+    "${inputs.anvil.packages.${pkgs.system}.anvilctl}/bin/anvilctl";
+};
+systemd.services.blitzcrank.serviceConfig.SupplementaryGroups = [ "anvil" ];
+```
 
 Every public comment carries a footer with the model identity and the issue's
 cumulative token usage, e.g.
@@ -201,7 +221,10 @@ mutation_tools:
 A model mapping changes only that automation's fresh agent turn; it does not
 expand its service access, mutation tools, or evidence gates. Unknown
 automation names and unavailable models are startup errors, so renamed tasks
-cannot leave dead routing configuration behind. Runs are triggered by cron,
+cannot leave dead routing configuration behind. The bundled
+`stale-import-handler` declares Sonarr, Radarr, and Anvil mutations and
+therefore requires all three services to be configured; unavailable declared tools fail
+closed rather than being silently omitted. Runs are triggered by cron,
 `POST /automations/:name/run`, or Discord, and one automation never runs twice
 concurrently (a busy name is refused with `409`). Every run finishes through
 the typed `submit_automation_report` tool. Its validated `status` and `body`
