@@ -124,12 +124,6 @@ export function usageAnchor(
 /** Repo root (contains skills/): two levels up from dist/agent/. */
 const projectRoot = path.resolve(new URL("../..", import.meta.url).pathname)
 const skillsDir = path.join(projectRoot, "skills")
-const codexSearchExtensionPath = path.join(
-  projectRoot,
-  "node_modules",
-  "pi-codex-search",
-)
-export const CODEX_SEARCH_TOOL_NAME = "codex_search"
 
 export function resolveModel(modelRuntime: ModelRuntime, spec: string) {
   const parsed = parseModelSpec(spec)
@@ -160,8 +154,6 @@ export interface AgentTurnOptions {
   /** Observe completed tool calls without exposing their arguments or results. */
   onToolExecutionEnd?: (toolName: string, isError: boolean) => void
   logPrefix: string
-  /** Add the pinned subscription-backed web search extension to this run. */
-  codexSearch?: boolean
   /** Register builtin read for loading deployment skills. Default true. */
   builtinRead?: boolean
 }
@@ -245,9 +237,6 @@ export async function runAgentTurn(
   const loader = new DefaultResourceLoader({
     cwd,
     agentDir: path.join(os.tmpdir(), "blitzcrank-agent-noop"),
-    additionalExtensionPaths: opts.codexSearch
-      ? [codexSearchExtensionPath]
-      : [],
     additionalSkillPaths: [skillsDir],
     noExtensions: true,
     noPromptTemplates: true,
@@ -264,7 +253,7 @@ export async function runAgentTurn(
   const extensionErrors = loader.getExtensions().errors
   if (extensionErrors.length > 0) {
     throw new Error(
-      `failed to load Codex search extension: ${extensionErrors
+      `extensions are disabled but reported errors: ${extensionErrors
         .map((error) => `${error.path}: ${error.error}`)
         .join("; ")}`,
     )
@@ -279,7 +268,6 @@ export async function runAgentTurn(
     customTools: opts.tools,
     tools: [
       ...opts.tools.map((t) => t.name),
-      ...(opts.codexSearch ? [CODEX_SEARCH_TOOL_NAME] : []),
       ...(opts.builtinRead === false ? [] : ["read"]),
     ],
     sessionManager: opened.manager,

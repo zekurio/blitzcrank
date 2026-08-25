@@ -33,6 +33,10 @@ export interface AutomationModelMap {
   [name: string]: string
 }
 
+export type WebConfig =
+  | { provider: "firecrawl"; apiKey: string }
+  | { provider: "none" }
+
 export interface Config {
   port: number
   /** Persistent state (session transcripts) lives here. */
@@ -57,6 +61,8 @@ export interface Config {
   modelsPath: string | undefined
   /** Language for public comments (default German, matching the deployment). */
   language: string
+  /** External web search/extract for issue and Discord conversation runs. */
+  web: WebConfig
   /** Seerr user id sent as X-Api-User so bot comments are attributed correctly. */
   seerrBotUserId: string | undefined
   /** Display name of the bot's Seerr user; its own comment webhooks are ignored. */
@@ -198,6 +204,33 @@ function media(): MediaConfig | undefined {
   return { roots }
 }
 
+/**
+ * Web access is explicit opt-in: an unset provider means no external web
+ * tools, even if a stray FIRECRAWL_API_KEY exists in the environment (the
+ * same variable name is used by other tools, so its presence is not consent).
+ */
+function web(): WebConfig {
+  const provider = process.env.BLITZCRANK_WEB_PROVIDER ?? "none"
+  if (process.env.FIRECRAWL_URL) {
+    throw new Error(
+      "FIRECRAWL_URL is not supported; web tools use the hosted Firecrawl API",
+    )
+  }
+  if (provider === "none") return { provider }
+  if (provider !== "firecrawl") {
+    throw new Error(
+      `BLITZCRANK_WEB_PROVIDER must be firecrawl or none, got "${provider}"`,
+    )
+  }
+  const apiKey = process.env.FIRECRAWL_API_KEY
+  if (!apiKey) {
+    throw new Error(
+      "BLITZCRANK_WEB_PROVIDER=firecrawl requires FIRECRAWL_API_KEY",
+    )
+  }
+  return { provider, apiKey }
+}
+
 export function loadConfig(): Config {
   const seerr = service("SEERR")
   if (!seerr) {
@@ -216,6 +249,7 @@ export function loadConfig(): Config {
     authPath: process.env.BLITZCRANK_AUTH_PATH,
     modelsPath: process.env.BLITZCRANK_MODELS_PATH,
     language: process.env.BLITZCRANK_LANGUAGE ?? "German",
+    web: web(),
     seerrBotUserId: process.env.SEERR_BOT_USER_ID,
     seerrBotUsername: process.env.SEERR_BOT_USERNAME,
     seerr,

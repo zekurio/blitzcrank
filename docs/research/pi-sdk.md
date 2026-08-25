@@ -27,14 +27,10 @@ Version 0.84.0 changed `message_update` events to expose deltas through
 changed provider refresh APIs or the removed low-level session repository APIs.
 The 0.84.2 type check therefore needs no SDK call-site migration.
 
-Blitzcrank pins `pi-codex-search@0.1.6`. The runner loads its declared extension
-path only for issue runs while `noExtensions` stays enabled. The explicit tool
-allowlist includes `codex_search`; automations do not load or allow it. The
-extension reads the service's existing `openai-codex` OAuth credential and
-sends a separate hosted web-search request. Its `high` setting controls search
-context size, not model reasoning effort. Headless SDK sessions must call
-`session.bindExtensions()` so extension `session_start` handlers can register
-their tools before the first prompt.
+Blitzcrank loads no extensions: `noExtensions` stays enabled and no
+additional extension paths are registered, for issue runs and automations
+alike. Web access comes from typed custom tools instead (see
+`docs/research/firecrawl.md`).
 
 Important import paths at this version:
 
