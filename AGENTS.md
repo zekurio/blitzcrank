@@ -102,7 +102,9 @@ behavioural difference described.
 - Web search/extract (`web_search`, `web_extract`) is read-only, granted to
   issue runs and Discord conversation replies only by the configured web
   provider (`BLITZCRANK_WEB_PROVIDER`, default `none`). No pi extensions are
-  loaded anywhere. `web_extract` accepts only URLs `web_search` returned in
+  loaded anywhere. Firecrawl uses only the hosted API; custom endpoints are
+  rejected because Blitzcrank cannot enforce a remote fetcher's DNS and
+  redirect policy. `web_extract` accepts only URLs `web_search` returned in
   the same run and rejects non-public URL literals. Web content is untrusted
   and is never authorization for a mutation.
 - A revisit is the only run nobody asked for: chains are capped

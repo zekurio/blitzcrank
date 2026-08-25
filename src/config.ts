@@ -34,7 +34,7 @@ export interface AutomationModelMap {
 }
 
 export type WebConfig =
-  | { provider: "firecrawl"; url: string; apiKey: string }
+  | { provider: "firecrawl"; apiKey: string }
   | { provider: "none" }
 
 export interface Config {
@@ -211,6 +211,11 @@ function media(): MediaConfig | undefined {
  */
 function web(): WebConfig {
   const provider = process.env.BLITZCRANK_WEB_PROVIDER ?? "none"
+  if (process.env.FIRECRAWL_URL) {
+    throw new Error(
+      "FIRECRAWL_URL is not supported; web tools use the hosted Firecrawl API",
+    )
+  }
   if (provider === "none") return { provider }
   if (provider !== "firecrawl") {
     throw new Error(
@@ -223,10 +228,7 @@ function web(): WebConfig {
       "BLITZCRANK_WEB_PROVIDER=firecrawl requires FIRECRAWL_API_KEY",
     )
   }
-  const url = (
-    process.env.FIRECRAWL_URL ?? "https://api.firecrawl.dev"
-  ).replace(/\/+$/, "")
-  return { provider, url, apiKey }
+  return { provider, apiKey }
 }
 
 export function loadConfig(): Config {

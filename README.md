@@ -155,8 +155,9 @@ via `BLITZCRANK_MODELS_PATH`. Issue runs and Discord conversations can get
 external web tools through `BLITZCRANK_WEB_PROVIDER` (default `none`):
 `firecrawl` adds `web_search`
 (snippets) and `web_extract` (one page per call, gated to URLs the same run's
-search returned) backed by `FIRECRAWL_API_KEY` and optionally `FIRECRAWL_URL`
-for a self-hosted instance. The Nix module exposes this as
+search returned) backed by `FIRECRAWL_API_KEY` through Firecrawl's hosted API.
+Custom Firecrawl endpoints are rejected because Blitzcrank cannot enforce the
+DNS and redirect policy of a remote fetcher. The Nix module exposes this as
 `services.blitzcrank.webProvider`.
 
 Every public comment carries a footer with the model identity and the issue's

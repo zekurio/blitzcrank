@@ -5,13 +5,14 @@ for `POST /search` and `POST /scrape` plus the Lockdown Mode feature page.
 
 Blitzcrank's `web_search`/`web_extract` (`src/web/`) are read-only typed
 tools for issue runs and Discord conversation replies, backed by Firecrawl's
-v2 REST API. Selected with
-`BLITZCRANK_WEB_PROVIDER=firecrawl`, `FIRECRAWL_API_KEY`, and optional
-`FIRECRAWL_URL` for self-hosted instances. `none` (the default) grants no
-external web tools. Web tools are not service reads: they never call
-`ctx.recordRead`, so web content can never satisfy an evidence gate.
+hosted v2 REST API at `https://api.firecrawl.dev`. Selected with
+`BLITZCRANK_WEB_PROVIDER=firecrawl` and `FIRECRAWL_API_KEY`. `none` (the
+default) grants no external web tools. Custom endpoints are rejected because
+Blitzcrank cannot validate the DNS answers and redirect chain used by a remote
+fetcher. Web tools are not service reads: they never call `ctx.recordRead`, so
+web content can never satisfy an evidence gate.
 
-## Search: `POST {url}/v2/search`
+## Search: `POST https://api.firecrawl.dev/v2/search`
 
 Bearer auth. Request fields used:
 
@@ -29,7 +30,7 @@ Bearer auth. Request fields used:
 Response: `{ success, data: { web: [{ title, description, url }] }, warning,
 creditsUsed }`. `markdown`/`html` only appear when `scrapeOptions` was sent.
 
-## Scrape: `POST {url}/v2/scrape`
+## Scrape: `POST https://api.firecrawl.dev/v2/scrape`
 
 Request fields used: `url`, `formats: [{ "type": "markdown" }]`,
 `onlyMainContent: true` (deterministic HTML-level boilerplate filter, no
@@ -43,15 +44,24 @@ is the final URL after redirects; `title`/`description` may be string **or
 string[]** (repeated meta tags). Failures arrive as non-2xx (`HttpError`) or
 `success: false` with `code`/`error`.
 
-## Lockdown mode: deliberately not used
+## Network boundary and lockdown mode
+
+Firecrawl performs the target request, DNS resolution, and redirects. A client
+side hostname check cannot prove where a custom Firecrawl deployment will
+connect: its DNS view can differ from Blitzcrank's, answers can change after a
+check, and redirects are visible only to the fetcher. Blitzcrank therefore
+uses only Firecrawl's hosted API and rejects `FIRECRAWL_URL`. This keeps a web
+result from turning a Firecrawl container on the homelab network into an SSRF
+path to private services.
 
 `lockdown: true` forces cache-only scrapes: no outbound request to the target,
 a cache miss returns 404 `SCRAPE_LOCKDOWN_CACHE_MISS`, and requests are
 zero-data-retention. It exists for compliance/air-gapped replay of
 already-indexed pages. The tools' purpose is checking _fresh_ availability
 pages, which are usually not cached, so lockdown would make `web_extract`
-mostly fail. The SSRF concern (a self-hosted Firecrawl with private-network
-access) is carried instead by:
+mostly fail. It is not requested.
+
+Two narrower controls still apply:
 
 1. **Per-run search→extract gate** — `web_extract` accepts only URLs a
    `web_search` returned earlier in the same run (normalized `URL.href`,
@@ -64,6 +74,5 @@ access) is carried instead by:
    IPv6 `::`, `::1`, `fc00::/7`, `fe80::/10`, and IPv4-mapped `::ffff:*`
    (range-checked after WHATWG normalization to hex hextets). WHATWG parsing
    itself collapses odd IPv4 spellings (`0x7f.1`, `2130706433`) to dotted
-   quads before these checks. Firecrawl fetches remotely, so public hostnames
-   are never resolved locally; the guard matches the legacy Kagi `web_fetch`
-   semantics in `legacy.md`.
+   quads before these checks. The guard rejects direct literals and is not a
+   substitute for fetcher-side DNS and redirect enforcement.

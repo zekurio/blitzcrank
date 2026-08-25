@@ -10,6 +10,7 @@ import { textResult } from "../tools/common.ts"
 
 type FirecrawlConfig = Extract<WebConfig, { provider: "firecrawl" }>
 
+const FIRECRAWL_URL = "https://api.firecrawl.dev"
 /** Bound on remembered search URLs; one run rarely exceeds a dozen searches. */
 const MAX_EXTRACTABLE_URLS = 100
 
@@ -49,15 +50,14 @@ interface FirecrawlScrapeResponse {
  * Firecrawl web_search + web_extract sharing one per-run gate: only URLs a
  * web_search returned earlier in this run can be extracted. The model picks
  * from Firecrawl's index instead of turning arbitrary (possibly
- * user-supplied) text into fetch instructions — important because a
- * self-hosted Firecrawl may sit inside a private network. On top of the
- * gate, extract rejects obviously non-public URL literals. Firecrawl fetches
- * remotely, so hostnames are never resolved locally.
+ * user-supplied) text into fetch instructions. Extract also rejects obviously
+ * non-public URL literals. Firecrawl fetches remotely, so Blitzcrank cannot
+ * validate the resolved address or redirect chain. Custom Firecrawl endpoints
+ * are therefore unsupported: the hosted API is the network security boundary.
  *
  * Firecrawl's lockdown mode is deliberately not requested: it serves only
  * previously cached pages and errors on a cache miss, which defeats
- * extraction of the fresh availability pages these tools exist for. The
- * per-run gate plus the literal guard carry the SSRF concern instead.
+ * extraction of the fresh availability pages these tools exist for.
  */
 export function buildFirecrawlTools(config: FirecrawlConfig): ToolDefinition[] {
   const extractable = new Set<string>()
@@ -104,7 +104,7 @@ function buildSearchTool(
         )
       }
       const response = await jsonRequest<FirecrawlSearchResponse>(
-        config.url,
+        FIRECRAWL_URL,
         "/v2/search",
         {
           method: "POST",
@@ -177,7 +177,7 @@ function buildExtractTool(
         )
       }
       const response = await jsonRequest<FirecrawlScrapeResponse>(
-        config.url,
+        FIRECRAWL_URL,
         "/v2/scrape",
         {
           method: "POST",

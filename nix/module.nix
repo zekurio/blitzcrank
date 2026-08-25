@@ -174,10 +174,10 @@ in
       default = "none";
       description = ''
         External web provider for issue runs and Discord conversations.
-        "firecrawl" grants the read-only web_search and web_extract tools and
-        needs FIRECRAWL_API_KEY (and optionally FIRECRAWL_URL for a
-        self-hosted instance) in {option}`environmentFile`. "none" grants no
-        external web tools.
+        "firecrawl" grants the read-only web_search and web_extract tools
+        through Firecrawl's hosted API and needs FIRECRAWL_API_KEY in
+        {option}`environmentFile`. Custom endpoints are not supported. "none"
+        grants no external web tools.
       '';
     };
 
