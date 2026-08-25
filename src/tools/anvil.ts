@@ -869,6 +869,10 @@ export function buildAnvilTools(
             `Anvil job ${job} was already retried this run; re-read its state instead of retrying twice.`,
           )
         }
+        // Reserve synchronously because pi may execute sibling tool calls in
+        // parallel. Never release the reservation: any later transport failure
+        // may hide a successful retry, so another attempt in this run is unsafe.
+        retriedJobIds.add(job)
         const beforeShown = await showJob(job, signal)
         const before = recordJobs(
           beforeShown.query,
@@ -888,9 +892,6 @@ export function buildAnvilTools(
               "blitzcrank retries only diagnosed failures. Do not retry canceled, active, complete, or skipped work; use operator review where the state remains unhealthy or ambiguous.",
           )
         }
-        // Mark before invoking the daemon: a transport failure may hide a
-        // successful retry, so repeating it in the same run is unsafe.
-        retriedJobIds.add(job)
         const outcome = await runMutation(ctx, {
           kind: "mutate",
           evidence: [

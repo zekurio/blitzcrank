@@ -24,7 +24,7 @@ async function execute(
 }
 
 async function fakeAnvilctl(
-  options: { largeDiagnostics?: boolean } = {},
+  options: { largeDiagnostics?: boolean; showDelayMs?: number } = {},
 ): Promise<{
   command: string
   cleanup: () => Promise<void>
@@ -64,6 +64,7 @@ if (command === "jobs") {
     jobs: [job]
   }))
 } else if (command === "show") {
+  await new Promise((resolve) => setTimeout(resolve, ${options.showDelayMs ?? 0}))
   process.stdout.write(JSON.stringify({
     api_version: "v1",
     job: {
@@ -186,6 +187,44 @@ describe("Anvil retry gates", () => {
       }),
       /already retried this run/,
     )
+  })
+
+  test("reserves a concurrent retry before reading state", async (t) => {
+    const fake = await fakeAnvilctl({ showDelayMs: 100 })
+    t.after(fake.cleanup)
+    const ctx = new RunContext()
+    ctx.recordPath("sonarr", SOURCE_PATH, "outputPath")
+    const tools = buildAnvilTools(
+      { command: fake.command, socket: "/tmp/anvild.sock" },
+      ctx,
+    )
+
+    await execute(tools, "anvil_job_lookup", {
+      purpose: "correlate the stalled import",
+      absolute_path: SOURCE_PATH,
+    })
+    await execute(tools, "anvil_job_show", {
+      purpose: "diagnose the failed attempt",
+      job: "7",
+    })
+
+    const retries = await Promise.allSettled([
+      execute(tools, "anvil_retry_job", {
+        reason: "retry failed job 7",
+        job: "7",
+      }),
+      execute(tools, "anvil_retry_job", {
+        reason: "concurrent duplicate retry for job 7",
+        job: "7",
+      }),
+    ])
+    assert.equal(
+      retries.filter((result) => result.status === "fulfilled").length,
+      1,
+    )
+    const rejected = retries.find((result) => result.status === "rejected")
+    assert.ok(rejected)
+    assert.match(String(rejected.reason), /already retried this run/)
   })
 
   test("omitted failure diagnostics block retry", async (t) => {
