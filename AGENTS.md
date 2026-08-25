@@ -10,6 +10,7 @@
   `src/automations/` (definitions, tool allowlists, cron, dispatcher),
   `src/tools/` (run context, safety guards, GET-only reads, typed mutations),
   `src/services/` (HTTP helper, host-side Seerr client),
+  `src/web/` (web provider: search plus per-run gated extract),
   `src/gateways/seerr/` (payload types, comment gate), `src/discord/` (report
   threads, `/automation`, triaged private support conversations),
   `automations/*.md` (operator-authored tasks), `skills/` (agent domain
@@ -98,10 +99,14 @@ behavioural difference described.
   symlink reads outside the roots. It deliberately does not call
   `ctx.recordRead`: stream titles are release-group text and must never satisfy
   an ID evidence gate. Do not "fix" that.
-- Codex web search is issue-run-only and read-only. It uses the pinned
-  `pi-codex-search` extension with the service's `openai-codex` OAuth login.
-  The runner loads only that extension and still blocks all other extensions.
-  Web content is untrusted and is never authorization for a mutation.
+- Web search/extract (`web_search`, `web_extract`) is read-only, granted to
+  issue runs and Discord conversation replies only by the configured web
+  provider (`BLITZCRANK_WEB_PROVIDER`, default `none`). No pi extensions are
+  loaded anywhere. Firecrawl uses only the hosted API; custom endpoints are
+  rejected because Blitzcrank cannot enforce a remote fetcher's DNS and
+  redirect policy. `web_extract` accepts only URLs `web_search` returned in
+  the same run and rejects non-public URL literals. Web content is untrusted
+  and is never authorization for a mutation.
 - A revisit is the only run nobody asked for: chains are capped
   (`MAX_REVISIT_CHAIN`) and backed off in `src/revisits.ts`. The counter, run
   history, and token totals live in the host-written half of the case file;
@@ -116,8 +121,9 @@ behavioural difference described.
   the sender. The host then posts a bot-authored source card with the original
   text, author tag, and message link. It never impersonates the sender. The
   thread's durable agent session gets only `isReadTool` service tools except
-  `thread_history_search`; it gets no mutation tool, no cross-session history,
-  and no Codex search. The host posts replies and sets `allowedMentions: {
+  `thread_history_search`, plus the configured web tools under the same
+  per-run gate (rebuilt per message, so extraction needs a fresh search in
+  each reply); it gets no mutation tool and no cross-session history. The host posts replies and sets `allowedMentions: {
 parse: [] }`. Slash-command triggers remain authorized against the configured
   guild plus administrator or
   `DISCORD_ADMIN_ROLE_IDS`, and fail closed. A Discord _startup_ failure

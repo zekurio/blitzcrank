@@ -15,6 +15,7 @@ import {
   type SessionFileRef,
   type StatusComment,
 } from "../tools/index.ts"
+import { buildWebProvider } from "../web/index.ts"
 import { parseDirectives, type Directives } from "./directives.ts"
 import {
   buildIssuePrompt,
@@ -142,22 +143,29 @@ export class IssueRunner {
           () => false,
         ))
 
-      const tools = buildIssueTools({
-        config: this.config,
-        ctx,
-        seerr,
-        issueId,
-        anchor: this.anchor,
-        sessionFileRef,
-        mediaScope,
-        status,
-        casefile,
-      })
+      const web = buildWebProvider(this.config.web)
+      const tools = [
+        ...buildIssueTools({
+          config: this.config,
+          ctx,
+          seerr,
+          issueId,
+          anchor: this.anchor,
+          sessionFileRef,
+          mediaScope,
+          status,
+          casefile,
+        }),
+        ...web.tools,
+      ]
 
       const turn = await runAgentTurn({
         modelRuntime: this.modelRuntime,
         modelSpec: this.modelSpec,
-        systemPrompt: buildSystemPrompt(this.config),
+        systemPrompt: buildSystemPrompt(this.config, {
+          search: web.searchTool,
+          extract: web.extractTool,
+        }),
         tools,
         prompt:
           event.kind === "webhook"
@@ -170,7 +178,6 @@ export class IssueRunner {
                 resuming,
               ),
         sessionDir: path.join(this.config.dataDir, "sessions", "issues"),
-        codexSearch: true,
         resumeFile: resuming ? casefile.sessionFile : undefined,
         sessionFileRef,
         logPrefix: `issue:${issueId}`,

@@ -166,6 +166,21 @@ in
       description = "Language for public comments and operations notes.";
     };
 
+    webProvider = lib.mkOption {
+      type = lib.types.enum [
+        "none"
+        "firecrawl"
+      ];
+      default = "none";
+      description = ''
+        External web provider for issue runs and Discord conversations.
+        "firecrawl" grants the read-only web_search and web_extract tools
+        through Firecrawl's hosted API and needs FIRECRAWL_API_KEY in
+        {option}`environmentFile`. Custom endpoints are not supported. "none"
+        grants no external web tools.
+      '';
+    };
+
     authFile = lib.mkOption {
       type = lib.types.str;
       default = "${stateDir}/auth.json";
@@ -235,7 +250,8 @@ in
       description = ''
         Environment file with secrets: SEERR_URL/SEERR_API_KEY (required),
         SONARR_/RADARR_/SABNZBD_/JELLYFIN_ URLs and API keys,
-        BLITZCRANK_WEBHOOK_SECRET, DISCORD_BOT_TOKEN, and provider API keys
+        BLITZCRANK_WEBHOOK_SECRET, DISCORD_BOT_TOKEN, FIRECRAWL_API_KEY when
+        {option}`webProvider` is "firecrawl", and provider API keys
         such as ANTHROPIC_API_KEY when not using OAuth.
       '';
     };
@@ -279,9 +295,7 @@ in
         BLITZCRANK_DATA_DIR = stateDir;
         BLITZCRANK_AUTOMATIONS_DIR = cfg.automationsDir;
         BLITZCRANK_AUTH_PATH = cfg.authFile;
-        PI_CODEX_WEB_SEARCH_ENABLED = "true";
-        PI_CODEX_WEB_SEARCH_CONTEXT_SIZE = "high";
-        PI_CODEX_WEB_SEARCH_MODEL = "gpt-5.6-luna";
+        BLITZCRANK_WEB_PROVIDER = cfg.webProvider;
       }
       // lib.optionalAttrs (cfg.automationModel != null) {
         BLITZCRANK_AUTOMATION_MODEL = cfg.automationModel;
