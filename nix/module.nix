@@ -250,7 +250,8 @@ in
       description = ''
         Environment file with secrets: SEERR_URL/SEERR_API_KEY (required),
         SONARR_/RADARR_/SABNZBD_/JELLYFIN_ URLs and API keys,
-        BLITZCRANK_WEBHOOK_SECRET, DISCORD_BOT_TOKEN, FIRECRAWL_API_KEY when
+        ANVIL_CONTROL_SOCKET/ANVIL_COMMAND, BLITZCRANK_WEBHOOK_SECRET,
+        DISCORD_BOT_TOKEN, FIRECRAWL_API_KEY when
         {option}`webProvider` is "firecrawl", and provider API keys
         such as ANTHROPIC_API_KEY when not using OAuth.
       '';
@@ -261,6 +262,8 @@ in
       default = { };
       example = {
         SEERR_BOT_USERNAME = "blitzcrank";
+        ANVIL_CONTROL_SOCKET = "/run/anvil/anvild.sock";
+        ANVIL_COMMAND = "/run/current-system/sw/bin/anvilctl";
         DISCORD_GUILD_ID = "000000000000000000";
         DISCORD_WATCH_CHANNEL_ID = "000000000000000000";
       };

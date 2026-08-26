@@ -162,10 +162,14 @@ export class IssueRunner {
       const turn = await runAgentTurn({
         modelRuntime: this.modelRuntime,
         modelSpec: this.modelSpec,
-        systemPrompt: buildSystemPrompt(this.config, {
-          search: web.searchTool,
-          extract: web.extractTool,
-        }),
+        systemPrompt: buildSystemPrompt(
+          this.config,
+          {
+            search: web.searchTool,
+            extract: web.extractTool,
+          },
+          tools.map((tool) => tool.name),
+        ),
         tools,
         prompt:
           event.kind === "webhook"
