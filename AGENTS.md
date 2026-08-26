@@ -3,7 +3,7 @@
 - blitzcrank is an agentic webhook gateway for a private media homelab: a
   Jellyseerr issue webhook wakes a serial run queue (`src/server.ts` →
   `src/queue.ts`), which opens one pi SDK agent session (`src/agent/`) that
-  investigates across Seerr/Sonarr/Radarr/SABnzbd/Jellyfin and applies
+  investigates across Seerr/Sonarr/Radarr/SABnzbd/Jellyfin/Anvil and applies
   narrow verified fixes through typed tools (`src/tools/`). The host — never
   the agent — comments, resolves issues, and schedules revisits.
 - Layout: `src/agent/` (session, issue prompt, directive parsing),
@@ -60,9 +60,10 @@ behavioural difference described.
   Keep that rule intact in `src/agent/prompt.ts`.
 - An issue's session is resumed across its events (`casefile.sessionFile`,
   `src/agent/session.ts`), carrying the evidence store
-  (`CaseStore.loadEvidence`/`saveEvidence`) — the gate stops fabricated IDs,
-  and service IDs are not recycled. A resumed run must still build its system
-  prompt and tool list fresh (the SDK never replays them), and must take the
+  (`CaseStore.loadEvidence`/`saveEvidence`) — the gate stops fabricated IDs.
+  Arr and Anvil numeric IDs are not recycled, SAB `nzo_id`s are stable, and
+  reusable Anvil slugs are current-run-only. A resumed run must still build
+  its system prompt and tool list fresh (the SDK never replays them), and must take the
   final assistant message from the live event stream, never
   `session.messages.findLast`, or a run that produced nothing re-executes the
   previous directive block.
@@ -94,11 +95,18 @@ behavioural difference described.
 - Operational agent sessions get their custom tools plus builtin `read` (for
   skills). The Discord triage session gets only its typed terminal tool and no
   builtin `read`. Never enable `bash`, `edit`, or `write` in the runner.
-- `media_probe` (ffprobe) is read-only, gated on `BLITZCRANK_MEDIA_ROOTS`, and
-  resolves targets with `realpath` _before_ the containment check, so no
-  symlink reads outside the roots. It deliberately does not call
-  `ctx.recordRead`: stream titles are release-group text and must never satisfy
+- `media_probe` (ffprobe) is read-only, accepts only exact paths extracted from
+  declared service/Anvil path fields in the current run, is gated on
+  `BLITZCRANK_MEDIA_ROOTS`, and resolves targets with `realpath` _before_ the
+  containment check, so no symlink reads outside the roots. It deliberately
+  does not call `ctx.recordRead`: stream titles are release-group text and must never satisfy
   an ID evidence gate. Do not "fix" that.
+- Anvil is reached only through `anvilctl` over its control socket, never by
+  opening its store, and only reads plus `anvil_retry_job` are exposed.
+  Cancellation stays unexposed: an encode is work already spent on someone
+  else's behalf, and a reporter agreeing to "stop it" is not authorization to
+  destroy it. Prune, recover, requeue, staging cleanup, library scans, and store
+  backup stay operator-only — their blast radius is a library or the database.
 - Web search/extract (`web_search`, `web_extract`) is read-only, granted to
   issue runs and Discord conversation replies only by the configured web
   provider (`BLITZCRANK_WEB_PROVIDER`, default `none`). No pi extensions are
@@ -134,7 +142,9 @@ parse: [] }`. Slash-command triggers remain authorized against the configured
   plus the always-on read tools. "Always-on read tools" means exactly
   `isReadTool` (`src/tools/index.ts`), which the mutation-tool allowlist is
   added to. A mutation matching that predicate would be granted to every
-  automation, gate-free. A new mutation tool must never be matched by it.
+  automation, gate-free. Anvil reads are deliberately enumerated there;
+  `anvil_retry_job` must never be matched by it. A new mutation tool must never
+  be matched by it.
 
 ## Branch Names
 
@@ -240,6 +250,8 @@ small named helpers below it. Extract only when it names a real concept.
 - Service HTTP goes through `jsonRequest` (`src/services/http.ts`); paths are
   service-relative (`/api/v3/...`) and validated by `assertServicePath`.
   Host-side Seerr actions go through `SeerrClient`, never through agent tools.
+  Anvil is the exception to HTTP: invoke only `anvilctl` over the configured
+  control socket, never a shell or the daemon's SQLite store.
 - Fire-and-forget async is not allowed; the queue owns run lifecycles. The HTTP
   and Discord event listeners contain their own failures because event emitters
   cannot await them.

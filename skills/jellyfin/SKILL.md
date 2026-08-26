@@ -8,8 +8,8 @@ description: Diagnose Jellyfin library identity, availability, media streams, su
 Use read-only `jellyfin_request` with `purpose` and a relative GET path. The only
 mutation is `jellyfin_refresh_item`; it requires `reason` and an `itemId`
 previously returned by a Jellyfin read on this issue. Inspect its `verification`
-and re-read affected state. Issue runs are uncapped; an automation is capped
-only when its definition declares a budget. Refresh updates metadata/indexing
+and re-read affected state. Issue and automation runs are uncapped; automation
+scope comes from its exact mutation-tool allowlist. Refresh updates metadata/indexing
 and probing; it cannot repair bytes or add tracks. No broad-library refresh is
 exposed.
 
@@ -60,7 +60,7 @@ preference symptoms; never expose private data.
   compatibility/transcode behavior.
 - **Missing after import:** verify the exact Arr path lies under a Jellyfin
   library as Jellyfin sees it, then search by provider/path and narrowly refresh
-  an existing item. If the Arr file is absent, return to Arr/SAB.
+  an existing item. If the Arr file is absent, return to Arr/SAB/Anvil.
 - **Wrong/stale metadata:** compare IDs, type, title/year, hierarchy, path, size,
   runtime, and streams. Refresh the affected item and re-fetch identity/media.
   Do not replace a correct file solely for metadata.

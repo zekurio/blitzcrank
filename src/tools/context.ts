@@ -12,9 +12,9 @@
  * For issue runs the evidence store is *carried across* the events of one
  * issue, matching the agent session that is likewise resumed: the gate exists
  * to stop fabricated IDs, and an ID that was real yesterday was not fabricated
- * today. Arr numeric IDs are autoincrement and are not recycled, and SAB
- * `nzo_id`s are stable opaque values, so a stale carried identity resolves to
- * the same object or 404s.
+ * today. Arr and Anvil numeric IDs are autoincrement and are not recycled, and
+ * SAB `nzo_id`s are stable opaque values, so a stale carried identity resolves
+ * to the same object or 404s. Reusable Anvil slugs are deliberately not carried.
  */
 
 const MAX_EVIDENCE_ENTRIES = 24
@@ -38,6 +38,7 @@ export interface EvidenceIdentity {
 interface RecordedPath {
   service: string
   value: string
+  field: string | undefined
 }
 
 /** Evidence carried between the runs of one issue. */
@@ -118,16 +119,19 @@ export class RunContext {
   }
 
   /** Records a schema-extracted absolute path, preserving its exact spelling. */
-  recordPath(service: string, value: string): void {
+  recordPath(service: string, value: string, field?: string): void {
     if (
       value.length === 0 ||
       this.paths.some(
-        (entry) => entry.service === service && entry.value === value,
+        (entry) =>
+          entry.service === service &&
+          entry.value === value &&
+          entry.field === field,
       )
     ) {
       return
     }
-    this.paths.push({ service, value })
+    this.paths.push({ service, value, field })
     if (this.paths.length > MAX_PATHS) {
       this.paths.splice(0, this.paths.length - MAX_PATHS)
     }
@@ -135,6 +139,19 @@ export class RunContext {
 
   sawRecordedPath(value: string): boolean {
     return this.paths.some((path) => path.value === value)
+  }
+
+  sawRecordedPathField(
+    value: string,
+    services: readonly string[],
+    field: string,
+  ): boolean {
+    return this.paths.some(
+      (path) =>
+        path.value === value &&
+        services.includes(path.service) &&
+        path.field === field,
+    )
   }
 
   sawValue(service: string, value: string | number): boolean {
@@ -165,21 +182,6 @@ export class RunContext {
     if (this.probed.length > MAX_PROBED_PATHS) {
       this.probed.splice(0, this.probed.length - MAX_PROBED_PATHS)
     }
-  }
-
-  /**
-   * True when a path, or the directory it sits in, appeared in a service read
-   * on this issue. Probing is filesystem access driven by model input, so the target
-   * must come from a service's own answer (Arr file path/outputPath, SABnzbd
-   * storage, Jellyfin Path) rather than from issue text or reconstruction.
-   */
-  sawPathInAnyRead(filePath: string): boolean {
-    const parent = filePath.slice(0, filePath.lastIndexOf("/"))
-    return [filePath, parent].some(
-      (candidate) =>
-        candidate.length > 1 &&
-        this.evidence.some((entry) => entry.body.includes(candidate)),
-    )
   }
 
   /** True when this exact file, or a directory containing it, was probed. */
