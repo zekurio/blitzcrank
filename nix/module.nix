@@ -27,8 +27,8 @@ let
     printf '%s\n' "$sum" > "$stamp"
   '';
 
-  login = pkgs.writeShellApplication {
-    name = "blitzcrank-login";
+  statePi = pkgs.writeShellApplication {
+    name = "blitzcrank-pi";
     runtimeInputs = [
       pkgs.coreutils
       pkgs.systemd
@@ -36,24 +36,24 @@ let
     ];
     text = ''
       if [ "$(id -u)" -ne 0 ]; then
-        echo "blitzcrank-login must be run as root (try sudo)" >&2
+        echo "blitzcrank-pi must be run as root (try sudo)" >&2
         exit 1
       fi
       if [ ! -t 0 ] || [ ! -t 1 ]; then
-        echo "blitzcrank-login requires an interactive terminal" >&2
+        echo "blitzcrank-pi requires an interactive terminal" >&2
         exit 1
       fi
 
-      exec 9>/run/blitzcrank-login.lock
+      exec 9>/run/blitzcrank-pi.lock
       if ! flock --nonblock 9; then
-        echo "another blitzcrank-login session is already running" >&2
+        echo "another blitzcrank-pi session is already running" >&2
         exit 1
       fi
 
       # Recover a transient unit left behind if the previous helper was killed.
-      systemctl stop blitzcrank-login.service >/dev/null 2>&1 || true
+      systemctl stop blitzcrank-pi.service >/dev/null 2>&1 || true
 
-      restore_stamp=/run/blitzcrank-login.restore
+      restore_stamp=/run/blitzcrank-pi.restore
       restore_service=0
       if [ -e "$restore_stamp" ]; then
         restore_service=1
@@ -69,7 +69,7 @@ let
       cleanup() {
         status=$?
         trap - EXIT HUP INT TERM
-        systemctl stop blitzcrank-login.service >/dev/null 2>&1 || true
+        systemctl stop blitzcrank-pi.service >/dev/null 2>&1 || true
         if [ "$restore_service" -eq 1 ]; then
           if systemctl start blitzcrank.service; then
             rm -f "$restore_stamp"
@@ -89,8 +89,8 @@ let
       systemctl stop blitzcrank.service
 
       systemd-run \
-        --unit=blitzcrank-login.service \
-        --description="Interactive pi login for blitzcrank" \
+        --unit=blitzcrank-pi.service \
+        --description="Interactive pi instance for blitzcrank" \
         --service-type=exec \
         --property=Conflicts=blitzcrank.service \
         --property=DynamicUser=yes \
@@ -187,7 +187,7 @@ in
       description = ''
         pi auth.json with provider credentials. Required for OAuth providers
         such as openai-codex. With the default path, bootstrap interactively
-        with {command}`sudo blitzcrank-login`, or declaratively via
+        with {command}`sudo blitzcrank-pi`, or declaratively via
         {option}`authSeedFile`. It must stay writable because OAuth tokens
         auto-refresh and are persisted back.
       '';
@@ -272,7 +272,7 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    environment.systemPackages = [ login ];
+    environment.systemPackages = [ statePi ];
 
     assertions = [
       {

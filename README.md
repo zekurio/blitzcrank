@@ -107,19 +107,19 @@ Then import and configure the module:
 
 State lives in `/var/lib/blitzcrank` (case files, session transcripts, Discord
 thread sessions, and `auth.json` for OAuth providers — it must stay writable
-because tokens refresh in place). To authenticate interactively on the
-deployed host, run:
+because tokens refresh in place). To manage authentication interactively on the deployed host, run:
 
 ```bash
-sudo blitzcrank-login
+sudo blitzcrank-pi
 ```
 
-At the pi prompt, enter `/login`, then select the provider (for example, OpenAI
-Codex). The helper stops `blitzcrank.service` while pi owns the auth file and
-restores its previous running or stopped state when pi exits or the helper is
-interrupted. It requires an interactive terminal and works over SSH. The
-bundled pi CLI is also exposed as `blitz-pi`; use the helper for login so
-it runs with the service's dynamic identity and writable state directory.
+This opens the bundled pi CLI with its agent directory pointed at
+`/var/lib/blitzcrank`. Use `/login` or `/logout` to manage provider
+credentials. The helper stops `blitzcrank.service` while pi owns the auth file
+and restores its previous running or stopped state when pi exits or the helper
+is interrupted. It requires an interactive terminal and works over SSH. The
+unmanaged pi CLI is exposed as `blitz-pi`; use `blitzcrank-pi` for the deployed
+service's dynamic identity and writable state directory.
 
 As a declarative alternative, `authSeedFile` loads a read-only secret as a
 systemd credential and copies it to `authFile` only when the file is missing or
@@ -152,7 +152,7 @@ exposes the same mapping as `services.blitzcrank.automationModels`.
 Authentication follows pi's resolution order: API-key providers read the usual
 env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …), OAuth/subscription
 providers read a pi `auth.json`. On NixOS, bootstrap the default auth path with
-`sudo blitzcrank-login` → `/login`; outside NixOS, bootstrap once with pi and
+`sudo blitzcrank-pi` then `/login`; outside NixOS, bootstrap once with pi and
 point `BLITZCRANK_AUTH_PATH` at the writable file (default
 `~/.pi/agent/auth.json`). Custom providers can be declared in a `models.json`
 via `BLITZCRANK_MODELS_PATH`. Issue runs and Discord conversations can get
