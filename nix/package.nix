@@ -41,7 +41,6 @@ stdenv.mkDerivation (finalAttrs: {
       --add-flags "$out/lib/blitzcrank/dist/index.js"
     makeWrapper ${nodejs_24}/bin/node $out/bin/blitz-pi \
       --add-flags "$out/lib/blitzcrank/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"
-    ln -s blitz-pi $out/bin/blitzcrank-pi
     runHook postInstall
   '';
 
