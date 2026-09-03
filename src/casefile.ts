@@ -1,15 +1,9 @@
-import {
-  mkdir,
-  readdir,
-  readFile,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises"
+import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises"
 import path from "node:path"
 
+import { EvidenceStore } from "./evidence.ts"
 import type { JsonValue } from "./services/http.ts"
-import type { EvidenceIdentity, EvidenceSnapshot } from "./tools/context.ts"
+import type { EvidenceSnapshot } from "./tools/context.ts"
 
 /**
  * Per-issue case file: the durable, host-owned record of one issue.
@@ -201,17 +195,17 @@ export function renderCase(file: CaseFile): string | undefined {
 }
 
 export class CaseStore {
-  constructor(private readonly dir: string) {}
+  private readonly evidence: EvidenceStore
+
+  constructor(private readonly dir: string) {
+    this.evidence = new EvidenceStore(dir, "case")
+  }
 
   private file(issueId: string): string {
     if (!/^[\w-]{1,64}$/.test(issueId)) {
       throw new Error(`refusing to use "${issueId}" as a case file name`)
     }
     return path.join(this.dir, `${issueId}.json`)
-  }
-
-  private evidenceFile(issueId: string): string {
-    return `${this.file(issueId).slice(0, -".json".length)}.evidence.json`
   }
 
   /**
@@ -271,37 +265,14 @@ export class CaseStore {
    * which is exactly what the gate asks for anyway.
    */
   async loadEvidence(issueId: string): Promise<EvidenceSnapshot | undefined> {
-    const raw = await readFile(this.evidenceFile(issueId), "utf8").catch(
-      () => undefined,
-    )
-    if (raw === undefined) return undefined
-    try {
-      // SAFETY: Array presence and identity members are checked before use.
-      const parsed = JSON.parse(raw) as Partial<EvidenceFileData>
-      if (!Array.isArray(parsed.evidence)) return undefined
-      const identities = Array.isArray(parsed.identities)
-        ? parsed.identities.filter(isEvidenceIdentity)
-        : []
-      return {
-        evidence: parsed.evidence,
-        identities,
-        probed: Array.isArray(parsed.probed) ? parsed.probed : [],
-      }
-    } catch {
-      console.warn(`[case:${issueId}] unreadable evidence file; ignoring it`)
-      return undefined
-    }
+    return this.evidence.load(issueId)
   }
 
   async saveEvidence(
     issueId: string,
     snapshot: EvidenceSnapshot,
   ): Promise<void> {
-    const target = this.evidenceFile(issueId)
-    await mkdir(this.dir, { recursive: true })
-    const tmp = `${target}.tmp`
-    await writeFile(tmp, JSON.stringify(snapshot), "utf8")
-    await rename(tmp, target)
+    await this.evidence.save(issueId, snapshot)
   }
 
   /**
@@ -310,7 +281,7 @@ export class CaseStore {
    * destroyed even after the issue closes.
    */
   async forgetEvidence(issueId: string): Promise<void> {
-    await rm(this.evidenceFile(issueId), { force: true })
+    await this.evidence.forget(issueId)
   }
 
   async save(file: CaseFile): Promise<void> {
@@ -345,24 +316,6 @@ export class CaseStore {
     }
     return files
   }
-}
-
-interface EvidenceFileData {
-  evidence: EvidenceSnapshot["evidence"]
-  identities: JsonValue[]
-  probed: string[]
-}
-
-function isEvidenceIdentity(
-  value: JsonValue,
-): value is JsonValue & EvidenceIdentity {
-  return isJsonObject(value) && isString(value.service) && isString(value.value)
-}
-
-function isJsonObject(
-  value: JsonValue,
-): value is { [key: string]: JsonValue | undefined } {
-  return value !== null && Object(value) === value && !Array.isArray(value)
 }
 
 function isString<Value>(value: Value): value is Value & string {

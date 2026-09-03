@@ -807,7 +807,7 @@ export function buildAnvilTools(
         "Read a compact diagnostic history of one Anvil job by id or slug: current state and, when output is complete, every attempt state/error, " +
         "failed events, resumable pipeline checkpoints, publish/cleanup operation, quality-search metric, and stream decisions. " +
         "Routine event payloads are omitted so errors stay visible; `output_complete: false` means operator review and blocks retry. " +
-        "A numeric id may come from this issue's carried evidence; a slug must come from an Anvil read this run.",
+        "A numeric id must pass the Anvil evidence gate; a slug must come from an Anvil read this run.",
       parameters: Type.Object({
         purpose: Type.String({
           description: "What this job's history must establish",
@@ -815,7 +815,7 @@ export function buildAnvilTools(
         job: Type.String({
           minLength: 1,
           description:
-            "Anvil numeric job id from this issue, or slug exactly as an Anvil read reported it in this run",
+            "Anvil numeric job id accepted by the evidence gate, or slug exactly as an Anvil read reported it in this run",
         }),
       }),
       async execute(_toolCallId, params, signal) {
@@ -839,14 +839,14 @@ export function buildAnvilTools(
         "Requeue one failed Anvil job that will not finish on its own, normally an encode blocking an import. " +
         "The interrupted encode restarts, while reusable analysis checkpoints and a journaled publish may resume. " +
         "Canceled, active, complete, and skipped jobs are rejected. The job must first be uniquely correlated from an exact current Arr queue outputPath " +
-        "and inspected with anvil_job_show in this run. A numeric id may come from this issue's carried evidence; " +
+        "and inspected with anvil_job_show in this run. A numeric id must pass the Anvil evidence gate; " +
         "a slug must come from an Anvil read this run. Only single jobs: there is no bulk retry here.",
       parameters: Type.Object({
         reason: reasonParam(),
         job: Type.String({
           minLength: 1,
           description:
-            "Anvil numeric job id from this issue, or slug exactly as an Anvil read reported it in this run",
+            "Anvil numeric job id accepted by the evidence gate, or slug exactly as an Anvil read reported it in this run",
         }),
       }),
       async execute(_toolCallId, params, signal) {

@@ -279,7 +279,7 @@ function deleteEpisodeFileTool(
     name: "sonarr_delete_episode_file",
     label: "Sonarr: delete episode file",
     description:
-      "Delete one episode file from disk (e.g. verified corrupt), so a replacement can be searched. Call it once per file when a whole verified set is wrong. The episodefile id must come from a Sonarr read on this issue.",
+      "Delete one episode file from disk (e.g. verified corrupt), so a replacement can be searched. Call it once per file when a whole verified set is wrong. The episodefile id must pass the Sonarr evidence gate.",
     parameters: Type.Object({
       reason: reasonParam(),
       episodeFileId: Type.Integer({ minimum: 1 }),

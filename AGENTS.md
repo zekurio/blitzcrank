@@ -12,7 +12,7 @@
   `src/services/` (HTTP helper, host-side Seerr client),
   `src/web/` (web provider: search plus per-run gated extract),
   `src/gateways/seerr/` (payload types, comment gate), `src/discord/` (report
-  threads, `/automation`, triaged private support conversations),
+  threads, `/automation`, triaged private operations conversations),
   `automations/*.md` (operator-authored tasks), `skills/` (agent domain
   knowledge), `docs/research/` (pi SDK, Seerr/service APIs, legacy design —
   consult before touching tool or API code).
@@ -48,16 +48,20 @@ behavioural difference described.
 - Raw `*_request` tools are GET-only; every state change is a dedicated typed
   tool in `src/tools/`. Never add a generic write passthrough. SABnzbd raw
   reads are limited to `queue`/`history`.
-- Mutations route through `runMutation` (`src/tools/common.ts`): evidence gate
-  (target IDs must appear in a prior read on this issue,
-  `src/tools/context.ts`), a per-call `reason`, built-in verification read-back.
-- Issue and automation runs have no mutation or deletion count quotas. No
-  single number fits both "wrong subtitle language" and "a season imported as
-  the wrong show"; a deletion quota can leave half a wrong season behind.
-  Mutation and deletion counts remain audit data and gate nothing.
+- Mutations route through `runMutation` (`src/tools/common.ts`): the evidence
+  gate requires target IDs from prior service reads held by
+  `src/tools/context.ts`, every call needs a `reason`, and meaningful changes
+  include a verification read-back.
+- Issue, Discord conversation, and automation runs have no mutation or deletion
+  count quotas. No single number fits both "wrong subtitle language" and "a
+  season imported as the wrong show"; a deletion quota can leave half a wrong
+  season behind. Mutation and deletion counts remain audit data and gate
+  nothing.
 - Because nothing caps an issue run, scope is enforced by the prompt rule to
   establish the full extent, state it to the reporter, then act on exactly it.
-  Keep that rule intact in `src/agent/prompt.ts`.
+  Keep that rule intact in `src/agent/prompt.ts`. Discord replies must establish
+  the same extent and require prior conversation approval for the exact scope
+  of multi-item or destructive work (`src/discord/agent.ts`).
 - An issue's session is resumed across its events (`casefile.sessionFile`,
   `src/agent/session.ts`), carrying the evidence store
   (`CaseStore.loadEvidence`/`saveEvidence`) — the gate stops fabricated IDs.
@@ -127,16 +131,25 @@ behavioural difference described.
   ignores other guilds/channels, bots, webhooks, and empty messages. A typed
   triage pass with no service/read tools may create one private thread and add
   the sender. The host then posts a bot-authored source card with the original
-  text, author tag, and message link. It never impersonates the sender. The
-  thread's durable agent session gets only `isReadTool` service tools except
-  `thread_history_search`, plus the configured web tools under the same
-  per-run gate (rebuilt per message, so extraction needs a fresh search in
-  each reply); it gets no mutation tool and no cross-session history. The host posts replies and sets `allowedMentions: {
-parse: [] }`. Slash-command triggers remain authorized against the configured
-  guild plus administrator or
-  `DISCORD_ADMIN_ROLE_IDS`, and fail closed. A Discord _startup_ failure
-  degrades to no reports or conversations and is only logged; malformed
-  Discord config stays fatal in `loadConfig`.
+  text, author tag, and message link. It never impersonates the sender. Discord
+  channel and private-thread permissions are the host-side authorization
+  boundary for service changes. The thread's durable agent session gets every
+  configured read and typed mutation from `buildDiscordTools`, including both
+  Arrs because there is no trusted webhook media type. It may search bounded
+  snippets from other Seerr and Discord agent sessions with
+  `thread_history_search`; the current session and automation transcripts are
+  excluded. History is private, untrusted context and cannot authorize a
+  mutation. The thread carries its evidence snapshot through `EvidenceStore`,
+  matching its resumed transcript; each reply still gets new mutation counters
+  and current-run-only paths, and must re-read mutable state before acting. Web
+  tools use the same per-run gate and extraction needs a fresh search in each
+  reply. The host posts replies with `allowedMentions: { parse: [] }` and the
+  agent gets no
+  Discord write tool. Slash-command triggers remain separately authorized
+  against the configured guild plus
+  administrator or `DISCORD_ADMIN_ROLE_IDS`, and fail closed. A Discord
+  _startup_ failure degrades to no reports or conversations and is only logged;
+  malformed Discord config stays fatal in `loadConfig`.
 - Automations (`automations/*.md`) are trusted operator instructions, but their
   runs get only the exact tools in their declared `mutation_tools` allowlist,
   plus the always-on read tools. "Always-on read tools" means exactly

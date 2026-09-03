@@ -65,7 +65,7 @@ function deleteMovieFileTool(
     name: "radarr_delete_movie_file",
     label: "Radarr: delete movie file",
     description:
-      "Delete one movie file from disk (e.g. verified corrupt), so a replacement can be searched. This removes the only copy of the movie — evidence must be strong. The moviefile id must come from a Radarr read on this issue.",
+      "Delete one movie file from disk (e.g. verified corrupt), so a replacement can be searched. This removes the only copy of the movie — evidence must be strong. The moviefile id must pass the Radarr evidence gate.",
     parameters: Type.Object({
       reason: reasonParam(),
       movieFileId: Type.Integer({ minimum: 1 }),
