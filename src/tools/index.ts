@@ -76,6 +76,29 @@ export function isReadTool(name: string): boolean {
   return READ_TOOLS.has(name)
 }
 
+/**
+ * Discord conversations get every configured typed service operation plus
+ * bounded search over prior Seerr and Discord sessions. Automation transcripts
+ * stay hidden. Both Arrs remain available because Discord has no trusted
+ * webhook media type for routing.
+ */
+export function buildDiscordTools(
+  config: Config,
+  ctx: RunContext,
+  sessionFileRef: SessionFileRef,
+): ToolDefinition[] {
+  const tools = buildServiceTools(config, ctx, sessionFileRef).filter(
+    (tool) => tool.name !== "thread_history_search",
+  )
+  tools.push(
+    buildHistoryTool(path.join(config.dataDir, "sessions"), sessionFileRef, [
+      "issues",
+      "discord",
+    ]),
+  )
+  return tools
+}
+
 export type MediaScope = "movie" | "tv" | undefined
 
 export interface IssueToolDeps {

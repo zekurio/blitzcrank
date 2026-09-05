@@ -24,8 +24,9 @@ This project targets one private deployment. Expect sharp edges.
 
 ### Safety model
 
-The host owns every user-visible action; the agent only investigates, mutates
-through a narrow typed surface, and returns directives.
+The host owns every user-visible action. The agent investigates and mutates
+through a narrow typed tool set. Seerr runs return host-executed directives;
+Discord runs return text that the host posts.
 
 - **Host-owned lifecycle** — the agent never comments or resolves directly. It
   emits `RESOLVE_ISSUE: yes|no` plus optional `REVISIT_IN`/`REVISIT_REASON`,
@@ -36,16 +37,18 @@ through a narrow typed surface, and returns directives.
   `sonarr_delete_episode_file`, `sabnzbd_retry_job`, …): no raw POST/DELETE
   surface, no path parsing, a mandatory `reason`, and a verification read-back
   returned in the result.
-- **Evidence gates** — mutation targets must have appeared in a read earlier in
-  the same issue; guessed IDs are rejected in code, not in the prompt.
+- **Evidence gates** — mutation targets must have appeared in an accepted
+  service read; guessed IDs are rejected in code, not in the prompt. Issue and
+  Discord evidence follows their durable conversation. Mutable state still
+  gets re-read before a change.
 - **Scope gates** — a multi-episode Sonarr search must state the true episode
   count, and replacing two or more existing files requires that one was
   inspected with `media_probe` this run.
 - **Media-specific tools** — movie issues get Radarr. TV issues get Sonarr. An
   unknown media type gets neither. Other service tools stay available.
-- **No mutation quotas** — issue and automation runs are uncapped, deletions
-  included. One number cannot fit both a wrong subtitle track and a season
-  imported as the wrong show. A deletion cap can create the bad outcome it
+- **No mutation quotas** — issue, Discord, and automation runs are uncapped,
+  deletions included. One number cannot fit both a wrong subtitle track and a
+  season imported as the wrong show. A deletion cap can create the bad outcome it
   claims to prevent. Everything stays counted, reported, and recorded.
 - **Continuous sessions** — an issue's runs share one agent session, so a
   follow-up comment continues the conversation with its evidence intact, while
@@ -68,11 +71,12 @@ through a narrow typed surface, and returns directives.
   `BLITZCRANK_MEDIA_ROOTS` after `realpath`; the optional `web_search` /
   `web_extract` tools never justify a mutation, and `web_extract` only opens
   URLs `web_search` returned during the same run.
-- **Discord conversations are read-only** — the host receives text only from
-  one configured inbox. A classifier with no service/read tools can open a
-  private thread. Each thread has a durable session with read-only service
-  tools, the configured web tools, and no access to other conversation
-  history. The host posts replies and blocks mentions.
+- **Discord conversations can fix things** — the host receives text only from
+  one configured inbox. A classifier with no service tools can open a private
+  thread. Each thread has a durable session with configured service reads and
+  typed mutations and the same evidence gates. A bounded search can return
+  snippets from prior Blitzcrank-handled Seerr and Discord threads as untrusted
+  clues. The host posts replies and blocks mentions.
 
 Details and rationale live in [AGENTS.md](AGENTS.md); the legacy Go deployment
 this is distilled from is described in `docs/research/legacy.md`.
@@ -239,14 +243,21 @@ becomes the report header, and internal history markers are removed before
 delivery. `/automation list`
 shows schedules and next runs, `/automation run name:<x>` queues one.
 
-Set `DISCORD_INBOX_CHANNEL_ID` to enable support conversations. Each plain-text
-message in that channel goes to a classifier with no service/read tools.
+Set `DISCORD_INBOX_CHANNEL_ID` to enable operations conversations. Each
+plain-text message in that channel goes to a classifier with no service/read
+tools.
 Accepted messages open a private `blitzcrank: <topic>` thread and add the
 sender. The bot copies the accepted message into a source card that names its
 author and links to the original. It does not impersonate the author. Replies
 in that thread continue one persistent agent session. The conversation can
-inspect current media-service state with read-only tools. It cannot mutate
-services or search other issue, automation, or Discord transcripts.
+inspect current media-service state and use every configured typed mutation to
+apply an authorized, verified fix. It cannot change Seerr issue status or write
+to Discord itself. It can search bounded snippets from prior Blitzcrank-handled
+Seerr issues and Discord conversations; its current thread and automation
+transcripts are excluded. History is a private clue, never authorization or
+current service evidence. Each thread persists its own service evidence with
+the conversation, while mutable state, paths, and reusable Anvil slugs must be
+read again before they are used.
 
 `BLITZCRANK_DISCORD_MODEL` selects the conversation model and falls back to
 `BLITZCRANK_MODEL`. `BLITZCRANK_DISCORD_TRIAGE_MODEL` selects the cheap triage
@@ -266,8 +277,10 @@ the application with another bot.
 
 For the inbox, also enable **Message Content Intent** in the Discord developer
 portal. Grant the bot the same thread permissions in that channel. Channel
-access decides who may start a conversation. Private threads are visible to
-the invited sender and members with Discord's Manage Threads permission.
+access authorizes typed service changes and access to prior conversation
+snippets, not just chat, so restrict it to trusted users. Private threads are
+visible to the invited sender and members with Discord's Manage Threads
+permission; those members can also drive the conversation if they reply.
 
 ### Development
 

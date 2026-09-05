@@ -9,8 +9,8 @@ Anvil transcodes between SABnzbd completion and Arr import. When registered,
 its reads require `purpose`: `anvil_status` (health/counts), `anvil_job_list`
 (bounded current jobs), `anvil_job_lookup` (one exact absolute path), and
 `anvil_job_show` (compact history). The only possible mutation is
-`anvil_retry_job`, and some read-only run types do not receive it. Health or
-aggregate counts never prove an item is encoding.
+`anvil_retry_job`, and it can be used only when registered for the run. Health
+or aggregate counts never prove an item is encoding.
 
 ## Limits and retry safety
 
@@ -108,14 +108,16 @@ history.
 ## State and communication
 
 In Seerr issue runs, call `report_progress` first as one rewritable public
-status line. Read-only Discord runs do not have it. SAB may be
-complete while Anvil causes temporary missing/unavailable/locked/changing paths
-or delayed imports. Complete still needs Arr/Jellyfin validation. Failed,
+status line. Discord runs report through the host's existing status message and
+must not emit Seerr directives. SAB may be complete while Anvil causes temporary
+missing/unavailable/locked/changing paths or delayed imports. Complete still
+needs Arr/Jellyfin validation. Failed,
 skipped, and canceled are terminal; inspect `last_error` and
 `publish_operation` because skip may be normal/stale-input and cancellation may
 leave output. Compare leases/heartbeats with `server_time`.
 
 For a confirmed running job with a fresh heartbeat, schedule a roughly 10–15
-minute revisit rather than a default hour; report only what the next check will
-verify. Keep the issue open while encoding and through subsequent Arr import
-and Jellyfin validation; completion of one stage is not end-to-end resolution.
+minute revisit rather than a default hour in a Seerr issue. Discord has no
+scheduled revisit, so state the pending stage without promising a later check.
+Keep a Seerr issue open while encoding and through subsequent Arr import and
+Jellyfin validation; completion of one stage is not end-to-end resolution.

@@ -8,10 +8,10 @@ description: Diagnose and safely remediate SABnzbd queue, history, download, rep
 `sabnzbd_request` is read-only and accepts `purpose` plus relative GET paths
 limited to `GET /api?mode=queue` and `GET /api?mode=history` (optional `limit`).
 Blitzcrank injects credentials and JSON output; never include credentials.
-Mutations use only typed tools, require `reason` and an `nzoId` previously read
-as `nzo_id` on this issue, and return `verification` that must be inspected.
-Issue and automation runs are uncapped; automation scope comes from its exact
-mutation-tool allowlist.
+Mutations use only typed tools, require `reason` and an `nzoId` accepted by the
+run's SABnzbd evidence gate, and return `verification` that must be inspected.
+Issue, Discord, and automation runs are uncapped; automation scope comes from
+its exact mutation-tool allowlist.
 
 SAB downloads, verifies, repairs, unpacks, and writes output. Completion does
 not prove Arr import or Jellyfin playback; Anvil may intervene. Arr owns release
@@ -74,9 +74,8 @@ Anvil wait. While waiting, do not force/manual import, remove, blocklist, retry,
 search, or refresh. Failed/skipped Anvil work is a blocker; complete still
 needs Arr/Jellyfin verification.
 
-Call `report_progress` first with one short public status line; updates rewrite
-it rather than narrating percentages. Claim mutation only after successful
-verification. Never call Seerr comment/resolve APIs. Use the required final directive block
-beginning with `RESOLVE_ISSUE: yes|no`; active work may add `REVISIT_IN` and a
-falsifiable `REVISIT_REASON`. Keep the issue open while downloading, repairing,
-encoding, importing, scanning, or awaiting verification.
+In a Seerr issue, call `report_progress` first and finish with the required
+`RESOLVE_ISSUE` directive block; keep it open while downloading, repairing,
+encoding, importing, scanning, or awaiting verification. In Discord, answer
+directly without Seerr directives or promises of a later check. Claim mutation
+only after successful verification. Never call Seerr comment/resolve APIs.

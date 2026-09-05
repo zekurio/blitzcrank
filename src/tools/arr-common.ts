@@ -230,7 +230,7 @@ function deleteQueueItemTool(deps: ArrToolDeps): ToolDefinition {
   return defineTool({
     name: `${deps.service}_delete_queue_item`,
     label: `${deps.service}: remove queue item`,
-    description: `Remove a stuck/failed download from the ${deps.service} queue, optionally blocklisting the release and removing it from the download client. With removeFromClient=true the downloaded data is destroyed and the call is recorded as a deletion. The queue item id must come from a queue read on this issue.`,
+    description: `Remove a stuck/failed download from the ${deps.service} queue, optionally blocklisting the release and removing it from the download client. With removeFromClient=true the downloaded data is destroyed and the call is recorded as a deletion. The queue item id must pass the ${deps.service} evidence gate.`,
     parameters: Type.Object({
       reason: reasonParam(),
       queueId: Type.Integer({ minimum: 1 }),

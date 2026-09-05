@@ -1,15 +1,15 @@
 ---
 name: jellyfin
-description: Diagnose Jellyfin library identity, availability, media streams, subtitles, playback, transcoding, user visibility, and stale metadata. Load for Seerr reports involving wrong language, missing subtitles, wrong metadata, unavailable media, or playback failure after Arr import.
+description: Diagnose Jellyfin library identity, availability, media streams, subtitles, playback, transcoding, user visibility, and stale metadata. Load for media reports involving wrong language, missing subtitles, wrong metadata, unavailable media, or playback failure after Arr import.
 ---
 
 # Jellyfin
 
 Use read-only `jellyfin_request` with `purpose` and a relative GET path. The only
 mutation is `jellyfin_refresh_item`; it requires `reason` and an `itemId`
-previously returned by a Jellyfin read on this issue. Inspect its `verification`
-and re-read affected state. Issue and automation runs are uncapped; automation
-scope comes from its exact mutation-tool allowlist. Refresh updates metadata/indexing
+accepted by the run's Jellyfin evidence gate. Inspect its `verification` and
+re-read affected state. Issue, Discord, and automation runs are uncapped;
+automation scope comes from its exact mutation-tool allowlist. Refresh updates metadata/indexing
 and probing; it cannot repair bytes or add tracks. No broad-library refresh is
 exposed.
 
@@ -70,10 +70,9 @@ client/transcoding, bad source, or a mixture. Multiple versions may mean
 Jellyfin played a different file than Radarr's inspected file. A successful scan
 does not prove playback; verify the original symptom before resolution.
 
-Call `report_progress` first with one short public status line; later calls
-rewrite it. Do not expose tool names, IDs, URLs, paths, promises, or user data.
-Never call Seerr comment/resolve APIs. Use the required final directive block
-beginning with `RESOLVE_ISSUE: yes|no`; when unresolved, add `REVISIT_IN` and
-`REVISIT_REASON` only for a concrete, falsifiable active check. Keep the issue
-open through importing, scanning, playback validation, or needed reporter
-confirmation.
+In a Seerr issue, call `report_progress` first and finish with its required
+`RESOLVE_ISSUE` directive block. In Discord, answer directly without Seerr
+directives or promises of a later check. Do not expose tool names, IDs, URLs,
+paths, promises, or user data. Never call Seerr comment/resolve APIs. Keep a
+Seerr issue open through importing, scanning, playback validation, or needed
+reporter confirmation.

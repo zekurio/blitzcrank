@@ -34,7 +34,7 @@ export interface DiscordDeps {
 
 /**
  * Host-side Discord surface: automation reports, commands, and private
- * read-only support conversations. No agent tool can write to Discord.
+ * media-operations conversations. No agent tool can write to Discord.
  */
 export class DiscordBot {
   private constructor(

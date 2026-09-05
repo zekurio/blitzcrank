@@ -1,11 +1,11 @@
 ---
 name: sonarr
-description: Diagnose and safely remediate Sonarr-managed TV series, seasons, episodes, queues, imports, files, and quality upgrades. Load for Seerr issues involving a show or episode, especially missing, corrupt, wrong, stalled, or repeatedly replaced media.
+description: Diagnose and safely remediate Sonarr-managed TV series, seasons, episodes, queues, imports, files, and quality upgrades. Load for show or episode problems, especially missing, corrupt, wrong, stalled, or repeatedly replaced media.
 ---
 
 # Sonarr
 
-`sonarr_request` is GET-only and accepts `purpose` and a relative `/api/v3/...` `path`. Mutations use the typed tools, require `reason`, and require every target ID to have appeared in a Sonarr read on this issue. Issue and automation runs are uncapped; automation scope comes from its exact mutation-tool allowlist.
+`sonarr_request` is GET-only and accepts `purpose` and a relative `/api/v3/...` `path`. Mutations use the typed tools, require `reason`, and require every target ID to pass the run's Sonarr evidence gate. Issue, Discord, and automation runs are uncapped; automation scope comes from its exact mutation-tool allowlist.
 
 ## Identity and evidence
 
@@ -54,4 +54,4 @@ For stalls/import failures, allow download/repair/unpack work and diagnose categ
 
 For manual import, read the exact queue folder/download ID and candidate endpoint; inspect every `rejections` array. Import only candidates mapped to that queued episode and download with acceptable quality/language evidence. Reject wrong targets, samples, missing paths, permission or duplicate conflicts, unwanted language, and low score/cutoff. Never import while Anvil/transcode owns the path. Re-read queue and file state; use queue deletion with `blocklist: true` when cleanup, not import, is warranted.
 
-A search is not a grab; a grab is not a download; import is not Jellyfin playback. Verify queue/blocklist/episode/file state, ensure any replacement differs, and after import verify the file record and Jellyfin streams. Call `report_progress` first with one short public status sentence and no tools, IDs, URLs, or promises. Final output must include `RESOLVE_ISSUE: yes|no`; unresolved work may include `REVISIT_IN` and `REVISIT_REASON`. Resolve only when the reported symptom is objectively verified or required reporter confirmation is obtained.
+A search is not a grab; a grab is not a download; import is not Jellyfin playback. Verify queue/blocklist/episode/file state, ensure any replacement differs, and after import verify the file record and Jellyfin streams. In a Seerr issue, call `report_progress` first and finish with the required `RESOLVE_ISSUE` directive block. In Discord, answer directly without Seerr directives or promises of a later check. Resolve a Seerr issue only when the reported symptom is objectively verified or required reporter confirmation is obtained.
