@@ -81,7 +81,7 @@ export interface Config {
   anvil: AnvilConfig | undefined
   /** Enables the ffprobe-backed media_probe tool when media roots are set. */
   media: MediaConfig | undefined
-  /** Reports, commands, and optional triaged private support threads. */
+  /** Reports, commands, and optional triaged private operations threads. */
   discord: DiscordConfig | undefined
 }
 
