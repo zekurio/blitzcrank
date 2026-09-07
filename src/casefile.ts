@@ -1,4 +1,11 @@
-import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises"
+import {
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises"
 import path from "node:path"
 
 import { EvidenceStore } from "./evidence.ts"
@@ -206,6 +213,29 @@ export class CaseStore {
       throw new Error(`refusing to use "${issueId}" as a case file name`)
     }
     return path.join(this.dir, `${issueId}.json`)
+  }
+
+  private pauseFile(issueId: string): string {
+    return `${this.file(issueId).slice(0, -".json".length)}.paused`
+  }
+
+  async isPaused(issueId: string): Promise<boolean> {
+    return readFile(this.pauseFile(issueId)).then(
+      () => true,
+      (err: NodeJS.ErrnoException) => {
+        if (err.code === "ENOENT") return false
+        throw err
+      },
+    )
+  }
+
+  async pause(issueId: string): Promise<void> {
+    await mkdir(this.dir, { recursive: true })
+    await writeFile(this.pauseFile(issueId), "", "utf8")
+  }
+
+  async resume(issueId: string): Promise<void> {
+    await rm(this.pauseFile(issueId), { force: true })
   }
 
   /**

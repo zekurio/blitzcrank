@@ -156,6 +156,8 @@ export interface AgentTurnOptions {
   logPrefix: string
   /** Register builtin read for loading deployment skills. Default true. */
   builtinRead?: boolean
+  /** Stops the live turn after any tool call already in flight returns. */
+  signal?: AbortSignal | undefined
 }
 
 /**
@@ -265,7 +267,14 @@ export async function runAgentTurn(
     thinkingLevel: parseModelSpec(opts.modelSpec).thinkingLevel,
     modelRuntime: opts.modelRuntime,
     resourceLoader: loader,
-    customTools: opts.tools,
+    customTools: opts.tools.map((tool) => ({
+      ...tool,
+      execute: (...args) => {
+        // Pi can prepare a parallel batch before any call starts.
+        if (opts.signal?.aborted) throw new Error("agent turn aborted")
+        return tool.execute(...args)
+      },
+    })),
     tools: [
       ...opts.tools.map((t) => t.name),
       ...(opts.builtinRead === false ? [] : ["read"]),
@@ -302,16 +311,32 @@ export async function runAgentTurn(
   // run's directive block. A stale RESOLVE_ISSUE would then close an issue
   // nobody looked at. Only messages seen live can belong to this run.
   let final: AssistantMessage | undefined
+  let activeTools = 0
+  let abortRequested = false
+
+  let abortCompletion: Promise<void> | undefined
+  const abortSession = (): void => {
+    abortCompletion ??= session.abort().catch((err: unknown) => {
+      console.warn(`[${opts.logPrefix}] failed to abort agent turn:`, err)
+    })
+  }
+  const abort = (): void => {
+    abortRequested = true
+    if (activeTools === 0) abortSession()
+  }
 
   const unsubscribe = session.subscribe((event) => {
     if (event.type === "tool_execution_start") {
+      activeTools += 1
       return
     }
     if (event.type === "tool_execution_end") {
+      activeTools -= 1
       opts.onToolExecutionEnd?.(event.toolName, event.isError)
       if (event.isError) {
         console.warn(`[${opts.logPrefix}] tool ${event.toolName} failed`)
       }
+      if (abortRequested && activeTools === 0) abortSession()
       return
     }
     if (event.type === "message_end" && event.message.role === "assistant") {
@@ -325,11 +350,26 @@ export async function runAgentTurn(
       if (usage.costUsd !== undefined) usage.costUsd += turn.cost.total
     }
   })
+  opts.signal?.addEventListener("abort", abort, { once: true })
 
   try {
+    if (opts.signal?.aborted) throw new Error("agent turn aborted")
     await session.prompt(opts.prompt)
 
+    if (opts.signal?.aborted) {
+      // The host must save usage and evidence even when it discards the answer.
+      return {
+        text: "",
+        finalToolNames: [],
+        usage,
+        sessionFile: session.sessionFile,
+        resumed: opened.resumed,
+      }
+    }
     if (!final) throw new Error("agent produced no assistant message")
+    if (final.stopReason === "aborted") {
+      throw new Error("agent turn aborted")
+    }
     if (final.stopReason === "error") {
       throw new Error(final.errorMessage ?? "model request failed")
     }
@@ -347,6 +387,8 @@ export async function runAgentTurn(
       resumed: opened.resumed,
     }
   } finally {
+    opts.signal?.removeEventListener("abort", abort)
+    await abortCompletion
     unsubscribe()
     session.dispose()
   }

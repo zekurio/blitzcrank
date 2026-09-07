@@ -109,6 +109,7 @@ export class IssueRunner {
   async run(
     event: IssueEvent,
     status: StatusComment = { id: undefined },
+    signal?: AbortSignal,
   ): Promise<RunOutcome> {
     const { issueId } = event
     const seerr = new SeerrClient(this.config.seerr, this.config.seerrBotUserId)
@@ -191,6 +192,7 @@ export class IssueRunner {
         resumeFile: resuming ? casefile.sessionFile : undefined,
         sessionFileRef,
         logPrefix: `issue:${issueId}`,
+        signal,
       })
 
       // Usage is recorded before any Seerr call: a failure while commenting must
@@ -219,6 +221,23 @@ export class IssueRunner {
       await this.cases.save(casefile)
       await this.cases.saveEvidence(issueId, ctx.snapshot)
 
+      if (signal?.aborted) {
+        casefile.runs.push({
+          at: new Date().toISOString(),
+          trigger: event.kind,
+          mutations,
+          deletes,
+          tokens: turn.usage.newTokens,
+          inputTokens: turn.usage.inputTokens,
+          outputTokens: turn.usage.outputTokens,
+          commented: false,
+          resolved: false,
+        })
+        casefile.revisit = undefined
+        await this.cases.save(casefile)
+        throw new Error("issue run stopped")
+      }
+
       const directives = parseDirectives(turn.text)
 
       if (directives.malformed) {
@@ -228,6 +247,7 @@ export class IssueRunner {
       }
 
       const comment = directives.malformed ? undefined : directives.comment
+      if (signal?.aborted) throw new Error("issue run stopped")
       await publishComment(
         seerr,
         issueId,
@@ -247,6 +267,7 @@ export class IssueRunner {
       )
 
       if (!directives.malformed && directives.resolve) {
+        if (signal?.aborted) throw new Error("issue run stopped")
         await seerr.setStatus(issueId, "resolved")
         // A closed issue keeps its case file (audit trail, and `spend.deletes`
         // must not reset if it is reopened) but drops the bulky raw evidence.
@@ -300,6 +321,11 @@ export class IssueRunner {
       )
       throw err
     }
+  }
+
+  async retractStatus(issueId: string, status: StatusComment): Promise<void> {
+    const seerr = new SeerrClient(this.config.seerr, this.config.seerrBotUserId)
+    await publishComment(seerr, issueId, status, undefined)
   }
 }
 
