@@ -2,7 +2,7 @@ import path from "node:path"
 
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent"
 
-import { runAgentTurn } from "../agent/session.ts"
+import { resolveModel, runAgentTurn } from "../agent/session.ts"
 import type { Config } from "../config.ts"
 import { RunContext } from "../tools/context.ts"
 import {
@@ -59,7 +59,12 @@ export class AutomationRunner {
       this.modelSpecs,
     )
 
-    const serviceTools = buildServiceTools(this.config, ctx, sessionFileRef)
+    const serviceTools = buildServiceTools(
+      this.config,
+      ctx,
+      sessionFileRef,
+      resolveModel(this.modelRuntime, modelSpec).input,
+    )
     for (const name of def.mutationTools) {
       const tool = serviceTools.find((candidate) => candidate.name === name)
       if (!tool) {

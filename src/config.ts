@@ -79,7 +79,7 @@ export interface Config {
   jellyfin: ServiceConfig | undefined
   /** Enables Anvil correlation and retry tools when its control socket is set. */
   anvil: AnvilConfig | undefined
-  /** Enables the ffprobe-backed media_probe tool when media roots are set. */
+  /** Enables media reads; frame extraction also requires model image support. */
   media: MediaConfig | undefined
   /** Reports, commands, and optional triaged private operations threads. */
   discord: DiscordConfig | undefined

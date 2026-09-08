@@ -9,6 +9,12 @@ description: Diagnose and safely remediate Radarr-managed movies, releases, queu
 
 ## Identity and evidence
 
+History `data.droppedPath` and `data.importedPath` are exact service paths.
+Use them with `anvil_job_lookup` or `media_probe` after reading the history
+in the current run. They do not grant the Anvil retry permission that requires
+an exact queue `outputPath` correlation. Media probes still require an allowed
+media root.
+
 Keep TMDB, Radarr movie, movie-file, queue, history/blocklist, and download IDs distinct. Seerr's `tmdbId` resolves the internal movie ID; a download ID correlates Radarr with SABnzbd. Commands are asynchronous and do not prove import.
 
 Release/queue/history/file `languages` are release-name parsing (`MULTi`, `DL`, `GERMAN` are claims), not stream evidence. For audio, subtitle, codec, or playback reports, use `media_probe` on `movieFile.path`, queue `outputPath`, or completed SAB `storage`; then inspect imported streams with `jellyfin_request`. Load the `media-probe` skill. Never search or delete based on `languages` alone.

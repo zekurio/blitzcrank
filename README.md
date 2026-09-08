@@ -66,6 +66,10 @@ Discord runs return text that the host posts.
   treat incomplete/empty lookups as unknown, and expose just one mutation:
   evidence-gated retry of a diagnosed failed encode. Cancellation and
   library/store maintenance remain operator-only.
+- **Video frames** — `media_frames` returns up to six JPEG frames at chosen
+  timestamps for wrong movie or episode reports. It requires model image
+  support and a service-supplied file inside `BLITZCRANK_MEDIA_ROOTS`.
+  Frames are supporting evidence, not permission for a change.
 - **Read-only extras** — `media_probe` (ffprobe) answers language questions
   from the file rather than the release name, confined to
   `BLITZCRANK_MEDIA_ROOTS` after `realpath`; the optional `web_search` /
