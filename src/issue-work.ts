@@ -1,3 +1,5 @@
+import { Cause, Effect, Fiber, Semaphore } from "effect"
+
 import {
   eventMediaScope,
   type IssueEvent,
@@ -11,8 +13,8 @@ import type { StatusComment } from "./tools/index.ts"
 interface PendingIssue {
   issueId: string
   revision: number
-  status: Promise<StatusComment>
-  retraction: Promise<void> | undefined
+  status: Fiber.Fiber<StatusComment>
+  retraction: Fiber.Fiber<void, unknown> | undefined
 }
 
 export class IssueWork {
@@ -21,13 +23,13 @@ export class IssueWork {
 
   private active: { issueId: string; controller: AbortController } | undefined
   private readonly pending = new Set<PendingIssue>()
-  private transitions: Promise<unknown> = Promise.resolve()
+  private readonly transitions = Semaphore.makeUnsafe(1)
   private readonly revisions = new Map<string, number>()
 
   constructor(
     private readonly runner: Pick<
       IssueRunner,
-      "notifyQueued" | "retractStatus" | "run"
+      "notifyQueuedEffect" | "retractStatusEffect" | "runEffect"
     >,
     private readonly cases: CaseStore,
   ) {}
@@ -38,138 +40,180 @@ export class IssueWork {
     reason: string,
     mediaScope: ReturnType<typeof eventMediaScope>,
   ): void {
-    this.revisits.schedule(issueId, delayMs, () => {
-      this.enqueue({ kind: "revisit", issueId, reason, mediaScope }).catch(
-        (err: unknown) => {
-          console.error(`[issue:${issueId}] revisit enqueue failed:`, err)
-        },
-      )
-    })
+    this.revisits.scheduleEffect(issueId, delayMs, () =>
+      this.enqueueEffect({ kind: "revisit", issueId, reason, mediaScope }).pipe(
+        Effect.asVoid,
+      ),
+    )
   }
 
   enqueue(event: IssueEvent): Promise<"paused" | "queued"> {
-    return this.transition(() => this.enqueueEvent(event))
+    return Effect.runPromise(this.enqueueEffect(event))
+  }
+
+  enqueueEffect(
+    event: IssueEvent,
+  ): Effect.Effect<"paused" | "queued", unknown> {
+    return this.transitions.withPermit(this.enqueueEvent(event))
   }
 
   stop(issueId: string): Promise<void> {
-    return this.transition(() => this.stopIssue(issueId))
+    return Effect.runPromise(this.stopEffect(issueId))
+  }
+
+  stopEffect(issueId: string): Effect.Effect<void, unknown> {
+    return this.transitions.withPermit(this.stopIssue(issueId))
   }
 
   resume(issueId: string): Promise<void> {
-    return this.transition(async () => {
-      await this.cases.resume(issueId)
-      console.log(`[issue:${issueId}] resumed by Seerr command`)
+    return Effect.runPromise(this.resumeEffect(issueId))
+  }
+
+  resumeEffect(issueId: string): Effect.Effect<void, unknown> {
+    return this.transitions.withPermit(
+      this.cases
+        .resumeEffect(issueId)
+        .pipe(
+          Effect.tap(() =>
+            Effect.sync(() =>
+              console.log(`[issue:${issueId}] resumed by Seerr command`),
+            ),
+          ),
+        ),
+    )
+  }
+
+  private enqueueEvent(
+    event: IssueEvent,
+  ): Effect.Effect<"paused" | "queued", unknown> {
+    return Effect.gen({ self: this }, function* () {
+      if (this.queue.closed)
+        return yield* Effect.fail(new Error("queue is closed"))
+      if (yield* this.cases.isPausedEffect(event.issueId)) {
+        console.log(`[issue:${event.issueId}] paused; event ignored`)
+        return "paused"
+      }
+      // Shutdown may close admission while the pause marker is being read.
+      if (this.queue.closed)
+        return yield* Effect.fail(new Error("queue is closed"))
+      const runsAhead = this.queue.size
+      const status = Effect.runFork(
+        event.kind === "webhook" && runsAhead > 0
+          ? this.runner.notifyQueuedEffect(event.issueId, runsAhead).pipe(
+              Effect.catchCause((cause) => {
+                console.error(
+                  `[issue:${event.issueId}] queue notification failed; continuing:`,
+                  Cause.squash(cause),
+                )
+                return Effect.succeed({ id: undefined })
+              }),
+            )
+          : Effect.succeed({ id: undefined }),
+      )
+      const pending: PendingIssue = {
+        issueId: event.issueId,
+        revision: this.revision(event.issueId),
+        status,
+        retraction: undefined,
+      }
+      this.pending.add(pending)
+      this.queue.enqueueEffect(() => this.run(event, pending))
+      return "queued"
     })
   }
 
-  // Order webhook operations without waiting for the agent queue.
-  private transition<Result>(
-    operation: () => Promise<Result>,
-  ): Promise<Result> {
-    const result = this.transitions.then(operation)
-    this.transitions = result.catch(() => undefined)
-    return result
+  private stopIssue(issueId: string): Effect.Effect<void, unknown> {
+    return Effect.gen({ self: this }, function* () {
+      this.bumpRevision(issueId)
+      this.revisits.cancel(issueId)
+      if (this.active?.issueId === issueId) this.active.controller.abort()
+      yield* this.cases.pauseEffect(issueId)
+      yield* Effect.forEach(
+        [...this.pending].filter((pending) => pending.issueId === issueId),
+        (pending) =>
+          this.retract(pending).pipe(
+            Effect.catchCause((cause) =>
+              Effect.sync(() => {
+                console.error(
+                  `[issue:${issueId}] failed to retract queue notice:`,
+                  Cause.squash(cause),
+                )
+              }),
+            ),
+          ),
+        { concurrency: "unbounded" },
+      )
+      // The active run owns its case file until it exits. It clears its revisit.
+      if (this.active?.issueId !== issueId) yield* this.clearRevisit(issueId)
+      console.log(`[issue:${issueId}] stopped by Seerr command`)
+    })
   }
 
-  private async enqueueEvent(event: IssueEvent): Promise<"paused" | "queued"> {
-    if (await this.cases.isPaused(event.issueId)) {
-      console.log(`[issue:${event.issueId}] paused; event ignored`)
-      return "paused"
-    }
-
-    const runsAhead = this.queue.size
-    const status =
-      event.kind === "webhook" && runsAhead > 0
-        ? this.runner.notifyQueued(event.issueId, runsAhead).catch((err) => {
-            console.error(
-              `[issue:${event.issueId}] queue notification failed; continuing:`,
-              err,
-            )
-            return { id: undefined }
-          })
-        : Promise.resolve({ id: undefined })
-    const pending: PendingIssue = {
-      issueId: event.issueId,
-      revision: this.revision(event.issueId),
-      status,
-      retraction: undefined,
-    }
-    this.pending.add(pending)
-    this.queue.enqueue(() => this.run(event, pending))
-    return "queued"
-  }
-
-  private async stopIssue(issueId: string): Promise<void> {
-    this.bumpRevision(issueId)
-    this.revisits.cancel(issueId)
-    if (this.active?.issueId === issueId) this.active.controller.abort()
-    await this.cases.pause(issueId)
-
-    await Promise.all(
-      [...this.pending]
-        .filter((pending) => pending.issueId === issueId)
-        .map((pending) =>
-          this.retract(pending).catch((err: unknown) => {
-            console.error(
-              `[issue:${issueId}] failed to retract queue notice:`,
-              err,
-            )
-          }),
-        ),
-    )
-    // The active run owns its case file until it exits. It clears its revisit.
-    if (this.active?.issueId !== issueId) await this.clearRevisit(issueId)
-    console.log(`[issue:${issueId}] stopped by Seerr command`)
-  }
-
-  private async run(event: IssueEvent, pending: PendingIssue): Promise<void> {
-    const status = await pending.status
-    if (
-      (await this.cases.isPaused(event.issueId)) ||
-      pending.revision !== this.revision(event.issueId)
-    ) {
-      await this.retract(pending)
-      this.pending.delete(pending)
-      return
-    }
-
-    this.pending.delete(pending)
-    const controller = new AbortController()
-    this.active = { issueId: event.issueId, controller }
-    try {
-      const result = await this.runner.run(event, status, controller.signal)
+  private run(
+    event: IssueEvent,
+    pending: PendingIssue,
+  ): Effect.Effect<void, unknown> {
+    return Effect.gen({ self: this }, function* () {
+      const status = yield* Fiber.join(pending.status)
       if (
-        (await this.cases.isPaused(event.issueId)) ||
-        controller.signal.aborted ||
+        (yield* this.cases.isPausedEffect(event.issueId)) ||
         pending.revision !== this.revision(event.issueId)
       ) {
-        await this.clearRevisit(event.issueId)
+        yield* this.retract(pending)
+        this.pending.delete(pending)
         return
       }
-      const revisit = result.casefile.revisit
-      if (!revisit) return
-      this.armRevisit(
-        result.issueId,
-        revisit.delayMs,
-        revisit.reason,
-        revisit.mediaScope,
+      this.pending.delete(pending)
+      const controller = new AbortController()
+      this.active = { issueId: event.issueId, controller }
+      yield* Effect.gen({ self: this }, function* () {
+        const result = yield* this.runner.runEffect(
+          event,
+          status,
+          controller.signal,
+        )
+        if (
+          (yield* this.cases.isPausedEffect(event.issueId)) ||
+          controller.signal.aborted ||
+          pending.revision !== this.revision(event.issueId)
+        ) {
+          yield* this.clearRevisit(event.issueId)
+          return
+        }
+        const revisit = result.casefile.revisit
+        if (!revisit) return
+        this.armRevisit(
+          result.issueId,
+          revisit.delayMs,
+          revisit.reason,
+          revisit.mediaScope,
+        )
+      }).pipe(
+        Effect.catchCause((cause) =>
+          controller.signal.aborted
+            ? this.clearRevisit(event.issueId)
+            : Effect.failCause(cause),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (this.active?.controller === controller) this.active = undefined
+          }),
+        ),
       )
-    } catch (err) {
-      if (controller.signal.aborted) {
-        await this.clearRevisit(event.issueId)
-        return
-      }
-      throw err
-    } finally {
-      if (this.active?.controller === controller) this.active = undefined
-    }
+    })
   }
 
-  private retract(pending: PendingIssue): Promise<void> {
-    pending.retraction ??= pending.status.then((status) =>
-      this.runner.retractStatus(pending.issueId, status),
-    )
-    return pending.retraction
+  private retract(pending: PendingIssue): Effect.Effect<void, unknown> {
+    return Effect.suspend(() => {
+      pending.retraction ??= Effect.runFork(
+        Fiber.join(pending.status).pipe(
+          Effect.flatMap((status) =>
+            this.runner.retractStatusEffect(pending.issueId, status),
+          ),
+        ),
+      )
+      return Fiber.join(pending.retraction)
+    })
   }
 
   private revision(issueId: string): number {
@@ -180,10 +224,13 @@ export class IssueWork {
     this.revisions.set(issueId, this.revision(issueId) + 1)
   }
 
-  private async clearRevisit(issueId: string): Promise<void> {
-    const file = await this.cases.load(issueId)
-    if (!file.revisit) return
-    file.revisit = undefined
-    await this.cases.save(file)
+  private clearRevisit(issueId: string): Effect.Effect<void, unknown> {
+    return this.cases.loadEffect(issueId).pipe(
+      Effect.flatMap((file) => {
+        if (!file.revisit) return Effect.void
+        file.revisit = undefined
+        return this.cases.saveEffect(file)
+      }),
+    )
   }
 }

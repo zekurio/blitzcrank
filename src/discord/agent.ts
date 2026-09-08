@@ -3,7 +3,7 @@ import path from "node:path"
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent"
 import { Effect } from "effect"
 
-import { sdkPromise, SdkError } from "../agent/effect.ts"
+import { SdkError } from "../agent/effect.ts"
 import type { WebToolNames } from "../agent/prompt.ts"
 import { resolveModel, runAgentTurnEffect } from "../agent/session.ts"
 import type { Config } from "../config.ts"
@@ -16,7 +16,6 @@ import {
   buildDiscordTriageTool,
   parseDiscordTriage,
   type DiscordTriageCapture,
-  type DiscordTriageDecision,
 } from "./triage.ts"
 
 const TRIAGE_SYSTEM_PROMPT = `You triage messages in blitzcrank's shared media-support inbox.
@@ -105,9 +104,6 @@ export class DiscordAgent {
     )
   }
 
-  triage(messageId: string, content: string): Promise<DiscordTriageDecision> {
-    return Effect.runPromise(this.triageEffect(messageId, content))
-  }
   triageEffect(messageId: string, content: string) {
     return Effect.gen({ self: this }, function* () {
       const capture: DiscordTriageCapture = { submissions: [] }
@@ -141,31 +137,31 @@ export class DiscordAgent {
   enqueue(
     threadId: string,
     content: string,
-    deliver: (response: string) => Promise<void>,
-    fail: () => Promise<void>,
-  ): void {
-    this.queue.enqueue(() =>
-      Effect.runPromise(
-        this.respondEffect(threadId, content).pipe(
-          Effect.flatMap((response) => sdkPromise(() => deliver(response))),
-          Effect.catchCause((cause) =>
-            Effect.gen(function* () {
-              console.error(`[discord:${threadId}] conversation failed:`, cause)
-              yield* sdkPromise(fail).pipe(
-                Effect.catchCause((deliveryCause) =>
-                  Effect.sync(() => {
-                    console.error(
-                      `[discord:${threadId}] failed to publish error state:`,
-                      deliveryCause,
-                    )
-                  }),
-                ),
-              )
-            }),
-          ),
+    deliver: (response: string) => Effect.Effect<void, unknown>,
+    fail: () => Effect.Effect<void, unknown>,
+  ): boolean {
+    if (this.queue.closed) return false
+    this.queue.enqueueEffect(() =>
+      this.respondEffect(threadId, content).pipe(
+        Effect.flatMap(deliver),
+        Effect.catchCause((cause) =>
+          Effect.gen(function* () {
+            console.error(`[discord:${threadId}] conversation failed:`, cause)
+            yield* Effect.suspend(fail).pipe(
+              Effect.catchCause((deliveryCause) =>
+                Effect.sync(() => {
+                  console.error(
+                    `[discord:${threadId}] failed to publish error state:`,
+                    deliveryCause,
+                  )
+                }),
+              ),
+            )
+          }),
         ),
       ),
     )
+    return true
   }
 
   private respondEffect(threadId: string, content: string) {

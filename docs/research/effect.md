@@ -49,28 +49,59 @@ same.
   error. Anvil retry reservations still precede the first I/O call.
 
 SDK tool cancellation policy is unchanged: issue stop still waits for active
-tools before aborting the session. Host-side Seerr actions, web tools, local
-media tools, persistence, and runner lifecycles remain for later slices.
+tools before aborting the session.
 
-## Further slices
+## Persistence and remaining reads
 
-Stack each subsequent PR on the preceding migration branch while it is
-unmerged; use main once its parent has merged. Each slice must run on its
-own and preserve the repository's safety invariants.
+Case/evidence files and automation definitions use native Effects with typed
+storage errors. Atomic writes finish through rename before an interruption
+returns. Missing pause markers remain distinct from storage failures, and
+unreadable case/evidence memory retains its safe fallback behavior.
 
-1. Migrate persistence and remaining host/web/local I/O, moving the Promise
-   adapters outward as callers become Effects. Keep evidence gates and the
-   completed-write/failed-verification distinction.
-2. Scope pi sessions and runner cleanup. Preserve session/evidence
-   continuity, fresh prompts and allowlists, live-stream final messages,
-   and the one-comment lifecycle. Issue stop requests must still wait for
-   active tools before aborting the session and must retain usage/evidence.
-3. Migrate queue ownership, revisits, automation scheduling, and shutdown.
-   Keep serialized runs, persisted revisit plans, chain limits, and an
-   explicit grace policy for in-flight mutations.
+Host Seerr actions and comment authorization use the native HTTP effects.
+Web search/extract, media probe/frames, and history reads convert to Promises
+only at their SDK tool callbacks. Frame extraction has one Effect deadline
+for the entire request. Current-run path evidence, realpath containment,
+search-before-extract, history exclusions, and output bounds are unchanged.
 
-These are boundaries for future PRs. Pure parsers and TypeBox tool schemas
-need no conversion.
+## Sessions and runtime ownership
+
+Pi sessions, issue/automation runs, Discord conversations, HTTP handlers,
+queue transitions, and startup/shutdown now compose as Effects. SDK Promise
+APIs are adapted at their boundaries. Pure parsers, TypeBox schemas, and
+Croner's calendar calculation stay as they are.
+
+- Session scopes dispose SDK resources after setup or run failures. Resumed
+  sessions still get fresh prompts and tool lists, carried evidence, and only
+  the current run's live final answer. Active runs use host stop signals and
+  finish active tool verification before aborting; fiber interruption cannot
+  dispose a session in the middle of a write.
+- The serial queue owns its fibers and uses one semaphore permit across all
+  triggers. Webhook transitions and queue notices have separate semaphores.
+  Automation busy slots are released even if the run factory throws.
+- Revisit sleeps are owned fibers, canceled on replacement, pause, and
+  shutdown. Their persisted plans, chain limits, and backoff are unchanged.
+- Shutdown stops cron, revisits, and new queue admission, then waits for HTTP
+  closure and queued runs within the existing total 30-second grace period.
+  Waiting uses fiber completion rather than polling. A drain deadline never
+  interrupts the underlying write. Discord stays connected while runs drain
+  so their reports can still land; the process exits when grace expires.
+- SDK callbacks and event emitters are the runtime boundaries. A few Promise
+  adapters remain for existing test fixtures; production orchestration calls
+  native Effect APIs directly. No automatic retries or new dependencies were
+  added after the initial core Effect pin.
+
+## PR stack
+
+Each branch targets its preceding unmerged migration branch. Merge from the
+bottom, then rebase and retarget the next PR onto main.
+
+1. [#28](https://github.com/zekurio/blitzcrank/pull/28), shared I/O and errors.
+2. [#29](https://github.com/zekurio/blitzcrank/pull/29), service tools.
+3. [#30](https://github.com/zekurio/blitzcrank/pull/30), persistence and host Seerr.
+4. [#31](https://github.com/zekurio/blitzcrank/pull/31), web and local reads.
+5. [#32](https://github.com/zekurio/blitzcrank/pull/32), sessions and Discord.
+6. effect-runtime, host handoffs, queue, revisits, and shutdown.
 
 ## References
 

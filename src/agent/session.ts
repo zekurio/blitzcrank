@@ -228,10 +228,6 @@ function openSessionEffect(
   })
 }
 
-export function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnResult> {
-  return Effect.runPromise(runAgentTurnEffect(opts))
-}
-
 export function runAgentTurnEffect(
   opts: AgentTurnOptions,
 ): Effect.Effect<AgentTurnResult, SdkError | StorageError> {

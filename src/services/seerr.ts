@@ -127,34 +127,4 @@ export class SeerrClient {
       },
     )
   }
-
-  getIssue(issueId: string | number): Promise<SeerrIssue> {
-    return Effect.runPromise(this.getIssueEffect(issueId))
-  }
-
-  listUsers(): Promise<SeerrUser[]> {
-    return Effect.runPromise(this.listUsersEffect())
-  }
-
-  postComment(
-    issueId: string | number,
-    message: string,
-  ): Promise<number | undefined> {
-    return Effect.runPromise(this.postCommentEffect(issueId, message))
-  }
-
-  updateComment(commentId: number, message: string): Promise<JsonValue> {
-    return Effect.runPromise(this.updateCommentEffect(commentId, message))
-  }
-
-  deleteComment(commentId: number): Promise<JsonValue> {
-    return Effect.runPromise(this.deleteCommentEffect(commentId))
-  }
-
-  setStatus(
-    issueId: string | number,
-    status: "open" | "resolved",
-  ): Promise<JsonValue> {
-    return Effect.runPromise(this.setStatusEffect(issueId, status))
-  }
 }

@@ -139,7 +139,3 @@ export function loadAutomationsEffect(
     return definitions
   })
 }
-
-export function loadAutomations(dir: string): Promise<AutomationDefinition[]> {
-  return Effect.runPromise(loadAutomationsEffect(dir))
-}

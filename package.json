@@ -9,7 +9,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "tsx --test src/discord/discord.test.ts src/evidence.test.ts src/issue-work.test.ts src/server.test.ts src/services/http.test.ts src/tools/anvil.test.ts src/tools/common.test.ts src/tools/exec.test.ts src/tools/history.test.ts src/tools/media-frames.test.ts src/tools/services.test.ts src/storage.test.ts src/services/seerr.test.ts src/gateways/seerr/comment-gate.test.ts src/tools/media.test.ts src/web/firecrawl.test.ts src/agent/session.test.ts src/agent/runner.test.ts",
+    "test": "tsx --test src/discord/discord.test.ts src/evidence.test.ts src/issue-work.test.ts src/server.test.ts src/services/http.test.ts src/tools/anvil.test.ts src/tools/common.test.ts src/tools/exec.test.ts src/tools/history.test.ts src/tools/media-frames.test.ts src/tools/services.test.ts src/storage.test.ts src/services/seerr.test.ts src/gateways/seerr/comment-gate.test.ts src/tools/media.test.ts src/web/firecrawl.test.ts src/agent/session.test.ts src/agent/runner.test.ts src/queue.test.ts",
     "typecheck": "tsc --noEmit",
     "fmt": "oxfmt .",
     "fmt:check": "oxfmt --check .",

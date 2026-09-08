@@ -2,10 +2,11 @@ import {
   defineTool,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent"
+import { Effect } from "effect"
 import { Type } from "typebox"
 
 import type { SeerrClient } from "../services/seerr.ts"
-import { textResult } from "./common.ts"
+import { textResult, toolCheck } from "./common.ts"
 
 /** The run's single live status comment on the issue. */
 export interface StatusComment {
@@ -37,27 +38,33 @@ export function buildProgressTool(
         description: `One concise ${language} sentence tailored to this issue`,
       }),
     }),
-    async execute(_toolCallId, params) {
-      if (calls >= MAX_PROGRESS_UPDATES) {
-        throw new Error(
-          `report_progress may be called at most ${MAX_PROGRESS_UPDATES} times per run`,
-        )
-      }
-      calls++
-      const message = params.message.trim()
-      if (!message) throw new Error("message must not be empty")
-      const body = `${message}\n\n${anchor}`
-      if (status.id === undefined) {
-        status.id = await seerr.postComment(issueId, body)
-        return textResult(
-          { posted: true, replacesPrevious: true },
-          { action: "report_progress" },
-        )
-      }
-      await seerr.updateComment(status.id, body)
-      return textResult(
-        { updated: true, replacesPrevious: true },
-        { action: "report_progress" },
+    execute(_toolCallId, params) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          yield* toolCheck(() => {
+            if (calls >= MAX_PROGRESS_UPDATES) {
+              throw new Error(
+                `report_progress may be called at most ${MAX_PROGRESS_UPDATES} times per run`,
+              )
+            }
+            calls++
+            const message = params.message.trim()
+            if (!message) throw new Error("message must not be empty")
+          })
+          const body = `${params.message.trim()}\n\n${anchor}`
+          if (status.id === undefined) {
+            status.id = yield* seerr.postCommentEffect(issueId, body)
+            return textResult(
+              { posted: true, replacesPrevious: true },
+              { action: "report_progress" },
+            )
+          }
+          yield* seerr.updateCommentEffect(status.id, body)
+          return textResult(
+            { updated: true, replacesPrevious: true },
+            { action: "report_progress" },
+          )
+        }),
       )
     },
   })

@@ -25,16 +25,10 @@ export class AutomationThreads {
   ) {}
 
   /** Boot check: a watch channel we cannot resolve is a config error. */
-  verify(): Promise<string> {
-    return Effect.runPromise(this.verifyEffect())
-  }
   verifyEffect() {
     return this.channelEffect().pipe(Effect.map((channel) => channel.name))
   }
 
-  get(name: string): Promise<AnyThreadChannel> {
-    return Effect.runPromise(this.getEffect(name))
-  }
   getEffect(name: string) {
     return Effect.gen({ self: this }, function* () {
       const channel = yield* this.channelEffect()

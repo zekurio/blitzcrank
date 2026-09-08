@@ -404,15 +404,3 @@ export function publishCommentEffect(
     status.id = undefined
   }).pipe(Effect.uninterruptible)
 }
-
-export function publishComment(
-  seerr: Pick<
-    SeerrClient,
-    "postCommentEffect" | "updateCommentEffect" | "deleteCommentEffect"
-  >,
-  issueId: string,
-  status: StatusComment,
-  body: string | undefined,
-): Promise<void> {
-  return Effect.runPromise(publishCommentEffect(seerr, issueId, status, body))
-}
