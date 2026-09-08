@@ -57,11 +57,3 @@ export function syncCommandsEffect(
     client.application.commands.set([automationCommand(names)], guildId),
   ).pipe(Effect.asVoid)
 }
-
-export function syncCommands(
-  client: Client<true>,
-  guildId: string,
-  names: string[],
-): Promise<void> {
-  return Effect.runPromise(syncCommandsEffect(client, guildId, names))
-}

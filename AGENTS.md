@@ -251,6 +251,10 @@ small named helpers below it. Extract only when it names a real concept.
 
 ## Repo Patterns
 
+- I/O and host orchestration compose native Effect v4 APIs. Convert to
+  Promises at SDK callbacks; event emitters contain their own fiber failures.
+  Live agent runs use host stop signals and finish active tool verification
+  before disposal. Queue drain deadlines must never interrupt active writes.
 - Tools use `defineTool` with TypeBox schemas (`typebox`, not zod; `StringEnum`
   from `@earendil-works/pi-ai`) and return via `textResult(...)` with output
   capped by `toText` — never return unbounded JSON to the model.

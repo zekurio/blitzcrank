@@ -2,6 +2,8 @@ import assert from "node:assert/strict"
 import { createServer } from "node:http"
 import test from "node:test"
 
+import { Effect } from "effect"
+
 import type { Config } from "./config.ts"
 import { createApp } from "./server.ts"
 
@@ -35,21 +37,26 @@ test("Seerr commands require authorization and never enqueue agent work", async 
   const server = createServer(
     createApp({
       config,
-      async allowComment() {
-        if (unavailable) throw new Error("Seerr unavailable")
-        return allowed
-      },
-      async onIssueStop(id) {
-        calls.push(`stop:${id}`)
-      },
-      async onIssueResume(id) {
-        calls.push(`resume:${id}`)
-      },
-      async onIssueEvent(id) {
-        calls.push(`event:${id}`)
-        return "paused"
-      },
-      async onIssueClosed() {},
+      allowComment: () =>
+        Effect.suspend(() =>
+          unavailable
+            ? Effect.fail(new Error("Seerr unavailable"))
+            : Effect.succeed(allowed),
+        ),
+      onIssueStop: (id) =>
+        Effect.sync(() => {
+          calls.push(`stop:${id}`)
+        }),
+      onIssueResume: (id) =>
+        Effect.sync(() => {
+          calls.push(`resume:${id}`)
+        }),
+      onIssueEvent: (id) =>
+        Effect.sync(() => {
+          calls.push(`event:${id}`)
+          return "paused" as const
+        }),
+      onIssueClosed: () => Effect.void,
       listAutomations: () => [],
       triggerAutomation: () => "unknown",
       stats: () => ({ queued: 0, pendingRevisits: 0 }),

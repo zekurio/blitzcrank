@@ -47,9 +47,6 @@ export class DiscordBot {
     private readonly deps: DiscordDeps,
   ) {}
 
-  static start(config: Config, deps: DiscordDeps): Promise<DiscordBot> {
-    return Effect.runPromise(this.startEffect(config, deps))
-  }
   static startEffect(config: Config, deps: DiscordDeps) {
     return Effect.gen(function* () {
       const discord = config.discord
@@ -162,9 +159,6 @@ export class DiscordBot {
   }
 
   /** A broken report sink must never fail the run it reports on. */
-  report(report: AutomationReport): Promise<void> {
-    return Effect.runPromise(this.reportEffect(report))
-  }
   reportEffect(report: AutomationReport) {
     return Effect.gen({ self: this }, function* () {
       const thread = yield* this.threads.getEffect(report.name).pipe(
@@ -189,9 +183,6 @@ export class DiscordBot {
     })
   }
 
-  stop(): Promise<void> {
-    return Effect.runPromise(this.stopEffect())
-  }
   stopEffect() {
     return sdkPromise(() => this.client.destroy())
   }
@@ -271,27 +262,23 @@ export class DiscordBot {
       const status = yield* sdkPromise(() =>
         thread.send(thinkingMessage(this.language)),
       )
-      chat.enqueue(
+      const queued = chat.enqueue(
         thread.id,
         content,
         (response) =>
-          Effect.runPromise(
-            Effect.gen(function* () {
-              const chunks = discordMessageChunks(response)
-              yield* sdkPromise(() =>
-                status.edit(chunks[0] ?? "_No response._"),
-              )
-              for (const chunk of chunks.slice(1))
-                yield* sdkPromise(() => thread.send(chunk))
-            }),
-          ),
+          Effect.gen(function* () {
+            const chunks = discordMessageChunks(response)
+            yield* sdkPromise(() => status.edit(chunks[0] ?? "_No response._"))
+            for (const chunk of chunks.slice(1))
+              yield* sdkPromise(() => thread.send(chunk))
+          }),
         () =>
-          Effect.runPromise(
-            sdkPromise(() => status.edit(failureMessage(this.language))).pipe(
-              Effect.asVoid,
-            ),
+          sdkPromise(() => status.edit(failureMessage(this.language))).pipe(
+            Effect.asVoid,
           ),
       )
+      if (!queued)
+        yield* sdkPromise(() => status.edit(failureMessage(this.language)))
     })
   }
 
