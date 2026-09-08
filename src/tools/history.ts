@@ -6,9 +6,10 @@ import {
   defineTool,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent"
+import { Effect } from "effect"
 import { Type } from "typebox"
 
-import { textResult } from "./common.ts"
+import { textResult, toolCheck } from "./common.js"
 
 export type HistorySource = "issues" | "automations" | "discord"
 
@@ -38,25 +39,24 @@ const SOURCE_LABELS: Record<HistorySource, HistoryMatch["source"]> = {
   discord: "discord",
 }
 
-async function collectFiles(
+function collectFiles(
   root: string,
   source: HistorySource,
   out: HistoryFile[],
-): Promise<void> {
-  let entries
-  try {
-    entries = await readdir(root, { withFileTypes: true })
-  } catch {
-    return
-  }
-  for (const entry of entries) {
-    if (out.length >= MAX_FILES) return
-    const full = path.join(root, entry.name)
-    if (entry.isDirectory()) await collectFiles(full, source, out)
-    else if (entry.isFile() && /\.jsonl$/i.test(entry.name)) {
-      out.push({ path: full, source })
+): Effect.Effect<void> {
+  return Effect.gen(function* () {
+    const entries = yield* Effect.tryPromise(() =>
+      readdir(root, { withFileTypes: true }),
+    ).pipe(Effect.catch(() => Effect.succeed([])))
+    for (const entry of entries) {
+      if (out.length >= MAX_FILES) return
+      const full = path.join(root, entry.name)
+      if (entry.isDirectory()) yield* collectFiles(full, source, out)
+      else if (entry.isFile() && /\.jsonl$/i.test(entry.name)) {
+        out.push({ path: full, source })
+      }
     }
-  }
+  })
 }
 
 function belongsToCurrentThread(
@@ -123,53 +123,68 @@ export function buildHistoryTool(
       ),
       limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 10 })),
     }),
-    async execute(_toolCallId, params) {
-      const terms = params.query.toLowerCase().split(/\s+/).filter(Boolean)
-      if (terms.length === 0) throw new Error("query is required")
-      const limit = params.limit ?? 5
-      const source = params.source ?? "all"
-      if (source !== "all" && !allowedSources.includes(source)) {
-        throw new Error(`history source ${source} is not available in this run`)
-      }
-      const selectedSources =
-        source === "all"
-          ? allowedSources
-          : allowedSources.filter((candidate) => candidate === source)
-      const files: HistoryFile[] = []
-      for (const selected of selectedSources) {
-        await collectFiles(path.join(sessionsRoot, selected), selected, files)
-      }
+    execute(_toolCallId, params) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          const terms = params.query.toLowerCase().split(/\s+/).filter(Boolean)
+          yield* toolCheck(() => {
+            if (terms.length === 0) throw new Error("query is required")
+          })
+          const limit = params.limit ?? 5
+          const source = params.source ?? "all"
+          yield* toolCheck(() => {
+            if (source !== "all" && !allowedSources.includes(source)) {
+              throw new Error(
+                `history source ${source} is not available in this run`,
+              )
+            }
+          })
+          const selectedSources =
+            source === "all"
+              ? allowedSources
+              : allowedSources.filter((candidate) => candidate === source)
+          const files: HistoryFile[] = []
+          for (const selected of selectedSources) {
+            yield* collectFiles(
+              path.join(sessionsRoot, selected),
+              selected,
+              files,
+            )
+          }
 
-      const results: HistoryMatch[] = []
-      for (const file of files) {
-        if (belongsToCurrentThread(file, currentSessionFile.current)) continue
-        let text: string
-        try {
-          text = await readFile(file.path, "utf8")
-        } catch {
-          continue
-        }
-        const lower = text.toLowerCase()
-        const score = terms.reduce(
-          (sum, term) => sum + (lower.includes(term) ? 1 : 0),
-          0,
-        )
-        if (score <= 0) continue
-        const info = await stat(file.path).catch(() => undefined)
-        // Deliberately no file path: handing one out invites the model to page
-        // through raw JSONL with `read`, which is how a follow-up run once cost
-        // more than the investigation it was recovering.
-        results.push({
-          source: SOURCE_LABELS[file.source],
-          score,
-          modified: info?.mtime.toISOString(),
-          snippet: snippet(text, terms),
-        })
-      }
-      results.sort((a, b) => Number(b.score) - Number(a.score))
-      return textResult(
-        { query: params.query, results: results.slice(0, limit) },
-        { action: "thread_history_search", matches: results.length },
+          const results: HistoryMatch[] = []
+          for (const file of files) {
+            if (belongsToCurrentThread(file, currentSessionFile.current))
+              continue
+            const text = yield* Effect.tryPromise((signal) =>
+              readFile(file.path, { encoding: "utf8", signal }),
+            ).pipe(Effect.catch(() => Effect.succeed(undefined)))
+            if (text === undefined) continue
+            const lower = text.toLowerCase()
+            const score = terms.reduce(
+              (sum, term) => sum + (lower.includes(term) ? 1 : 0),
+              0,
+            )
+            if (score <= 0) continue
+            const info = yield* Effect.tryPromise(() => stat(file.path)).pipe(
+              Effect.catch(() => Effect.succeed(undefined)),
+            )
+            // Deliberately no file path: handing one out invites the model to page
+            // through raw JSONL with `read`, which is how a follow-up run once cost
+            // more than the investigation it was recovering.
+            results.push({
+              source: SOURCE_LABELS[file.source],
+              score,
+              modified: info?.mtime.toISOString(),
+              snippet: snippet(text, terms),
+            })
+          }
+          results.sort((a, b) => Number(b.score) - Number(a.score))
+          return textResult(
+            { query: params.query, results: results.slice(0, limit) },
+            { action: "thread_history_search", matches: results.length },
+          )
+        }),
       )
     },
   })
