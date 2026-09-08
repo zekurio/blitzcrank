@@ -6,11 +6,7 @@ import {
   type CreateModelRuntimeOptions,
 } from "@earendil-works/pi-coding-agent"
 
-import {
-  eventMediaScope,
-  IssueRunner,
-  type IssueEvent,
-} from "./agent/runner.ts"
+import { IssueRunner } from "./agent/runner.ts"
 import { DEFAULT_MODEL, resolveModel } from "./agent/session.ts"
 import {
   loadAutomations,
@@ -28,8 +24,9 @@ import { loadConfig, type Config } from "./config.ts"
 import { DiscordAgent } from "./discord/agent.ts"
 import { DiscordBot } from "./discord/bot.ts"
 import { createCommentGate } from "./gateways/seerr/comment-gate.ts"
+import { IssueWork } from "./issue-work.ts"
 import { SerialQueue } from "./queue.ts"
-import { RevisitScheduler, revisitDelay } from "./revisits.ts"
+import { revisitDelay } from "./revisits.ts"
 import { createApp } from "./server.ts"
 import { SeerrClient } from "./services/seerr.ts"
 
@@ -53,58 +50,14 @@ interface AutomationWork {
   discord: DiscordBot | undefined
 }
 
-class IssueWork {
-  readonly queue = new SerialQueue()
-  readonly revisits = new RevisitScheduler()
-
-  constructor(private readonly runner: IssueRunner) {}
-
-  armRevisit(
-    issueId: string,
-    delayMs: number,
-    reason: string,
-    mediaScope: ReturnType<typeof eventMediaScope>,
-  ): void {
-    this.revisits.schedule(issueId, delayMs, () =>
-      this.enqueue({ kind: "revisit", issueId, reason, mediaScope }),
-    )
-  }
-
-  enqueue(event: IssueEvent): void {
-    const runsAhead = this.queue.size
-    // Only user-driven runs get a public queue notice. Create its promise
-    // before enqueueing so it cannot wait behind the run that will adopt it.
-    const queuedStatus =
-      event.kind === "webhook" && runsAhead > 0
-        ? this.runner.notifyQueued(event.issueId, runsAhead).catch((err) => {
-            console.error(
-              `[issue:${event.issueId}] queue notification failed; continuing:`,
-              err,
-            )
-            return { id: undefined }
-          })
-        : Promise.resolve({ id: undefined })
-    this.queue.enqueue(async () => {
-      const result = await this.runner.run(event, await queuedStatus)
-      const revisit = result.casefile.revisit
-      if (!revisit) return
-      // The case file owns the plan. The timer only mirrors the saved state.
-      this.armRevisit(
-        result.issueId,
-        revisit.delayMs,
-        revisit.reason,
-        revisit.mediaScope,
-      )
-    })
-  }
-}
-
 async function main(): Promise<void> {
   const config = loadConfig()
   const automations = await loadAutomations(config.automationsDir)
   const models = await loadModels(config, automations)
+  const cases = new CaseStore(path.join(config.dataDir, "cases"))
   const issueWork = new IssueWork(
     new IssueRunner(config, models.runtime, models.issueSpec),
+    cases,
   )
   const automationWork = await startAutomations(
     config,
@@ -112,7 +65,6 @@ async function main(): Promise<void> {
     models,
     issueWork.queue,
   )
-  const cases = new CaseStore(path.join(config.dataDir, "cases"))
   await restoreRevisits(cases, issueWork)
 
   const app = createGatewayApp(config, cases, issueWork, automationWork)
@@ -236,6 +188,7 @@ async function restoreRevisits(
 ): Promise<void> {
   // Re-arm saved follow-ups. Spread overdue runs through revisitDelay.
   for (const file of await cases.pendingRevisits()) {
+    if (await cases.isPaused(file.issueId)) continue
     const delayMs = revisitDelay(file, Date.now())
     const revisit = file.revisit
     if (delayMs === undefined || !revisit) continue
@@ -259,11 +212,13 @@ function createGatewayApp(
     allowComment: createCommentGate(
       new SeerrClient(config.seerr, config.seerrBotUserId),
     ),
-    onIssueEvent: (issueId, payload) => {
+    onIssueEvent: async (issueId, payload) => {
       // New user activity replaces any pending follow-up for this issue.
       issueWork.revisits.cancel(issueId)
-      issueWork.enqueue({ kind: "webhook", issueId, payload })
+      return issueWork.enqueue({ kind: "webhook", issueId, payload })
     },
+    onIssueStop: (issueId) => issueWork.stop(issueId),
+    onIssueResume: (issueId) => issueWork.resume(issueId),
     onIssueClosed: (issueId) => closeIssue(cases, issueWork, issueId),
     listAutomations: () => automationWork.dispatcher.list(),
     triggerAutomation: (name) => automationWork.dispatcher.trigger(name),

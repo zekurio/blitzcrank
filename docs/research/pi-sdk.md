@@ -506,6 +506,19 @@ Tool results accept image blocks with `type: "image"`, base64 `data`, and
 `mimeType`. Frame results use `image/jpeg`. They are part of the saved session,
 so avoiding temporary files does not remove images from session history.
 
+### Stopping an issue turn
+
+The installed 0.85.1 `AgentSession.abort()` cancels retries, signals the agent,
+and waits for idle. Blitzcrank waits for active tool calls to finish before
+calling it, so a mutation can finish its verification read. Pi emits tool start
+events while preparing a parallel batch. The custom tool wrapper therefore
+also checks the host stop signal before each tool executes.
+
+A stopped turn returns an empty answer with its usage and session path. The
+issue runner saves these values and the evidence snapshot, then skips the
+directives and retracts the live status comment. The next run opens the saved
+session with a fresh prompt and tool list.
+
 ### Cleanup and concurrency
 
 - Call `session.dispose()` in `finally`.

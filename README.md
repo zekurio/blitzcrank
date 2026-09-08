@@ -56,6 +56,12 @@ Discord runs return text that the host posts.
 - **Comment authorization** — only the issue's reporter or a Seerr user with
   `ADMIN`/`MANAGE_ISSUES` can start a run by commenting; the check fails closed
   when Seerr is unreachable.
+- **Human takeover** — an authorized user can comment `/blitzcrank stop` to
+  stop an active turn after in-flight tool calls finish, drop queued and
+  scheduled work, and pause the issue. Normal comments stay ignored until
+  `/blitzcrank resume` is posted. The pause survives a restart. Resume allows
+  new events; it does not replay stopped work. Completed changes, usage, and
+  session evidence remain in the audit record.
 - **Loop guards** — the bot's own comment webhooks and `ISSUE_RESOLVED` events
   are dropped, one run leaves at most one comment, and new user activity
   cancels pending revisits.
