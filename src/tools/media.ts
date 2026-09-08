@@ -1,18 +1,18 @@
-import { execFile } from "node:child_process"
 import { readdir, realpath, stat } from "node:fs/promises"
 import path from "node:path"
-import { promisify } from "node:util"
 
 import {
   defineTool,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent"
+import { Effect } from "effect"
 import { Type } from "typebox"
 
-import type { MediaConfig } from "../config.ts"
-import type { JsonValue } from "../services/http.ts"
-import { textResult } from "./common.ts"
-import type { RunContext } from "./context.ts"
+import type { MediaConfig } from "../config.js"
+import type { JsonValue } from "../services/http.js"
+import { textResult, toolCheck, ToolError } from "./common.js"
+import type { RunContext } from "./context.js"
+import { execFileTextEffect } from "./exec.js"
 
 /**
  * ffprobe-backed media inspection: the only source of file truth about audio
@@ -52,7 +52,6 @@ const MEDIA_EXTENSIONS = new Set([
 
 /** Resolved from PATH; the NixOS unit puts ffmpeg there. */
 const FFPROBE = "ffprobe"
-const ffprobe = promisify(execFile)
 
 const MAX_WALK_ENTRIES = 4000
 const MAX_WALK_DEPTH = 4
@@ -86,62 +85,82 @@ export function buildMediaTools(
             "Absolute file or release-directory path from a declared path field this run (Arr file path or queue outputPath, SABnzbd storage, Jellyfin MediaSources Path, or Anvil source/destination); never a guessed, carried, or user-supplied path",
         }),
       }),
-      async execute(_toolCallId, params, signal) {
-        if (probes >= MAX_PROBES_PER_RUN) {
-          throw new Error(
-            `media_probe may be called at most ${MAX_PROBES_PER_RUN} times per run; probe one representative file instead`,
-          )
-        }
-        probes++
+      execute(_toolCallId, params, signal) {
+        return Effect.runPromise(
+          Effect.gen(function* () {
+            const requested = yield* toolCheck(() => {
+              if (probes >= MAX_PROBES_PER_RUN) {
+                throw new Error(
+                  `media_probe may be called at most ${MAX_PROBES_PER_RUN} times per run; probe one representative file instead`,
+                )
+              }
+              probes++
 
-        const requested = params.path.trim()
-        if (!ctx.sawRecordedPath(requested)) {
-          throw new Error(
-            `evidence gate: ${requested} was not returned in a declared service or Anvil path field this run. ` +
-              "Probe only an exact path from Sonarr/Radarr, SABnzbd, Jellyfin, or Anvil; " +
-              "never use issue text, carried evidence, or a reconstructed path.",
-          )
-        }
-        const target = await resolveMediaPath(requested, cfg.roots)
-        const info = await stat(target)
-        const file = info.isDirectory()
-          ? await largestMediaFile(target)
-          : { path: target, size: info.size }
-        if (!file) {
-          throw new Error(
-            `no media file found under ${target} (searched ${MAX_WALK_DEPTH} levels deep for ${[...MEDIA_EXTENSIONS].join(", ")})`,
-          )
-        }
+              const requested = params.path.trim()
+              if (!ctx.sawRecordedPath(requested)) {
+                throw new Error(
+                  `evidence gate: ${requested} was not returned in a declared service or Anvil path field this run. ` +
+                    "Probe only an exact path from Sonarr/Radarr, SABnzbd, Jellyfin, or Anvil; " +
+                    "never use issue text, carried evidence, or a reconstructed path.",
+                )
+              }
+              return requested
+            })
+            const target = yield* resolveMediaPathEffect(requested, cfg.roots)
+            const info = yield* Effect.tryPromise({
+              try: () => stat(target),
+              catch: (error) =>
+                new ToolError({
+                  message:
+                    error instanceof Error ? error.message : String(error),
+                }),
+            })
+            const file = info.isDirectory()
+              ? yield* largestMediaFileEffect(target)
+              : { path: target, size: info.size }
+            if (!file) {
+              return yield* Effect.fail(
+                new ToolError({
+                  message: `no media file found under ${target} (searched ${MAX_WALK_DEPTH} levels deep for ${[...MEDIA_EXTENSIONS].join(", ")})`,
+                }),
+              )
+            }
 
-        const { stdout } = await ffprobe(
-          FFPROBE,
-          [
-            "-v",
-            "error",
-            "-show_entries",
-            "stream=index,codec_type,codec_name,channels,channel_layout:stream_tags=language,title:stream_disposition=default,forced:format=duration",
-            "-of",
-            "json",
-            file.path,
-          ],
-          {
-            encoding: "utf8",
-            maxBuffer: 1024 * 1024,
-            signal,
-            timeout: PROBE_TIMEOUT_MS,
-          },
+            const stdout = yield* execFileTextEffect(
+              FFPROBE,
+              [
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=index,codec_type,codec_name,channels,channel_layout:stream_tags=language,title:stream_disposition=default,forced:format=duration",
+                "-of",
+                "json",
+                file.path,
+              ],
+              {
+                maxBufferBytes: 1024 * 1024,
+                signal,
+                timeoutMs: PROBE_TIMEOUT_MS,
+              },
+            )
+            // Both the path the model asked for and the file actually read: the
+            // former is the Arr's own spelling (pre-symlink-resolution), which is
+            // what a later scope gate compares against.
+            ctx.recordProbe(requested, target, file.path)
+            const summary = yield* toolCheck(() => summarizeProbe(stdout))
+            const result = {
+              ...summary,
+              file: file.path,
+              sizeBytes: file.size,
+            }
+            if (info.isDirectory())
+              Object.assign(result, { pickedFrom: target })
+            return textResult(result, {
+              action: "media_probe",
+              file: file.path,
+            })
+          }),
         )
-        // Both the path the model asked for and the file actually read: the
-        // former is the Arr's own spelling (pre-symlink-resolution), which is
-        // what a later scope gate compares against.
-        ctx.recordProbe(requested, target, file.path)
-        const result = {
-          ...summarizeProbe(stdout),
-          file: file.path,
-          sizeBytes: file.size,
-        }
-        if (info.isDirectory()) Object.assign(result, { pickedFrom: target })
-        return textResult(result, { action: "media_probe", file: file.path })
       },
     }),
   ]
@@ -160,33 +179,46 @@ const OUTSIDE_ROOTS =
  * is untrusted, and distinguishing "does not exist" from "exists but is not
  * yours" would turn the tool into an existence oracle for the whole host.
  */
-export async function resolveMediaPath(
+export function resolveMediaPathEffect(
   raw: string,
   roots: string[],
-): Promise<string> {
-  const input = raw.trim()
-  if (!path.isAbsolute(input) || input.includes("\0")) {
-    throw new Error(
-      "path must be an absolute filesystem path inside a media directory blitzcrank may read",
+): Effect.Effect<string, ToolError> {
+  return Effect.gen(function* () {
+    const lexical = yield* toolCheck(() => {
+      const input = raw.trim()
+      if (!path.isAbsolute(input) || input.includes("\0")) {
+        throw new Error(
+          "path must be an absolute filesystem path inside a media directory blitzcrank may read",
+        )
+      }
+      return path.resolve(input)
+    })
+    const resolvedRoots = yield* Effect.forEach(
+      roots,
+      (root) =>
+        Effect.tryPromise(() => realpath(root)).pipe(
+          Effect.catch(() => Effect.succeed(root)),
+        ),
+      { concurrency: "unbounded" },
     )
-  }
-  const lexical = path.resolve(input)
-  const allowed = (
-    await Promise.all(roots.map((root) => realpath(root).catch(() => root)))
-  ).concat(roots)
-  const inside = (candidate: string) =>
-    allowed.some(
-      (root) => candidate === root || candidate.startsWith(root + path.sep),
+    const allowed = resolvedRoots.concat(roots)
+    const inside = (candidate: string) =>
+      allowed.some(
+        (root) => candidate === root || candidate.startsWith(root + path.sep),
+      )
+    const target = yield* Effect.tryPromise(() => realpath(lexical)).pipe(
+      Effect.catch(() => Effect.succeed(undefined)),
     )
-
-  const target = await realpath(lexical).catch(() => undefined)
-  if (target === undefined) {
-    // Only admit that a path is missing when it was one we would have read.
-    if (!inside(lexical)) throw new Error(OUTSIDE_ROOTS)
-    throw new Error(`no such file or directory: ${lexical}`)
-  }
-  if (!inside(target)) throw new Error(OUTSIDE_ROOTS)
-  return target
+    return yield* toolCheck(() => {
+      if (target === undefined) {
+        // Only admit that a path is missing when it was one we would have read.
+        if (!inside(lexical)) throw new Error(OUTSIDE_ROOTS)
+        throw new Error(`no such file or directory: ${lexical}`)
+      }
+      if (!inside(target)) throw new Error(OUTSIDE_ROOTS)
+      return target
+    })
+  })
 }
 
 /**
@@ -197,39 +229,57 @@ export async function resolveMediaPath(
  * directory is indistinguishable from a regular file by design — whatever can
  * write into a media root can already place bytes there.
  */
-export async function largestMediaFile(
+export function largestMediaFileEffect(
   dir: string,
-): Promise<{ path: string; size: number } | undefined> {
-  let best: { path: string; size: number } | undefined
-  let seen = 0
-  const pending = [{ dir, depth: 0 }]
-  while (pending.length > 0) {
-    const current = pending.shift()!
-    for (const entry of await readdir(current.dir, { withFileTypes: true })) {
-      if (++seen > MAX_WALK_ENTRIES) {
-        // Huge tree: answer with the best candidate found so far rather than
-        // failing the whole probe.
-        if (best) return best
-        throw new Error(
-          `no media file in the first ${MAX_WALK_ENTRIES} entries of ${dir}; pass an exact file path`,
-        )
-      }
-      const full = path.join(current.dir, entry.name)
-      if (entry.isDirectory()) {
-        if (current.depth < MAX_WALK_DEPTH) {
-          pending.push({ dir: full, depth: current.depth + 1 })
+): Effect.Effect<{ path: string; size: number } | undefined, ToolError> {
+  return Effect.gen(function* () {
+    let best: { path: string; size: number } | undefined
+    let seen = 0
+    const pending = [{ dir, depth: 0 }]
+    while (pending.length > 0) {
+      const current = pending.shift()!
+      const entries = yield* Effect.tryPromise({
+        try: () => readdir(current.dir, { withFileTypes: true }),
+        catch: (error) =>
+          new ToolError({
+            message: error instanceof Error ? error.message : String(error),
+          }),
+      })
+      for (const entry of entries) {
+        if (++seen > MAX_WALK_ENTRIES) {
+          // Huge tree: answer with the best candidate found so far rather than
+          // failing the whole probe.
+          if (best) return best
+          return yield* Effect.fail(
+            new ToolError({
+              message: `no media file in the first ${MAX_WALK_ENTRIES} entries of ${dir}; pass an exact file path`,
+            }),
+          )
         }
-        continue
+        const full = path.join(current.dir, entry.name)
+        if (entry.isDirectory()) {
+          if (current.depth < MAX_WALK_DEPTH) {
+            pending.push({ dir: full, depth: current.depth + 1 })
+          }
+          continue
+        }
+        if (!entry.isFile()) continue
+        if (!MEDIA_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
+          continue
+        }
+        const info = yield* Effect.tryPromise({
+          try: () => stat(full),
+          catch: (error) =>
+            new ToolError({
+              message: error instanceof Error ? error.message : String(error),
+            }),
+        })
+        const size = info.size
+        if (!best || size > best.size) best = { path: full, size }
       }
-      if (!entry.isFile()) continue
-      if (!MEDIA_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
-        continue
-      }
-      const size = (await stat(full)).size
-      if (!best || size > best.size) best = { path: full, size }
     }
-  }
-  return best
+    return best
+  })
 }
 
 interface FfprobeStream {

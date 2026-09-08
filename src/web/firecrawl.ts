@@ -2,11 +2,12 @@ import {
   defineTool,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent"
+import { Effect } from "effect"
 import { Type } from "typebox"
 
-import type { WebConfig } from "../config.ts"
-import { jsonRequest, type JsonValue } from "../services/http.ts"
-import { textResult } from "../tools/common.ts"
+import type { WebConfig } from "../config.js"
+import { jsonRequestEffect, type JsonValue } from "../services/http.js"
+import { textResult, toolCheck } from "../tools/common.js"
 
 type FirecrawlConfig = Extract<WebConfig, { provider: "firecrawl" }>
 
@@ -97,58 +98,67 @@ function buildSearchTool(
         ]),
       ),
     }),
-    async execute(_toolCallId, params) {
-      if (params.includeDomains && params.excludeDomains) {
-        throw new Error(
-          "includeDomains and excludeDomains are mutually exclusive",
-        )
-      }
-      const response = await jsonRequest<FirecrawlSearchResponse>(
-        FIRECRAWL_URL,
-        "/v2/search",
-        {
-          method: "POST",
-          headers: { authorization: `Bearer ${config.apiKey}` },
-          body: {
-            query: params.query,
-            limit: params.limit ?? 5,
-            sources: [{ type: "web" }],
-            // Results are the only valid extraction targets, so keep out
-            // URLs Firecrawl itself could not scrape.
-            ignoreInvalidURLs: true,
-            ...(params.includeDomains
-              ? { includeDomains: params.includeDomains }
-              : {}),
-            ...(params.excludeDomains
-              ? { excludeDomains: params.excludeDomains }
-              : {}),
-            ...(params.recency ? { tbs: recencyValue(params.recency) } : {}),
-          } satisfies JsonValue,
-        },
-      )
-      if (!response.success) {
-        throw new Error("Firecrawl search was unsuccessful")
-      }
-      const results = (response.data?.web ?? []).map((result) => ({
-        ...(result.title !== undefined ? { title: result.title } : {}),
-        ...(result.description !== undefined
-          ? { description: result.description }
-          : {}),
-        ...(result.url !== undefined ? { url: result.url } : {}),
-      }))
-      for (const result of results) {
-        recordExtractable(extractable, result.url)
-      }
-      return textResult(
-        {
-          results,
-          ...(response.warning ? { warning: response.warning } : {}),
-        },
-        {
-          provider: "firecrawl",
-          results: results.length,
-          creditsUsed: response.creditsUsed,
-        },
+    execute(_toolCallId, params) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          const recency = yield* toolCheck(() => {
+            if (params.includeDomains && params.excludeDomains) {
+              throw new Error(
+                "includeDomains and excludeDomains are mutually exclusive",
+              )
+            }
+            return params.recency ? recencyValue(params.recency) : undefined
+          })
+          const response = yield* jsonRequestEffect<FirecrawlSearchResponse>(
+            FIRECRAWL_URL,
+            "/v2/search",
+            {
+              method: "POST",
+              headers: { authorization: `Bearer ${config.apiKey}` },
+              body: {
+                query: params.query,
+                limit: params.limit ?? 5,
+                sources: [{ type: "web" }],
+                // Results are the only valid extraction targets, so keep out
+                // URLs Firecrawl itself could not scrape.
+                ignoreInvalidURLs: true,
+                ...(params.includeDomains
+                  ? { includeDomains: params.includeDomains }
+                  : {}),
+                ...(params.excludeDomains
+                  ? { excludeDomains: params.excludeDomains }
+                  : {}),
+                ...(recency ? { tbs: recency } : {}),
+              } satisfies JsonValue,
+            },
+          )
+          return yield* toolCheck(() => {
+            if (!response.success) {
+              throw new Error("Firecrawl search was unsuccessful")
+            }
+            const results = (response.data?.web ?? []).map((result) => ({
+              ...(result.title !== undefined ? { title: result.title } : {}),
+              ...(result.description !== undefined
+                ? { description: result.description }
+                : {}),
+              ...(result.url !== undefined ? { url: result.url } : {}),
+            }))
+            for (const result of results) {
+              recordExtractable(extractable, result.url)
+            }
+            return textResult(
+              {
+                results,
+                ...(response.warning ? { warning: response.warning } : {}),
+              },
+              {
+                provider: "firecrawl",
+                results: results.length,
+                creditsUsed: response.creditsUsed,
+              },
+            )
+          })
+        }),
       )
     },
   })
@@ -168,56 +178,66 @@ function buildExtractTool(
     parameters: Type.Object({
       url: Type.String({ minLength: 1, maxLength: 2_000 }),
     }),
-    async execute(_toolCallId, params) {
-      const url = publicHttpUrl(params.url)
-      if (!extractable.has(url)) {
-        throw new Error(
-          "web_extract only opens URLs returned by web_search in this run; " +
-            "search first and pick a result URL",
-        )
-      }
-      const response = await jsonRequest<FirecrawlScrapeResponse>(
-        FIRECRAWL_URL,
-        "/v2/scrape",
-        {
-          method: "POST",
-          headers: { authorization: `Bearer ${config.apiKey}` },
-          body: {
-            url,
-            formats: [{ type: "markdown" }],
-            onlyMainContent: true,
-            // Slow JS-heavy pages get room; Firecrawl's own timeout (below
-            // the client's) makes it answer with a structured error first.
-            timeout: 45_000,
-          } satisfies JsonValue,
-          timeoutMs: 60_000,
-        },
-      )
-      if (!response.success) {
-        throw new Error(
-          `Firecrawl extraction failed: ${response.error ?? "unknown error"}`,
-        )
-      }
-      const metadata = response.data?.metadata
-      const markdown = response.data?.markdown ?? ""
-      return textResult(
-        {
-          url: metadata?.url ?? url,
-          statusCode: metadata?.statusCode,
-          ...(metadata?.title !== undefined
-            ? { title: metadataText(metadata.title) }
-            : {}),
-          ...(metadata?.description !== undefined
-            ? { description: metadataText(metadata.description) }
-            : {}),
-          markdown: markdown === "" ? "(page yielded no content)" : markdown,
-          ...(response.warning ? { warning: response.warning } : {}),
-        },
-        {
-          provider: "firecrawl",
-          chars: markdown.length,
-          creditsUsed: response.creditsUsed,
-        },
+    execute(_toolCallId, params) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          const url = yield* toolCheck(() => {
+            const url = publicHttpUrl(params.url)
+            if (!extractable.has(url)) {
+              throw new Error(
+                "web_extract only opens URLs returned by web_search in this run; " +
+                  "search first and pick a result URL",
+              )
+            }
+            return url
+          })
+          const response = yield* jsonRequestEffect<FirecrawlScrapeResponse>(
+            FIRECRAWL_URL,
+            "/v2/scrape",
+            {
+              method: "POST",
+              headers: { authorization: `Bearer ${config.apiKey}` },
+              body: {
+                url,
+                formats: [{ type: "markdown" }],
+                onlyMainContent: true,
+                // Slow JS-heavy pages get room; Firecrawl's own timeout (below
+                // the client's) makes it answer with a structured error first.
+                timeout: 45_000,
+              } satisfies JsonValue,
+              timeoutMs: 60_000,
+            },
+          )
+          return yield* toolCheck(() => {
+            if (!response.success) {
+              throw new Error(
+                `Firecrawl extraction failed: ${response.error ?? "unknown error"}`,
+              )
+            }
+            const metadata = response.data?.metadata
+            const markdown = response.data?.markdown ?? ""
+            return textResult(
+              {
+                url: metadata?.url ?? url,
+                statusCode: metadata?.statusCode,
+                ...(metadata?.title !== undefined
+                  ? { title: metadataText(metadata.title) }
+                  : {}),
+                ...(metadata?.description !== undefined
+                  ? { description: metadataText(metadata.description) }
+                  : {}),
+                markdown:
+                  markdown === "" ? "(page yielded no content)" : markdown,
+                ...(response.warning ? { warning: response.warning } : {}),
+              },
+              {
+                provider: "firecrawl",
+                chars: markdown.length,
+                creditsUsed: response.creditsUsed,
+              },
+            )
+          })
+        }),
       )
     },
   })
