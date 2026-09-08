@@ -2,6 +2,7 @@ allowBuilds:
   esbuild: true
   "@google/genai": false
   protobufjs: false
+  msgpackr-extract: false
 
 minimumReleaseAgeExclude:
   - "@earendil-works/pi-agent-core@0.84.2"
