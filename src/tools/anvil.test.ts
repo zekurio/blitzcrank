@@ -7,11 +7,73 @@ import { describe, test } from "node:test"
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent"
 
 import { buildAnvilTools, interpretJobLookup } from "./anvil.ts"
+import { makeReadTool } from "./common.ts"
 import { RunContext } from "./context.ts"
 import { isReadTool } from "./index.ts"
 
 const SOURCE_PATH = "/mnt/downloads/complete/Show/episode.mkv"
 const CONVERTED_PATH = "/mnt/downloads/converted/Show/episode.mkv"
+
+for (const field of ["droppedPath", "importedPath"]) {
+  test(`Radarr history ${field} permits lookup but not retry`, async (t) => {
+    const fake = await fakeAnvilctl()
+    t.after(fake.cleanup)
+    const ctx = new RunContext()
+    const tools = buildAnvilTools(
+      { command: fake.command, socket: "/tmp/anvild.sock" },
+      ctx,
+    )
+    const read = makeReadTool(
+      {
+        service: "radarr",
+        label: "Radarr",
+        description: "Read Radarr history",
+        request: async () => ({
+          records: [
+            { data: { [field]: SOURCE_PATH, message: "/untrusted/movie.mkv" } },
+            { data: { [field]: "relative/movie.mkv" } },
+            { data: { [field]: "/invalid\0/movie.mkv" } },
+          ],
+        }),
+      },
+      ctx,
+    )
+    await execute([read], "radarr_request", {
+      path: "/api/v3/history?downloadId=test",
+      purpose: "Find the exact import paths",
+    })
+    for (const target of [
+      "/untrusted/movie.mkv",
+      "/different/movie.mkv",
+      "relative/movie.mkv",
+      "/invalid\0/movie.mkv",
+    ]) {
+      assert.equal(ctx.sawRecordedPath(target), false)
+      await assert.rejects(
+        execute(tools, "anvil_job_lookup", {
+          purpose: "Reject an unverified path",
+          absolute_path: target,
+        }),
+        /evidence gate|exact absolute path/,
+      )
+    }
+    await execute(tools, "anvil_job_lookup", {
+      purpose: "Find the imported file's job",
+      absolute_path: SOURCE_PATH,
+    })
+    await execute(tools, "anvil_job_show", {
+      purpose: "Read failure details",
+      job: "7",
+    })
+    await assert.rejects(
+      execute(tools, "anvil_retry_job", {
+        reason: "History paths must not grant retry permission",
+        job: "7",
+      }),
+      /not uniquely returned by an exact-path lookup/,
+    )
+  })
+}
 
 async function execute(
   tools: ToolDefinition[],

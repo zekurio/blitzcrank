@@ -22,7 +22,12 @@ import {
   buildRevisitPrompt,
   buildSystemPrompt,
 } from "./prompt.ts"
-import { modelAnchor, runAgentTurn, usageAnchor } from "./session.ts"
+import {
+  modelAnchor,
+  resolveModel,
+  runAgentTurn,
+  usageAnchor,
+} from "./session.ts"
 
 export type IssueEvent =
   | { kind: "webhook"; issueId: string; payload: SeerrWebhookPayload }
@@ -146,6 +151,7 @@ export class IssueRunner {
       const web = buildWebProvider(this.config.web)
       const tools = [
         ...buildIssueTools({
+          modelInput: resolveModel(this.modelRuntime, this.modelSpec).input,
           config: this.config,
           ctx,
           seerr,

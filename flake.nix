@@ -74,6 +74,7 @@
               blitzPi
               nodejs_24
               pnpm
+              ffmpeg-headless
             ];
 
             shellHook = ''
