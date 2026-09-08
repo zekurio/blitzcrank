@@ -4,10 +4,14 @@ import os from "node:os"
 import path from "node:path"
 import test from "node:test"
 
+import { Deferred, Effect } from "effect"
+
 import { parseDirectives } from "./agent/directives.ts"
+import { sdkPromise } from "./agent/effect.ts"
 import type { IssueRunner, RunOutcome } from "./agent/runner.ts"
 import { CaseStore } from "./casefile.ts"
 import { IssueWork } from "./issue-work.ts"
+import { HttpRequestError } from "./services/http.ts"
 
 test("stop pauses an issue and cancels active and queued work", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "blitzcrank-stop-"))
@@ -38,7 +42,7 @@ test("stop pauses an issue and cancels active and queued work", async () => {
       throw new Error("unreachable")
     },
   }
-  const work = new IssueWork(runner, cases)
+  const work = new IssueWork(effectRunner(runner), cases)
   const event = {
     kind: "webhook" as const,
     issueId: "12",
@@ -84,7 +88,7 @@ test("pause survives restart and concurrent resume follows stop", async (t) => {
       throw new Error("unexpected run")
     },
   }
-  const work = new IssueWork(runner, cases)
+  const work = new IssueWork(effectRunner(runner), cases)
   await work.stop("12")
   assert.equal(await new CaseStore(dir).isPaused("12"), true)
   await Promise.all([work.stop("12"), work.resume("12")])
@@ -105,7 +109,7 @@ test("stop preserves active writes and resume does not revive old work", async (
   })
   const ran: string[] = []
   const work = new IssueWork(
-    {
+    effectRunner({
       async notifyQueued() {
         return { id: undefined }
       },
@@ -132,7 +136,7 @@ test("stop preserves active writes and resume does not revive old work", async (
           directives: parseDirectives(""),
         }
       },
-    },
+    }),
     cases,
   )
   const event = {
@@ -173,18 +177,19 @@ test("stop wins while a queued run waits for its pause check", async (t) => {
   })
   class DelayedCaseStore extends CaseStore {
     reads = 0
-    override async isPaused(issueId: string): Promise<boolean> {
-      this.reads += 1
-      if (this.reads !== 2) return super.isPaused(issueId)
-      checked()
-      await reading
-      return false
+    override isPausedEffect(issueId: string) {
+      return Effect.suspend(() => {
+        this.reads += 1
+        if (this.reads !== 2) return super.isPausedEffect(issueId)
+        checked()
+        return Effect.promise(() => reading).pipe(Effect.as(false))
+      })
     }
   }
   const cases = new DelayedCaseStore(dir)
   let runs = 0
   const work = new IssueWork(
-    {
+    effectRunner({
       async notifyQueued() {
         return { id: undefined }
       },
@@ -193,7 +198,7 @@ test("stop wins while a queued run waits for its pause check", async (t) => {
         runs += 1
         throw new Error("stopped work must not start")
       },
-    },
+    }),
     cases,
   )
   await work.enqueue({
@@ -207,4 +212,63 @@ test("stop wins while a queued run waits for its pause check", async (t) => {
   release()
   await waitForDrain(work)
   assert.equal(runs, 0)
+})
+
+function effectRunner(
+  runner: Pick<IssueRunner, "notifyQueued" | "retractStatus" | "run">,
+) {
+  return {
+    notifyQueuedEffect: (...args: Parameters<IssueRunner["notifyQueued"]>) =>
+      Effect.tryPromise({
+        try: () => runner.notifyQueued(...args),
+        catch: (cause) => new HttpRequestError({ cause }),
+      }),
+    retractStatusEffect: (...args: Parameters<IssueRunner["retractStatus"]>) =>
+      Effect.tryPromise({
+        try: () => runner.retractStatus(...args),
+        catch: (cause) => new HttpRequestError({ cause }),
+      }),
+    runEffect: (...args: Parameters<IssueRunner["run"]>) =>
+      sdkPromise(() => runner.run(...args)),
+  }
+}
+
+test("shutdown during a pause check cannot post an orphan queue notice", async () => {
+  const checking = Deferred.makeUnsafe<void>()
+  const paused = Deferred.makeUnsafe<boolean>()
+  const release = Deferred.makeUnsafe<void>()
+  class DelayedCaseStore extends CaseStore {
+    override isPausedEffect() {
+      return Deferred.succeed(checking, undefined).pipe(
+        Effect.andThen(Deferred.await(paused)),
+      )
+    }
+  }
+  let notices = 0
+  const work = new IssueWork(
+    {
+      notifyQueuedEffect: () =>
+        Effect.sync(() => {
+          notices += 1
+          return { id: 1 }
+        }),
+      retractStatusEffect: () => Effect.void,
+      runEffect: () => Effect.die("unexpected run"),
+    },
+    new DelayedCaseStore("/unused"),
+  )
+  work.queue.enqueueEffect(() => Deferred.await(release))
+  const queued = work.enqueue({
+    kind: "webhook",
+    issueId: "12",
+    payload: { notification_type: "ISSUE_COMMENT" },
+  })
+  await Effect.runPromise(Deferred.await(checking))
+  work.queue.close()
+  const rejected = assert.rejects(queued, /queue is closed/)
+  await Effect.runPromise(Deferred.succeed(paused, false))
+  await rejected
+  assert.equal(notices, 0)
+  await Effect.runPromise(Deferred.succeed(release, undefined))
+  await Effect.runPromise(work.queue.drainEffect())
 })

@@ -1,3 +1,5 @@
+import { Effect } from "effect"
+
 import type { SerialQueue } from "../queue.ts"
 import type { AutomationDefinition } from "./definitions.ts"
 import type { AutomationReport } from "./runner.ts"
@@ -18,9 +20,9 @@ export interface DispatcherDeps {
   /** Automations loaded at boot; nothing else can ever be dispatched. */
   definitions: AutomationDefinition[]
   queue: SerialQueue
-  run: (def: AutomationDefinition) => Promise<AutomationReport>
+  run: (def: AutomationDefinition) => Effect.Effect<AutomationReport, unknown>
   /** Report hand-off (Discord today). A broken sink must not leak a slot. */
-  publish: (report: AutomationReport) => Promise<void>
+  publish: (report: AutomationReport) => Effect.Effect<void, unknown>
   /** Next cron occurrence, for `list()`; owned by the scheduler. */
   nextRun: (name: string) => string | undefined
 }
@@ -42,21 +44,19 @@ export class AutomationDispatcher {
 
   /** Cron entry point: dispatch an already-loaded definition. */
   dispatch(def: AutomationDefinition): TriggerResult {
-    if (this.inFlight.has(def.name)) {
+    if (this.deps.queue.closed || this.inFlight.has(def.name)) {
       console.warn(
         `[automation:${def.name}] already queued or running; skipped`,
       )
       return "busy"
     }
     this.inFlight.add(def.name)
-    this.deps.queue.enqueue(async () => {
-      try {
-        const report = await this.deps.run(def)
-        await this.deps.publish(report)
-      } finally {
-        this.inFlight.delete(def.name)
-      }
-    })
+    this.deps.queue.enqueueEffect(() =>
+      Effect.suspend(() => this.deps.run(def)).pipe(
+        Effect.flatMap((report) => this.deps.publish(report)),
+        Effect.ensuring(Effect.sync(() => this.inFlight.delete(def.name))),
+      ),
+    )
     return "queued"
   }
 

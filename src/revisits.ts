@@ -1,3 +1,5 @@
+import { Cause, Effect, Fiber } from "effect"
+
 import type { CaseFile, CaseMediaScope, PendingRevisit } from "./casefile.ts"
 
 /**
@@ -9,28 +11,53 @@ import type { CaseFile, CaseMediaScope, PendingRevisit } from "./casefile.ts"
  * case file, so a restart re-arms them instead of silently dropping follow-ups.
  */
 export class RevisitScheduler {
-  private readonly timers = new Map<string, NodeJS.Timeout>()
+  private readonly timers = new Map<string, Fiber.Fiber<void>>()
 
   schedule(issueId: string, delayMs: number, run: () => void): void {
+    this.scheduleEffect(issueId, delayMs, () => Effect.sync(run))
+  }
+
+  scheduleEffect(
+    issueId: string,
+    delayMs: number,
+    run: () => Effect.Effect<void, unknown>,
+  ): void {
     this.cancel(issueId)
-    const timer = setTimeout(() => {
-      this.timers.delete(issueId)
-      run()
-    }, delayMs)
-    timer.unref?.()
+    const timer = Effect.runFork(
+      Effect.sleep(delayMs).pipe(
+        Effect.flatMap(() => {
+          this.timers.delete(issueId)
+          return run()
+        }),
+        Effect.catchCause((cause) =>
+          Cause.hasInterrupts(cause)
+            ? Effect.void
+            : Effect.sync(() =>
+                console.error(
+                  `[issue:${issueId}] revisit failed:`,
+                  Cause.squash(cause),
+                ),
+              ),
+        ),
+      ),
+    )
     this.timers.set(issueId, timer)
   }
 
   cancel(issueId: string): void {
     const timer = this.timers.get(issueId)
     if (timer) {
-      clearTimeout(timer)
+      timer.interruptUnsafe()
       this.timers.delete(issueId)
     }
   }
 
   get pending(): number {
     return this.timers.size
+  }
+
+  stop(): void {
+    for (const issueId of this.timers.keys()) this.cancel(issueId)
   }
 }
 

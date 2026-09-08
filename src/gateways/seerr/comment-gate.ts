@@ -1,6 +1,5 @@
 import { Cause, Effect } from "effect"
 
-import { HttpRequestError } from "../../services/http.ts"
 import type { SeerrClient, SeerrUser } from "../../services/seerr.ts"
 import { issueIdOf, webhookText, type SeerrWebhookPayload } from "./types.ts"
 
@@ -84,22 +83,4 @@ function matchesUser(
 
 function normalize(value: string | undefined): string | undefined {
   return webhookText(value)?.toLowerCase()
-}
-
-export function createCommentGate(
-  seerr: Pick<SeerrClient, "getIssue" | "listUsers">,
-): (payload: SeerrWebhookPayload) => Promise<boolean> {
-  const gate = createCommentGateEffect({
-    getIssueEffect: (issueId) =>
-      Effect.tryPromise({
-        try: () => seerr.getIssue(issueId),
-        catch: (cause) => new HttpRequestError({ cause }),
-      }),
-    listUsersEffect: () =>
-      Effect.tryPromise({
-        try: () => seerr.listUsers(),
-        catch: (cause) => new HttpRequestError({ cause }),
-      }),
-  })
-  return (payload) => Effect.runPromise(gate(payload))
 }

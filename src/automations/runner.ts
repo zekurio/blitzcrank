@@ -52,9 +52,6 @@ export class AutomationRunner {
     private readonly modelSpecs: Readonly<Record<string, string>>,
   ) {}
 
-  run(def: AutomationDefinition): Promise<AutomationReport> {
-    return Effect.runPromise(this.runEffect(def))
-  }
   runEffect(def: AutomationDefinition) {
     return Effect.gen({ self: this }, function* () {
       const ctx = new RunContext()
