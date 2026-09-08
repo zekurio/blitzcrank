@@ -153,6 +153,14 @@ default for automation runs and inherits `BLITZCRANK_MODEL` when unset.
 for example
 `{"stale-import-handler":"openai-codex/gpt-5.6-terra:high"}`. The Nix module
 exposes the same mapping as `services.blitzcrank.automationModels`.
+
+GPT-6 Astra is supported by the pinned pi SDK 0.85.1. Set
+`BLITZCRANK_MODEL=openai-codex/gpt-6-astra:medium` for Codex subscription auth,
+or `openai/gpt-6-astra:medium` with `OPENAI_API_KEY` for API-key auth.
+Use `low`, `medium`, `high`, `xhigh`, or `max` reasoning for Astra.
+Account access is still required. Automation and Discord model overrides
+continue to take precedence over this shared setting.
+
 Authentication follows pi's resolution order: API-key providers read the usual
 env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …), OAuth/subscription
 providers read a pi `auth.json`. On NixOS, bootstrap the default auth path with

@@ -17,8 +17,8 @@
     "verify": "pnpm fmt:check && pnpm lint && pnpm typecheck"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "0.84.2",
-    "@earendil-works/pi-coding-agent": "0.84.2",
+    "@earendil-works/pi-ai": "0.85.1",
+    "@earendil-works/pi-coding-agent": "0.85.1",
     "croner": "^10.0.1",
     "discord.js": "^14.27.0",
     "typebox": "1.1.38",
