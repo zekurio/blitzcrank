@@ -10,15 +10,22 @@ import { isBotComment } from "./gateways/seerr/loop-guard.ts"
 import {
   isIssueEvent,
   issueIdOf,
+  webhookText,
   type SeerrWebhookPayload,
 } from "./gateways/seerr/types.ts"
 
 export interface ServerDeps {
   config: Config
   /** Called with a validated issue event; must not throw synchronously. */
-  onIssueEvent: (issueId: string, payload: SeerrWebhookPayload) => void
+  onIssueEvent: (
+    issueId: string,
+    payload: SeerrWebhookPayload,
+  ) => Promise<"paused" | "queued">
   /** Called when an issue is resolved, so pending follow-ups are dropped. */
   onIssueClosed: (issueId: string) => Promise<void>
+  /** Stops or resumes work after the normal comment authorization check. */
+  onIssueStop: (issueId: string) => Promise<void>
+  onIssueResume: (issueId: string) => Promise<void>
   /** Authorizes comment-triggered runs (reporter/admin policy). */
   allowComment: (payload: SeerrWebhookPayload) => Promise<boolean>
   listAutomations: () => AutomationInfo[]
@@ -141,10 +148,24 @@ async function handleSeerrWebhook(
       })
       return
     }
+    const command = webhookText(payload.comment?.comment_message)?.toLowerCase()
+    if (command === "/blitzcrank stop") {
+      await deps.onIssueStop(issueId)
+      json(response, 200, { ok: true, command: "stopped" })
+      return
+    }
+    if (command === "/blitzcrank resume") {
+      await deps.onIssueResume(issueId)
+      json(response, 200, { ok: true, command: "resumed" })
+      return
+    }
   }
 
-  deps.onIssueEvent(issueId, payload)
-  json(response, 200, { ok: true })
+  const result = await deps.onIssueEvent(issueId, payload)
+  json(response, 200, {
+    ok: true,
+    ...(result === "paused" ? { ignored: "issue paused" } : {}),
+  })
 }
 
 async function readPayload(
