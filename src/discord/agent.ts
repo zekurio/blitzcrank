@@ -3,7 +3,7 @@ import path from "node:path"
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent"
 
 import type { WebToolNames } from "../agent/prompt.ts"
-import { runAgentTurn } from "../agent/session.ts"
+import { resolveModel, runAgentTurn } from "../agent/session.ts"
 import type { Config } from "../config.ts"
 import { EvidenceStore } from "../evidence.ts"
 import type { SerialQueue } from "../queue.ts"
@@ -158,7 +158,12 @@ export class DiscordAgent {
     const sessionFileRef: SessionFileRef = { current: undefined }
     const web = buildWebProvider(this.config.web)
     const tools = [
-      ...buildDiscordTools(this.config, ctx, sessionFileRef),
+      ...buildDiscordTools(
+        this.config,
+        ctx,
+        sessionFileRef,
+        resolveModel(this.modelRuntime, this.modelSpec).input,
+      ),
       ...web.tools,
     ]
     const turn = await runAgentTurn({

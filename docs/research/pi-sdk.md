@@ -485,6 +485,17 @@ The minimal `createAgentSession()` call performs default discovery. A locked-dow
 
 Project-local resources may involve pi's project-trust behavior. For fully controlled service deployments, avoid dynamic project discovery and provide explicit resources.
 
+### Image tool results
+
+The resolved model's `input` array declares `"text"` and optional `"image"`
+support. Register `media_frames` only when `input.includes("image")` and media
+roots are configured. Resolve this for each run before building its tools and
+prompt, including resumed issue and Discord sessions.
+
+Tool results accept image blocks with `type: "image"`, base64 `data`, and
+`mimeType`. Frame results use `image/jpeg`. They are part of the saved session,
+so avoiding temporary files does not remove images from session history.
+
 ### Cleanup and concurrency
 
 - Call `session.dispose()` in `finally`.

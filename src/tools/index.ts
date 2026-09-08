@@ -12,6 +12,7 @@ import { buildCaseFileTool } from "./casefile.ts"
 import type { RunContext } from "./context.ts"
 import { buildHistoryTool } from "./history.ts"
 import { buildJellyfinTools } from "./jellyfin.ts"
+import { buildMediaFramesTool } from "./media-frames.ts"
 import { buildMediaTools } from "./media.ts"
 import { buildProgressTool, type StatusComment } from "./progress.ts"
 import { buildSabnzbdTools } from "./sabnzbd.ts"
@@ -32,6 +33,7 @@ export function buildServiceTools(
   config: Config,
   ctx: RunContext,
   sessionFileRef: SessionFileRef,
+  modelInput: readonly ("text" | "image")[] = [],
 ): ToolDefinition[] {
   const tools: ToolDefinition[] = [...buildSeerrTools(config.seerr, ctx)]
   if (config.sonarr) {
@@ -44,6 +46,9 @@ export function buildServiceTools(
   if (config.sabnzbd) tools.push(...buildSabnzbdTools(config.sabnzbd, ctx))
   if (config.anvil) tools.push(...buildAnvilTools(config.anvil, ctx))
   if (config.media) tools.push(...buildMediaTools(config.media, ctx))
+  if (config.media?.roots.length && modelInput.includes("image")) {
+    tools.push(buildMediaFramesTool(config.media, ctx))
+  }
   tools.push(
     buildHistoryTool(path.join(config.dataDir, "sessions"), sessionFileRef),
   )
@@ -65,6 +70,7 @@ const READ_TOOLS = new Set([
   "anvil_status",
   "jellyfin_request",
   "media_probe",
+  "media_frames",
   "radarr_request",
   "sabnzbd_request",
   "seerr_request",
@@ -86,10 +92,14 @@ export function buildDiscordTools(
   config: Config,
   ctx: RunContext,
   sessionFileRef: SessionFileRef,
+  modelInput: readonly ("text" | "image")[] = [],
 ): ToolDefinition[] {
-  const tools = buildServiceTools(config, ctx, sessionFileRef).filter(
-    (tool) => tool.name !== "thread_history_search",
-  )
+  const tools = buildServiceTools(
+    config,
+    ctx,
+    sessionFileRef,
+    modelInput,
+  ).filter((tool) => tool.name !== "thread_history_search")
   tools.push(
     buildHistoryTool(path.join(config.dataDir, "sessions"), sessionFileRef, [
       "issues",
@@ -102,6 +112,7 @@ export function buildDiscordTools(
 export type MediaScope = "movie" | "tv" | undefined
 
 export interface IssueToolDeps {
+  modelInput?: readonly ("text" | "image")[]
   config: Config
   ctx: RunContext
   seerr: SeerrClient
@@ -128,6 +139,7 @@ export function buildIssueTools(deps: IssueToolDeps): ToolDefinition[] {
     deps.config,
     deps.ctx,
     deps.sessionFileRef,
+    deps.modelInput,
   ).filter((tool) => {
     const isSonarr = tool.name.startsWith("sonarr_")
     const isRadarr = tool.name.startsWith("radarr_")
