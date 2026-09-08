@@ -1,15 +1,12 @@
-import {
-  mkdir,
-  readdir,
-  readFile,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises"
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
+
+import { Effect } from "effect"
 
 import { EvidenceStore } from "./evidence.ts"
 import type { JsonValue } from "./services/http.ts"
+import { storageCheck, storageIO, writeAtomic } from "./storage.ts"
+import type { StorageError } from "./storage.ts"
 import type { EvidenceSnapshot } from "./tools/context.ts"
 
 /**
@@ -219,70 +216,95 @@ export class CaseStore {
     return `${this.file(issueId).slice(0, -".json".length)}.paused`
   }
 
-  async isPaused(issueId: string): Promise<boolean> {
-    return readFile(this.pauseFile(issueId)).then(
-      () => true,
-      (err: NodeJS.ErrnoException) => {
-        if (err.code === "ENOENT") return false
-        throw err
-      },
-    )
+  isPausedEffect(issueId: string): Effect.Effect<boolean, StorageError> {
+    return Effect.gen({ self: this }, function* () {
+      const target = yield* storageCheck(() => this.pauseFile(issueId))
+      return yield* storageIO(() => readFile(target)).pipe(
+        Effect.as(true),
+        Effect.catch((error) =>
+          error.code === "ENOENT" ? Effect.succeed(false) : Effect.fail(error),
+        ),
+      )
+    })
   }
 
-  async pause(issueId: string): Promise<void> {
-    await mkdir(this.dir, { recursive: true })
-    await writeFile(this.pauseFile(issueId), "", "utf8")
+  pauseEffect(issueId: string): Effect.Effect<void, StorageError> {
+    return Effect.gen({ self: this }, function* () {
+      const target = yield* storageCheck(() => this.pauseFile(issueId))
+      yield* storageIO(() => mkdir(this.dir, { recursive: true }))
+      yield* storageIO(() => writeFile(target, "", "utf8"))
+    })
   }
 
-  async resume(issueId: string): Promise<void> {
-    await rm(this.pauseFile(issueId), { force: true })
+  resumeEffect(issueId: string): Effect.Effect<void, StorageError> {
+    return Effect.gen({ self: this }, function* () {
+      const target = yield* storageCheck(() => this.pauseFile(issueId))
+      yield* storageIO(() => rm(target, { force: true }))
+    })
   }
 
-  /**
-   * Never throws for a damaged file: losing the memory of an issue is
-   * recoverable, refusing to run it ever again is not.
-   */
-  async load(issueId: string): Promise<CaseFile> {
-    const raw = await readFile(this.file(issueId), "utf8").catch(
-      () => undefined,
-    )
-    if (raw === undefined) return emptyCase(issueId)
-    const empty = emptyCase(issueId)
-    let parsed: Partial<CaseFile> | undefined
-    try {
-      // SAFETY: Every field used from this durable file is clamped below.
-      parsed = JSON.parse(raw) as Partial<CaseFile>
-    } catch {
-      console.warn(`[case:${issueId}] unreadable case file; starting fresh`)
-      return empty
-    }
-    return {
-      ...empty,
-      ...parsed,
-      issueId,
-      // Re-clamped on the way in as well: the cap has to be a property of the
-      // prompt, not only of the write path.
-      summary: clampSummary(parsed.summary),
-      lastAnswer: clampEntry(parsed.lastAnswer),
-      sessionFile: isString(parsed.sessionFile)
-        ? parsed.sessionFile
-        : undefined,
-      spend: {
-        ...empty.spend,
-        ...parsed.spend,
-        // Do not pretend a legacy combined total was all input or all output.
-        inputTokens: isNumber(parsed.spend?.inputTokens)
-          ? parsed.spend.inputTokens
-          : undefined,
-        outputTokens: isNumber(parsed.spend?.outputTokens)
-          ? parsed.spend.outputTokens
-          : undefined,
-        costUsd: isNumber(parsed.spend?.costUsd)
-          ? parsed.spend.costUsd
-          : undefined,
-      },
-      runs: Array.isArray(parsed.runs) ? parsed.runs.slice(-MAX_RUNS) : [],
-    }
+  /** Damaged or unreadable case memory does not permanently block an issue. */
+  loadEffect(issueId: string): Effect.Effect<CaseFile, StorageError> {
+    return Effect.gen({ self: this }, function* () {
+      const target = yield* storageCheck(() => this.file(issueId))
+      const raw = yield* storageIO(() => readFile(target, "utf8")).pipe(
+        Effect.catch(() => Effect.succeed(undefined)),
+      )
+      if (raw === undefined) return emptyCase(issueId)
+      const empty = emptyCase(issueId)
+      return yield* storageCheck(() => {
+        // SAFETY: Every field used from this durable file is clamped below.
+        const parsed = JSON.parse(raw) as Partial<CaseFile>
+        return {
+          ...empty,
+          ...parsed,
+          issueId,
+          // Re-clamped on the way in as well: the cap has to be a property of the
+          // prompt, not only of the write path.
+          summary: clampSummary(parsed.summary),
+          lastAnswer: clampEntry(parsed.lastAnswer),
+          sessionFile: isString(parsed.sessionFile)
+            ? parsed.sessionFile
+            : undefined,
+          spend: {
+            ...empty.spend,
+            ...parsed.spend,
+            // Do not pretend a legacy combined total was all input or all output.
+            inputTokens: isNumber(parsed.spend?.inputTokens)
+              ? parsed.spend.inputTokens
+              : undefined,
+            outputTokens: isNumber(parsed.spend?.outputTokens)
+              ? parsed.spend.outputTokens
+              : undefined,
+            costUsd: isNumber(parsed.spend?.costUsd)
+              ? parsed.spend.costUsd
+              : undefined,
+          },
+          runs: Array.isArray(parsed.runs) ? parsed.runs.slice(-MAX_RUNS) : [],
+        }
+      }).pipe(
+        Effect.catch(() => {
+          console.warn(`[case:${issueId}] unreadable case file; starting fresh`)
+          return Effect.succeed(empty)
+        }),
+      )
+    })
+  }
+
+  isPaused(issueId: string): Promise<boolean> {
+    return Effect.runPromise(this.isPausedEffect(issueId))
+  }
+
+  pause(issueId: string): Promise<void> {
+    return Effect.runPromise(this.pauseEffect(issueId))
+  }
+
+  resume(issueId: string): Promise<void> {
+    return Effect.runPromise(this.resumeEffect(issueId))
+  }
+
+  load(issueId: string): Promise<CaseFile> {
+    return Effect.runPromise(this.loadEffect(issueId))
   }
 
   /**
@@ -294,57 +316,78 @@ export class CaseStore {
    * fails in the safe direction — the agent must re-read before it can mutate,
    * which is exactly what the gate asks for anyway.
    */
-  async loadEvidence(issueId: string): Promise<EvidenceSnapshot | undefined> {
-    return this.evidence.load(issueId)
+  loadEvidenceEffect(
+    issueId: string,
+  ): Effect.Effect<EvidenceSnapshot | undefined, StorageError> {
+    return this.evidence.loadEffect(issueId)
   }
 
-  async saveEvidence(
+  saveEvidenceEffect(
     issueId: string,
     snapshot: EvidenceSnapshot,
-  ): Promise<void> {
-    await this.evidence.save(issueId, snapshot)
+  ): Effect.Effect<void, StorageError> {
+    return this.evidence.saveEffect(issueId, snapshot)
   }
 
-  /**
-   * Drops the carried-over evidence for a closed issue. The case file itself
-   * stays: it is the issue's audit trail, and `spend.deletes` records what was
-   * destroyed even after the issue closes.
-   */
-  async forgetEvidence(issueId: string): Promise<void> {
-    await this.evidence.forget(issueId)
+  /** Drops evidence when closed, retaining the host-written case audit trail. */
+  forgetEvidenceEffect(issueId: string): Effect.Effect<void, StorageError> {
+    return this.evidence.forgetEffect(issueId)
   }
 
-  async save(file: CaseFile): Promise<void> {
-    const target = this.file(file.issueId)
-    await mkdir(this.dir, { recursive: true })
-    const body = JSON.stringify(
-      {
-        ...file,
-        updatedAt: new Date().toISOString(),
-        runs: file.runs.slice(-MAX_RUNS),
-      },
-      null,
-      2,
-    )
-    // Write-then-rename: a crash mid-write must not leave an unparsable file
-    // that would make the issue permanently unrunnable.
-    const tmp = `${target}.tmp`
-    await writeFile(tmp, body, "utf8")
-    await rename(tmp, target)
+  saveEffect(file: CaseFile): Effect.Effect<void, StorageError> {
+    return Effect.gen({ self: this }, function* () {
+      const target = yield* storageCheck(() => this.file(file.issueId))
+      const body = yield* storageCheck(() =>
+        JSON.stringify(
+          {
+            ...file,
+            updatedAt: new Date().toISOString(),
+            runs: file.runs.slice(-MAX_RUNS),
+          },
+          null,
+          2,
+        ),
+      )
+      yield* writeAtomic(target, body)
+    })
   }
 
   /** Pending revisits across all issues, for re-arming after a restart. */
-  async pendingRevisits(): Promise<CaseFile[]> {
-    const entries = await readdir(this.dir).catch(() => [])
-    const files: CaseFile[] = []
-    for (const entry of entries) {
-      if (!entry.endsWith(".json")) continue
-      const file = await this.load(path.basename(entry, ".json")).catch(
-        () => undefined,
+  pendingRevisitsEffect(): Effect.Effect<CaseFile[]> {
+    return Effect.gen({ self: this }, function* () {
+      const entries = yield* storageIO(() => readdir(this.dir)).pipe(
+        Effect.catch(() => Effect.succeed([])),
       )
-      if (file?.revisit) files.push(file)
-    }
-    return files
+      const files: CaseFile[] = []
+      for (const entry of entries) {
+        if (!entry.endsWith(".json")) continue
+        const file = yield* this.loadEffect(path.basename(entry, ".json")).pipe(
+          Effect.catch(() => Effect.succeed(undefined)),
+        )
+        if (file?.revisit) files.push(file)
+      }
+      return files
+    })
+  }
+
+  loadEvidence(issueId: string): Promise<EvidenceSnapshot | undefined> {
+    return Effect.runPromise(this.loadEvidenceEffect(issueId))
+  }
+
+  saveEvidence(issueId: string, snapshot: EvidenceSnapshot): Promise<void> {
+    return Effect.runPromise(this.saveEvidenceEffect(issueId, snapshot))
+  }
+
+  forgetEvidence(issueId: string): Promise<void> {
+    return Effect.runPromise(this.forgetEvidenceEffect(issueId))
+  }
+
+  save(file: CaseFile): Promise<void> {
+    return Effect.runPromise(this.saveEffect(file))
+  }
+
+  pendingRevisits(): Promise<CaseFile[]> {
+    return Effect.runPromise(this.pendingRevisitsEffect())
   }
 }
 
