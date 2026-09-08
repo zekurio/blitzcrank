@@ -3,6 +3,9 @@ import {
   SlashCommandBuilder,
   type Client,
 } from "discord.js"
+import { Effect } from "effect"
+
+import { sdkPromise } from "../agent/effect.ts"
 
 /** Discord allows at most 25 static choices per option. */
 const MAX_CHOICES = 25
@@ -45,10 +48,20 @@ function automationCommand(names: string[]): SlashCommandBuilder {
 }
 
 /** Bulk overwrite: the guild set becomes exactly what we declare. */
-export async function syncCommands(
+export function syncCommandsEffect(
+  client: Client<true>,
+  guildId: string,
+  names: string[],
+) {
+  return sdkPromise(() =>
+    client.application.commands.set([automationCommand(names)], guildId),
+  ).pipe(Effect.asVoid)
+}
+
+export function syncCommands(
   client: Client<true>,
   guildId: string,
   names: string[],
 ): Promise<void> {
-  await client.application.commands.set([automationCommand(names)], guildId)
+  return Effect.runPromise(syncCommandsEffect(client, guildId, names))
 }

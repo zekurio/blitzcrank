@@ -2,6 +2,7 @@ import { stat } from "node:fs/promises"
 import path from "node:path"
 
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent"
+import { Effect, Semaphore } from "effect"
 
 import { CaseStore, clampEntry, type CaseFile } from "../casefile.ts"
 import type { Config } from "../config.ts"
@@ -17,6 +18,7 @@ import {
 } from "../tools/index.ts"
 import { buildWebProvider } from "../web/index.ts"
 import { parseDirectives, type Directives } from "./directives.ts"
+import { sdkPromise, SdkError } from "./effect.ts"
 import {
   buildIssuePrompt,
   buildRevisitPrompt,
@@ -25,7 +27,7 @@ import {
 import {
   modelAnchor,
   resolveModel,
-  runAgentTurn,
+  runAgentTurnEffect,
   usageAnchor,
 } from "./session.ts"
 
@@ -39,13 +41,17 @@ export function eventMediaScope(event: IssueEvent): MediaScope {
   return type === "movie" || type === "tv" ? type : undefined
 }
 
-async function resolveMediaScope(
+function resolveMediaScopeEffect(
   event: IssueEvent,
   seerr: Pick<SeerrClient, "getIssue">,
-): Promise<MediaScope> {
-  const scope = eventMediaScope(event)
-  if (scope !== undefined) return scope
-  return seerrIssueMediaType(await seerr.getIssue(event.issueId))
+) {
+  return Effect.gen(function* () {
+    const scope = eventMediaScope(event)
+    if (scope !== undefined) return scope
+    return seerrIssueMediaType(
+      yield* sdkPromise(() => seerr.getIssue(event.issueId)),
+    )
+  })
 }
 
 export interface RunOutcome {
@@ -58,7 +64,7 @@ export interface RunOutcome {
 export class IssueRunner {
   private readonly cases: CaseStore
   /** Serializes queue notices; see notifyQueued. */
-  private noticeChain: Promise<unknown> = Promise.resolve()
+  private readonly noticeLock = Semaphore.makeUnsafe(1)
 
   constructor(
     private readonly config: Config,
@@ -84,248 +90,272 @@ export class IssueRunner {
    * one run would then rewrite or delete the other's notice out from under
    * it.
    */
-  async notifyQueued(
-    issueId: string,
-    runsAhead: number,
-  ): Promise<StatusComment> {
-    const notice = this.noticeChain.then(async () => {
+  notifyQueued(issueId: string, runsAhead: number): Promise<StatusComment> {
+    return Effect.runPromise(this.notifyQueuedEffect(issueId, runsAhead))
+  }
+
+  notifyQueuedEffect(issueId: string, runsAhead: number) {
+    return Effect.gen({ self: this }, function* () {
       const seerr = new SeerrClient(
         this.config.seerr,
         this.config.seerrBotUserId,
       )
       const message = queuedMessage(this.config.language, runsAhead)
-      const id = await seerr.postComment(
-        issueId,
-        `${message}\n\n${this.anchor}`,
+      const id = yield* sdkPromise(() =>
+        seerr.postComment(issueId, `${message}\n\n${this.anchor}`),
       )
       return { id }
-    })
-    // A failed notice must not wedge the chain; its caller already logs the
-    // failure and runs without a handle.
-    this.noticeChain = notice.catch(() => undefined)
-    return notice
+    }).pipe(this.noticeLock.withPermits(1), Effect.uninterruptible)
   }
 
-  async run(
+  run(
     event: IssueEvent,
     status: StatusComment = { id: undefined },
     signal?: AbortSignal,
   ): Promise<RunOutcome> {
-    const { issueId } = event
-    const seerr = new SeerrClient(this.config.seerr, this.config.seerrBotUserId)
-    try {
-      const mediaScope = await resolveMediaScope(event, seerr)
-      if (mediaScope === undefined) {
-        console.warn(
-          `[issue:${issueId}] media type is unknown; no Arr tools granted`,
-        )
-      }
-      const casefile = await this.cases.load(issueId)
-      // Evidence carries across the runs of one issue, matching the session that
-      // is resumed alongside it: the gate exists to stop fabricated IDs, and a
-      // real ID does not become fabricated by being a day old. Mutation and
-      // deletion counts are audit data only.
-      const ctx = new RunContext({
-        prior: await this.cases.loadEvidence(issueId),
-      })
-      const sessionFileRef: SessionFileRef = { current: undefined }
-      // The agent's progress tool posts this once and edits it in place; when
-      // the host already posted a queue notice it adopts that comment instead.
-      // The final answer overwrites either status — and a run that dies before
-      // then retracts it — so a run leaves one comment at most.
-      const revisitsLeft = Math.max(
-        0,
-        MAX_REVISIT_CHAIN -
-          (event.kind === "revisit" ? (casefile.revisit?.chain ?? 0) : 0),
-      )
-      // Checked here, not just inside the session factory, because the prompt
-      // depends on the answer: a resumed run gets a short delta prompt, and
-      // sending that to a session that silently started blank would leave the
-      // agent working an issue it was never told about.
-      const resuming =
-        casefile.sessionFile !== undefined &&
-        (await stat(casefile.sessionFile).then(
-          (s) => s.isFile(),
-          () => false,
-        ))
+    return Effect.runPromise(this.runEffect(event, status, signal))
+  }
 
-      const web = buildWebProvider(this.config.web)
-      const tools = [
-        ...buildIssueTools({
-          modelInput: resolveModel(this.modelRuntime, this.modelSpec).input,
-          config: this.config,
-          ctx,
+  runEffect(
+    event: IssueEvent,
+    status: StatusComment = { id: undefined },
+    signal?: AbortSignal,
+  ): Effect.Effect<RunOutcome, SdkError> {
+    return Effect.gen({ self: this }, function* () {
+      const { issueId } = event
+      const seerr = new SeerrClient(
+        this.config.seerr,
+        this.config.seerrBotUserId,
+      )
+      return yield* Effect.gen({ self: this }, function* () {
+        const mediaScope = yield* resolveMediaScopeEffect(event, seerr)
+        if (mediaScope === undefined) {
+          console.warn(
+            `[issue:${issueId}] media type is unknown; no Arr tools granted`,
+          )
+        }
+        const casefile = yield* sdkPromise(() => this.cases.load(issueId))
+        // Evidence carries across the runs of one issue, matching the session that
+        // is resumed alongside it: the gate exists to stop fabricated IDs, and a
+        // real ID does not become fabricated by being a day old. Mutation and
+        // deletion counts are audit data only.
+        const ctx = new RunContext({
+          prior: yield* sdkPromise(() => this.cases.loadEvidence(issueId)),
+        })
+        const sessionFileRef: SessionFileRef = { current: undefined }
+        // The agent's progress tool posts this once and edits it in place; when
+        // the host already posted a queue notice it adopts that comment instead.
+        // The final answer overwrites either status — and a run that dies before
+        // then retracts it — so a run leaves one comment at most.
+        const revisitsLeft = Math.max(
+          0,
+          MAX_REVISIT_CHAIN -
+            (event.kind === "revisit" ? (casefile.revisit?.chain ?? 0) : 0),
+        )
+        // Checked here, not just inside the session factory, because the prompt
+        // depends on the answer: a resumed run gets a short delta prompt, and
+        // sending that to a session that silently started blank would leave the
+        // agent working an issue it was never told about.
+        const resuming =
+          casefile.sessionFile !== undefined &&
+          (yield* sdkPromise(() => stat(casefile.sessionFile!)).pipe(
+            Effect.map((s) => s.isFile()),
+            Effect.catch(() => Effect.succeed(false)),
+          ))
+
+        const web = buildWebProvider(this.config.web)
+        const tools = [
+          ...buildIssueTools({
+            modelInput: resolveModel(this.modelRuntime, this.modelSpec).input,
+            config: this.config,
+            ctx,
+            seerr,
+            issueId,
+            anchor: this.anchor,
+            sessionFileRef,
+            mediaScope,
+            status,
+            casefile,
+          }),
+          ...web.tools,
+        ]
+
+        const turn = yield* runAgentTurnEffect({
+          modelRuntime: this.modelRuntime,
+          modelSpec: this.modelSpec,
+          systemPrompt: buildSystemPrompt(
+            this.config,
+            {
+              search: web.searchTool,
+              extract: web.extractTool,
+            },
+            tools.map((tool) => tool.name),
+          ),
+          tools,
+          prompt:
+            event.kind === "webhook"
+              ? buildIssuePrompt(
+                  event.payload,
+                  casefile,
+                  revisitsLeft,
+                  resuming,
+                )
+              : buildRevisitPrompt(
+                  event.issueId,
+                  event.reason,
+                  casefile,
+                  revisitsLeft,
+                  resuming,
+                ),
+          sessionDir: path.join(this.config.dataDir, "sessions", "issues"),
+          resumeFile: resuming ? casefile.sessionFile : undefined,
+          sessionFileRef,
+          logPrefix: `issue:${issueId}`,
+          signal,
+        })
+
+        // Usage is recorded before any Seerr call: a failure while commenting must
+        // not make a run invisible in the issue's running total.
+        const { mutations, deletes } = ctx.counts
+        casefile.spend = {
+          runs: casefile.spend.runs + 1,
+          tokens: casefile.spend.tokens + turn.usage.newTokens,
+          inputTokens:
+            casefile.spend.inputTokens === undefined
+              ? undefined
+              : casefile.spend.inputTokens + turn.usage.inputTokens,
+          outputTokens:
+            casefile.spend.outputTokens === undefined
+              ? undefined
+              : casefile.spend.outputTokens + turn.usage.outputTokens,
+          costUsd:
+            casefile.spend.costUsd === undefined
+              ? undefined
+              : casefile.spend.costUsd + (turn.usage.costUsd ?? 0),
+          deletes: casefile.spend.deletes + deletes,
+        }
+        // Recorded before the directive block is even parsed: a run that mutated
+        // and then crashed still has to show what it did.
+        casefile.sessionFile = turn.sessionFile
+        yield* sdkPromise(() => this.cases.save(casefile))
+        yield* sdkPromise(() => this.cases.saveEvidence(issueId, ctx.snapshot))
+
+        if (signal?.aborted) {
+          casefile.runs.push({
+            at: new Date().toISOString(),
+            trigger: event.kind,
+            mutations,
+            deletes,
+            tokens: turn.usage.newTokens,
+            inputTokens: turn.usage.inputTokens,
+            outputTokens: turn.usage.outputTokens,
+            commented: false,
+            resolved: false,
+          })
+          casefile.revisit = undefined
+          yield* sdkPromise(() => this.cases.save(casefile))
+          return yield* Effect.fail(
+            new SdkError({ message: "issue run stopped", cause: undefined }),
+          )
+        }
+
+        const directives = parseDirectives(turn.text)
+
+        if (directives.malformed) {
+          console.warn(
+            `[issue:${issueId}] malformed directive block; no comment posted:\n${turn.text}`,
+          )
+        }
+
+        const comment = directives.malformed ? undefined : directives.comment
+        if (signal?.aborted)
+          return yield* Effect.fail(
+            new SdkError({ message: "issue run stopped", cause: undefined }),
+          )
+        yield* publishCommentEffect(
           seerr,
           issueId,
-          anchor: this.anchor,
-          sessionFileRef,
-          mediaScope,
           status,
-          casefile,
-        }),
-        ...web.tools,
-      ]
+          comment
+            ? `${comment}\n\n${usageAnchor(
+                this.modelSpec,
+                casefile.spend.tokens,
+                casefile.spend.inputTokens,
+                casefile.spend.outputTokens,
+                turn.usage.costUsd === undefined
+                  ? undefined
+                  : casefile.spend.costUsd,
+                turn.usage.costUsd,
+              )}`
+            : undefined,
+        )
 
-      const turn = await runAgentTurn({
-        modelRuntime: this.modelRuntime,
-        modelSpec: this.modelSpec,
-        systemPrompt: buildSystemPrompt(
-          this.config,
-          {
-            search: web.searchTool,
-            extract: web.extractTool,
-          },
-          tools.map((tool) => tool.name),
-        ),
-        tools,
-        prompt:
-          event.kind === "webhook"
-            ? buildIssuePrompt(event.payload, casefile, revisitsLeft, resuming)
-            : buildRevisitPrompt(
-                event.issueId,
-                event.reason,
-                casefile,
-                revisitsLeft,
-                resuming,
-              ),
-        sessionDir: path.join(this.config.dataDir, "sessions", "issues"),
-        resumeFile: resuming ? casefile.sessionFile : undefined,
-        sessionFileRef,
-        logPrefix: `issue:${issueId}`,
-        signal,
-      })
+        if (!directives.malformed && directives.resolve) {
+          if (signal?.aborted)
+            return yield* Effect.fail(
+              new SdkError({ message: "issue run stopped", cause: undefined }),
+            )
+          yield* sdkPromise(() => seerr.setStatus(issueId, "resolved"))
+          // A closed issue keeps its case file (audit trail, and `spend.deletes`
+          // must not reset if it is reopened) but drops the bulky raw evidence.
+          yield* sdkPromise(() => this.cases.forgetEvidence(issueId))
+        }
 
-      // Usage is recorded before any Seerr call: a failure while commenting must
-      // not make a run invisible in the issue's running total.
-      const { mutations, deletes } = ctx.counts
-      casefile.spend = {
-        runs: casefile.spend.runs + 1,
-        tokens: casefile.spend.tokens + turn.usage.newTokens,
-        inputTokens:
-          casefile.spend.inputTokens === undefined
-            ? undefined
-            : casefile.spend.inputTokens + turn.usage.inputTokens,
-        outputTokens:
-          casefile.spend.outputTokens === undefined
-            ? undefined
-            : casefile.spend.outputTokens + turn.usage.outputTokens,
-        costUsd:
-          casefile.spend.costUsd === undefined
-            ? undefined
-            : casefile.spend.costUsd + (turn.usage.costUsd ?? 0),
-        deletes: casefile.spend.deletes + deletes,
-      }
-      // Recorded before the directive block is even parsed: a run that mutated
-      // and then crashed still has to show what it did.
-      casefile.sessionFile = turn.sessionFile
-      await this.cases.save(casefile)
-      await this.cases.saveEvidence(issueId, ctx.snapshot)
-
-      if (signal?.aborted) {
+        // Host-written, so continuity survives a run that never called the tool.
+        if (comment) casefile.lastAnswer = clampEntry(comment)
         casefile.runs.push({
           at: new Date().toISOString(),
-          trigger: event.kind,
+          trigger: event.kind === "revisit" ? "revisit" : "webhook",
           mutations,
           deletes,
           tokens: turn.usage.newTokens,
           inputTokens: turn.usage.inputTokens,
           outputTokens: turn.usage.outputTokens,
-          commented: false,
-          resolved: false,
+          commented: comment !== undefined && comment.length > 0,
+          resolved: directives.resolve,
         })
-        casefile.revisit = undefined
-        await this.cases.save(casefile)
-        throw new Error("issue run stopped")
-      }
+        const plan = planRevisit({
+          requestedMs: directives.revisitInMs,
+          reason: directives.revisitReason,
+          mediaScope,
+          previous: casefile.revisit,
+          isRevisitRun: event.kind === "revisit",
+          producedNews:
+            mutations > 0 || (comment !== undefined && comment !== ""),
+          maxChain: MAX_REVISIT_CHAIN,
+          now: Date.now(),
+        })
+        if (plan.refused) console.warn(`[issue:${issueId}] ${plan.refused}`)
+        // A resolved issue is closed: never wake it again on an old schedule.
+        casefile.revisit = directives.resolve ? undefined : plan.revisit
+        yield* sdkPromise(() => this.cases.save(casefile))
 
-      const directives = parseDirectives(turn.text)
-
-      if (directives.malformed) {
-        console.warn(
-          `[issue:${issueId}] malformed directive block; no comment posted:\n${turn.text}`,
-        )
-      }
-
-      const comment = directives.malformed ? undefined : directives.comment
-      if (signal?.aborted) throw new Error("issue run stopped")
-      await publishComment(
-        seerr,
-        issueId,
-        status,
-        comment
-          ? `${comment}\n\n${usageAnchor(
-              this.modelSpec,
-              casefile.spend.tokens,
-              casefile.spend.inputTokens,
-              casefile.spend.outputTokens,
-              turn.usage.costUsd === undefined
-                ? undefined
-                : casefile.spend.costUsd,
-              turn.usage.costUsd,
-            )}`
-          : undefined,
+        return { issueId, directives, casefile }
+      }).pipe(
+        Effect.onExit(() =>
+          // A successful publication clears the handle; only a live status remains.
+          publishCommentEffect(seerr, issueId, status, undefined).pipe(
+            Effect.catchCause((cause) =>
+              Effect.sync(() => {
+                console.error(
+                  `[issue:${issueId}] failed to retract status comment:`,
+                  cause,
+                )
+              }),
+            ),
+          ),
+        ),
       )
-
-      if (!directives.malformed && directives.resolve) {
-        if (signal?.aborted) throw new Error("issue run stopped")
-        await seerr.setStatus(issueId, "resolved")
-        // A closed issue keeps its case file (audit trail, and `spend.deletes`
-        // must not reset if it is reopened) but drops the bulky raw evidence.
-        await this.cases.forgetEvidence(issueId)
-      }
-
-      // Host-written, so continuity survives a run that never called the tool.
-      if (comment) casefile.lastAnswer = clampEntry(comment)
-      casefile.runs.push({
-        at: new Date().toISOString(),
-        trigger: event.kind === "revisit" ? "revisit" : "webhook",
-        mutations,
-        deletes,
-        tokens: turn.usage.newTokens,
-        inputTokens: turn.usage.inputTokens,
-        outputTokens: turn.usage.outputTokens,
-        commented: comment !== undefined && comment.length > 0,
-        resolved: directives.resolve,
-      })
-      const plan = planRevisit({
-        requestedMs: directives.revisitInMs,
-        reason: directives.revisitReason,
-        mediaScope,
-        previous: casefile.revisit,
-        isRevisitRun: event.kind === "revisit",
-        producedNews:
-          mutations > 0 || (comment !== undefined && comment !== ""),
-        maxChain: MAX_REVISIT_CHAIN,
-        now: Date.now(),
-      })
-      if (plan.refused) console.warn(`[issue:${issueId}] ${plan.refused}`)
-      // A resolved issue is closed: never wake it again on an old schedule.
-      casefile.revisit = directives.resolve ? undefined : plan.revisit
-      await this.cases.save(casefile)
-
-      return { issueId, directives, casefile }
-    } catch (err) {
-      // The run died before its final comment, so the live status it adopted
-      // or posted — the queue notice or a progress line — would otherwise stay
-      // on the issue forever. publishComment cleared the handle once the final
-      // comment was out, so whatever it still points at is a status that must
-      // be retracted. The queue logs the run's own failure; a failed
-      // retraction only joins it there.
-      await publishComment(seerr, issueId, status, undefined).catch(
-        (cause: unknown) => {
-          console.error(
-            `[issue:${issueId}] failed to retract status comment:`,
-            cause,
-          )
-        },
-      )
-      throw err
-    }
+    }).pipe(Effect.uninterruptible)
   }
 
-  async retractStatus(issueId: string, status: StatusComment): Promise<void> {
+  retractStatus(issueId: string, status: StatusComment): Promise<void> {
+    return Effect.runPromise(this.retractStatusEffect(issueId, status))
+  }
+
+  retractStatusEffect(issueId: string, status: StatusComment) {
     const seerr = new SeerrClient(this.config.seerr, this.config.seerrBotUserId)
-    await publishComment(seerr, issueId, status, undefined)
+    return publishCommentEffect(seerr, issueId, status, undefined)
   }
 }
 
@@ -353,18 +383,30 @@ function queuedMessage(language: string, runsAhead: number): string {
  * carrying the final answer — so a run failing after this point must not
  * retract it.
  */
-export async function publishComment(
+export function publishCommentEffect(
+  seerr: Pick<SeerrClient, "postComment" | "updateComment" | "deleteComment">,
+  issueId: string,
+  status: StatusComment,
+  body: string | undefined,
+) {
+  return Effect.gen(function* () {
+    if (body === undefined) {
+      if (status.id !== undefined)
+        yield* sdkPromise(() => seerr.deleteComment(status.id!))
+    } else if (status.id === undefined) {
+      yield* sdkPromise(() => seerr.postComment(issueId, body))
+    } else {
+      yield* sdkPromise(() => seerr.updateComment(status.id!, body))
+    }
+    status.id = undefined
+  }).pipe(Effect.uninterruptible)
+}
+
+export function publishComment(
   seerr: Pick<SeerrClient, "postComment" | "updateComment" | "deleteComment">,
   issueId: string,
   status: StatusComment,
   body: string | undefined,
 ): Promise<void> {
-  if (body === undefined) {
-    if (status.id !== undefined) await seerr.deleteComment(status.id)
-  } else if (status.id === undefined) {
-    await seerr.postComment(issueId, body)
-  } else {
-    await seerr.updateComment(status.id, body)
-  }
-  status.id = undefined
+  return Effect.runPromise(publishCommentEffect(seerr, issueId, status, body))
 }

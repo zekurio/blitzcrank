@@ -5,6 +5,9 @@ import {
   type Client,
   type TextChannel,
 } from "discord.js"
+import { Effect } from "effect"
+
+import { sdkPromise, SdkError } from "../agent/effect.ts"
 
 const TITLE_PREFIX = "automation: "
 
@@ -22,53 +25,65 @@ export class AutomationThreads {
   ) {}
 
   /** Boot check: a watch channel we cannot resolve is a config error. */
-  async verify(): Promise<string> {
-    return (await this.channel()).name
+  verify(): Promise<string> {
+    return Effect.runPromise(this.verifyEffect())
+  }
+  verifyEffect() {
+    return this.channelEffect().pipe(Effect.map((channel) => channel.name))
   }
 
-  async get(name: string): Promise<AnyThreadChannel> {
-    const channel = await this.channel()
-    const title = `${TITLE_PREFIX}${name}`
-    const adopted = await this.find(channel, title)
-    if (adopted) {
-      console.log(`[discord] adopted thread "${title}" (${adopted.id})`)
-      return this.usable(adopted)
-    }
+  get(name: string): Promise<AnyThreadChannel> {
+    return Effect.runPromise(this.getEffect(name))
+  }
+  getEffect(name: string) {
+    return Effect.gen({ self: this }, function* () {
+      const channel = yield* this.channelEffect()
+      const title = `${TITLE_PREFIX}${name}`
+      const adopted = yield* this.findEffect(channel, title)
+      if (adopted) {
+        console.log(`[discord] adopted thread "${title}" (${adopted.id})`)
+        return yield* this.usableEffect(adopted)
+      }
 
-    const created = await channel.threads.create({
-      name: title,
-      type: ChannelType.PrivateThread,
-      invitable: false,
-      autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
-      reason: `blitzcrank automation reports for ${name}`,
+      const created = yield* sdkPromise(() =>
+        channel.threads.create({
+          name: title,
+          type: ChannelType.PrivateThread,
+          invitable: false,
+          autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
+          reason: `blitzcrank automation reports for ${name}`,
+        }),
+      )
+      console.log(`[discord] created thread "${title}" (${created.id})`)
+      return created
     })
-    console.log(`[discord] created thread "${title}" (${created.id})`)
-    return created
   }
 
   /** Reports would 404 into an archived thread, so revive it first. */
-  private async usable(thread: AnyThreadChannel): Promise<AnyThreadChannel> {
-    if (thread.archived) await thread.setArchived(false)
-    return thread
+  private usableEffect(thread: AnyThreadChannel) {
+    return Effect.gen(function* () {
+      if (thread.archived)
+        yield* sdkPromise<AnyThreadChannel>(() => thread.setArchived(false))
+      return thread
+    })
   }
 
-  private async find(
-    channel: TextChannel,
-    title: string,
-  ): Promise<AnyThreadChannel | undefined> {
-    const active = await channel.threads.fetch()
-    // fetchAll defaults to false, so this hits the "joined archived private
-    // threads" route (GET /channels/{id}/users/@me/threads/archived/private),
-    // which only needs READ_MESSAGE_HISTORY, not MANAGE_THREADS — fine, since
-    // the bot joins every thread it creates. Still `.catch()`d: without it we
-    // would rather create a fresh thread than crash the report.
-    const archived = await channel.threads
-      .fetchArchived({ type: "private" })
-      .catch(() => undefined)
-    return [
-      ...active.threads.values(),
-      ...(archived?.threads.values() ?? []),
-    ].find((thread) => thread.name === title)
+  private findEffect(channel: TextChannel, title: string) {
+    return Effect.gen(function* () {
+      const active = yield* sdkPromise(() => channel.threads.fetch())
+      // fetchAll defaults to false, so this hits the "joined archived private
+      // threads" route (GET /channels/{id}/users/@me/threads/archived/private),
+      // which only needs READ_MESSAGE_HISTORY, not MANAGE_THREADS — fine, since
+      // the bot joins every thread it creates. Failure is still tolerated: without it we
+      // would rather create a fresh thread than crash the report.
+      const archived = yield* sdkPromise(() =>
+        channel.threads.fetchArchived({ type: "private" }),
+      ).pipe(Effect.catch(() => Effect.succeed(undefined)))
+      return [
+        ...active.threads.values(),
+        ...(archived?.threads.values() ?? []),
+      ].find((thread) => thread.name === title)
+    })
   }
 
   /**
@@ -76,14 +91,23 @@ export class AutomationThreads {
    * the guild must be fetched over REST first: discord.js cannot construct a
    * guild channel (or a thread) whose guild it has never seen.
    */
-  private async channel(): Promise<TextChannel> {
-    const guild = await this.client.guilds.fetch(this.guildId)
-    const channel = await guild.channels.fetch(this.channelId)
-    if (!channel || channel.type !== ChannelType.GuildText) {
-      throw new Error(
-        `DISCORD_WATCH_CHANNEL_ID ${this.channelId} is not a text channel`,
+  private channelEffect() {
+    return Effect.gen({ self: this }, function* () {
+      const guild = yield* sdkPromise(() =>
+        this.client.guilds.fetch(this.guildId),
       )
-    }
-    return channel
+      const channel = yield* sdkPromise(() =>
+        guild.channels.fetch(this.channelId),
+      )
+      if (!channel || channel.type !== ChannelType.GuildText) {
+        return yield* Effect.fail(
+          new SdkError({
+            message: `DISCORD_WATCH_CHANNEL_ID ${this.channelId} is not a text channel`,
+            cause: undefined,
+          }),
+        )
+      }
+      return channel
+    })
   }
 }
