@@ -98,6 +98,8 @@ export class DiscordBot {
         yield* bot.finishStartEffect()
         return bot
       }).pipe(
+        // Observe interruption after setup finishes, before handing out the client.
+        Effect.uninterruptible,
         Effect.onExit((exit) =>
           Exit.isFailure(exit)
             ? sdkPromise(() => client.destroy()).pipe(
@@ -110,7 +112,7 @@ export class DiscordBot {
             : Effect.void,
         ),
       )
-    }).pipe(Effect.uninterruptible)
+    })
   }
 
   private finishStartEffect() {

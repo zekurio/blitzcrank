@@ -3,22 +3,23 @@ import test from "node:test"
 
 import { Effect } from "effect"
 
+import { HttpError } from "../services/http.ts"
 import { publishCommentEffect } from "./runner.ts"
 
 test("final comments adopt the status handle and failed deletions retain it", async () => {
   const calls: string[] = []
   const seerr = {
-    postComment: () => {
+    postCommentEffect: () => {
       calls.push("post")
-      return Promise.resolve(1)
+      return Effect.succeed(1)
     },
-    updateComment: () => {
+    updateCommentEffect: () => {
       calls.push("update")
-      return Promise.resolve(null)
+      return Effect.succeed(null)
     },
-    deleteComment: () => {
+    deleteCommentEffect: () => {
       calls.push("delete")
-      return Promise.reject(new Error("offline"))
+      return Effect.fail(new HttpError(503, "http://seerr.test", "offline"))
     },
   }
   const status = { id: 9 as number | undefined }

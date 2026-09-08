@@ -8,7 +8,9 @@ import { CaseStore, clampEntry, type CaseFile } from "../casefile.ts"
 import type { Config } from "../config.ts"
 import type { SeerrWebhookPayload } from "../gateways/seerr/types.ts"
 import { MAX_REVISIT_CHAIN, planRevisit } from "../revisits.ts"
+import type { JsonRequestError } from "../services/http.ts"
 import { SeerrClient, seerrIssueMediaType } from "../services/seerr.ts"
+import { storageIO, type StorageError } from "../storage.ts"
 import { RunContext } from "../tools/context.ts"
 import {
   buildIssueTools,
@@ -18,7 +20,7 @@ import {
 } from "../tools/index.ts"
 import { buildWebProvider } from "../web/index.ts"
 import { parseDirectives, type Directives } from "./directives.ts"
-import { sdkPromise, SdkError } from "./effect.ts"
+import { SdkError } from "./effect.ts"
 import {
   buildIssuePrompt,
   buildRevisitPrompt,
@@ -43,14 +45,12 @@ export function eventMediaScope(event: IssueEvent): MediaScope {
 
 function resolveMediaScopeEffect(
   event: IssueEvent,
-  seerr: Pick<SeerrClient, "getIssue">,
+  seerr: Pick<SeerrClient, "getIssueEffect">,
 ) {
   return Effect.gen(function* () {
     const scope = eventMediaScope(event)
     if (scope !== undefined) return scope
-    return seerrIssueMediaType(
-      yield* sdkPromise(() => seerr.getIssue(event.issueId)),
-    )
+    return seerrIssueMediaType(yield* seerr.getIssueEffect(event.issueId))
   })
 }
 
@@ -101,8 +101,9 @@ export class IssueRunner {
         this.config.seerrBotUserId,
       )
       const message = queuedMessage(this.config.language, runsAhead)
-      const id = yield* sdkPromise(() =>
-        seerr.postComment(issueId, `${message}\n\n${this.anchor}`),
+      const id = yield* seerr.postCommentEffect(
+        issueId,
+        `${message}\n\n${this.anchor}`,
       )
       return { id }
     }).pipe(this.noticeLock.withPermits(1), Effect.uninterruptible)
@@ -120,7 +121,7 @@ export class IssueRunner {
     event: IssueEvent,
     status: StatusComment = { id: undefined },
     signal?: AbortSignal,
-  ): Effect.Effect<RunOutcome, SdkError> {
+  ): Effect.Effect<RunOutcome, SdkError | StorageError | JsonRequestError> {
     return Effect.gen({ self: this }, function* () {
       const { issueId } = event
       const seerr = new SeerrClient(
@@ -134,13 +135,13 @@ export class IssueRunner {
             `[issue:${issueId}] media type is unknown; no Arr tools granted`,
           )
         }
-        const casefile = yield* sdkPromise(() => this.cases.load(issueId))
+        const casefile = yield* this.cases.loadEffect(issueId)
         // Evidence carries across the runs of one issue, matching the session that
         // is resumed alongside it: the gate exists to stop fabricated IDs, and a
         // real ID does not become fabricated by being a day old. Mutation and
         // deletion counts are audit data only.
         const ctx = new RunContext({
-          prior: yield* sdkPromise(() => this.cases.loadEvidence(issueId)),
+          prior: yield* this.cases.loadEvidenceEffect(issueId),
         })
         const sessionFileRef: SessionFileRef = { current: undefined }
         // The agent's progress tool posts this once and edits it in place; when
@@ -158,7 +159,7 @@ export class IssueRunner {
         // agent working an issue it was never told about.
         const resuming =
           casefile.sessionFile !== undefined &&
-          (yield* sdkPromise(() => stat(casefile.sessionFile!)).pipe(
+          (yield* storageIO(() => stat(casefile.sessionFile!)).pipe(
             Effect.map((s) => s.isFile()),
             Effect.catch(() => Effect.succeed(false)),
           ))
@@ -237,8 +238,8 @@ export class IssueRunner {
         // Recorded before the directive block is even parsed: a run that mutated
         // and then crashed still has to show what it did.
         casefile.sessionFile = turn.sessionFile
-        yield* sdkPromise(() => this.cases.save(casefile))
-        yield* sdkPromise(() => this.cases.saveEvidence(issueId, ctx.snapshot))
+        yield* this.cases.saveEffect(casefile)
+        yield* this.cases.saveEvidenceEffect(issueId, ctx.snapshot)
 
         if (signal?.aborted) {
           casefile.runs.push({
@@ -253,7 +254,7 @@ export class IssueRunner {
             resolved: false,
           })
           casefile.revisit = undefined
-          yield* sdkPromise(() => this.cases.save(casefile))
+          yield* this.cases.saveEffect(casefile)
           return yield* Effect.fail(
             new SdkError({ message: "issue run stopped", cause: undefined }),
           )
@@ -295,10 +296,10 @@ export class IssueRunner {
             return yield* Effect.fail(
               new SdkError({ message: "issue run stopped", cause: undefined }),
             )
-          yield* sdkPromise(() => seerr.setStatus(issueId, "resolved"))
+          yield* seerr.setStatusEffect(issueId, "resolved")
           // A closed issue keeps its case file (audit trail, and `spend.deletes`
           // must not reset if it is reopened) but drops the bulky raw evidence.
-          yield* sdkPromise(() => this.cases.forgetEvidence(issueId))
+          yield* this.cases.forgetEvidenceEffect(issueId)
         }
 
         // Host-written, so continuity survives a run that never called the tool.
@@ -328,7 +329,7 @@ export class IssueRunner {
         if (plan.refused) console.warn(`[issue:${issueId}] ${plan.refused}`)
         // A resolved issue is closed: never wake it again on an old schedule.
         casefile.revisit = directives.resolve ? undefined : plan.revisit
-        yield* sdkPromise(() => this.cases.save(casefile))
+        yield* this.cases.saveEffect(casefile)
 
         return { issueId, directives, casefile }
       }).pipe(
@@ -384,26 +385,31 @@ function queuedMessage(language: string, runsAhead: number): string {
  * retract it.
  */
 export function publishCommentEffect(
-  seerr: Pick<SeerrClient, "postComment" | "updateComment" | "deleteComment">,
+  seerr: Pick<
+    SeerrClient,
+    "postCommentEffect" | "updateCommentEffect" | "deleteCommentEffect"
+  >,
   issueId: string,
   status: StatusComment,
   body: string | undefined,
 ) {
   return Effect.gen(function* () {
     if (body === undefined) {
-      if (status.id !== undefined)
-        yield* sdkPromise(() => seerr.deleteComment(status.id!))
+      if (status.id !== undefined) yield* seerr.deleteCommentEffect(status.id!)
     } else if (status.id === undefined) {
-      yield* sdkPromise(() => seerr.postComment(issueId, body))
+      yield* seerr.postCommentEffect(issueId, body)
     } else {
-      yield* sdkPromise(() => seerr.updateComment(status.id!, body))
+      yield* seerr.updateCommentEffect(status.id!, body)
     }
     status.id = undefined
   }).pipe(Effect.uninterruptible)
 }
 
 export function publishComment(
-  seerr: Pick<SeerrClient, "postComment" | "updateComment" | "deleteComment">,
+  seerr: Pick<
+    SeerrClient,
+    "postCommentEffect" | "updateCommentEffect" | "deleteCommentEffect"
+  >,
   issueId: string,
   status: StatusComment,
   body: string | undefined,

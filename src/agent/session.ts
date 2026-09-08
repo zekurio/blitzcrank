@@ -15,6 +15,7 @@ import {
 import { Effect } from "effect"
 
 import { BOT_COMMENT_MARKER } from "../gateways/seerr/loop-guard.ts"
+import { storageIO, type StorageError } from "../storage.ts"
 import { sdkPromise, SdkError } from "./effect.ts"
 
 export const DEFAULT_MODEL = "anthropic/claude-sonnet-4-5"
@@ -195,7 +196,7 @@ function openSessionEffect(
 ) {
   return Effect.gen(function* () {
     if (resumeFile !== undefined) {
-      const exists = yield* sdkPromise(() => stat(resumeFile)).pipe(
+      const exists = yield* storageIO(() => stat(resumeFile)).pipe(
         Effect.map((s) => s.isFile()),
         Effect.catch(() => Effect.succeed(false)),
       )
@@ -233,13 +234,13 @@ export function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnResult> {
 
 export function runAgentTurnEffect(
   opts: AgentTurnOptions,
-): Effect.Effect<AgentTurnResult, SdkError> {
+): Effect.Effect<AgentTurnResult, SdkError | StorageError> {
   return Effect.scoped(
     Effect.gen(function* () {
       const cwd = path.join(os.tmpdir(), "blitzcrank-work")
-      yield* sdkPromise(() => mkdir(cwd, { recursive: true }))
+      yield* storageIO(() => mkdir(cwd, { recursive: true }))
       if (opts.sessionDir)
-        yield* sdkPromise(() => mkdir(opts.sessionDir!, { recursive: true }))
+        yield* storageIO(() => mkdir(opts.sessionDir!, { recursive: true }))
 
       const opened = yield* openSessionEffect(
         opts.resumeFile,

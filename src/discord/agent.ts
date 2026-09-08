@@ -172,7 +172,7 @@ export class DiscordAgent {
     return Effect.gen({ self: this }, function* () {
       const sessionDir = conversationSessionDir(this.config.dataDir, threadId)
       const ctx = new RunContext({
-        prior: yield* sdkPromise(() => this.evidence.load(threadId)),
+        prior: yield* this.evidence.loadEffect(threadId),
       })
       const sessionFileRef: SessionFileRef = { current: undefined }
       const web = buildWebProvider(this.config.web)
@@ -200,7 +200,7 @@ export class DiscordAgent {
         sessionFileRef,
         logPrefix: `discord:${threadId}`,
       })
-      yield* sdkPromise(() => this.evidence.save(threadId, ctx.snapshot))
+      yield* this.evidence.saveEffect(threadId, ctx.snapshot)
       const response = turn.text.trim()
       if (response === "")
         return yield* Effect.fail(
