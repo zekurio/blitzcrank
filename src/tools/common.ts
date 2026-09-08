@@ -45,7 +45,7 @@ export type ServiceName =
 
 const SERVICE_PATH_FIELDS = new Map<ServiceName, ReadonlySet<string>>([
   ["sonarr", new Set(["path", "outputPath"])],
-  ["radarr", new Set(["path", "outputPath"])],
+  ["radarr", new Set(["path", "outputPath", "droppedPath", "importedPath"])],
   ["sabnzbd", new Set(["storage"])],
   ["jellyfin", new Set(["Path", "path"])],
 ])
