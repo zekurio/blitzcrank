@@ -1,105 +1,34 @@
 # blitzcrank
 
-Agentic webhook gateway for a Seerr/Arr/Jellyfin homelab, built on the
-[pi SDK](https://www.npmjs.com/package/@earendil-works/pi-coding-agent).
+blitzcrank investigates media problems reported in Jellyseerr. It uses the
+[pi SDK](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) to read
+service state, apply fixes through dedicated tools, and report back on the issue.
+It connects to Seerr, Sonarr, Radarr, SABnzbd, Jellyfin, and optionally Anvil.
 
-Users report media issues in Jellyseerr ("episode is corrupt", "wrong
-language", "won't play"). Jellyseerr fires a webhook at blitzcrank, which opens
-an agent session that investigates across your services, fixes what it safely
-can, and reports back as a comment on the issue. Scheduled automations run the
-same tool layer against recurring homelab chores.
+A report such as "wrong language" or "episode won't play" starts an agent
+session. Follow-up comments continue that session. Scheduled automations handle
+recurring chores, and an optional Discord inbox supports private conversations
+with the same service tools.
 
-```
-Jellyseerr issue ──webhook──▶ blitzcrank host ──▶ pi agent session (one per issue)
-                              │    │                │  skills/    domain knowledge
-                              │    │                │  reads      *_request (GET-only)
-                              │    │                │  mutations  typed tools, evidence
-                              │    │                │             gated + verified
-                              │    ◀─ directives ──┘  RESOLVE_ISSUE / REVISIT_IN
-                              ├── posts comments, resolves issues (host-owned)
-                              └── schedules revisits (10m–48h, capped, backed off)
-```
+This project is built for one private homelab. Expect sharp edges.
 
-This project targets one private deployment. Expect sharp edges.
+- [Deploy on NixOS](#deploy-on-nixos)
+- [Connect Jellyseerr](#connect-jellyseerr)
+- [Configure models and services](#configure-models-and-services)
+- [Run automations](#run-automations)
+- [Set up Discord](#set-up-discord)
+- [Understand the safety rules](#safety-rules)
+- [Develop locally](#develop-locally)
 
-### Safety model
+## Deploy on NixOS
 
-The host owns every user-visible action. The agent investigates and mutates
-through a narrow typed tool set. Seerr runs return host-executed directives;
-Discord runs return text that the host posts.
-
-- **Host-owned lifecycle** — the agent never comments or resolves directly. It
-  emits `RESOLVE_ISSUE: yes|no` plus optional `REVISIT_IN`/`REVISIT_REASON`,
-  and the host executes it. Malformed directives ⇒ nothing is posted.
-- **GET-only raw tools** — `seerr|sonarr|radarr|jellyfin|sabnzbd_request` can
-  only read; SABnzbd reads are limited to `queue`/`history`.
-- **Typed mutations** — every state change is its own tool (`sonarr_search`,
-  `sonarr_delete_episode_file`, `sabnzbd_retry_job`, …): no raw POST/DELETE
-  surface, no path parsing, a mandatory `reason`, and a verification read-back
-  returned in the result.
-- **Evidence gates** — mutation targets must have appeared in an accepted
-  service read; guessed IDs are rejected in code, not in the prompt. Issue and
-  Discord evidence follows their durable conversation. Mutable state still
-  gets re-read before a change.
-- **Scope gates** — a multi-episode Sonarr search must state the true episode
-  count, and replacing two or more existing files requires that one was
-  inspected with `media_probe` this run.
-- **Media-specific tools** — movie issues get Radarr. TV issues get Sonarr. An
-  unknown media type gets neither. Other service tools stay available.
-- **No mutation quotas** — issue, Discord, and automation runs are uncapped,
-  deletions included. One number cannot fit both a wrong subtitle track and a
-  season imported as the wrong show. A deletion cap can create the bad outcome it
-  claims to prevent. Everything stays counted, reported, and recorded.
-- **Continuous sessions** — an issue's runs share one agent session, so a
-  follow-up comment continues the conversation with its evidence intact, while
-  the system prompt and tool list are always rebuilt from the current registry.
-- **Comment authorization** — only the issue's reporter or a Seerr user with
-  `ADMIN`/`MANAGE_ISSUES` can start a run by commenting; the check fails closed
-  when Seerr is unreachable.
-- **Human takeover** — an authorized user can comment `/blitzcrank stop` to
-  stop an active turn after in-flight tool calls finish, drop queued and
-  scheduled work, and pause the issue. Normal comments stay ignored until
-  `/blitzcrank resume` is posted. The pause survives a restart. Resume allows
-  new events; it does not replay stopped work. Completed changes, usage, and
-  session evidence remain in the audit record.
-- **Loop guards** — the bot's own comment webhooks and `ISSUE_RESOLVED` events
-  are dropped, one run leaves at most one comment, and new user activity
-  cancels pending revisits.
-- **Bounded follow-ups** — at most 3 self-scheduled revisits between two user
-  messages, doubling delays when a revisit produced no news. Pending revisits
-  are persisted and re-armed after a restart.
-- **Anvil-aware imports** — optional Anvil tools correlate only exact paths,
-  treat incomplete/empty lookups as unknown, and expose just one mutation:
-  evidence-gated retry of a diagnosed failed encode. Cancellation and
-  library/store maintenance remain operator-only.
-- **Video frames** — `media_frames` returns up to six JPEG frames at chosen
-  timestamps for wrong movie or episode reports. It requires model image
-  support and a service-supplied file inside `BLITZCRANK_MEDIA_ROOTS`.
-  Frames are supporting evidence, not permission for a change.
-- **Read-only extras** — `media_probe` (ffprobe) answers language questions
-  from the file rather than the release name, confined to
-  `BLITZCRANK_MEDIA_ROOTS` after `realpath`; the optional `web_search` /
-  `web_extract` tools never justify a mutation, and `web_extract` only opens
-  URLs `web_search` returned during the same run.
-- **Discord conversations can fix things** — the host receives text only from
-  one configured inbox. A classifier with no service tools can open a private
-  thread. Each thread has a durable session with configured service reads and
-  typed mutations and the same evidence gates. A bounded search can return
-  snippets from prior Blitzcrank-handled Seerr and Discord threads as untrusted
-  clues. The host posts replies and blocks mentions.
-
-Details and rationale live in [AGENTS.md](AGENTS.md); the legacy Go deployment
-this is distilled from is described in `docs/research/legacy.md`.
-
-### Deployment
-
-NixOS is the intended deployment path. Add blitzcrank to your flake inputs:
+Add blitzcrank to your flake inputs:
 
 ```nix
 inputs.blitzcrank.url = "github:zekurio/blitzcrank";
 ```
 
-Then import and configure the module:
+Import and configure the module:
 
 ```nix
 {
@@ -108,90 +37,206 @@ Then import and configure the module:
   services.blitzcrank = {
     enable = true;
     model = "openai-codex/gpt-5.2-codex";
-    automationModel = "anthropic/claude-sonnet-4-5:medium"; # optional default
-    automationModels = {
-      stale-import-handler = "openai-codex/gpt-5.6-terra:high";
-    };
-    environmentFile = "/run/secrets/blitzcrank.env"; # SEERR_*, SONARR_*, ...
-    authSeedFile = "/run/secrets/pi_auth_json";      # optional, OAuth providers
+    environmentFile = "/run/secrets/blitzcrank.env";
     settings.SEERR_BOT_USERNAME = "blitzcrank";
   };
 }
 ```
 
-State lives in `/var/lib/blitzcrank` (case files, session transcripts, Discord
-thread sessions, and `auth.json` for OAuth providers — it must stay writable
-because tokens refresh in place). To manage authentication interactively on the deployed host, run:
+Put service URLs, API keys, and `BLITZCRANK_WEBHOOK_SECRET` in the environment
+file. `SEERR_URL` and `SEERR_API_KEY` are required. See
+[`.env.example`](.env.example) for every setting.
+
+The service stores case files, session transcripts, Discord conversations, and
+provider credentials in `/var/lib/blitzcrank`. Keep `auth.json` writable so pi
+can refresh OAuth tokens.
+
+### Provider login
+
+For OAuth or subscription authentication, run this on the deployed host:
 
 ```bash
 sudo blitzcrank-pi
 ```
 
-This opens the bundled pi CLI with its agent directory pointed at
-`/var/lib/blitzcrank`. Use `/login` or `/logout` to manage provider
-credentials. The helper stops `blitzcrank.service` while pi owns the auth file
-and restores its previous running or stopped state when pi exits or the helper
-is interrupted. It requires an interactive terminal and works over SSH. The
-unmanaged pi CLI is exposed as `blitz-pi`; use `blitzcrank-pi` for the deployed
-service's dynamic identity and writable state directory.
+Use `/login` or `/logout` in the pi CLI. The helper uses
+`/var/lib/blitzcrank` as its agent directory and stops `blitzcrank.service`
+while the CLI owns the auth file. On exit or interruption, it restores the
+service's previous running or stopped state. It needs an interactive terminal
+and works over SSH.
 
-As a declarative alternative, `authSeedFile` loads a read-only secret as a
-systemd credential and copies it to `authFile` only when the file is missing or
-the secret changed, so rebuilds never clobber refreshed tokens; it is a restore
-seed, not a live mirror. The interactive helper writes the default
-`/var/lib/blitzcrank/auth.json`; use `authSeedFile` when `authFile` is
-customized. Automations default to the definitions shipped in the package; set
-`automationsDir` to manage your own.
+For declarative authentication, set:
 
-The server exposes `POST /webhook/seerr`, `GET /healthz`, `GET /automations`,
-and `POST /automations/:name/run` on `BLITZCRANK_PORT` (default `8484`). All
-but `/healthz` require the `BLITZCRANK_WEBHOOK_SECRET` as the `Authorization`
-header when one is set.
+```nix
+services.blitzcrank.authSeedFile = "/run/secrets/pi_auth_json";
+```
 
-### Configuration
+The module loads the secret as a systemd credential. It copies the secret to
+`authFile` only when that file is missing or the secret changes, so ordinary
+rebuilds preserve refreshed tokens. Use this option if you customize
+`authFile`; the interactive helper always writes the default path.
 
-Everything is environment variables; [`.env.example`](.env.example) documents
-each one. `SEERR_URL`/`SEERR_API_KEY` are required. Sonarr, Radarr, SABnzbd,
-Jellyfin, Anvil, media probing, web access, and Discord are optional — their
-tools are registered only when configured.
+The unmanaged CLI is also available as `blitz-pi`. Use `blitzcrank-pi` to
+manage the deployed service's credentials.
 
-`BLITZCRANK_MODEL` selects the issue-run model as
-`provider/model[:thinking]` (default
-`anthropic/claude-sonnet-4-5:medium`). `BLITZCRANK_AUTOMATION_MODEL` selects the
-default for automation runs and inherits `BLITZCRANK_MODEL` when unset.
-`BLITZCRANK_AUTOMATION_MODELS` is a JSON object of per-automation overrides,
-for example
-`{"stale-import-handler":"openai-codex/gpt-5.6-terra:high"}`. The Nix module
-exposes the same mapping as `services.blitzcrank.automationModels`.
+### HTTP endpoints
 
-GPT-6 Astra is supported by the pinned pi SDK 0.85.1. Set
-`BLITZCRANK_MODEL=openai-codex/gpt-6-astra:medium` for Codex subscription auth,
-or `openai/gpt-6-astra:medium` with `OPENAI_API_KEY` for API-key auth.
-Use `low`, `medium`, `high`, `xhigh`, or `max` reasoning for Astra.
-Account access is still required. Automation and Discord model overrides
-continue to take precedence over this shared setting.
+The server listens on `BLITZCRANK_PORT`, which defaults to `8484`.
 
-Authentication follows pi's resolution order: API-key providers read the usual
-env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …), OAuth/subscription
-providers read a pi `auth.json`. On NixOS, bootstrap the default auth path with
-`sudo blitzcrank-pi` then `/login`; outside NixOS, bootstrap once with pi and
-point `BLITZCRANK_AUTH_PATH` at the writable file (default
-`~/.pi/agent/auth.json`). Custom providers can be declared in a `models.json`
-via `BLITZCRANK_MODELS_PATH`. Issue runs and Discord conversations can get
-external web tools through `BLITZCRANK_WEB_PROVIDER` (default `none`):
-`firecrawl` adds `web_search`
-(snippets) and `web_extract` (one page per call, gated to URLs the same run's
-search returned) backed by `FIRECRAWL_API_KEY` through Firecrawl's hosted API.
-Custom Firecrawl endpoints are rejected because Blitzcrank cannot enforce the
-DNS and redirect policy of a remote fetcher. The Nix module exposes this as
-`services.blitzcrank.webProvider`.
+| Method | Path                     | Purpose                   |
+| ------ | ------------------------ | ------------------------- |
+| `POST` | `/webhook/seerr`         | Receive Jellyseerr events |
+| `GET`  | `/healthz`               | Check server health       |
+| `GET`  | `/automations`           | List automations          |
+| `POST` | `/automations/:name/run` | Start an automation       |
 
-Set `ANVIL_CONTROL_SOCKET` to enable Anvil status, exact-path job correlation,
-compact job diagnostics, and evidence-gated retry of one diagnosed failed job.
-`ANVIL_COMMAND` defaults to `anvilctl`; set it to an absolute executable path
-when the daemon client is not on the service's `PATH`. On NixOS, point it at
-Anvil's standalone `anvilctl` package and grant the service access to Anvil's
-socket group:
+When `BLITZCRANK_WEBHOOK_SECRET` is set, every endpoint except `/healthz`
+requires its value in the `Authorization` header.
+
+## Connect Jellyseerr
+
+Open **Settings → Notifications → Webhook** in Jellyseerr and configure:
+
+| Setting              | Value                                         |
+| -------------------- | --------------------------------------------- |
+| URL                  | `http://<blitzcrank-host>:8484/webhook/seerr` |
+| Authorization header | Your `BLITZCRANK_WEBHOOK_SECRET`, if set      |
+| Payload              | Keep the default JSON template                |
+| Notification types   | Enable the Issue events                       |
+
+Set `SEERR_BOT_USERNAME` to the bot's display name and `SEERR_BOT_USER_ID` to
+the user it should comment as. These identify the bot's comments and prevent
+webhook loops.
+
+### What happens after a report
+
+1. Jellyseerr sends the issue webhook. blitzcrank queues an agent run.
+2. The agent reads service state and uses dedicated tools to make verified
+   changes. Movie issues get Radarr tools; TV issues get Sonarr tools. An
+   unknown media type gets neither.
+3. The host posts the result, resolves the issue if requested, and schedules
+   a revisit if work needs time to finish.
+
+Each issue keeps one agent session and its service evidence across replies.
+Only the reporter or a Seerr user with `ADMIN` or `MANAGE_ISSUES` may start a
+run by commenting. If Seerr is unreachable, the authorization check rejects
+the comment.
+
+A run leaves at most one comment. Progress updates edit that comment, and the
+final response replaces it. The bot ignores its own comment webhooks and
+`ISSUE_RESOLVED` events.
+
+Revisits wait between 10 minutes and 48 hours. There are at most three between
+user messages, with doubled delays when a revisit finds nothing new. New user
+activity cancels pending revisits. Pending revisits survive restarts.
+
+### Pause an issue
+
+An authorized user can comment `/blitzcrank stop` to finish in-flight tool
+calls, stop the active turn, clear queued and scheduled work, and pause the
+issue. The pause survives restarts. blitzcrank ignores ordinary comments until
+an authorized user posts `/blitzcrank resume`.
+
+Resuming allows new events. It does not replay stopped work or undo completed
+changes. Usage and session evidence remain in the audit record.
+
+### Comment usage totals
+
+Each public comment ends with the model and the issue's cumulative token usage:
+
+```text
+[blitzcrank w/ gpt-5.2-codex:high · 118.2k in · 14.2k out]
+```
+
+API-key authentication adds a cumulative price estimate, such as `· $0.42`.
+Legacy issues without cost history show the current run's estimate instead.
+Subscription authentication omits cost because API list prices do not represent
+subscription spending.
+
+## Configure models and services
+
+Configuration uses environment variables. [`.env.example`](.env.example) is the
+full reference. Optional service tools are available only when configured.
+
+### Model selection
+
+Model values use `provider/model[:thinking]`.
+
+| Setting                           | Applies to                                   | Default or fallback                  |
+| --------------------------------- | -------------------------------------------- | ------------------------------------ |
+| `BLITZCRANK_MODEL`                | Issue runs                                   | `anthropic/claude-sonnet-4-5:medium` |
+| `BLITZCRANK_AUTOMATION_MODEL`     | Automations                                  | `BLITZCRANK_MODEL`                   |
+| `BLITZCRANK_AUTOMATION_MODELS`    | Named automation overrides, as a JSON object | Automation default                   |
+| `BLITZCRANK_DISCORD_MODEL`        | Discord conversations                        | `BLITZCRANK_MODEL`                   |
+| `BLITZCRANK_DISCORD_TRIAGE_MODEL` | Discord inbox classification                 | Conversation model                   |
+
+For example, this overrides one automation:
+
+```dotenv
+BLITZCRANK_AUTOMATION_MODELS={"stale-import-handler":"openai-codex/gpt-5.6-terra:high"}
+```
+
+The Nix module exposes automation defaults and overrides as:
+
+```nix
+services.blitzcrank = {
+  automationModel = "anthropic/claude-sonnet-4-5:medium";
+  automationModels.stale-import-handler = "openai-codex/gpt-5.6-terra:high";
+};
+```
+
+The pinned pi SDK 0.85.1 supports GPT-6 Astra. Use
+`openai-codex/gpt-6-astra:medium` for Codex subscription authentication or
+`openai/gpt-6-astra:medium` with `OPENAI_API_KEY`. Supported reasoning levels
+are `low`, `medium`, `high`, `xhigh`, and `max`. Your account must have access.
+Automation and Discord overrides take precedence over the shared model.
+
+### Credentials and custom providers
+
+pi reads the usual provider environment variables, such as
+`ANTHROPIC_API_KEY` and `OPENAI_API_KEY`. OAuth and subscription providers use
+a writable pi `auth.json`.
+
+On NixOS, use the [provider login helper](#provider-login). Elsewhere, log in
+with pi and set `BLITZCRANK_AUTH_PATH` to its writable auth file. The default
+is `~/.pi/agent/auth.json`.
+
+Set `BLITZCRANK_MODELS_PATH` to a `models.json` file to define custom providers.
+
+### Media inspection
+
+Set `BLITZCRANK_MEDIA_ROOTS` to colon-separated absolute directories containing
+media and completed downloads. `media_probe` uses ffprobe to inspect streams,
+including their languages. `media_frames` uses ffmpeg to return up to six JPEG
+frames at requested timestamps for wrong-movie or wrong-episode reports. Frame
+inspection also requires a model that accepts images.
+
+These tools accept only service-supplied paths read during the current run.
+They resolve symlinks before checking that files are inside the allowed roots.
+Frames and stream metadata do not authorize changes or establish target IDs.
+
+### Web access
+
+Set `BLITZCRANK_WEB_PROVIDER=firecrawl` and `FIRECRAWL_API_KEY` to add web
+search and extraction to issue runs and Discord conversations. Web access is
+off by default. On NixOS, use `services.blitzcrank.webProvider`.
+
+`web_search` returns snippets. `web_extract` opens one page per call, and only
+if the current run's search returned its URL. Web content is untrusted and
+cannot authorize a change.
+
+Firecrawl must use its hosted API. blitzcrank rejects custom endpoints because
+it cannot enforce a remote fetcher's DNS and redirect policy.
+
+### Anvil
+
+Set `ANVIL_CONTROL_SOCKET` to enable status reads, exact-path job lookups,
+diagnostics, and retry of a diagnosed failed encode. Anvil tools use `anvilctl`
+over its control socket. They never open its store.
+
+`ANVIL_COMMAND` defaults to `anvilctl`. Set an absolute path if the executable
+is not on the service's `PATH`. On NixOS, use Anvil's standalone client package
+and grant access to its socket group:
 
 ```nix
 services.blitzcrank.settings = {
@@ -202,34 +247,15 @@ services.blitzcrank.settings = {
 systemd.services.blitzcrank.serviceConfig.SupplementaryGroups = [ "anvil" ];
 ```
 
-Every public comment carries a footer with the model identity and the issue's
-cumulative token usage, e.g.
-`[blitzcrank w/ gpt-5.2-codex:high · 118.2k in · 14.2k out]`. With API-key
-authentication it also shows the cumulative API-price estimate, for example
-`· $0.42`. For a legacy issue without cumulative cost history, it shows the current
-run's estimate instead. Cost is omitted for OAuth subscription authentication,
-where a list-price dollar figure would be fiction.
+Job lookups correlate exact paths only. Empty or incomplete results mean the
+state is unknown. Retry is the only Anvil mutation available to the agent;
+cancellation and library or store maintenance remain operator-only.
 
-### Jellyseerr webhook
+## Run automations
 
-Settings → Notifications → Webhook:
-
-- URL: `http://<blitzcrank-host>:8484/webhook/seerr`
-- Authorization header: the value of `BLITZCRANK_WEBHOOK_SECRET`, if set
-- Payload: keep the default JSON template
-- Notification types: enable the Issue events
-
-Set `SEERR_BOT_USERNAME` (and `SEERR_BOT_USER_ID` for the comment identity) so
-the bot's own comments never trigger runs.
-
-### Automations
-
-`automations/*.md` are operator-authored tasks: frontmatter declares the cron
-schedule and the exact mutation tools the task may use. The body is the trusted
-instruction text.
-Model selection is deployment configuration: a named entry in
-`BLITZCRANK_AUTOMATION_MODELS` wins, then `BLITZCRANK_AUTOMATION_MODEL`, then
-`BLITZCRANK_MODEL`. For example, an automation definition contains no model:
+Automation definitions live in [`automations/`](automations). Each Markdown
+file declares a cron schedule and the exact mutation tools it may use. Its body
+contains trusted operator instructions. For example, the frontmatter can be:
 
 ```yaml
 ---
@@ -240,95 +266,145 @@ mutation_tools:
 ---
 ```
 
-A model mapping changes only that automation's fresh agent turn; it does not
-expand its service access, mutation tools, or evidence gates. Unknown
-automation names and unavailable models are startup errors, so renamed tasks
-cannot leave dead routing configuration behind. The bundled
-`stale-import-handler` declares Sonarr, Radarr, and Anvil mutations and
-therefore requires all three services to be configured; unavailable declared tools fail
-closed rather than being silently omitted. Runs are triggered by cron,
-`POST /automations/:name/run`, or Discord, and one automation never runs twice
-concurrently (a busy name is refused with `409`). Every run finishes through
-the typed `submit_automation_report` tool. Its validated `status` and `body`
-arguments are the authoritative report; the host does not parse a status line
-from free-text model output.
+Automations get read tools plus their declared mutation tools. Model selection
+belongs in deployment configuration, not the task file. Changing a model does
+not change tool access or evidence requirements.
 
-Discord monitoring is optional and off unless `DISCORD_BOT_TOKEN` is set (then
-`DISCORD_GUILD_ID` and `DISCORD_WATCH_CHANNEL_ID` are required). Each run posts
-its formatted report — including "nothing to do" runs, as a heartbeat — into a
-private `automation: <name>` thread in the watch channel. The structured status
-becomes the report header, and internal history markers are removed before
-delivery. `/automation list`
-shows schedules and next runs, `/automation run name:<x>` queues one.
+NixOS uses the bundled definitions by default. Set `automationsDir` to use your
+own. The bundled `stale-import-handler` requires Sonarr, Radarr, and Anvil.
+Startup fails if a declared tool is unavailable, a model override names an
+unknown automation, or a selected model is unavailable.
 
-Set `DISCORD_INBOX_CHANNEL_ID` to enable operations conversations. Each
-plain-text message in that channel goes to a classifier with no service/read
-tools.
-Accepted messages open a private `blitzcrank: <topic>` thread and add the
-sender. The bot copies the accepted message into a source card that names its
-author and links to the original. It does not impersonate the author. Replies
-in that thread continue one persistent agent session. The conversation can
-inspect current media-service state and use every configured typed mutation to
-apply an authorized, verified fix. It cannot change Seerr issue status or write
-to Discord itself. It can search bounded snippets from prior Blitzcrank-handled
-Seerr issues and Discord conversations; its current thread and automation
-transcripts are excluded. History is a private clue, never authorization or
-current service evidence. Each thread persists its own service evidence with
-the conversation, while mutable state, paths, and reusable Anvil slugs must be
-read again before they are used.
+Cron, `POST /automations/:name/run`, and Discord can start runs. Each automation
+can run only once at a time; another request for a busy name returns `409`.
+The agent finishes through `submit_automation_report`. The host uses that tool's
+validated `status` and `body` as the report.
 
-`BLITZCRANK_DISCORD_MODEL` selects the conversation model and falls back to
-`BLITZCRANK_MODEL`. `BLITZCRANK_DISCORD_TRIAGE_MODEL` selects the cheap triage
-model and falls back to the conversation model. Configure the latter to make
-the first pass cheap.
+## Set up Discord
 
-Invite the bot with the `bot` and `applications.commands` scopes and grant it
-View Channel, Send Messages, Send Messages in Threads, Create Private Threads,
-Manage Threads, and Read Message History in that channel (the last is how
-archived report threads are found again). Keep the watch channel admin-only;
-blitzcrank never edits permissions itself. Optionally set
-`DISCORD_ADMIN_ROLE_IDS` to let non-administrator roles trigger runs. Don't
-lock a report thread by hand — reviving it would need Manage Threads on the
-thread itself; delete it instead and the next run makes a new one. On startup
-blitzcrank bulk-overwrites the configured guild's command set, so don't share
-the application with another bot.
+### Automation reports and commands
 
-For the inbox, also enable **Message Content Intent** in the Discord developer
-portal. Grant the bot the same thread permissions in that channel. Channel
-access authorizes typed service changes and access to prior conversation
-snippets, not just chat, so restrict it to trusted users. Private threads are
-visible to the invited sender and members with Discord's Manage Threads
-permission; those members can also drive the conversation if they reply.
+Discord is off unless `DISCORD_BOT_TOKEN` is set. Enabling it also requires
+`DISCORD_GUILD_ID` and `DISCORD_WATCH_CHANNEL_ID`.
 
-### Development
+Each automation posts to a private `automation: <name>` thread in the watch
+channel. Reports include runs with nothing to do, so you can see that the
+schedule is still working. The report header shows the structured status;
+internal history markers are removed before delivery.
 
-The Nix flake ships a dev shell with Node 24, pnpm, and TypeScript:
+- `/automation list` shows schedules and next runs.
+- `/automation run name:<x>` queues a run.
+
+Administrators can trigger runs. Set `DISCORD_ADMIN_ROLE_IDS` to grant that
+access to additional roles.
+
+### Bot permissions
+
+Invite the bot with the `bot` and `applications.commands` scopes. Grant these
+permissions in the watch channel:
+
+- View Channel
+- Send Messages
+- Send Messages in Threads
+- Create Private Threads
+- Manage Threads
+- Read Message History, which lets the bot find archived report threads
+
+Keep the watch channel admin-only. blitzcrank does not edit permissions.
+If you need to remove a report thread, delete it; the next run creates another.
+Avoid locking threads, since reviving one requires Manage Threads permission
+on the thread itself.
+
+On startup, blitzcrank replaces the configured guild's command set. Use a
+separate Discord application for this bot.
+
+### Private operations inbox
+
+Set `DISCORD_INBOX_CHANNEL_ID` and enable Message Content Intent in the Discord
+developer portal. Grant the bot the same thread permissions in the inbox.
+Restrict channel access to trusted users: access allows service changes and
+searches of prior conversations.
+
+Each plain-text message goes to a classifier with no service or read tools.
+For accepted messages, the host opens a private `blitzcrank: <topic>` thread,
+adds the sender, and posts a source card with the original text, author, and
+message link.
+
+Replies continue one persistent agent session. It can use all configured
+service reads and typed mutations, including both Sonarr and Radarr. Multi-item
+or destructive work requires prior conversation approval for the exact scope.
+The host posts replies with mentions blocked. The agent cannot write to Discord
+or change Seerr issue status.
+
+The agent can search bounded snippets from earlier blitzcrank Seerr and Discord
+sessions. Searches exclude the current thread and automation transcripts.
+History is untrusted context, not permission or current service evidence.
+Each thread retains service evidence, but the agent must read mutable state,
+file paths, and reusable Anvil slugs again before using them.
+
+Private threads are visible to the invited sender and members with Manage
+Threads permission. Those members can also drive the conversation by replying.
+Use `BLITZCRANK_DISCORD_TRIAGE_MODEL` to choose a cheaper model for the initial
+classification pass.
+
+## Safety rules
+
+The agent can change media services, so the tool layer enforces these limits:
+
+- Raw `*_request` tools are GET-only. SABnzbd raw reads are limited to `queue`
+  and `history`. Every mutation has a dedicated tool and requires a reason.
+- Mutation targets must come from accepted service reads. The code rejects
+  guessed IDs. Meaningful changes include a verification read-back.
+- A multi-episode Sonarr search must state the true episode count. Replacing
+  two or more existing files requires inspecting at least one with
+  `media_probe` during the current run.
+- Issue, Discord, and automation runs have no mutation or deletion quotas.
+  Changes remain counted and audited. Issue prompts require the agent to
+  establish the full scope, tell the reporter, and act on exactly that scope.
+- Each resumed session gets a fresh system prompt and tool list while keeping
+  its conversation and service evidence.
+- The host posts comments, resolves issues, and schedules revisits. The agent
+  returns `RESOLVE_ISSUE` and optional `REVISIT_IN` and `REVISIT_REASON`
+  directives. Malformed directives result in no comment.
+
+[AGENTS.md](AGENTS.md) records the full safety invariants and their rationale.
+The [legacy deployment notes](docs/research/legacy.md) describe the earlier Go
+implementation.
+
+## Develop locally
+
+The Nix dev shell includes Node 24, pnpm, and TypeScript:
 
 ```bash
 nix develop          # or: direnv allow
 pnpm install
-cp .env.example .env # fill in service URLs + API keys
+cp .env.example .env # fill in service URLs and API keys
 pnpm dev             # tsx watch
 ```
 
-The dev shell exposes the checkout's pinned Pi CLI as `blitz-pi`, avoiding a
-collision with any other `pi` installation.
+The shell exposes the checkout's pinned pi CLI as `blitz-pi` to avoid collisions
+with other `pi` installations.
 
-Without Nix: install Node >= 22.19.0 and pnpm, then the same steps. `pnpm
-build && pnpm start` compiles to `dist/` and runs it.
+Without Nix, install Node >= 22.19.0 and pnpm, then follow the commands after
+`nix develop`. To compile and run the output:
 
-Run `pnpm verify` (format check, lint, typecheck, and the tool-surface check)
-before opening a pull request. [AGENTS.md](AGENTS.md) covers the safety
-invariants, branch/commit conventions, and code style; `skills/` and
-`docs/research/` hold the domain knowledge the agent and the code depend on.
+```bash
+pnpm build
+pnpm start
+```
 
-### Contributing
+Run `pnpm verify` before opening a pull request. It checks formatting, lint,
+and types. [AGENTS.md](AGENTS.md) covers code style and contribution rules;
+[`skills/`](skills) and [`docs/research/`](docs/research) contain agent domain
+knowledge and API references.
 
-Found a bug or have an idea?
-[Open an issue](https://github.com/zekurio/blitzcrank/issues/new). Changes that
-touch the tool surface, evidence gates, session resumption, or the
-directive protocol must say so explicitly in the pull request.
+## Contributing
 
-### License
+[Open an issue](https://github.com/zekurio/blitzcrank/issues/new) to report a
+bug or propose a change. Pull requests that change available tools, evidence
+gates, session resumption, or the directive protocol must describe that change
+explicitly.
+
+## License
 
 [MIT](LICENSE)
