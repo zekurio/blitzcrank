@@ -2,6 +2,7 @@ import {
   defineTool,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent"
+import { Effect } from "effect"
 import { Type } from "typebox"
 
 import type { ServiceConfig } from "../config.ts"
@@ -41,17 +42,23 @@ function movieCommandTool(
       reason: reasonParam(),
       movieId,
     }),
-    async execute(_toolCallId, params) {
-      const evidence = [{ service, value: params.movieId, hint: "movie id" }]
-      const outcome = await runArrCommand(cfg, service, ctx, evidence, {
-        name: command.commandName,
-        movieIds: [params.movieId],
-      })
-      return textResult(outcome, {
-        service,
-        action: command.action,
-        movieId: params.movieId,
-      })
+    execute(_toolCallId, params) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          const evidence = [
+            { service, value: params.movieId, hint: "movie id" },
+          ]
+          const outcome = yield* runArrCommand(cfg, service, ctx, evidence, {
+            name: command.commandName,
+            movieIds: [params.movieId],
+          })
+          return textResult(outcome, {
+            service,
+            action: command.action,
+            movieId: params.movieId,
+          })
+        }),
+      )
     },
   })
 }
@@ -70,22 +77,26 @@ function deleteMovieFileTool(
       reason: reasonParam(),
       movieFileId: Type.Integer({ minimum: 1 }),
     }),
-    async execute(_toolCallId, params) {
-      const path = `/api/v3/moviefile/${params.movieFileId}`
-      const outcome = await runArrFileDelete(
-        cfg,
-        service,
-        ctx,
-        path,
-        params.movieFileId,
-        "moviefile id",
-        "movie file",
+    execute(_toolCallId, params) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          const path = `/api/v3/moviefile/${params.movieFileId}`
+          const outcome = yield* runArrFileDelete(
+            cfg,
+            service,
+            ctx,
+            path,
+            params.movieFileId,
+            "moviefile id",
+            "movie file",
+          )
+          return textResult(outcome, {
+            service,
+            action: "delete_movie_file",
+            movieFileId: params.movieFileId,
+          })
+        }),
       )
-      return textResult(outcome, {
-        service,
-        action: "delete_movie_file",
-        movieFileId: params.movieFileId,
-      })
     },
   })
 }

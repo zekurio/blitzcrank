@@ -3,10 +3,15 @@ import {
   defineTool,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent"
+import { Effect } from "effect"
 import { Type } from "typebox"
 
 import type { ServiceConfig } from "../config.ts"
-import { jsonRequest, type JsonValue } from "../services/http.ts"
+import {
+  jsonRequestEffect,
+  type JsonRequestError,
+  type JsonValue,
+} from "../services/http.ts"
 import { makeReadTool, reasonParam, runMutation, textResult } from "./common.ts"
 import type { RunContext } from "./context.ts"
 import { assertSeerrLifecycleOwned } from "./safety.ts"
@@ -16,7 +21,7 @@ export function buildSeerrTools(
   ctx: RunContext,
 ): ToolDefinition[] {
   const request = (path: string) =>
-    jsonRequest(cfg.url, path, { headers: { "X-Api-Key": cfg.apiKey } })
+    jsonRequestEffect(cfg.url, path, { headers: { "X-Api-Key": cfg.apiKey } })
 
   return [
     makeReadTool(
@@ -37,7 +42,7 @@ export function buildSeerrTools(
 function createRequestTool(
   cfg: ServiceConfig,
   ctx: RunContext,
-  request: (path: string) => Promise<JsonValue>,
+  request: (path: string) => Effect.Effect<JsonValue, JsonRequestError>,
 ): ToolDefinition {
   return defineTool({
     name: "seerr_create_request",
@@ -57,43 +62,52 @@ function createRequestTool(
         }),
       ),
     }),
-    async execute(_toolCallId, params) {
-      const body = {
-        mediaType: params.mediaType,
-        mediaId: params.mediaId,
-      }
-      if (params.seasons) Object.assign(body, { seasons: params.seasons })
-      const outcome = await runMutation(ctx, {
-        kind: "mutate",
-        evidence: [{ service: "seerr", value: params.mediaId, hint: "tmdbId" }],
-        perform: () =>
-          jsonRequest(cfg.url, "/api/v1/request", {
-            method: "POST",
-            headers: { "X-Api-Key": cfg.apiKey },
-            body,
-          }),
-        verify: (result) => verifyCreatedRequest(ctx, request, result),
-      })
-      return textResult(outcome, {
-        service: "seerr",
-        action: "create_request",
-        mediaId: params.mediaId,
-      })
+    execute(_toolCallId, params) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          const body = {
+            mediaType: params.mediaType,
+            mediaId: params.mediaId,
+          }
+          if (params.seasons) Object.assign(body, { seasons: params.seasons })
+          const outcome = yield* runMutation(ctx, {
+            kind: "mutate",
+            evidence: [
+              { service: "seerr", value: params.mediaId, hint: "tmdbId" },
+            ],
+            perform: () =>
+              jsonRequestEffect(cfg.url, "/api/v1/request", {
+                method: "POST",
+                headers: { "X-Api-Key": cfg.apiKey },
+                body,
+              }),
+            verify: (result) => verifyCreatedRequest(ctx, request, result),
+          })
+          return textResult(outcome, {
+            service: "seerr",
+            action: "create_request",
+            mediaId: params.mediaId,
+          })
+        }),
+      )
     },
   })
 }
 
-async function verifyCreatedRequest(
+function verifyCreatedRequest(
   ctx: RunContext,
-  request: (path: string) => Promise<JsonValue>,
+  request: (path: string) => Effect.Effect<JsonValue, JsonRequestError>,
   result: JsonValue,
-): Promise<JsonValue> {
-  const id = isJsonObject(result) && isNumber(result.id) ? result.id : undefined
-  if (!id) return { warning: "request response had no id" }
-  const path = `/api/v1/request/${id}`
-  const created = await request(path)
-  ctx.recordRead("seerr", path, JSON.stringify(created))
-  return created
+): Effect.Effect<JsonValue, JsonRequestError> {
+  return Effect.gen(function* () {
+    const id =
+      isJsonObject(result) && isNumber(result.id) ? result.id : undefined
+    if (!id) return { warning: "request response had no id" }
+    const path = `/api/v1/request/${id}`
+    const created = yield* request(path)
+    ctx.recordRead("seerr", path, JSON.stringify(created))
+    return created
+  })
 }
 
 function isJsonObject(

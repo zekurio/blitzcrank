@@ -4,6 +4,7 @@ import {
   defineTool,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent"
+import { Cause, Data, Effect } from "effect"
 import { Type } from "typebox"
 
 import type { JsonValue } from "../services/http.ts"
@@ -85,18 +86,33 @@ function recordResponsePaths(
   }
 }
 
-export interface ReadToolSpec {
+export class ToolError extends Data.TaggedError("ToolError")<{
+  message: string
+}> {}
+
+/** Keep existing synchronous tool guards in the typed failure channel. */
+export function toolCheck<A>(check: () => A): Effect.Effect<A, ToolError> {
+  return Effect.try({
+    try: check,
+    catch: (error) =>
+      new ToolError({
+        message: error instanceof Error ? error.message : String(error),
+      }),
+  })
+}
+
+export interface ReadToolSpec<E> {
   service: ServiceName
   label: string
   description: string
   /** Extra deterministic guards beyond assertServicePath. */
   guards?: (path: string) => void
-  request: (path: string) => Promise<JsonValue>
+  request: (path: string) => Effect.Effect<JsonValue, E>
 }
 
 /** GET-only raw request tool for investigation. Every read is recorded as evidence. */
-export function makeReadTool(
-  spec: ReadToolSpec,
+export function makeReadTool<E>(
+  spec: ReadToolSpec<E>,
   ctx: RunContext,
 ): ToolDefinition {
   return defineTool({
@@ -113,21 +129,27 @@ export function makeReadTool(
           "Service-relative path starting with /, including any query string. Never a full URL or credentials.",
       }),
     }),
-    async execute(_toolCallId, params) {
-      assertServicePath(params.path)
-      spec.guards?.(params.path)
-      const data = await spec.request(params.path)
-      ctx.recordRead(
-        spec.service,
-        params.path,
-        isString(data) ? data : JSON.stringify(data),
+    execute(_toolCallId, params) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          yield* toolCheck(() => {
+            assertServicePath(params.path)
+            spec.guards?.(params.path)
+          })
+          const data = yield* spec.request(params.path)
+          ctx.recordRead(
+            spec.service,
+            params.path,
+            isString(data) ? data : JSON.stringify(data),
+          )
+          recordResponsePaths(ctx, spec.service, data)
+          return textResult(data, {
+            service: spec.service,
+            method: "GET",
+            path: params.path,
+          })
+        }),
       )
-      recordResponsePaths(ctx, spec.service, data)
-      return textResult(data, {
-        service: spec.service,
-        method: "GET",
-        path: params.path,
-      })
     },
   })
 }
@@ -151,33 +173,44 @@ export interface MutationOutcome {
  * built-in verification read. Verification failures never mask a completed
  * mutation.
  */
-export async function runMutation(
+export function runMutation<E, R, E2 = never, R2 = never>(
   ctx: RunContext,
   opts: {
     kind: "mutate" | "delete"
     evidence?: EvidenceRequirement[]
-    perform: () => Promise<JsonValue>
-    verify?: (result: JsonValue) => Promise<JsonValue>
+    perform: () => Effect.Effect<JsonValue, E, R>
+    verify?: (result: JsonValue) => Effect.Effect<JsonValue, E2, R2>
   },
-): Promise<MutationOutcome> {
-  for (const e of opts.evidence ?? []) {
-    if (e.identity === true) {
-      ctx.requireIdentity(e.service, e.value, e.hint)
-      continue
-    }
-    ctx.requireEvidence(e.service, e.value, e.hint)
-  }
-  ctx.noteMutation(opts.kind)
-  const result = await opts.perform()
-  if (!opts.verify) return { result }
-  try {
-    return { result, verification: await opts.verify(result) }
-  } catch (err) {
-    return {
-      result,
-      verificationError: err instanceof Error ? err.message : String(err),
-    }
-  }
+): Effect.Effect<MutationOutcome, E | ToolError, R | R2> {
+  return Effect.gen(function* () {
+    yield* toolCheck(() => {
+      for (const e of opts.evidence ?? []) {
+        if (e.identity === true) {
+          ctx.requireIdentity(e.service, e.value, e.hint)
+          continue
+        }
+        ctx.requireEvidence(e.service, e.value, e.hint)
+      }
+    })
+    ctx.noteMutation(opts.kind)
+    const result = yield* opts.perform()
+    const verify = opts.verify
+    if (!verify) return { result }
+    return yield* Effect.suspend(() => verify(result)).pipe(
+      Effect.map((verification): MutationOutcome => ({ result, verification })),
+      // A thrown parser error must not hide a completed write either. Fiber
+      // interruption remains interruption, not a successful verification result.
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterrupts(cause)) return Effect.interrupt
+        const error = Cause.squash(cause)
+        return Effect.succeed({
+          result,
+          verificationError:
+            error instanceof Error ? error.message : String(error),
+        })
+      }),
+    )
+  })
 }
 
 export const reasonParam = () =>
