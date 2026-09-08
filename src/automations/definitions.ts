@@ -1,7 +1,11 @@
 import { readdir, readFile } from "node:fs/promises"
 import path from "node:path"
 
+import { Data, Effect } from "effect"
 import { parse } from "yaml"
+
+import { storageIO } from "../storage.ts"
+import type { StorageError } from "../storage.ts"
 
 export interface AutomationDefinition {
   name: string
@@ -94,28 +98,48 @@ function parseDefinition(filePath: string, raw: string): AutomationDefinition {
   }
 }
 
-export async function loadAutomations(
+export class AutomationDefinitionError extends Data.TaggedError(
+  "AutomationDefinitionError",
+)<{ cause: unknown }> {
+  override get message(): string {
+    return this.cause instanceof Error ? this.cause.message : String(this.cause)
+  }
+}
+
+export function loadAutomationsEffect(
   dir: string,
-): Promise<AutomationDefinition[]> {
-  let entries
-  try {
-    entries = await readdir(dir, { withFileTypes: true })
-  } catch {
-    return []
-  }
-  const definitions: AutomationDefinition[] = []
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith(".md")) continue
-    const filePath = path.join(dir, entry.name)
-    definitions.push(
-      parseDefinition(filePath, await readFile(filePath, "utf8")),
-    )
-  }
-  const names = new Set<string>()
-  for (const def of definitions) {
-    if (names.has(def.name))
-      throw new Error(`duplicate automation name "${def.name}"`)
-    names.add(def.name)
-  }
-  return definitions
+): Effect.Effect<
+  AutomationDefinition[],
+  StorageError | AutomationDefinitionError
+> {
+  return Effect.gen(function* () {
+    const entries = yield* storageIO(() =>
+      readdir(dir, { withFileTypes: true }),
+    ).pipe(Effect.catch(() => Effect.succeed([])))
+    const definitions: AutomationDefinition[] = []
+    const names = new Set<string>()
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".md")) continue
+      const filePath = path.join(dir, entry.name)
+      const raw = yield* storageIO(() => readFile(filePath, "utf8"))
+      const definition = yield* Effect.try({
+        try: () => parseDefinition(filePath, raw),
+        catch: (cause) => new AutomationDefinitionError({ cause }),
+      })
+      if (names.has(definition.name)) {
+        return yield* Effect.fail(
+          new AutomationDefinitionError({
+            cause: new Error(`duplicate automation name "${definition.name}"`),
+          }),
+        )
+      }
+      names.add(definition.name)
+      definitions.push(definition)
+    }
+    return definitions
+  })
+}
+
+export function loadAutomations(dir: string): Promise<AutomationDefinition[]> {
+  return Effect.runPromise(loadAutomationsEffect(dir))
 }

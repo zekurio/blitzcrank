@@ -1,7 +1,11 @@
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
+import { readFile, rm } from "node:fs/promises"
 import path from "node:path"
 
+import { Effect } from "effect"
+
 import type { JsonValue } from "./services/http.ts"
+import { storageCheck, storageIO, writeAtomic } from "./storage.ts"
+import type { StorageError } from "./storage.ts"
 import type { EvidenceIdentity, EvidenceSnapshot } from "./tools/context.ts"
 
 interface EvidenceFileData {
@@ -17,41 +21,66 @@ export class EvidenceStore {
     private readonly logPrefix: string,
   ) {}
 
-  async load(scopeId: string): Promise<EvidenceSnapshot | undefined> {
-    const raw = await readFile(this.file(scopeId), "utf8").catch(
-      () => undefined,
-    )
-    if (raw === undefined) return undefined
-    try {
-      // SAFETY: Array presence and identity members are checked before use.
-      const parsed = JSON.parse(raw) as Partial<EvidenceFileData>
-      if (!Array.isArray(parsed.evidence)) return undefined
-      const identities = Array.isArray(parsed.identities)
-        ? parsed.identities.filter(isEvidenceIdentity)
-        : []
-      return {
-        evidence: parsed.evidence,
-        identities,
-        probed: Array.isArray(parsed.probed) ? parsed.probed : [],
-      }
-    } catch {
-      console.warn(
-        `[${this.logPrefix}:${scopeId}] unreadable evidence file; ignoring it`,
+  loadEffect(
+    scopeId: string,
+  ): Effect.Effect<EvidenceSnapshot | undefined, StorageError> {
+    return Effect.gen({ self: this }, function* () {
+      const target = yield* storageCheck(() => this.file(scopeId))
+      const raw = yield* storageIO(() => readFile(target, "utf8")).pipe(
+        Effect.catch(() => Effect.succeed(undefined)),
       )
-      return undefined
-    }
+      if (raw === undefined) return undefined
+      return yield* storageCheck(() => {
+        // SAFETY: Array presence and identity members are checked before use.
+        const parsed = JSON.parse(raw) as Partial<EvidenceFileData>
+        if (!Array.isArray(parsed.evidence)) return undefined
+        const identities = Array.isArray(parsed.identities)
+          ? parsed.identities.filter(isEvidenceIdentity)
+          : []
+        return {
+          evidence: parsed.evidence,
+          identities,
+          probed: Array.isArray(parsed.probed) ? parsed.probed : [],
+        }
+      }).pipe(
+        Effect.catch(() => {
+          console.warn(
+            `[${this.logPrefix}:${scopeId}] unreadable evidence file; ignoring it`,
+          )
+          return Effect.succeed(undefined)
+        }),
+      )
+    })
   }
 
-  async save(scopeId: string, snapshot: EvidenceSnapshot): Promise<void> {
-    const target = this.file(scopeId)
-    await mkdir(this.dir, { recursive: true })
-    const tmp = `${target}.tmp`
-    await writeFile(tmp, JSON.stringify(snapshot), "utf8")
-    await rename(tmp, target)
+  saveEffect(
+    scopeId: string,
+    snapshot: EvidenceSnapshot,
+  ): Effect.Effect<void, StorageError> {
+    return Effect.gen({ self: this }, function* () {
+      const target = yield* storageCheck(() => this.file(scopeId))
+      const body = yield* storageCheck(() => JSON.stringify(snapshot))
+      yield* writeAtomic(target, body)
+    })
   }
 
-  async forget(scopeId: string): Promise<void> {
-    await rm(this.file(scopeId), { force: true })
+  forgetEffect(scopeId: string): Effect.Effect<void, StorageError> {
+    return Effect.gen({ self: this }, function* () {
+      const target = yield* storageCheck(() => this.file(scopeId))
+      yield* storageIO(() => rm(target, { force: true }))
+    })
+  }
+
+  load(scopeId: string): Promise<EvidenceSnapshot | undefined> {
+    return Effect.runPromise(this.loadEffect(scopeId))
+  }
+
+  save(scopeId: string, snapshot: EvidenceSnapshot): Promise<void> {
+    return Effect.runPromise(this.saveEffect(scopeId, snapshot))
+  }
+
+  forget(scopeId: string): Promise<void> {
+    return Effect.runPromise(this.forgetEffect(scopeId))
   }
 
   private file(scopeId: string): string {

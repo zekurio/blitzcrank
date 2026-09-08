@@ -1,5 +1,11 @@
+import { Effect } from "effect"
+
 import type { ServiceConfig } from "../config.ts"
-import { jsonRequest, type JsonValue } from "./http.ts"
+import {
+  jsonRequestEffect,
+  type JsonValue,
+  type JsonRequestError,
+} from "./http.ts"
 
 export interface SeerrUser {
   id?: number
@@ -29,25 +35,31 @@ export class SeerrClient {
     private readonly botUserId: string | undefined,
   ) {}
 
-  private headers(): Headers {
-    const headers = new Headers({ "X-Api-Key": this.cfg.apiKey })
-    if (this.botUserId) headers.set("X-Api-User", this.botUserId)
-    return headers
+  private headers(): Record<string, string> {
+    return {
+      "X-Api-Key": this.cfg.apiKey,
+      ...(this.botUserId ? { "X-Api-User": this.botUserId } : {}),
+    }
   }
 
-  getIssue(issueId: string | number): Promise<SeerrIssue> {
-    return jsonRequest<SeerrIssue>(this.cfg.url, `/api/v1/issue/${issueId}`, {
-      headers: this.headers(),
-    })
+  getIssueEffect(
+    issueId: string | number,
+  ): Effect.Effect<SeerrIssue, JsonRequestError> {
+    return jsonRequestEffect<SeerrIssue>(
+      this.cfg.url,
+      `/api/v1/issue/${issueId}`,
+      {
+        headers: this.headers(),
+      },
+    )
   }
 
-  async listUsers(): Promise<SeerrUser[]> {
-    const response = await jsonRequest<{ results?: SeerrUser[] }>(
+  listUsersEffect(): Effect.Effect<SeerrUser[], JsonRequestError> {
+    return jsonRequestEffect<{ results?: SeerrUser[] }>(
       this.cfg.url,
       "/api/v1/user?take=200",
       { headers: this.headers() },
-    )
-    return response.results ?? []
+    ).pipe(Effect.map((response) => response.results ?? []))
   }
 
   /**
@@ -55,44 +67,94 @@ export class SeerrClient {
    * The inference is ambiguous when two posts to one issue race, so posting
    * must be serialized by the caller (see IssueRunner.notifyQueued).
    */
-  async postComment(
+  postCommentEffect(
     issueId: string | number,
     message: string,
-  ): Promise<number | undefined> {
-    const issue = await jsonRequest<{ comments?: Array<{ id?: number }> }>(
+  ): Effect.Effect<number | undefined, JsonRequestError> {
+    return jsonRequestEffect<{ comments?: Array<{ id?: number }> }>(
       this.cfg.url,
       `/api/v1/issue/${issueId}/comment`,
       { method: "POST", headers: this.headers(), body: { message } },
+    ).pipe(
+      Effect.map((issue) => {
+        const ids = (issue?.comments ?? [])
+          .map((comment) => comment.id)
+          .filter((id): id is number => typeof id === "number")
+        return ids.length > 0 ? Math.max(...ids) : undefined
+      }),
     )
-    const ids = (issue?.comments ?? [])
-      .map((comment) => comment.id)
-      .filter((id): id is number => typeof id === "number")
-    return ids.length > 0 ? Math.max(...ids) : undefined
   }
 
   /** Rewrites an existing comment in place (author or MANAGE_ISSUES only). */
+  updateCommentEffect(
+    commentId: number,
+    message: string,
+  ): Effect.Effect<JsonValue, JsonRequestError> {
+    return jsonRequestEffect(
+      this.cfg.url,
+      `/api/v1/issueComment/${commentId}`,
+      {
+        method: "PUT",
+        headers: this.headers(),
+        body: { message },
+      },
+    )
+  }
+
+  deleteCommentEffect(
+    commentId: number,
+  ): Effect.Effect<JsonValue, JsonRequestError> {
+    return jsonRequestEffect(
+      this.cfg.url,
+      `/api/v1/issueComment/${commentId}`,
+      {
+        method: "DELETE",
+        headers: this.headers(),
+      },
+    )
+  }
+
+  setStatusEffect(
+    issueId: string | number,
+    status: "open" | "resolved",
+  ): Effect.Effect<JsonValue, JsonRequestError> {
+    return jsonRequestEffect(
+      this.cfg.url,
+      `/api/v1/issue/${issueId}/${status}`,
+      {
+        method: "POST",
+        headers: this.headers(),
+      },
+    )
+  }
+
+  getIssue(issueId: string | number): Promise<SeerrIssue> {
+    return Effect.runPromise(this.getIssueEffect(issueId))
+  }
+
+  listUsers(): Promise<SeerrUser[]> {
+    return Effect.runPromise(this.listUsersEffect())
+  }
+
+  postComment(
+    issueId: string | number,
+    message: string,
+  ): Promise<number | undefined> {
+    return Effect.runPromise(this.postCommentEffect(issueId, message))
+  }
+
   updateComment(commentId: number, message: string): Promise<JsonValue> {
-    return jsonRequest(this.cfg.url, `/api/v1/issueComment/${commentId}`, {
-      method: "PUT",
-      headers: this.headers(),
-      body: { message },
-    })
+    return Effect.runPromise(this.updateCommentEffect(commentId, message))
   }
 
   deleteComment(commentId: number): Promise<JsonValue> {
-    return jsonRequest(this.cfg.url, `/api/v1/issueComment/${commentId}`, {
-      method: "DELETE",
-      headers: this.headers(),
-    })
+    return Effect.runPromise(this.deleteCommentEffect(commentId))
   }
 
   setStatus(
     issueId: string | number,
     status: "open" | "resolved",
   ): Promise<JsonValue> {
-    return jsonRequest(this.cfg.url, `/api/v1/issue/${issueId}/${status}`, {
-      method: "POST",
-      headers: this.headers(),
-    })
+    return Effect.runPromise(this.setStatusEffect(issueId, status))
   }
 }
