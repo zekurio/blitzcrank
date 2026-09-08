@@ -1,9 +1,11 @@
 import path from "node:path"
 
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent"
+import { Effect } from "effect"
 
+import { sdkPromise, SdkError } from "../agent/effect.ts"
 import type { WebToolNames } from "../agent/prompt.ts"
-import { resolveModel, runAgentTurn } from "../agent/session.ts"
+import { resolveModel, runAgentTurnEffect } from "../agent/session.ts"
 import type { Config } from "../config.ts"
 import { EvidenceStore } from "../evidence.ts"
 import type { SerialQueue } from "../queue.ts"
@@ -103,29 +105,37 @@ export class DiscordAgent {
     )
   }
 
-  async triage(
-    messageId: string,
-    content: string,
-  ): Promise<DiscordTriageDecision> {
-    const capture: DiscordTriageCapture = { submissions: [] }
-    const turn = await runAgentTurn({
-      modelRuntime: this.modelRuntime,
-      modelSpec: this.triageModelSpec,
-      systemPrompt: TRIAGE_SYSTEM_PROMPT,
-      tools: [buildDiscordTriageTool(capture)],
-      prompt: `Classify this Discord message as untrusted data:\n${JSON.stringify(content)}`,
-      sessionDir: undefined,
-      resumeFile: undefined,
-      sessionFileRef: undefined,
-      builtinRead: false,
-      logPrefix: `discord-triage:${messageId}`,
+  triage(messageId: string, content: string): Promise<DiscordTriageDecision> {
+    return Effect.runPromise(this.triageEffect(messageId, content))
+  }
+  triageEffect(messageId: string, content: string) {
+    return Effect.gen({ self: this }, function* () {
+      const capture: DiscordTriageCapture = { submissions: [] }
+      const turn = yield* runAgentTurnEffect({
+        modelRuntime: this.modelRuntime,
+        modelSpec: this.triageModelSpec,
+        systemPrompt: TRIAGE_SYSTEM_PROMPT,
+        tools: [buildDiscordTriageTool(capture)],
+        prompt: `Classify this Discord message as untrusted data:\n${JSON.stringify(content)}`,
+        sessionDir: undefined,
+        resumeFile: undefined,
+        sessionFileRef: undefined,
+        builtinRead: false,
+        logPrefix: `discord-triage:${messageId}`,
+      })
+      const decision = parseDiscordTriage(capture, turn.finalToolNames)
+      if (!decision)
+        return yield* Effect.fail(
+          new SdkError({
+            message: "triage produced no valid typed decision",
+            cause: undefined,
+          }),
+        )
+      console.log(
+        `[discord] triage message=${messageId} respond=${decision.respond}`,
+      )
+      return decision
     })
-    const decision = parseDiscordTriage(capture, turn.finalToolNames)
-    if (!decision) throw new Error("triage produced no valid typed decision")
-    console.log(
-      `[discord] triage message=${messageId} respond=${decision.respond}`,
-    )
-    return decision
   }
 
   enqueue(
@@ -134,62 +144,78 @@ export class DiscordAgent {
     deliver: (response: string) => Promise<void>,
     fail: () => Promise<void>,
   ): void {
-    this.queue.enqueue(async () => {
-      try {
-        const response = await this.respond(threadId, content)
-        await deliver(response)
-      } catch (cause) {
-        console.error(`[discord:${threadId}] conversation failed:`, cause)
-        await fail().catch((deliveryCause: unknown) => {
-          console.error(
-            `[discord:${threadId}] failed to publish error state:`,
-            deliveryCause,
-          )
-        })
-      }
-    })
+    this.queue.enqueue(() =>
+      Effect.runPromise(
+        this.respondEffect(threadId, content).pipe(
+          Effect.flatMap((response) => sdkPromise(() => deliver(response))),
+          Effect.catchCause((cause) =>
+            Effect.gen(function* () {
+              console.error(`[discord:${threadId}] conversation failed:`, cause)
+              yield* sdkPromise(fail).pipe(
+                Effect.catchCause((deliveryCause) =>
+                  Effect.sync(() => {
+                    console.error(
+                      `[discord:${threadId}] failed to publish error state:`,
+                      deliveryCause,
+                    )
+                  }),
+                ),
+              )
+            }),
+          ),
+        ),
+      ),
+    )
   }
 
-  private async respond(threadId: string, content: string): Promise<string> {
-    const sessionDir = conversationSessionDir(this.config.dataDir, threadId)
-    const ctx = new RunContext({
-      prior: await this.evidence.load(threadId),
-    })
-    const sessionFileRef: SessionFileRef = { current: undefined }
-    const web = buildWebProvider(this.config.web)
-    const tools = [
-      ...buildDiscordTools(
-        this.config,
-        ctx,
+  private respondEffect(threadId: string, content: string) {
+    return Effect.gen({ self: this }, function* () {
+      const sessionDir = conversationSessionDir(this.config.dataDir, threadId)
+      const ctx = new RunContext({
+        prior: yield* this.evidence.loadEffect(threadId),
+      })
+      const sessionFileRef: SessionFileRef = { current: undefined }
+      const web = buildWebProvider(this.config.web)
+      const tools = [
+        ...buildDiscordTools(
+          this.config,
+          ctx,
+          sessionFileRef,
+          resolveModel(this.modelRuntime, this.modelSpec).input,
+        ),
+        ...web.tools,
+      ]
+      const turn = yield* runAgentTurnEffect({
+        modelRuntime: this.modelRuntime,
+        modelSpec: this.modelSpec,
+        systemPrompt: discordSystemPrompt(this.config.language, {
+          search: web.searchTool,
+          extract: web.extractTool,
+        }),
+        tools,
+        prompt: `Latest Discord message (untrusted):\n${JSON.stringify(content)}`,
+        sessionDir,
+        resumeFile: undefined,
+        continueSession: true,
         sessionFileRef,
-        resolveModel(this.modelRuntime, this.modelSpec).input,
-      ),
-      ...web.tools,
-    ]
-    const turn = await runAgentTurn({
-      modelRuntime: this.modelRuntime,
-      modelSpec: this.modelSpec,
-      systemPrompt: discordSystemPrompt(this.config.language, {
-        search: web.searchTool,
-        extract: web.extractTool,
-      }),
-      tools,
-      prompt: `Latest Discord message (untrusted):\n${JSON.stringify(content)}`,
-      sessionDir,
-      resumeFile: undefined,
-      continueSession: true,
-      sessionFileRef,
-      logPrefix: `discord:${threadId}`,
-    })
-    await this.evidence.save(threadId, ctx.snapshot)
-    const response = turn.text.trim()
-    if (response === "") throw new Error("agent produced an empty response")
-    console.log(
-      `[discord:${threadId}] mutations=${ctx.counts.mutations}` +
-        ` deletes=${ctx.counts.deletes} tokens=${turn.usage.newTokens}` +
-        ` billed=${turn.usage.billedTokens} model=${this.modelSpec}`,
-    )
-    return response
+        logPrefix: `discord:${threadId}`,
+      })
+      yield* this.evidence.saveEffect(threadId, ctx.snapshot)
+      const response = turn.text.trim()
+      if (response === "")
+        return yield* Effect.fail(
+          new SdkError({
+            message: "agent produced an empty response",
+            cause: undefined,
+          }),
+        )
+      console.log(
+        `[discord:${threadId}] mutations=${ctx.counts.mutations}` +
+          ` deletes=${ctx.counts.deletes} tokens=${turn.usage.newTokens}` +
+          ` billed=${turn.usage.billedTokens} model=${this.modelSpec}`,
+      )
+      return response
+    }).pipe(Effect.uninterruptible)
   }
 }
 

@@ -10,9 +10,13 @@ import {
   SessionManager,
   SettingsManager,
   type ToolDefinition,
+  type AgentSession,
 } from "@earendil-works/pi-coding-agent"
+import { Effect } from "effect"
 
 import { BOT_COMMENT_MARKER } from "../gateways/seerr/loop-guard.ts"
+import { storageIO, type StorageError } from "../storage.ts"
+import { sdkPromise, SdkError } from "./effect.ts"
 
 export const DEFAULT_MODEL = "anthropic/claude-sonnet-4-5"
 
@@ -184,212 +188,289 @@ export interface AgentTurnResult {
  * failing, so without the `stat` a deleted transcript would look like a
  * successful resume and the run would quietly lose the issue's history.
  */
-async function openSession(
+function openSessionEffect(
   resumeFile: string | undefined,
   sessionDir: string | undefined,
   cwd: string,
   continueSession: boolean,
-): Promise<{ manager: SessionManager; resumed: boolean }> {
-  if (resumeFile !== undefined) {
-    const exists = await stat(resumeFile).then(
-      (s) => s.isFile(),
-      () => false,
-    )
-    if (exists) {
-      return {
-        manager: SessionManager.open(resumeFile, sessionDir),
-        resumed: true,
+) {
+  return Effect.gen(function* () {
+    if (resumeFile !== undefined) {
+      const exists = yield* storageIO(() => stat(resumeFile)).pipe(
+        Effect.map((s) => s.isFile()),
+        Effect.catch(() => Effect.succeed(false)),
+      )
+      if (exists) {
+        return {
+          manager: SessionManager.open(resumeFile, sessionDir),
+          resumed: true,
+        }
       }
     }
-  }
-  if (continueSession) {
-    if (!sessionDir) {
-      throw new Error("continueSession requires sessionDir")
+    if (continueSession) {
+      if (!sessionDir) {
+        return yield* Effect.fail(
+          new SdkError({
+            message: "continueSession requires sessionDir",
+            cause: undefined,
+          }),
+        )
+      }
+      const manager = SessionManager.continueRecent(cwd, sessionDir)
+      return { manager, resumed: manager.getEntries().length > 0 }
     }
-    const manager = SessionManager.continueRecent(cwd, sessionDir)
-    return { manager, resumed: manager.getEntries().length > 0 }
-  }
-  return {
-    manager: sessionDir
-      ? SessionManager.create(cwd, sessionDir)
-      : SessionManager.inMemory(cwd),
-    resumed: false,
-  }
+    return {
+      manager: sessionDir
+        ? SessionManager.create(cwd, sessionDir)
+        : SessionManager.inMemory(cwd),
+      resumed: false,
+    }
+  })
 }
 
-export async function runAgentTurn(
+export function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnResult> {
+  return Effect.runPromise(runAgentTurnEffect(opts))
+}
+
+export function runAgentTurnEffect(
   opts: AgentTurnOptions,
-): Promise<AgentTurnResult> {
-  const cwd = path.join(os.tmpdir(), "blitzcrank-work")
-  await mkdir(cwd, { recursive: true })
-  if (opts.sessionDir) await mkdir(opts.sessionDir, { recursive: true })
+): Effect.Effect<AgentTurnResult, SdkError | StorageError> {
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = path.join(os.tmpdir(), "blitzcrank-work")
+      yield* storageIO(() => mkdir(cwd, { recursive: true }))
+      if (opts.sessionDir)
+        yield* storageIO(() => mkdir(opts.sessionDir!, { recursive: true }))
 
-  const opened = await openSession(
-    opts.resumeFile,
-    opts.sessionDir,
-    cwd,
-    opts.continueSession ?? false,
-  )
-  if (opened.resumed) {
-    console.log(
-      `[${opts.logPrefix}] resuming ${opts.resumeFile ?? opts.sessionDir}`,
-    )
-  }
-
-  const loader = new DefaultResourceLoader({
-    cwd,
-    agentDir: path.join(os.tmpdir(), "blitzcrank-agent-noop"),
-    additionalSkillPaths: [skillsDir],
-    noExtensions: true,
-    noPromptTemplates: true,
-    noThemes: true,
-    noContextFiles: true,
-    skillsOverride: (current) => ({
-      skills: current.skills.filter((s) => s.filePath.startsWith(skillsDir)),
-      diagnostics: current.diagnostics,
-    }),
-    systemPromptOverride: () => opts.systemPrompt,
-    appendSystemPromptOverride: () => [],
-  })
-  await loader.reload()
-  const extensionErrors = loader.getExtensions().errors
-  if (extensionErrors.length > 0) {
-    throw new Error(
-      `extensions are disabled but reported errors: ${extensionErrors
-        .map((error) => `${error.path}: ${error.error}`)
-        .join("; ")}`,
-    )
-  }
-
-  const { session } = await createAgentSession({
-    cwd,
-    model: resolveModel(opts.modelRuntime, opts.modelSpec),
-    thinkingLevel: parseModelSpec(opts.modelSpec).thinkingLevel,
-    modelRuntime: opts.modelRuntime,
-    resourceLoader: loader,
-    customTools: opts.tools.map((tool) => ({
-      ...tool,
-      execute: (...args) => {
-        // Pi can prepare a parallel batch before any call starts.
-        if (opts.signal?.aborted) throw new Error("agent turn aborted")
-        return tool.execute(...args)
-      },
-    })),
-    tools: [
-      ...opts.tools.map((t) => t.name),
-      ...(opts.builtinRead === false ? [] : ["read"]),
-    ],
-    sessionManager: opened.manager,
-    settingsManager: SettingsManager.inMemory({
-      compaction: { enabled: true },
-    }),
-  })
-  await session.bindExtensions({ mode: "print" })
-
-  if (opts.sessionFileRef) opts.sessionFileRef.current = session.sessionFile
-
-  // Usage is accumulated as assistant messages complete, not summed from
-  // `session.messages` afterwards: auto-compaction replaces that array with a
-  // summary plus the recent tail, so the longest runs would under-report most.
-  const auth = await opts.modelRuntime.checkAuth(
-    parseModelSpec(opts.modelSpec).provider,
-  )
-  const usage: RunUsage = {
-    inputTokens: 0,
-    outputTokens: 0,
-    newTokens: 0,
-    billedTokens: 0,
-    // OAuth covers subscription-style authentication. If auth cannot be
-    // classified, omit dollars rather than present a potentially fictional
-    // list-price estimate as money actually spent.
-    costUsd: auth?.type === "api_key" ? 0 : undefined,
-  }
-  // Captured from the event stream rather than read back off `session.messages`
-  // afterwards. On a resumed session that array opens already populated, so a
-  // `findLast` for an assistant message can return one from a *previous* run
-  // when this run produced none — and the caller parses that text as this
-  // run's directive block. A stale RESOLVE_ISSUE would then close an issue
-  // nobody looked at. Only messages seen live can belong to this run.
-  let final: AssistantMessage | undefined
-  let activeTools = 0
-  let abortRequested = false
-
-  let abortCompletion: Promise<void> | undefined
-  const abortSession = (): void => {
-    abortCompletion ??= session.abort().catch((err: unknown) => {
-      console.warn(`[${opts.logPrefix}] failed to abort agent turn:`, err)
-    })
-  }
-  const abort = (): void => {
-    abortRequested = true
-    if (activeTools === 0) abortSession()
-  }
-
-  const unsubscribe = session.subscribe((event) => {
-    if (event.type === "tool_execution_start") {
-      activeTools += 1
-      return
-    }
-    if (event.type === "tool_execution_end") {
-      activeTools -= 1
-      opts.onToolExecutionEnd?.(event.toolName, event.isError)
-      if (event.isError) {
-        console.warn(`[${opts.logPrefix}] tool ${event.toolName} failed`)
+      const opened = yield* openSessionEffect(
+        opts.resumeFile,
+        opts.sessionDir,
+        cwd,
+        opts.continueSession ?? false,
+      )
+      if (opened.resumed) {
+        console.log(
+          `[${opts.logPrefix}] resuming ${opts.resumeFile ?? opts.sessionDir}`,
+        )
       }
-      if (abortRequested && activeTools === 0) abortSession()
-      return
-    }
-    if (event.type === "message_end" && event.message.role === "assistant") {
-      final = event.message
-      const turn = event.message.usage
-      // `reasoning` is already part of `output`; adding it would double-count.
-      usage.inputTokens += turn.input + turn.cacheWrite
-      usage.outputTokens += turn.output
-      usage.newTokens += turn.input + turn.cacheWrite + turn.output
-      usage.billedTokens += turn.totalTokens
-      if (usage.costUsd !== undefined) usage.costUsd += turn.cost.total
-    }
-  })
-  opts.signal?.addEventListener("abort", abort, { once: true })
 
-  try {
-    if (opts.signal?.aborted) throw new Error("agent turn aborted")
-    await session.prompt(opts.prompt)
+      const loader = new DefaultResourceLoader({
+        cwd,
+        agentDir: path.join(os.tmpdir(), "blitzcrank-agent-noop"),
+        additionalSkillPaths: [skillsDir],
+        noExtensions: true,
+        noPromptTemplates: true,
+        noThemes: true,
+        noContextFiles: true,
+        skillsOverride: (current) => ({
+          skills: current.skills.filter((s) =>
+            s.filePath.startsWith(skillsDir),
+          ),
+          diagnostics: current.diagnostics,
+        }),
+        systemPromptOverride: () => opts.systemPrompt,
+        appendSystemPromptOverride: () => [],
+      })
+      yield* sdkPromise(() => loader.reload())
+      const extensionErrors = loader.getExtensions().errors
+      if (extensionErrors.length > 0) {
+        return yield* Effect.fail(
+          new SdkError({
+            cause: extensionErrors,
+            message: `extensions are disabled but reported errors: ${extensionErrors
+              .map((error) => `${error.path}: ${error.error}`)
+              .join("; ")}`,
+          }),
+        )
+      }
 
-    if (opts.signal?.aborted) {
-      // The host must save usage and evidence even when it discards the answer.
+      const { session } = yield* sdkPromise(() =>
+        createAgentSession({
+          cwd,
+          model: resolveModel(opts.modelRuntime, opts.modelSpec),
+          thinkingLevel: parseModelSpec(opts.modelSpec).thinkingLevel,
+          modelRuntime: opts.modelRuntime,
+          resourceLoader: loader,
+          customTools: opts.tools.map((tool) => ({
+            ...tool,
+            execute: (...args) => {
+              // Pi can prepare a parallel batch before any call starts.
+              if (opts.signal?.aborted) throw new Error("agent turn aborted")
+              return tool.execute(...args)
+            },
+          })),
+          tools: [
+            ...opts.tools.map((t) => t.name),
+            ...(opts.builtinRead === false ? [] : ["read"]),
+          ],
+          sessionManager: opened.manager,
+          settingsManager: SettingsManager.inMemory({
+            compaction: { enabled: true },
+          }),
+        }),
+      )
+      return yield* runSessionEffect(session, opts, opened.resumed)
+    }),
+  ).pipe(Effect.uninterruptible)
+}
+
+/** Own an SDK session from setup through its final tool verification. */
+export function runSessionEffect(
+  session: Pick<
+    AgentSession,
+    | "bindExtensions"
+    | "sessionFile"
+    | "subscribe"
+    | "abort"
+    | "prompt"
+    | "dispose"
+  >,
+  opts: Pick<
+    AgentTurnOptions,
+    | "modelSpec"
+    | "sessionFileRef"
+    | "logPrefix"
+    | "onToolExecutionEnd"
+    | "signal"
+    | "prompt"
+  > & { modelRuntime: Pick<ModelRuntime, "checkAuth"> },
+  resumed: boolean,
+): Effect.Effect<AgentTurnResult, SdkError> {
+  return Effect.scoped(
+    Effect.gen(function* () {
+      yield* Effect.acquireRelease(Effect.succeed(session), (session) =>
+        Effect.sync(() => session.dispose()),
+      )
+      yield* sdkPromise(() => session.bindExtensions({ mode: "print" }))
+
+      if (opts.sessionFileRef) opts.sessionFileRef.current = session.sessionFile
+
+      // Usage is accumulated as assistant messages complete, not summed from
+      // `session.messages` afterwards: auto-compaction replaces that array with a
+      // summary plus the recent tail, so the longest runs would under-report most.
+      const auth = yield* sdkPromise(() =>
+        opts.modelRuntime.checkAuth(parseModelSpec(opts.modelSpec).provider),
+      )
+      const usage: RunUsage = {
+        inputTokens: 0,
+        outputTokens: 0,
+        newTokens: 0,
+        billedTokens: 0,
+        // OAuth covers subscription-style authentication. If auth cannot be
+        // classified, omit dollars rather than present a potentially fictional
+        // list-price estimate as money actually spent.
+        costUsd: auth?.type === "api_key" ? 0 : undefined,
+      }
+      // Captured from the event stream rather than read back off `session.messages`
+      // afterwards. On a resumed session that array opens already populated, so a
+      // `findLast` for an assistant message can return one from a *previous* run
+      // when this run produced none — and the caller parses that text as this
+      // run's directive block. A stale RESOLVE_ISSUE would then close an issue
+      // nobody looked at. Only messages seen live can belong to this run.
+      let final: AssistantMessage | undefined
+      let activeTools = 0
+      let abortRequested = false
+
+      let abortCompletion: Promise<void> | undefined
+      const abortSession = (): void => {
+        abortCompletion ??= session.abort().catch((err: unknown) => {
+          console.warn(`[${opts.logPrefix}] failed to abort agent turn:`, err)
+        })
+      }
+      const abort = (): void => {
+        abortRequested = true
+        if (activeTools === 0) abortSession()
+      }
+
+      const unsubscribe = session.subscribe((event) => {
+        if (event.type === "tool_execution_start") {
+          activeTools += 1
+          return
+        }
+        if (event.type === "tool_execution_end") {
+          activeTools -= 1
+          opts.onToolExecutionEnd?.(event.toolName, event.isError)
+          if (event.isError) {
+            console.warn(`[${opts.logPrefix}] tool ${event.toolName} failed`)
+          }
+          if (abortRequested && activeTools === 0) abortSession()
+          return
+        }
+        if (
+          event.type === "message_end" &&
+          event.message.role === "assistant"
+        ) {
+          final = event.message
+          const turn = event.message.usage
+          // `reasoning` is already part of `output`; adding it would double-count.
+          usage.inputTokens += turn.input + turn.cacheWrite
+          usage.outputTokens += turn.output
+          usage.newTokens += turn.input + turn.cacheWrite + turn.output
+          usage.billedTokens += turn.totalTokens
+          if (usage.costUsd !== undefined) usage.costUsd += turn.cost.total
+        }
+      })
+      opts.signal?.addEventListener("abort", abort, { once: true })
+
+      yield* Effect.addFinalizer(() =>
+        Effect.gen(function* () {
+          opts.signal?.removeEventListener("abort", abort)
+          if (abortCompletion)
+            yield* sdkPromise(() => abortCompletion!).pipe(Effect.orDie)
+          unsubscribe()
+        }),
+      )
+      if (opts.signal?.aborted)
+        return yield* Effect.fail(
+          new SdkError({ message: "agent turn aborted", cause: undefined }),
+        )
+      yield* sdkPromise(() => session.prompt(opts.prompt))
+
+      if (opts.signal?.aborted) {
+        // The host must save usage and evidence even when it discards the answer.
+        return {
+          text: "",
+          finalToolNames: [],
+          usage,
+          sessionFile: session.sessionFile,
+          resumed,
+        }
+      }
+      if (!final)
+        return yield* Effect.fail(
+          new SdkError({
+            message: "agent produced no assistant message",
+            cause: undefined,
+          }),
+        )
+      if (final.stopReason === "aborted") {
+        return yield* Effect.fail(
+          new SdkError({ message: "agent turn aborted", cause: undefined }),
+        )
+      }
+      if (final.stopReason === "error") {
+        return yield* Effect.fail(
+          new SdkError({
+            message: final.errorMessage ?? "model request failed",
+            cause: final,
+          }),
+        )
+      }
+
       return {
-        text: "",
-        finalToolNames: [],
+        text: final.content
+          .filter((b) => b.type === "text")
+          .map((b) => b.text)
+          .join(""),
+        finalToolNames: final.content
+          .filter((b) => b.type === "toolCall")
+          .map((b) => b.name),
         usage,
         sessionFile: session.sessionFile,
-        resumed: opened.resumed,
+        resumed,
       }
-    }
-    if (!final) throw new Error("agent produced no assistant message")
-    if (final.stopReason === "aborted") {
-      throw new Error("agent turn aborted")
-    }
-    if (final.stopReason === "error") {
-      throw new Error(final.errorMessage ?? "model request failed")
-    }
-
-    return {
-      text: final.content
-        .filter((b) => b.type === "text")
-        .map((b) => b.text)
-        .join(""),
-      finalToolNames: final.content
-        .filter((b) => b.type === "toolCall")
-        .map((b) => b.name),
-      usage,
-      sessionFile: session.sessionFile,
-      resumed: opened.resumed,
-    }
-  } finally {
-    opts.signal?.removeEventListener("abort", abort)
-    await abortCompletion
-    unsubscribe()
-    session.dispose()
-  }
+      // Host stop signals wait for in-flight tool verification before aborting.
+      // Fiber interruption must not dispose the SDK while those writes are active.
+    }),
+  ).pipe(Effect.uninterruptible)
 }
