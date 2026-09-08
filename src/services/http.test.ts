@@ -118,24 +118,28 @@ test("HTTP adapters preserve requests, errors, and mutation verification", async
 
   const ctx = new RunContext()
   ctx.recordRead("radarr", "/api/v3/moviefile/7", '{"id":7}')
-  const deletion = await runArrFileDelete(
-    { url: base, apiKey: "test-key" },
-    "radarr",
-    ctx,
-    "/api/v3/moviefile/7",
-    7,
-    "movie file",
-    "movie file",
+  const deletion = await Effect.runPromise(
+    runArrFileDelete(
+      { url: base, apiKey: "test-key" },
+      "radarr",
+      ctx,
+      "/api/v3/moviefile/7",
+      7,
+      "movie file",
+      "movie file",
+    ),
   )
   assert.deepEqual(deletion.verification, {
     confirmed: "movie file no longer present (HTTP 404)",
   })
 
-  const outcome = await runMutation(ctx, {
-    kind: "mutate",
-    perform: () => jsonRequest(base, "/empty", { method: "POST" }),
-    verify: () => jsonRequest(base, "/unavailable"),
-  })
+  const outcome = await Effect.runPromise(
+    runMutation(ctx, {
+      kind: "mutate",
+      perform: () => jsonRequestEffect(base, "/empty", { method: "POST" }),
+      verify: () => jsonRequestEffect(base, "/unavailable"),
+    }),
+  )
   assert.match(outcome.verificationError ?? "", /HTTP 503/)
   assert.equal(requests.filter((entry) => entry === "POST /empty").length, 1)
   // SABnzbd mutations also use GET; an error must not repeat the request.

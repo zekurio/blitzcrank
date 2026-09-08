@@ -260,8 +260,9 @@ small named helpers below it. Extract only when it names a real concept.
 - Any new _service_ read path must call `ctx.recordRead` so evidence gates keep
   working. Local reads whose content is release-group text (`media_probe`) are
   the documented exception.
-- Service HTTP goes through `jsonRequest` (`src/services/http.ts`); paths are
-  service-relative (`/api/v3/...`) and validated by `assertServicePath`.
+- Service HTTP goes through `jsonRequestEffect` or its `jsonRequest` Promise
+  adapter (`src/services/http.ts`); paths are service-relative (`/api/v3/...`)
+  and validated by `assertServicePath`.
   Host-side Seerr actions go through `SeerrClient`, never through agent tools.
   Anvil is the exception to HTTP: invoke only `anvilctl` over the configured
   control socket, never a shell or the daemon's SQLite store.
