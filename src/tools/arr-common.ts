@@ -3,15 +3,21 @@ import {
   defineTool,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent"
+import { Effect } from "effect"
 import { Type } from "typebox"
 
 import type { ServiceConfig } from "../config.ts"
-import { HttpError, jsonRequest, type JsonValue } from "../services/http.ts"
+import {
+  jsonRequestEffect,
+  type JsonRequestError,
+  type JsonValue,
+} from "../services/http.ts"
 import {
   makeReadTool,
   reasonParam,
   runMutation,
   textResult,
+  toolCheck,
   type EvidenceRequirement,
   type ServiceName,
 } from "./common.ts"
@@ -22,13 +28,13 @@ export function arrRequest(
   path: string,
   method: "GET" | "POST" | "DELETE" = "GET",
   body?: JsonValue,
-): Promise<JsonValue> {
+): Effect.Effect<JsonValue, JsonRequestError> {
   const options = {
     method,
     headers: { "X-Api-Key": cfg.apiKey },
   }
   if (body !== undefined) Object.assign(options, { body })
-  return jsonRequest(cfg.url, path, options)
+  return jsonRequestEffect(cfg.url, path, options)
 }
 
 export function arrReadTool(
@@ -50,46 +56,53 @@ export function arrReadTool(
 }
 
 /** Follow-up read on the queued command so the model can see it was accepted. */
-async function verifyCommand(
+function verifyCommand(
   cfg: ServiceConfig,
   service: ServiceName,
   ctx: RunContext,
   result: JsonValue,
-): Promise<JsonValue> {
-  const id = isJsonObject(result) && isNumber(result.id) ? result.id : undefined
-  if (!id) {
-    return {
-      warning:
-        "command response had no id; verify manually via GET /api/v3/command",
+): Effect.Effect<JsonValue, JsonRequestError> {
+  return Effect.gen(function* () {
+    const id =
+      isJsonObject(result) && isNumber(result.id) ? result.id : undefined
+    if (!id) {
+      return {
+        warning:
+          "command response had no id; verify manually via GET /api/v3/command",
+      }
     }
-  }
-  const path = `/api/v3/command/${id}`
-  const status = await arrRequest(cfg, path)
-  ctx.recordRead(service, path, JSON.stringify(status))
-  return status
+    const path = `/api/v3/command/${id}`
+    const status = yield* arrRequest(cfg, path)
+    ctx.recordRead(service, path, JSON.stringify(status))
+    return status
+  })
 }
 
-async function verifyQueue(
+function verifyQueue(
   cfg: ServiceConfig,
   service: ServiceName,
   ctx: RunContext,
-): Promise<JsonValue> {
-  const path = "/api/v3/queue?pageSize=100"
-  const queue = await arrRequest(cfg, path)
-  ctx.recordRead(service, path, JSON.stringify(queue))
-  return queue
+): Effect.Effect<JsonValue, JsonRequestError> {
+  return Effect.gen(function* () {
+    const path = "/api/v3/queue?pageSize=100"
+    const queue = yield* arrRequest(cfg, path)
+    ctx.recordRead(service, path, JSON.stringify(queue))
+    return queue
+  })
 }
 
-async function verifyBlocklistAndQueue(
+function verifyBlocklistAndQueue(
   cfg: ServiceConfig,
   service: ServiceName,
   ctx: RunContext,
-): Promise<JsonValue> {
-  const path =
-    "/api/v3/blocklist?page=1&pageSize=20&sortKey=date&sortDirection=descending"
-  const blocklist = await arrRequest(cfg, path)
-  ctx.recordRead(service, path, JSON.stringify(blocklist))
-  return { blocklist, queue: await verifyQueue(cfg, service, ctx) }
+): Effect.Effect<JsonValue, JsonRequestError> {
+  return Effect.gen(function* () {
+    const path =
+      "/api/v3/blocklist?page=1&pageSize=20&sortKey=date&sortDirection=descending"
+    const blocklist = yield* arrRequest(cfg, path)
+    ctx.recordRead(service, path, JSON.stringify(blocklist))
+    return { blocklist, queue: yield* verifyQueue(cfg, service, ctx) }
+  })
 }
 
 export function runArrCommand(
@@ -124,20 +137,26 @@ export function runArrFileDelete(
   })
 }
 
-async function verifyDeletedFile(
+function verifyDeletedFile(
   cfg: ServiceConfig,
   filePath: string,
   fileLabel: string,
-): Promise<JsonValue> {
-  try {
-    const body = await arrRequest(cfg, filePath)
-    return { warning: `${fileLabel} still present after delete`, body }
-  } catch (err) {
-    if (err instanceof HttpError && err.status === 404) {
-      return { confirmed: `${fileLabel} no longer present (HTTP 404)` }
-    }
-    throw err
-  }
+): Effect.Effect<JsonValue, JsonRequestError> {
+  return arrRequest(cfg, filePath).pipe(
+    Effect.map(
+      (body): JsonValue => ({
+        warning: `${fileLabel} still present after delete`,
+        body,
+      }),
+    ),
+    Effect.catchTag("HttpError", (error) =>
+      error.status === 404
+        ? Effect.succeed({
+            confirmed: `${fileLabel} no longer present (HTTP 404)`,
+          })
+        : Effect.fail(error),
+    ),
+  )
 }
 
 /** ManualImport is shared because both Arrs use the same command shape. */
@@ -164,18 +183,24 @@ export function manualImportTool(
       }),
       importMode: StringEnum(["auto", "move", "copy"] as const),
     }),
-    async execute(_toolCallId, params) {
-      const evidence = manualImportEvidence(service, params.files)
-      const outcome = await runArrCommand(cfg, service, ctx, evidence, {
-        name: "ManualImport",
-        files: params.files,
-        importMode: params.importMode,
-      })
-      return textResult(outcome, {
-        service,
-        action: "manual_import",
-        files: params.files.length,
-      })
+    execute(_toolCallId, params) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          const evidence = yield* toolCheck(() =>
+            manualImportEvidence(service, params.files),
+          )
+          const outcome = yield* runArrCommand(cfg, service, ctx, evidence, {
+            name: "ManualImport",
+            files: params.files,
+            importMode: params.importMode,
+          })
+          return textResult(outcome, {
+            service,
+            action: "manual_import",
+            files: params.files.length,
+          })
+        }),
+      )
     },
   })
 }
@@ -243,18 +268,22 @@ function deleteQueueItemTool(deps: ArrToolDeps): ToolDefinition {
           "Also remove the job from the download client, destroying the downloaded data (default true)",
       }),
     }),
-    async execute(_toolCallId, params) {
-      return executeQueueMutation(
-        deps,
-        params.queueId,
-        "delete_queue_item",
-        params.removeFromClient ? "delete" : "mutate",
-        () =>
-          arrRequest(
-            deps.cfg,
-            `/api/v3/queue/${params.queueId}?removeFromClient=${params.removeFromClient}&blocklist=${params.blocklist}`,
-            "DELETE",
-          ),
+    execute(_toolCallId, params) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          return yield* executeQueueMutation(
+            deps,
+            params.queueId,
+            "delete_queue_item",
+            params.removeFromClient ? "delete" : "mutate",
+            () =>
+              arrRequest(
+                deps.cfg,
+                `/api/v3/queue/${params.queueId}?removeFromClient=${params.removeFromClient}&blocklist=${params.blocklist}`,
+                "DELETE",
+              ),
+          )
+        }),
       )
     },
   })
@@ -277,29 +306,34 @@ function blocklistFromHistoryTool(deps: ArrToolDeps): ToolDefinition {
       reason: reasonParam(),
       historyId: Type.Integer({ minimum: 1 }),
     }),
-    async execute(_toolCallId, params) {
-      const outcome = await runMutation(deps.ctx, {
-        kind: "mutate",
-        evidence: [
-          {
+    execute(_toolCallId, params) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          const outcome = yield* runMutation(deps.ctx, {
+            kind: "mutate",
+            evidence: [
+              {
+                service: deps.service,
+                value: params.historyId,
+                hint: "history record id",
+              },
+            ],
+            perform: () =>
+              arrRequest(
+                deps.cfg,
+                `/api/v3/history/failed/${params.historyId}`,
+                "POST",
+              ),
+            verify: () =>
+              verifyBlocklistAndQueue(deps.cfg, deps.service, deps.ctx),
+          })
+          return textResult(outcome, {
             service: deps.service,
-            value: params.historyId,
-            hint: "history record id",
-          },
-        ],
-        perform: () =>
-          arrRequest(
-            deps.cfg,
-            `/api/v3/history/failed/${params.historyId}`,
-            "POST",
-          ),
-        verify: () => verifyBlocklistAndQueue(deps.cfg, deps.service, deps.ctx),
-      })
-      return textResult(outcome, {
-        service: deps.service,
-        action: "blocklist_from_history",
-        historyId: params.historyId,
-      })
+            action: "blocklist_from_history",
+            historyId: params.historyId,
+          })
+        }),
+      )
     },
   })
 }
@@ -313,14 +347,22 @@ function grabQueueItemTool(deps: ArrToolDeps): ToolDefinition {
       reason: reasonParam(),
       queueId: Type.Integer({ minimum: 1 }),
     }),
-    async execute(_toolCallId, params) {
-      return executeQueueMutation(
-        deps,
-        params.queueId,
-        "grab_queue_item",
-        "mutate",
-        () =>
-          arrRequest(deps.cfg, `/api/v3/queue/grab/${params.queueId}`, "POST"),
+    execute(_toolCallId, params) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          return yield* executeQueueMutation(
+            deps,
+            params.queueId,
+            "grab_queue_item",
+            "mutate",
+            () =>
+              arrRequest(
+                deps.cfg,
+                `/api/v3/queue/grab/${params.queueId}`,
+                "POST",
+              ),
+          )
+        }),
       )
     },
   })
@@ -335,46 +377,52 @@ function removeFromBlocklistTool(deps: ArrToolDeps): ToolDefinition {
       reason: reasonParam(),
       blocklistId: Type.Integer({ minimum: 1 }),
     }),
-    async execute(_toolCallId, params) {
-      const outcome = await runMutation(deps.ctx, {
-        kind: "mutate",
-        evidence: [
-          {
+    execute(_toolCallId, params) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          const outcome = yield* runMutation(deps.ctx, {
+            kind: "mutate",
+            evidence: [
+              {
+                service: deps.service,
+                value: params.blocklistId,
+                hint: "blocklist entry id",
+              },
+            ],
+            perform: () =>
+              arrRequest(
+                deps.cfg,
+                `/api/v3/blocklist/${params.blocklistId}`,
+                "DELETE",
+              ),
+          })
+          return textResult(outcome, {
             service: deps.service,
-            value: params.blocklistId,
-            hint: "blocklist entry id",
-          },
-        ],
-        perform: () =>
-          arrRequest(
-            deps.cfg,
-            `/api/v3/blocklist/${params.blocklistId}`,
-            "DELETE",
-          ),
-      })
-      return textResult(outcome, {
-        service: deps.service,
-        action: "remove_from_blocklist",
-        blocklistId: params.blocklistId,
-      })
+            action: "remove_from_blocklist",
+            blocklistId: params.blocklistId,
+          })
+        }),
+      )
     },
   })
 }
 
-async function executeQueueMutation(
+function executeQueueMutation(
   deps: ArrToolDeps,
   queueId: number,
   action: string,
   kind: "mutate" | "delete",
-  perform: () => Promise<JsonValue>,
+  perform: () => Effect.Effect<JsonValue, JsonRequestError>,
 ) {
-  const outcome = await runMutation(deps.ctx, {
-    kind,
-    evidence: queueEvidence(deps.service, queueId),
-    perform,
-    verify: () => verifyQueue(deps.cfg, deps.service, deps.ctx),
+  return Effect.gen(function* () {
+    const outcome = yield* runMutation(deps.ctx, {
+      kind,
+      evidence: queueEvidence(deps.service, queueId),
+      perform,
+      verify: () => verifyQueue(deps.cfg, deps.service, deps.ctx),
+    })
+    return textResult(outcome, { service: deps.service, action, queueId })
   })
-  return textResult(outcome, { service: deps.service, action, queueId })
 }
 
 function queueEvidence(

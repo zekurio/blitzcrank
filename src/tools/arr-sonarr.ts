@@ -2,10 +2,11 @@ import {
   defineTool,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent"
+import { Effect } from "effect"
 import { Type } from "typebox"
 
 import type { ServiceConfig } from "../config.ts"
-import type { JsonValue } from "../services/http.ts"
+import type { JsonRequestError, JsonValue } from "../services/http.ts"
 import {
   arrReadTool,
   arrRequest,
@@ -14,7 +15,13 @@ import {
   runArrCommand,
   runArrFileDelete,
 } from "./arr-common.ts"
-import { reasonParam, textResult, type ServiceName } from "./common.ts"
+import {
+  reasonParam,
+  textResult,
+  toolCheck,
+  type ServiceName,
+  type ToolError,
+} from "./common.ts"
 import type { RunContext } from "./context.ts"
 
 export interface ScopedEpisode {
@@ -76,28 +83,32 @@ interface SonarrSearchParams {
   expectedEpisodeCount?: number | undefined
 }
 
-async function scopedEpisodes(
+function scopedEpisodes(
   cfg: ServiceConfig,
   params: SonarrSearchParams,
-): Promise<ScopedEpisode[]> {
-  const raw = await arrRequest(
-    cfg,
-    `/api/v3/episode?seriesId=${params.seriesId}&includeEpisodeFile=true`,
-  )
-  if (!Array.isArray(raw)) {
-    throw new Error(
-      `could not read the episodes of series ${params.seriesId}; refusing to search with unknown scope`,
+): Effect.Effect<ScopedEpisode[], JsonRequestError | ToolError> {
+  return Effect.gen(function* () {
+    const raw = yield* arrRequest(
+      cfg,
+      `/api/v3/episode?seriesId=${params.seriesId}&includeEpisodeFile=true`,
     )
-  }
-  const episodes = raw.filter(isSonarrEpisode).map(episodeScope)
-  if (params.episodeIds && params.episodeIds.length > 0) {
-    return selectedEpisodes(episodes, params.seriesId, params.episodeIds)
-  }
-  const monitored = episodes.filter((episode) => episode.monitored)
-  if (params.seasonNumber === undefined) return monitored
-  return monitored.filter(
-    (episode) => episode.seasonNumber === params.seasonNumber,
-  )
+    return yield* toolCheck(() => {
+      if (!Array.isArray(raw)) {
+        throw new Error(
+          `could not read the episodes of series ${params.seriesId}; refusing to search with unknown scope`,
+        )
+      }
+      const episodes = raw.filter(isSonarrEpisode).map(episodeScope)
+      if (params.episodeIds && params.episodeIds.length > 0) {
+        return selectedEpisodes(episodes, params.seriesId, params.episodeIds)
+      }
+      const monitored = episodes.filter((episode) => episode.monitored)
+      if (params.seasonNumber === undefined) return monitored
+      return monitored.filter(
+        (episode) => episode.seasonNumber === params.seasonNumber,
+      )
+    })
+  })
 }
 
 function episodeScope(episode: SonarrEpisodeRecord): ScopedEpisode {
@@ -170,40 +181,46 @@ function sonarrSearchTool(
       ),
     }),
     execute: (_toolCallId, params) =>
-      executeSonarrSearch(cfg, ctx, probeAvailable, params),
+      Effect.runPromise(executeSonarrSearch(cfg, ctx, probeAvailable, params)),
   })
 }
 
-async function executeSonarrSearch(
+function executeSonarrSearch(
   cfg: ServiceConfig,
   ctx: RunContext,
   probeAvailable: boolean,
   params: SonarrSearchParams,
 ) {
-  const service: ServiceName = "sonarr"
-  ctx.requireEvidence(service, params.seriesId, "series id")
-  const episodes = await scopedEpisodes(cfg, params)
-  assertSearchScope({
-    episodes,
-    expectedEpisodeCount: params.expectedEpisodeCount,
-    probeAvailable,
-    probed: (filePath) => ctx.sawProbe(filePath),
-  })
-  const command = sonarrSearchCommand(params)
-  const evidence = [
-    { service, value: params.seriesId, hint: "series id" },
-    ...(params.episodeIds ?? []).map((id) => ({
+  return Effect.gen(function* () {
+    const service: ServiceName = "sonarr"
+    yield* toolCheck(() =>
+      ctx.requireEvidence(service, params.seriesId, "series id"),
+    )
+    const episodes = yield* scopedEpisodes(cfg, params)
+    yield* toolCheck(() =>
+      assertSearchScope({
+        episodes,
+        expectedEpisodeCount: params.expectedEpisodeCount,
+        probeAvailable,
+        probed: (filePath) => ctx.sawProbe(filePath),
+      }),
+    )
+    const command = sonarrSearchCommand(params)
+    const evidence = [
+      { service, value: params.seriesId, hint: "series id" },
+      ...(params.episodeIds ?? []).map((id) => ({
+        service,
+        value: id,
+        hint: "episode id",
+      })),
+    ]
+    const outcome = yield* runArrCommand(cfg, service, ctx, evidence, command)
+    return textResult(outcome, {
       service,
-      value: id,
-      hint: "episode id",
-    })),
-  ]
-  const outcome = await runArrCommand(cfg, service, ctx, evidence, command)
-  return textResult(outcome, {
-    service,
-    action: "search",
-    command: command.name,
-    episodes: episodes.length,
+      action: "search",
+      command: command.name,
+      episodes: episodes.length,
+    })
   })
 }
 
@@ -255,18 +272,24 @@ function refreshSeriesTool(
       reason: reasonParam(),
       seriesId: Type.Integer({ minimum: 1 }),
     }),
-    async execute(_toolCallId, params) {
-      const service: ServiceName = "sonarr"
-      const evidence = [{ service, value: params.seriesId, hint: "series id" }]
-      const outcome = await runArrCommand(cfg, service, ctx, evidence, {
-        name: "RefreshSeries",
-        seriesId: params.seriesId,
-      })
-      return textResult(outcome, {
-        service,
-        action: "refresh_series",
-        seriesId: params.seriesId,
-      })
+    execute(_toolCallId, params) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          const service: ServiceName = "sonarr"
+          const evidence = [
+            { service, value: params.seriesId, hint: "series id" },
+          ]
+          const outcome = yield* runArrCommand(cfg, service, ctx, evidence, {
+            name: "RefreshSeries",
+            seriesId: params.seriesId,
+          })
+          return textResult(outcome, {
+            service,
+            action: "refresh_series",
+            seriesId: params.seriesId,
+          })
+        }),
+      )
     },
   })
 }
@@ -284,23 +307,27 @@ function deleteEpisodeFileTool(
       reason: reasonParam(),
       episodeFileId: Type.Integer({ minimum: 1 }),
     }),
-    async execute(_toolCallId, params) {
-      const service: ServiceName = "sonarr"
-      const path = `/api/v3/episodefile/${params.episodeFileId}`
-      const outcome = await runArrFileDelete(
-        cfg,
-        service,
-        ctx,
-        path,
-        params.episodeFileId,
-        "episodefile id",
-        "episode file",
+    execute(_toolCallId, params) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          const service: ServiceName = "sonarr"
+          const path = `/api/v3/episodefile/${params.episodeFileId}`
+          const outcome = yield* runArrFileDelete(
+            cfg,
+            service,
+            ctx,
+            path,
+            params.episodeFileId,
+            "episodefile id",
+            "episode file",
+          )
+          return textResult(outcome, {
+            service,
+            action: "delete_episode_file",
+            episodeFileId: params.episodeFileId,
+          })
+        }),
       )
-      return textResult(outcome, {
-        service,
-        action: "delete_episode_file",
-        episodeFileId: params.episodeFileId,
-      })
     },
   })
 }

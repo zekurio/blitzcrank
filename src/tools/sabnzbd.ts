@@ -3,17 +3,24 @@ import {
   defineTool,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent"
+import { Effect } from "effect"
 import { Type } from "typebox"
 
 import type { ServiceConfig } from "../config.ts"
-import { jsonRequest, type JsonValue } from "../services/http.ts"
+import {
+  jsonRequestEffect,
+  type JsonRequestError,
+  type JsonValue,
+} from "../services/http.ts"
 import { makeReadTool, reasonParam, runMutation, textResult } from "./common.ts"
 import type { RunContext } from "./context.ts"
 import { assertSabReadAllowed } from "./safety.ts"
 
 type SabMode = "queue" | "history"
-type SabCall = (params: Record<string, string>) => Promise<JsonValue>
-type VerifyList = (mode: SabMode) => Promise<JsonValue>
+type SabCall = (
+  params: Record<string, string>,
+) => Effect.Effect<JsonValue, JsonRequestError>
+type VerifyList = (mode: SabMode) => Effect.Effect<JsonValue, JsonRequestError>
 
 interface JobAction {
   name: "retry" | "pause" | "resume"
@@ -69,20 +76,21 @@ function createSabCall(cfg: ServiceConfig): SabCall {
     }
     url.searchParams.set("apikey", cfg.apiKey)
     url.searchParams.set("output", "json")
-    return jsonRequest(url.origin, url.pathname + url.search, {})
+    return jsonRequestEffect(url.origin, url.pathname + url.search, {})
   }
 }
 
 function createListVerifier(ctx: RunContext, sabCall: SabCall): VerifyList {
-  return async (mode) => {
-    const list = await sabCall({ mode, limit: "50" })
-    ctx.recordRead(
-      "sabnzbd",
-      `/api?mode=${mode}&limit=50`,
-      JSON.stringify(list),
-    )
-    return list
-  }
+  return (mode) =>
+    Effect.gen(function* () {
+      const list = yield* sabCall({ mode, limit: "50" })
+      ctx.recordRead(
+        "sabnzbd",
+        `/api?mode=${mode}&limit=50`,
+        JSON.stringify(list),
+      )
+      return list
+    })
 }
 
 function sabReadTool(cfg: ServiceConfig, ctx: RunContext): ToolDefinition {
@@ -104,11 +112,14 @@ function sabReadTool(cfg: ServiceConfig, ctx: RunContext): ToolDefinition {
   )
 }
 
-function sabRead(cfg: ServiceConfig, path: string): Promise<JsonValue> {
+function sabRead(
+  cfg: ServiceConfig,
+  path: string,
+): Effect.Effect<JsonValue, JsonRequestError> {
   const url = new URL(cfg.url + path)
   url.searchParams.set("apikey", cfg.apiKey)
   url.searchParams.set("output", "json")
-  return jsonRequest(url.origin, url.pathname + url.search, {})
+  return jsonRequestEffect(url.origin, url.pathname + url.search, {})
 }
 
 function jobActionTool(
@@ -128,18 +139,22 @@ function jobActionTool(
       reason: reasonParam(),
       nzoId,
     }),
-    async execute(_toolCallId, params) {
-      const outcome = await runMutation(ctx, {
-        kind: "mutate",
-        evidence: nzoEvidence(params.nzoId),
-        perform: () => sabCall(action.params(params.nzoId)),
-        verify: () => verifyList(action.verifyMode),
-      })
-      return textResult(outcome, {
-        service: "sabnzbd",
-        action: `${action.name}_job`,
-        nzoId: params.nzoId,
-      })
+    execute(_toolCallId, params) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          const outcome = yield* runMutation(ctx, {
+            kind: "mutate",
+            evidence: nzoEvidence(params.nzoId),
+            perform: () => sabCall(action.params(params.nzoId)),
+            verify: () => verifyList(action.verifyMode),
+          })
+          return textResult(outcome, {
+            service: "sabnzbd",
+            action: `${action.name}_job`,
+            nzoId: params.nzoId,
+          })
+        }),
+      )
     },
   })
 }
@@ -163,25 +178,29 @@ function deleteJobTool(
           "Also delete downloaded data from disk (counts as a deletion)",
       }),
     }),
-    async execute(_toolCallId, params) {
-      const outcome = await runMutation(ctx, {
-        kind: params.deleteFiles ? "delete" : "mutate",
-        evidence: nzoEvidence(params.nzoId),
-        perform: () =>
-          sabCall({
-            mode: params.from,
-            name: "delete",
-            value: params.nzoId,
-            del_files: params.deleteFiles ? "1" : "0",
-          }),
-        verify: () => verifyList(params.from),
-      })
-      return textResult(outcome, {
-        service: "sabnzbd",
-        action: "delete_job",
-        from: params.from,
-        nzoId: params.nzoId,
-      })
+    execute(_toolCallId, params) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          const outcome = yield* runMutation(ctx, {
+            kind: params.deleteFiles ? "delete" : "mutate",
+            evidence: nzoEvidence(params.nzoId),
+            perform: () =>
+              sabCall({
+                mode: params.from,
+                name: "delete",
+                value: params.nzoId,
+                del_files: params.deleteFiles ? "1" : "0",
+              }),
+            verify: () => verifyList(params.from),
+          })
+          return textResult(outcome, {
+            service: "sabnzbd",
+            action: "delete_job",
+            from: params.from,
+            nzoId: params.nzoId,
+          })
+        }),
+      )
     },
   })
 }

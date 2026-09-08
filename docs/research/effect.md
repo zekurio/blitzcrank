@@ -30,13 +30,35 @@ Only the core Effect package is needed here. Node's fetch and execFile
 remain the transport implementations. Effect's optional MessagePack native
 build is disabled; this slice does not use MessagePack.
 
+## Service tool composition
+
+The second slice moves Seerr, Sonarr, Radarr, Jellyfin, SABnzbd, and Anvil
+tools onto the native Effect I/O functions. Reads, mutation gates, writes,
+and verification compose as Effects; `Effect.runPromise` sits at the pi SDK
+tool callbacks. Tool names, schemas, allowlists, and evidence rules stay the
+same.
+
+- `makeReadTool` accepts an Effect request and records its result as before.
+- `runMutation` returns a lazy Effect. Evidence checks run before audit
+  counters and the write, with no automatic retry. Failed verification,
+  including a thrown parser error, preserves the completed write's result;
+  fiber interruption stays interrupted.
+- Synchronous guards enter the typed failure channel as `ToolError`, keeping
+  their existing messages. Arr deletion verification catches only HTTP 404;
+  Anvil's legacy `job show` fallback still requires the exact unknown-command
+  error. Anvil retry reservations still precede the first I/O call.
+
+SDK tool cancellation policy is unchanged: issue stop still waits for active
+tools before aborting the session. Host-side Seerr actions, web tools, local
+media tools, persistence, and runner lifecycles remain for later slices.
+
 ## Further slices
 
 Stack each subsequent PR on the preceding migration branch while it is
 unmerged; use main once its parent has merged. Each slice must run on its
 own and preserve the repository's safety invariants.
 
-1. Migrate service/tool composition and persistence, moving the Promise
+1. Migrate persistence and remaining host/web/local I/O, moving the Promise
    adapters outward as callers become Effects. Keep evidence gates and the
    completed-write/failed-verification distinction.
 2. Scope pi sessions and runner cleanup. Preserve session/evidence
@@ -47,8 +69,8 @@ own and preserve the repository's safety invariants.
    Keep serialized runs, persisted revisit plans, chain limits, and an
    explicit grace policy for in-flight mutations.
 
-These are boundaries for future PRs, not implementations included in the
-first slice. Pure parsers and TypeBox tool schemas need no conversion.
+These are boundaries for future PRs. Pure parsers and TypeBox tool schemas
+need no conversion.
 
 ## References
 

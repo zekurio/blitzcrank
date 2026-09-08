@@ -5,6 +5,7 @@ import {
   defineTool,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent"
+import { Effect } from "effect"
 import { Type } from "typebox"
 
 import type { AnvilConfig } from "../config.ts"
@@ -14,9 +15,11 @@ import {
   reasonParam,
   runMutation,
   textResult,
+  toolCheck,
+  ToolError,
 } from "./common.ts"
 import type { RunContext } from "./context.ts"
-import { ExecError, execFileText } from "./exec.ts"
+import { ExecError, execFileTextEffect } from "./exec.ts"
 
 /**
  * Anvil (transcode daemon) correlation tools, ported from the legacy
@@ -60,22 +63,23 @@ const JOB_STATES = [
  * could not ask". Collapsing them would rebuild the false negative this whole
  * tool set exists to prevent, one layer lower.
  */
-function explainExit(error: unknown): never {
-  if (!(error instanceof ExecError)) throw error
+function explainExit(error: ExecError): ExecError | ToolError {
   if (error.exitCode === 3) {
-    throw new Error(
-      `Anvil is unreachable or speaks a different protocol (${error.message}). ` +
+    return new ToolError({
+      message:
+        `Anvil is unreachable or speaks a different protocol (${error.message}). ` +
         "This says nothing about whether anything is encoding: report the control plane " +
         "as unavailable, never as 'no conversion job exists'.",
-    )
+    })
   }
   if (error.exitCode === 4) {
-    throw new Error(
-      `Anvil has no such job, library, or path (${error.message}). Re-read the job list ` +
+    return new ToolError({
+      message:
+        `Anvil has no such job, library, or path (${error.message}). Re-read the job list ` +
         "rather than guessing another reference.",
-    )
+    })
   }
-  throw error
+  return error
 }
 
 type JsonObject = { [key: string]: JsonValue | undefined }
@@ -633,7 +637,7 @@ export function buildAnvilTools(
   const retriedJobIds = new Set<string>()
 
   const anvilctl = (args: string[], signal: AbortSignal | undefined) =>
-    execFileText(
+    execFileTextEffect(
       cfg.command,
       ["--socket", cfg.socket, "--timeout", CLIENT_TIMEOUT, "--json", ...args],
       {
@@ -641,7 +645,7 @@ export function buildAnvilTools(
         timeoutMs: EXEC_TIMEOUT_MS,
         maxBufferBytes: ANVIL_MAX_BUFFER_BYTES,
       },
-    ).catch(explainExit)
+    ).pipe(Effect.mapError(explainExit))
 
   /**
    * `jobs` and `retry` were aliases before Anvil flattened its CLI, but `show`
@@ -649,29 +653,24 @@ export function buildAnvilTools(
    * unknown-command usage error activates this fallback, so daemon argument
    * errors are never mistaken for a dialect change.
    */
-  const showJob = async (
-    job: string,
-    signal: AbortSignal | undefined,
-  ): Promise<{ stdout: string; query: string }> => {
-    try {
-      return {
-        stdout: await anvilctl(["show", job], signal),
-        query: `show ${job}`,
-      }
-    } catch (error) {
-      if (
-        !(error instanceof ExecError) ||
-        error.exitCode !== 2 ||
-        !error.message.includes('unknown command "show"')
-      ) {
-        throw error
-      }
-    }
-    return {
-      stdout: await anvilctl(["job", "show", job], signal),
-      query: `job show ${job} (legacy fallback)`,
-    }
-  }
+  const showJob = (job: string, signal: AbortSignal | undefined) =>
+    anvilctl(["show", job], signal).pipe(
+      Effect.map((stdout) => ({ stdout, query: `show ${job}` })),
+      Effect.catchTag("ExecError", (error) => {
+        if (
+          error.exitCode !== 2 ||
+          !error.message.includes('unknown command "show"')
+        ) {
+          return Effect.fail(error)
+        }
+        return anvilctl(["job", "show", job], signal).pipe(
+          Effect.map((stdout) => ({
+            stdout,
+            query: `job show ${job} (legacy fallback)`,
+          })),
+        )
+      }),
+    )
 
   /**
    * Job results are recorded as evidence so the converted-file path they carry
@@ -732,11 +731,16 @@ export function buildAnvilTools(
           description: "Why Anvil daemon health is needed for this diagnosis",
         }),
       }),
-      async execute(_toolCallId, _params, signal) {
-        const stdout = await anvilctl(["status"], signal)
-        return textResult(parseAnvilResponse(stdout), {
-          action: "anvil_status",
-        })
+      execute(_toolCallId, _params, signal) {
+        return Effect.runPromise(
+          Effect.gen(function* () {
+            const stdout = yield* anvilctl(["status"], signal)
+            const response = yield* toolCheck(() => parseAnvilResponse(stdout))
+            return textResult(response, {
+              action: "anvil_status",
+            })
+          }),
+        )
       },
     }),
     defineTool({
@@ -771,18 +775,17 @@ export function buildAnvilTools(
           }),
         ),
       }),
-      async execute(_toolCallId, params, signal) {
-        const limit = String(params.limit ?? 200)
-        const states = params.states?.join(",")
-        const selection = params.includeStreamSelection === true
-        const query =
-          `jobs --current-only --limit ${limit}` +
-          `${states ? ` --state ${states}` : ""}` +
-          `${selection ? " --with-selection" : ""}`
-        const response = recordJobs(
-          query,
-          parseAnvilResponse(
-            await anvilctl(
+      execute(_toolCallId, params, signal) {
+        return Effect.runPromise(
+          Effect.gen(function* () {
+            const limit = String(params.limit ?? 200)
+            const states = params.states?.join(",")
+            const selection = params.includeStreamSelection === true
+            const query =
+              `jobs --current-only --limit ${limit}` +
+              `${states ? ` --state ${states}` : ""}` +
+              `${selection ? " --with-selection" : ""}`
+            const stdout = yield* anvilctl(
               [
                 "jobs",
                 "--current-only",
@@ -792,12 +795,15 @@ export function buildAnvilTools(
                 ...(selection ? ["--with-selection"] : []),
               ],
               signal,
-            ),
-          ),
+            )
+            const response = yield* toolCheck(() =>
+              recordJobs(query, parseAnvilResponse(stdout)),
+            )
+            return textResult(interpretJobList(response), {
+              action: "anvil_job_list",
+            })
+          }),
         )
-        return textResult(interpretJobList(response), {
-          action: "anvil_job_list",
-        })
       },
     }),
     defineTool({
@@ -818,18 +824,27 @@ export function buildAnvilTools(
             "Anvil numeric job id accepted by the evidence gate, or slug exactly as an Anvil read reported it in this run",
         }),
       }),
-      async execute(_toolCallId, params, signal) {
-        const reference = params.job.trim()
-        const job = resolveJobReference(reference)
-        const shown = await showJob(job, signal)
-        const response = requireShownJob(parseAnvilResponse(shown.stdout), job)
-        const result = compactJobShow(recordJobs(shown.query, response))
-        shownJobIds.add(job)
-        return textResult(result, {
-          action: "anvil_job_show",
-          job,
-          reference,
-        })
+      execute(_toolCallId, params, signal) {
+        return Effect.runPromise(
+          Effect.gen(function* () {
+            const reference = params.job.trim()
+            const job = yield* toolCheck(() => resolveJobReference(reference))
+            const shown = yield* showJob(job, signal)
+            const result = yield* toolCheck(() => {
+              const response = requireShownJob(
+                parseAnvilResponse(shown.stdout),
+                job,
+              )
+              return compactJobShow(recordJobs(shown.query, response))
+            })
+            shownJobIds.add(job)
+            return textResult(result, {
+              action: "anvil_job_show",
+              job,
+              reference,
+            })
+          }),
+        )
       },
     }),
     defineTool({
@@ -849,76 +864,91 @@ export function buildAnvilTools(
             "Anvil numeric job id accepted by the evidence gate, or slug exactly as an Anvil read reported it in this run",
         }),
       }),
-      async execute(_toolCallId, params, signal) {
-        const reference = params.job.trim()
-        const job = resolveJobReference(reference)
-        if (!correlatedJobIds.has(job)) {
-          throw new Error(
-            `evidence gate: Anvil job ${job} was not uniquely returned by an exact-path lookup this run. ` +
-              "Correlate one current Sonarr/Radarr queue outputPath first; a broad job list is not item evidence.",
-          )
-        }
-        if (!shownJobIds.has(job)) {
-          throw new Error(
-            `evidence gate: Anvil job ${job} was not inspected with anvil_job_show this run. ` +
-              "Read and diagnose its visible history before retrying.",
-          )
-        }
-        if (retriedJobIds.has(job)) {
-          throw new Error(
-            `Anvil job ${job} was already retried this run; re-read its state instead of retrying twice.`,
-          )
-        }
-        // Reserve synchronously because pi may execute sibling tool calls in
-        // parallel. Never release the reservation: any later transport failure
-        // may hide a successful retry, so another attempt in this run is unsafe.
-        retriedJobIds.add(job)
-        const beforeShown = await showJob(job, signal)
-        const before = recordJobs(
-          beforeShown.query,
-          requireShownJob(parseAnvilResponse(beforeShown.stdout), job),
+      execute(_toolCallId, params, signal) {
+        return Effect.runPromise(
+          Effect.gen(function* () {
+            const reference = params.job.trim()
+            const job = yield* toolCheck(() => resolveJobReference(reference))
+            yield* toolCheck(() => {
+              if (!correlatedJobIds.has(job)) {
+                throw new Error(
+                  `evidence gate: Anvil job ${job} was not uniquely returned by an exact-path lookup this run. ` +
+                    "Correlate one current Sonarr/Radarr queue outputPath first; a broad job list is not item evidence.",
+                )
+              }
+              if (!shownJobIds.has(job)) {
+                throw new Error(
+                  `evidence gate: Anvil job ${job} was not inspected with anvil_job_show this run. ` +
+                    "Read and diagnose its visible history before retrying.",
+                )
+              }
+              if (retriedJobIds.has(job)) {
+                throw new Error(
+                  `Anvil job ${job} was already retried this run; re-read its state instead of retrying twice.`,
+                )
+              }
+              // Reserve synchronously because pi may execute sibling tool calls in
+              // parallel. Never release the reservation: any later transport failure
+              // may hide a successful retry, so another attempt in this run is unsafe.
+              retriedJobIds.add(job)
+            })
+            const beforeShown = yield* showJob(job, signal)
+            yield* toolCheck(() => {
+              const before = recordJobs(
+                beforeShown.query,
+                requireShownJob(parseAnvilResponse(beforeShown.stdout), job),
+              )
+              const beforeDiagnostic = compactJobShow(before)
+              if (beforeDiagnostic.output_complete === false) {
+                throw new Error(
+                  `Anvil job ${job} has an incomplete diagnostic history. ` +
+                    "Refusing retry because prior attempt failures could be hidden; require operator review.",
+                )
+              }
+              const state = recordOf(before.job)?.state
+              if (state !== "failed") {
+                throw new Error(
+                  `Anvil job ${job} is ${JSON.stringify(state)}, not failed. ` +
+                    "blitzcrank retries only diagnosed failures. Do not retry canceled, active, complete, or skipped work; use operator review where the state remains unhealthy or ambiguous.",
+                )
+              }
+            })
+            const outcome = yield* runMutation(ctx, {
+              kind: "mutate",
+              evidence: [
+                {
+                  service: "anvil",
+                  value: job,
+                  hint: "job id or slug",
+                  identity: true,
+                },
+              ],
+              perform: () =>
+                anvilctl(["retry", job], signal).pipe(
+                  Effect.flatMap((stdout) =>
+                    toolCheck(() => parseAnvilResponse(stdout)),
+                  ),
+                ),
+              verify: () =>
+                Effect.gen(function* () {
+                  const shown = yield* showJob(job, signal)
+                  return yield* toolCheck(() =>
+                    compactJobShow(
+                      recordJobs(
+                        shown.query,
+                        requireShownJob(parseAnvilResponse(shown.stdout), job),
+                      ),
+                    ),
+                  )
+                }),
+            })
+            return textResult(outcome, {
+              action: "anvil_retry_job",
+              job,
+              reference,
+            })
+          }),
         )
-        const beforeDiagnostic = compactJobShow(before)
-        if (beforeDiagnostic.output_complete === false) {
-          throw new Error(
-            `Anvil job ${job} has an incomplete diagnostic history. ` +
-              "Refusing retry because prior attempt failures could be hidden; require operator review.",
-          )
-        }
-        const state = recordOf(before.job)?.state
-        if (state !== "failed") {
-          throw new Error(
-            `Anvil job ${job} is ${JSON.stringify(state)}, not failed. ` +
-              "blitzcrank retries only diagnosed failures. Do not retry canceled, active, complete, or skipped work; use operator review where the state remains unhealthy or ambiguous.",
-          )
-        }
-        const outcome = await runMutation(ctx, {
-          kind: "mutate",
-          evidence: [
-            {
-              service: "anvil",
-              value: job,
-              hint: "job id or slug",
-              identity: true,
-            },
-          ],
-          perform: async () =>
-            parseAnvilResponse(await anvilctl(["retry", job], signal)),
-          verify: async () => {
-            const shown = await showJob(job, signal)
-            return compactJobShow(
-              recordJobs(
-                shown.query,
-                requireShownJob(parseAnvilResponse(shown.stdout), job),
-              ),
-            )
-          },
-        })
-        return textResult(outcome, {
-          action: "anvil_retry_job",
-          job,
-          reference,
-        })
       },
     }),
     defineTool({
@@ -944,49 +974,57 @@ export function buildAnvilTools(
           }),
         ),
       }),
-      async execute(_toolCallId, params, signal) {
-        const target = params.absolute_path
-        if (!path.isAbsolute(target) || target.includes("\0")) {
-          throw new Error("absolute_path must be an exact absolute path")
-        }
-        if (!ctx.sawRecordedPath(target)) {
-          throw new Error(
-            `evidence gate: ${target} was not returned in a service or Anvil path field this run. ` +
-              "Look up only an exact path returned by Arr, SABnzbd, Jellyfin, or an earlier Anvil result; " +
-              "never use issue text or reconstruct a path.",
-          )
-        }
-        const selection = params.includeStreamSelection === true
-        const retryCorrelationPath = ctx.sawRecordedPathField(
-          target,
-          ["sonarr", "radarr"],
-          "outputPath",
+      execute(_toolCallId, params, signal) {
+        return Effect.runPromise(
+          Effect.gen(function* () {
+            const target = params.absolute_path
+            yield* toolCheck(() => {
+              if (!path.isAbsolute(target) || target.includes("\0")) {
+                throw new Error("absolute_path must be an exact absolute path")
+              }
+              if (!ctx.sawRecordedPath(target)) {
+                throw new Error(
+                  `evidence gate: ${target} was not returned in a service or Anvil path field this run. ` +
+                    "Look up only an exact path returned by Arr, SABnzbd, Jellyfin, or an earlier Anvil result; " +
+                    "never use issue text or reconstruct a path.",
+                )
+              }
+            })
+            const selection = params.includeStreamSelection === true
+            const retryCorrelationPath = ctx.sawRecordedPathField(
+              target,
+              ["sonarr", "radarr"],
+              "outputPath",
+            )
+            const stdout = yield* anvilctl(
+              [
+                "jobs",
+                "--absolute-path",
+                target,
+                "--current-only",
+                ...(selection ? ["--with-selection"] : []),
+              ],
+              signal,
+            )
+            const response = yield* toolCheck(() =>
+              recordJobs(
+                `jobs --absolute-path ${target} --current-only${selection ? " --with-selection" : ""}`,
+                parseAnvilResponse(stdout),
+              ),
+            )
+            const result = interpretJobLookup(response, target)
+            const identities = jobIdentitiesOf(response)
+            if (
+              retryCorrelationPath &&
+              result.output_complete !== false &&
+              identities.length === 1 &&
+              hasExactPathMatch(response)
+            ) {
+              correlatedJobIds.add(identities[0]!.id)
+            }
+            return textResult(result, { action: "anvil_job_lookup" })
+          }),
         )
-        const stdout = await anvilctl(
-          [
-            "jobs",
-            "--absolute-path",
-            target,
-            "--current-only",
-            ...(selection ? ["--with-selection"] : []),
-          ],
-          signal,
-        )
-        const response = recordJobs(
-          `jobs --absolute-path ${target} --current-only${selection ? " --with-selection" : ""}`,
-          parseAnvilResponse(stdout),
-        )
-        const result = interpretJobLookup(response, target)
-        const identities = jobIdentitiesOf(response)
-        if (
-          retryCorrelationPath &&
-          result.output_complete !== false &&
-          identities.length === 1 &&
-          hasExactPathMatch(response)
-        ) {
-          correlatedJobIds.add(identities[0]!.id)
-        }
-        return textResult(result, { action: "anvil_job_lookup" })
       },
     }),
   ]

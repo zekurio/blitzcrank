@@ -2,10 +2,15 @@ import {
   defineTool,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent"
+import { Effect } from "effect"
 import { Type } from "typebox"
 
 import type { ServiceConfig } from "../config.ts"
-import { jsonRequest, type JsonValue } from "../services/http.ts"
+import {
+  jsonRequestEffect,
+  type JsonRequestError,
+  type JsonValue,
+} from "../services/http.ts"
 import { makeReadTool, reasonParam, runMutation, textResult } from "./common.ts"
 import type { RunContext } from "./context.ts"
 
@@ -14,7 +19,7 @@ export function buildJellyfinTools(
   ctx: RunContext,
 ): ToolDefinition[] {
   const request = (path: string, method: "GET" | "POST" = "GET") =>
-    jsonRequest(cfg.url, path, {
+    jsonRequestEffect(cfg.url, path, {
       method,
       headers: { "X-Emby-Token": cfg.apiKey },
     })
@@ -36,7 +41,10 @@ export function buildJellyfinTools(
 
 function refreshItemTool(
   ctx: RunContext,
-  request: (path: string, method?: "GET" | "POST") => Promise<JsonValue>,
+  request: (
+    path: string,
+    method?: "GET" | "POST",
+  ) => Effect.Effect<JsonValue, JsonRequestError>,
 ): ToolDefinition {
   return defineTool({
     name: "jellyfin_refresh_item",
@@ -47,23 +55,27 @@ function refreshItemTool(
       reason: reasonParam(),
       itemId: Type.String({ minLength: 1 }),
     }),
-    async execute(_toolCallId, params) {
-      const outcome = await runMutation(ctx, {
-        kind: "mutate",
-        evidence: [
-          { service: "jellyfin", value: params.itemId, hint: "item id" },
-        ],
-        perform: () =>
-          request(
-            `/Items/${encodeURIComponent(params.itemId)}/Refresh`,
-            "POST",
-          ),
-      })
-      return textResult(outcome, {
-        service: "jellyfin",
-        action: "refresh_item",
-        itemId: params.itemId,
-      })
+    execute(_toolCallId, params) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          const outcome = yield* runMutation(ctx, {
+            kind: "mutate",
+            evidence: [
+              { service: "jellyfin", value: params.itemId, hint: "item id" },
+            ],
+            perform: () =>
+              request(
+                `/Items/${encodeURIComponent(params.itemId)}/Refresh`,
+                "POST",
+              ),
+          })
+          return textResult(outcome, {
+            service: "jellyfin",
+            action: "refresh_item",
+            itemId: params.itemId,
+          })
+        }),
+      )
     },
   })
 }

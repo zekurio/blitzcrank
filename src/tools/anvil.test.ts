@@ -1,10 +1,11 @@
 import assert from "node:assert/strict"
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { describe, test } from "node:test"
 
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent"
+import { Effect } from "effect"
 
 import { buildAnvilTools, interpretJobLookup } from "./anvil.ts"
 import { makeReadTool } from "./common.ts"
@@ -28,13 +29,16 @@ for (const field of ["droppedPath", "importedPath"]) {
         service: "radarr",
         label: "Radarr",
         description: "Read Radarr history",
-        request: async () => ({
-          records: [
-            { data: { [field]: SOURCE_PATH, message: "/untrusted/movie.mkv" } },
-            { data: { [field]: "relative/movie.mkv" } },
-            { data: { [field]: "/invalid\0/movie.mkv" } },
-          ],
-        }),
+        request: () =>
+          Effect.succeed({
+            records: [
+              {
+                data: { [field]: SOURCE_PATH, message: "/untrusted/movie.mkv" },
+              },
+              { data: { [field]: "relative/movie.mkv" } },
+              { data: { [field]: "/invalid\0/movie.mkv" } },
+            ],
+          }),
       },
       ctx,
     )
@@ -86,7 +90,12 @@ async function execute(
 }
 
 async function fakeAnvilctl(
-  options: { largeDiagnostics?: boolean; showDelayMs?: number } = {},
+  options: {
+    largeDiagnostics?: boolean
+    showDelayMs?: number
+    legacyShow?: boolean
+    showExitCode?: number
+  } = {},
 ): Promise<{
   command: string
   cleanup: () => Promise<void>
@@ -96,10 +105,19 @@ async function fakeAnvilctl(
   await writeFile(
     command,
     `#!/usr/bin/env node
-import { existsSync, writeFileSync } from "node:fs"
+import { appendFileSync, existsSync, writeFileSync } from "node:fs"
 
 const args = process.argv.slice(2)
+appendFileSync(process.argv[1] + ".calls", JSON.stringify(args) + "\\n")
 const command = args.find((arg) => ["jobs", "show", "retry", "status"].includes(arg))
+if (command === "show" && ${options.legacyShow === true} && !args.includes("job")) {
+  process.stderr.write('unknown command "show"')
+  process.exit(2)
+}
+if (command === "show" && ${options.showExitCode !== undefined}) {
+  process.stderr.write("show failed")
+  process.exit(${options.showExitCode ?? 0})
+}
 const stateFile = process.argv[1] + ".state"
 const state = existsSync(stateFile) ? "pending" : "failed"
 const job = {
@@ -172,6 +190,42 @@ if (command === "jobs") {
     cleanup: () => rm(dir, { recursive: true, force: true }),
   }
 }
+
+test("Anvil show falls back only for the exact legacy usage error", async (t) => {
+  for (const options of [
+    { legacyShow: true },
+    { showExitCode: 2 },
+    { showExitCode: 3 },
+    { showExitCode: 4 },
+  ]) {
+    const fake = await fakeAnvilctl(options)
+    t.after(fake.cleanup)
+    const ctx = new RunContext()
+    ctx.recordIdentity("anvil", 7)
+    const tools = buildAnvilTools(
+      { command: fake.command, socket: "/tmp/anvil.sock" },
+      ctx,
+    )
+    const show = execute(tools, "anvil_job_show", {
+      purpose: "diagnose known job",
+      job: "7",
+    })
+    if (options.legacyShow) await show
+    if (options.showExitCode) {
+      const message =
+        options.showExitCode === 3
+          ? /Anvil is unreachable/
+          : options.showExitCode === 4
+            ? /Anvil has no such job/
+            : /show failed/
+      await assert.rejects(show, message)
+    }
+    const calls = (await readFile(fake.command + ".calls", "utf8"))
+      .trim()
+      .split("\n")
+    assert.equal(calls.length, options.legacyShow ? 2 : 1)
+  }
+})
 
 describe("Anvil lookup interpretation", () => {
   test("labels an empty lookup unknown instead of absent", () => {
