@@ -1,3 +1,6 @@
+import { Cause, Effect } from "effect"
+
+import { HttpRequestError } from "../../services/http.ts"
 import type { SeerrClient, SeerrUser } from "../../services/seerr.ts"
 import { issueIdOf, webhookText, type SeerrWebhookPayload } from "./types.ts"
 
@@ -16,27 +19,27 @@ interface CommenterIdentity {
   name: string | undefined
 }
 
-export function createCommentGate(
-  seerr: Pick<SeerrClient, "getIssue" | "listUsers">,
-): (payload: SeerrWebhookPayload) => Promise<boolean> {
-  return async (payload) => {
-    const issueId = issueIdOf(payload)
-    const who: CommenterIdentity = {
-      email: normalize(payload.comment?.commentedBy_email),
-      name: normalize(payload.comment?.commentedBy_username),
-    }
-    if (issueId === undefined || (!who.email && !who.name)) {
-      console.warn(
-        "[comment-gate] comment event without identifiable author; ignoring",
-      )
-      return false
-    }
+export function createCommentGateEffect(
+  seerr: Pick<SeerrClient, "getIssueEffect" | "listUsersEffect">,
+): (payload: SeerrWebhookPayload) => Effect.Effect<boolean> {
+  return (payload) =>
+    Effect.gen(function* () {
+      const issueId = issueIdOf(payload)
+      const who: CommenterIdentity = {
+        email: normalize(payload.comment?.commentedBy_email),
+        name: normalize(payload.comment?.commentedBy_username),
+      }
+      if (issueId === undefined || (!who.email && !who.name)) {
+        console.warn(
+          "[comment-gate] comment event without identifiable author; ignoring",
+        )
+        return false
+      }
 
-    try {
-      const issue = await seerr.getIssue(issueId)
+      const issue = yield* seerr.getIssueEffect(issueId)
       if (matchesUser(issue.createdBy, who)) return true
 
-      const users = await seerr.listUsers()
+      const users = yield* seerr.listUsersEffect()
       const commenter = users.find((user) => matchesUser(user, who))
       const permissions = commenter?.permissions ?? 0
       const allowed = (permissions & (ADMIN | MANAGE_ISSUES)) !== 0
@@ -47,14 +50,17 @@ export function createCommentGate(
         )
       }
       return allowed
-    } catch (err) {
-      console.warn(
-        `[comment-gate] issue=${issueId} could not verify comment author; failing closed:`,
-        err instanceof Error ? err.message : err,
-      )
-      return false
-    }
-  }
+    }).pipe(
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterrupts(cause)) return Effect.interrupt
+        const err = Cause.squash(cause)
+        console.warn(
+          `[comment-gate] issue=${issueIdOf(payload)} could not verify comment author; failing closed:`,
+          err instanceof Error ? err.message : err,
+        )
+        return Effect.succeed(false)
+      }),
+    )
 }
 
 /**
@@ -78,4 +84,22 @@ function matchesUser(
 
 function normalize(value: string | undefined): string | undefined {
   return webhookText(value)?.toLowerCase()
+}
+
+export function createCommentGate(
+  seerr: Pick<SeerrClient, "getIssue" | "listUsers">,
+): (payload: SeerrWebhookPayload) => Promise<boolean> {
+  const gate = createCommentGateEffect({
+    getIssueEffect: (issueId) =>
+      Effect.tryPromise({
+        try: () => seerr.getIssue(issueId),
+        catch: (cause) => new HttpRequestError({ cause }),
+      }),
+    listUsersEffect: () =>
+      Effect.tryPromise({
+        try: () => seerr.listUsers(),
+        catch: (cause) => new HttpRequestError({ cause }),
+      }),
+  })
+  return (payload) => Effect.runPromise(gate(payload))
 }
