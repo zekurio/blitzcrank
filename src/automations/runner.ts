@@ -1,8 +1,10 @@
 import path from "node:path"
 
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent"
+import { Effect } from "effect"
 
-import { resolveModel, runAgentTurn } from "../agent/session.ts"
+import { SdkError } from "../agent/effect.ts"
+import { resolveModel, runAgentTurnEffect } from "../agent/session.ts"
 import type { Config } from "../config.ts"
 import { RunContext } from "../tools/context.ts"
 import {
@@ -50,81 +52,96 @@ export class AutomationRunner {
     private readonly modelSpecs: Readonly<Record<string, string>>,
   ) {}
 
-  async run(def: AutomationDefinition): Promise<AutomationReport> {
-    const ctx = new RunContext()
-    const sessionFileRef: SessionFileRef = { current: undefined }
-    const modelSpec = modelSpecForAutomation(
-      def.name,
-      this.defaultModelSpec,
-      this.modelSpecs,
-    )
+  run(def: AutomationDefinition): Promise<AutomationReport> {
+    return Effect.runPromise(this.runEffect(def))
+  }
+  runEffect(def: AutomationDefinition) {
+    return Effect.gen({ self: this }, function* () {
+      const ctx = new RunContext()
+      const sessionFileRef: SessionFileRef = { current: undefined }
+      const modelSpec = modelSpecForAutomation(
+        def.name,
+        this.defaultModelSpec,
+        this.modelSpecs,
+      )
 
-    const serviceTools = buildServiceTools(
-      this.config,
-      ctx,
-      sessionFileRef,
-      resolveModel(this.modelRuntime, modelSpec).input,
-    )
-    for (const name of def.mutationTools) {
-      const tool = serviceTools.find((candidate) => candidate.name === name)
-      if (!tool) {
-        throw new Error(
-          `automation ${def.name} requires unknown or unavailable ` +
-            `mutation tool ${name}`,
-        )
+      const serviceTools = buildServiceTools(
+        this.config,
+        ctx,
+        sessionFileRef,
+        resolveModel(this.modelRuntime, modelSpec).input,
+      )
+      for (const name of def.mutationTools) {
+        const tool = serviceTools.find((candidate) => candidate.name === name)
+        if (!tool) {
+          return yield* Effect.fail(
+            new SdkError({
+              cause: undefined,
+              message:
+                `automation ${def.name} requires unknown or unavailable ` +
+                `mutation tool ${name}`,
+            }),
+          )
+        }
+        if (isReadTool(tool.name)) {
+          return yield* Effect.fail(
+            new SdkError({
+              cause: undefined,
+              message:
+                `automation ${def.name} lists read tool ${name} in ` +
+                "mutation_tools; reads are always available",
+            }),
+          )
+        }
       }
-      if (isReadTool(tool.name)) {
-        throw new Error(
-          `automation ${def.name} lists read tool ${name} in ` +
-            "mutation_tools; reads are always available",
-        )
-      }
-    }
-    const allowedMutations = new Set(def.mutationTools)
-    const tools = serviceTools.filter(
-      (tool) => isReadTool(tool.name) || allowedMutations.has(tool.name),
-    )
-    const reportCapture: AutomationReportCapture = { submissions: [] }
-    tools.push(buildAutomationReportTool(reportCapture))
-    const readTools = new Set([
-      "read",
-      ...tools.filter((tool) => isReadTool(tool.name)).map((tool) => tool.name),
-    ])
-    const reads = { count: 0 }
+      const allowedMutations = new Set(def.mutationTools)
+      const tools = serviceTools.filter(
+        (tool) => isReadTool(tool.name) || allowedMutations.has(tool.name),
+      )
+      const reportCapture: AutomationReportCapture = { submissions: [] }
+      tools.push(buildAutomationReportTool(reportCapture))
+      const readTools = new Set([
+        "read",
+        ...tools
+          .filter((tool) => isReadTool(tool.name))
+          .map((tool) => tool.name),
+      ])
+      const reads = { count: 0 }
 
-    const turn = await runAgentTurn({
-      modelRuntime: this.modelRuntime,
-      modelSpec,
-      systemPrompt: buildAutomationSystemPrompt(this.config, def),
-      tools,
-      prompt: def.body,
-      sessionDir: path.join(this.config.dataDir, "sessions", "automations"),
-      // Automations never resume: each tick is a fresh sweep of current state,
-      // and carrying last hour's conclusions into it would be a liability.
-      resumeFile: undefined,
-      sessionFileRef,
-      onToolExecutionEnd: (toolName, isError) => {
-        if (!isError && readTools.has(toolName)) reads.count += 1
-      },
-      logPrefix: `automation:${def.name}`,
+      const turn = yield* runAgentTurnEffect({
+        modelRuntime: this.modelRuntime,
+        modelSpec,
+        systemPrompt: buildAutomationSystemPrompt(this.config, def),
+        tools,
+        prompt: def.body,
+        sessionDir: path.join(this.config.dataDir, "sessions", "automations"),
+        // Automations never resume: each tick is a fresh sweep of current state,
+        // and carrying last hour's conclusions into it would be a liability.
+        resumeFile: undefined,
+        sessionFileRef,
+        onToolExecutionEnd: (toolName, isError) => {
+          if (!isError && readTools.has(toolName)) reads.count += 1
+        },
+        logPrefix: `automation:${def.name}`,
+      })
+
+      const report: AutomationReport = {
+        name: def.name,
+        ...parseAutomationReport(reportCapture, turn.finalToolNames),
+        reads: reads.count,
+        mutations: ctx.counts.mutations,
+        deletes: ctx.counts.deletes,
+        tokens: turn.usage.newTokens,
+      }
+      const log = report.status === "fehler" ? console.error : console.log
+      log(
+        `[automation:${def.name}] status=${report.status} reads=${report.reads} ` +
+          `mutations=${report.mutations} deletes=${report.deletes} tokens=${report.tokens} ` +
+          `billed=${turn.usage.billedTokens} model=${modelSpec}` +
+          `${report.malformed ? " (invalid structured report)" : ""}${report.empty ? " (no report)" : ""}` +
+          `${report.body ? `\n${report.body}` : ""}`,
+      )
+      return report
     })
-
-    const report: AutomationReport = {
-      name: def.name,
-      ...parseAutomationReport(reportCapture, turn.finalToolNames),
-      reads: reads.count,
-      mutations: ctx.counts.mutations,
-      deletes: ctx.counts.deletes,
-      tokens: turn.usage.newTokens,
-    }
-    const log = report.status === "fehler" ? console.error : console.log
-    log(
-      `[automation:${def.name}] status=${report.status} reads=${report.reads} ` +
-        `mutations=${report.mutations} deletes=${report.deletes} tokens=${report.tokens} ` +
-        `billed=${turn.usage.billedTokens} model=${modelSpec}` +
-        `${report.malformed ? " (invalid structured report)" : ""}${report.empty ? " (no report)" : ""}` +
-        `${report.body ? `\n${report.body}` : ""}`,
-    )
-    return report
   }
 }
