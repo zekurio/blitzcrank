@@ -3,6 +3,8 @@
   stdenv,
   nodejs_24,
   pnpm_10,
+  pnpmConfigHook,
+  fetchPnpmDeps,
   makeWrapper,
 }:
 
@@ -14,14 +16,15 @@ stdenv.mkDerivation (finalAttrs: {
 
   nativeBuildInputs = [
     nodejs_24
-    pnpm_10.configHook
+    pnpm_10
+    pnpmConfigHook
     makeWrapper
   ];
 
-  # Deliberately the pnpm_10-bound fetcher (top-level fetchPnpmDeps binds to
-  # pnpm_11, which rejects fetcherVersion 3); hash computed with this pair.
-  pnpmDeps = pnpm_10.fetchDeps {
+  # Keep pnpm 10: the default pnpm 11 rejects fetcherVersion 3.
+  pnpmDeps = fetchPnpmDeps {
     inherit (finalAttrs) pname version src;
+    pnpm = pnpm_10;
     fetcherVersion = 3;
     hash = "sha256-Z03TfBzjmmnkSsjRSWl/84jZcEZeAYkGjc9Ld6GKPGs=";
   };
