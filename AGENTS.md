@@ -17,8 +17,8 @@
   knowledge), `docs/research/` (pi SDK, Seerr/service APIs, legacy design —
   consult before touching tool or API code).
 - Single pnpm package, strict ESM TypeScript (`module: NodeNext`,
-  `exactOptionalPropertyTypes`), no build step in dev. Node >= 22.19.0 (dev
-  shell ships 24), pnpm only — never npm, yarn, or Bun.
+  `exactOptionalPropertyTypes`), no build step in dev. Node >= 26.0.0 (dev
+  shell ships 26), pnpm only — never npm, yarn, or Bun.
 - `pnpm dev` (tsx watch), `pnpm build` + `pnpm start` (tsc → `dist/`),
   `pnpm fmt` / `pnpm lint` / `pnpm typecheck`.
 - `pnpm verify` (format check, lint, and typecheck) must pass before a coding
