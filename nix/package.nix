@@ -1,11 +1,15 @@
 {
   lib,
   stdenv,
-  nodejs_24,
-  pnpm_10,
+  nodejs_26,
+  pnpm_11,
+  pnpmConfigHook,
+  fetchPnpmDeps,
   makeWrapper,
 }:
-
+let
+  pnpm = pnpm_11.override { nodejs-slim = nodejs_26; };
+in
 stdenv.mkDerivation (finalAttrs: {
   pname = "blitzcrank";
   version = "0.1.0";
@@ -13,17 +17,17 @@ stdenv.mkDerivation (finalAttrs: {
   src = lib.cleanSource ../.;
 
   nativeBuildInputs = [
-    nodejs_24
-    pnpm_10.configHook
+    nodejs_26
+    pnpm
+    pnpmConfigHook
     makeWrapper
   ];
 
-  # Deliberately the pnpm_10-bound fetcher (top-level fetchPnpmDeps binds to
-  # pnpm_11, which rejects fetcherVersion 3); hash computed with this pair.
-  pnpmDeps = pnpm_10.fetchDeps {
+  pnpmDeps = fetchPnpmDeps {
     inherit (finalAttrs) pname version src;
-    fetcherVersion = 3;
-    hash = "sha256-Z03TfBzjmmnkSsjRSWl/84jZcEZeAYkGjc9Ld6GKPGs=";
+    inherit pnpm;
+    fetcherVersion = 4;
+    hash = "sha256-nRuJjkrFpkaKoJCSD5tOeSy73iLIhkbi0TbeHfME/UQ=";
   };
 
   buildPhase = ''
@@ -37,9 +41,9 @@ stdenv.mkDerivation (finalAttrs: {
     runHook preInstall
     mkdir -p $out/lib/blitzcrank
     cp -r dist node_modules skills automations package.json $out/lib/blitzcrank/
-    makeWrapper ${nodejs_24}/bin/node $out/bin/blitzcrank \
+    makeWrapper ${nodejs_26}/bin/node $out/bin/blitzcrank \
       --add-flags "$out/lib/blitzcrank/dist/index.js"
-    makeWrapper ${nodejs_24}/bin/node $out/bin/blitz-pi \
+    makeWrapper ${nodejs_26}/bin/node $out/bin/blitz-pi \
       --add-flags "$out/lib/blitzcrank/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"
     runHook postInstall
   '';

@@ -52,7 +52,7 @@
             name = "blitz-pi";
             runtimeInputs = [
               pkgs.git
-              pkgs.nodejs_24
+              pkgs.nodejs_26
             ];
             text = ''
               root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
@@ -72,8 +72,8 @@
           default = pkgs.mkShell {
             packages = with pkgs; [
               blitzPi
-              nodejs_24
-              pnpm
+              nodejs_26
+              (pnpm_11.override { nodejs-slim = nodejs_26; })
               ffmpeg-headless
             ];
 
@@ -84,6 +84,6 @@
         }
       );
 
-      formatter = forAllSystems (pkgs: pkgs.nixfmt-rfc-style);
+      formatter = forAllSystems (pkgs: pkgs.nixfmt);
     };
 }
