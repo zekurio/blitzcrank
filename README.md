@@ -373,7 +373,8 @@ implementation.
 
 ## Develop locally
 
-The Nix dev shell includes Node 26, pnpm 11, and TypeScript:
+The Nix dev shell includes the default Node.js from the pinned nixpkgs input,
+pnpm 11, and TypeScript. The current nixpkgs revision supplies Node 24:
 
 ```bash
 nix develop          # or: direnv allow
@@ -385,7 +386,7 @@ pnpm dev             # tsx watch
 The shell exposes the checkout's pinned pi CLI as `blitz-pi` to avoid collisions
 with other `pi` installations.
 
-Without Nix, install Node >= 26.0.0 and pnpm 11, then follow the commands after
+Without Nix, install Node >= 24.0.0 and pnpm 11, then follow the commands after
 `nix develop`. To compile and run the output:
 
 ```bash

@@ -52,7 +52,7 @@
             name = "blitz-pi";
             runtimeInputs = [
               pkgs.git
-              pkgs.nodejs_26
+              pkgs.nodejs
             ];
             text = ''
               root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
@@ -72,8 +72,8 @@
           default = pkgs.mkShell {
             packages = with pkgs; [
               blitzPi
-              nodejs_26
-              (pnpm_11.override { nodejs-slim = nodejs_26; })
+              nodejs
+              (pnpm_11.override { nodejs-slim = nodejs; })
               ffmpeg-headless
             ];
 
