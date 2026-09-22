@@ -31,6 +31,10 @@
       # `nix flake check` builds the package on linux CI.
       checks = forSystems linuxSystems (pkgs: {
         blitzcrank = pkgs.callPackage ./nix/package.nix { };
+        module = import ./nix/module-checks.nix {
+          inherit nixpkgs pkgs;
+          module = self.nixosModules.blitzcrank;
+        };
       });
 
       nixosModules = rec {

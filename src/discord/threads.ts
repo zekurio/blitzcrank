@@ -12,7 +12,7 @@ import { sdkPromise, SdkError } from "../agent/effect.ts"
 const TITLE_PREFIX = "automation: "
 
 /**
- * One private thread per automation inside the watch channel. Private threads
+ * One private thread per automation inside the report channel. Private threads
  * are visible to invited members and to anyone with MANAGE_THREADS, which is
  * how "admins only" is achieved without blitzcrank touching permissions.
  * Who may *post* is the channel's permission setup, i.e. operator config.
@@ -24,7 +24,7 @@ export class AutomationThreads {
     private readonly channelId: string,
   ) {}
 
-  /** Boot check: a watch channel we cannot resolve is a config error. */
+  /** Boot check: a report channel we cannot resolve is a config error. */
   verifyEffect() {
     return this.channelEffect().pipe(Effect.map((channel) => channel.name))
   }
@@ -96,7 +96,7 @@ export class AutomationThreads {
       if (!channel || channel.type !== ChannelType.GuildText) {
         return yield* Effect.fail(
           new SdkError({
-            message: `DISCORD_WATCH_CHANNEL_ID ${this.channelId} is not a text channel`,
+            message: `Discord report channel ${this.channelId} is not a text channel`,
             cause: undefined,
           }),
         )

@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "port": 8484,
+  "dataDir": "data",
+  "automationsDir": "automations",
+  "language": "German",
+  "webhookSecret": { "env": "BLITZCRANK_WEBHOOK_SECRET" },
+  "seerr": {
+    "url": "http://jellyseerr.local:5055",
+    "apiKey": { "env": "SEERR_API_KEY" }
+  },
+  "web": { "provider": "none" },
+  "gateways": []
+}

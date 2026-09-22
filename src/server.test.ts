@@ -29,7 +29,7 @@ test("Seerr commands require authorization and never enqueue agent work", async 
     jellyfin: { url: "http://jellyfin.test", apiKey: "test" },
     anvil: { command: "anvilctl", socket: "/tmp/anvil.sock" },
     media: { roots: ["/tmp/media"] },
-    discord: undefined,
+    gateways: [],
   }
   let allowed = false
   let unavailable = false

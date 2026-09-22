@@ -35,11 +35,27 @@ test("conversation history search is route-scoped and excludes itself", async ()
     const automations = path.join(root, "automations")
     const currentDiscord = path.join(root, "discord", "123")
     const otherDiscord = path.join(root, "discord", "456")
+    const currentGateway = path.join(
+      root,
+      "gateways",
+      "family-chat",
+      "conversations",
+      "123",
+    )
+    const otherGateway = path.join(
+      root,
+      "gateways",
+      "friends-chat",
+      "conversations",
+      "123",
+    )
     await Promise.all([
       mkdir(issues, { recursive: true }),
       mkdir(automations, { recursive: true }),
       mkdir(currentDiscord, { recursive: true }),
       mkdir(otherDiscord, { recursive: true }),
+      mkdir(currentGateway, { recursive: true }),
+      mkdir(otherGateway, { recursive: true }),
     ])
     await Promise.all([
       writeFile(path.join(issues, "issue.jsonl"), "needle seerr"),
@@ -48,6 +64,11 @@ test("conversation history search is route-scoped and excludes itself", async ()
         "needle automation",
       ),
       writeFile(path.join(otherDiscord, "other.jsonl"), "needle discord"),
+      writeFile(path.join(otherGateway, "other.jsonl"), "needle gateway"),
+      writeFile(
+        path.join(currentGateway, "stale.jsonl"),
+        "needle gateway same conversation",
+      ),
       writeFile(
         path.join(currentDiscord, "stale.jsonl"),
         "needle stale current thread",
@@ -68,7 +89,7 @@ test("conversation history search is route-scoped and excludes itself", async ()
 
     assert.deepEqual(
       discordResults.results.map((result) => result.source).sort(),
-      ["discord", "seerr"],
+      ["discord", "discord", "discord", "seerr"],
     )
     assert.ok(
       discordResults.results.every(
@@ -78,6 +99,23 @@ test("conversation history search is route-scoped and excludes itself", async ()
     await assert.rejects(
       execute(discordTool, { query: "needle", source: "automations" }),
       /not available in this run/,
+    )
+
+    const currentGatewayFile = path.join(currentGateway, "current.jsonl")
+    await writeFile(currentGatewayFile, "needle active family marker")
+    const gatewayResults = await execute(
+      buildHistoryTool(root, { current: currentGatewayFile }, [
+        "issues",
+        "discord",
+      ]),
+      { query: "needle", source: "all", limit: 10 },
+    )
+    assert.ok(
+      gatewayResults.results.every(
+        (result) =>
+          !result.snippet.includes("family marker") &&
+          !result.snippet.includes("same conversation"),
+      ),
     )
 
     const defaultTool = buildHistoryTool(root, { current: undefined })

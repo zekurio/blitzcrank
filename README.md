@@ -7,7 +7,7 @@ It connects to Seerr, Sonarr, Radarr, SABnzbd, Jellyfin, and optionally Anvil.
 
 A report such as "wrong language" or "episode won't play" starts an agent
 session. Follow-up comments continue that session. Scheduled automations handle
-recurring chores, and an optional Discord inbox supports private conversations
+recurring chores, and optional Discord inboxes support private conversations
 with the same service tools.
 
 This project is built for one private homelab. Expect sharp edges.
@@ -38,14 +38,23 @@ Import and configure the module:
     enable = true;
     model = "openai-codex/gpt-5.2-codex";
     environmentFile = "/run/secrets/blitzcrank.env";
-    settings.SEERR_BOT_USERNAME = "blitzcrank";
+    config = {
+      seerr = {
+        url = "http://jellyseerr.local:5055";
+        apiKey.env = "SEERR_API_KEY";
+      };
+      seerrBotUsername = "blitzcrank";
+      webhookSecret.env = "BLITZCRANK_WEBHOOK_SECRET";
+    };
   };
 }
 ```
 
-Put service URLs, API keys, and `BLITZCRANK_WEBHOOK_SECRET` in the environment
-file. `SEERR_URL` and `SEERR_API_KEY` are required. See
-[`.env.example`](.env.example) for every setting.
+Put the referenced `SEERR_API_KEY` and `BLITZCRANK_WEBHOOK_SECRET` in the
+environment file. Add optional service URLs and their key references under
+`config`. The module generates JSON without storing secret values in the Nix
+store. See the [configuration guide](docs/configuration.md) for multiple Discord
+inboxes, gateway instances, and migration from legacy env settings.
 
 The service stores case files, session transcripts, Discord conversations, and
 provider credentials in `/var/lib/blitzcrank`. Keep `auth.json` writable so pi
@@ -81,7 +90,8 @@ manage the deployed service's credentials.
 
 ### HTTP endpoints
 
-The server listens on `BLITZCRANK_PORT`, which defaults to `8484`.
+The server listens on `port`, which defaults to `8484`, or `BLITZCRANK_PORT` in
+legacy env mode.
 
 | Method | Path                     | Purpose                   |
 | ------ | ------------------------ | ------------------------- |
@@ -90,7 +100,7 @@ The server listens on `BLITZCRANK_PORT`, which defaults to `8484`.
 | `GET`  | `/automations`           | List automations          |
 | `POST` | `/automations/:name/run` | Start an automation       |
 
-When `BLITZCRANK_WEBHOOK_SECRET` is set, every endpoint except `/healthz`
+When `webhookSecret` is set, every endpoint except `/healthz`
 requires its value in the `Authorization` header.
 
 ## Connect Jellyseerr
@@ -155,8 +165,14 @@ subscription spending.
 
 ## Configure models and services
 
-Configuration uses environment variables. [`.env.example`](.env.example) is the
-full reference. Optional service tools are available only when configured.
+Set `BLITZCRANK_CONFIG` to a versioned JSON config file. Start with
+[`blitzcrank.example.json`](blitzcrank.example.json) and see the
+[configuration guide](docs/configuration.md) for every field, secret references,
+and Nix support. Optional service tools are available only when configured.
+
+Without `BLITZCRANK_CONFIG`, legacy env configuration still works.
+[`.env.example`](.env.example) lists its settings. The env names below describe
+that mode; in file mode, use the corresponding structured fields.
 
 ### Model selection
 
@@ -239,9 +255,9 @@ is not on the service's `PATH`. On NixOS, use Anvil's standalone client package
 and grant access to its socket group:
 
 ```nix
-services.blitzcrank.settings = {
-  ANVIL_CONTROL_SOCKET = "/run/anvil/anvild.sock";
-  ANVIL_COMMAND =
+services.blitzcrank.config.anvil = {
+  socket = "/run/anvil/anvild.sock";
+  command =
     "${inputs.anvil.packages.${pkgs.system}.anvilctl}/bin/anvilctl";
 };
 systemd.services.blitzcrank.serviceConfig.SupplementaryGroups = [ "anvil" ];
@@ -284,8 +300,13 @@ validated `status` and `body` as the report.
 
 ### Automation reports and commands
 
-Discord is off unless `DISCORD_BOT_TOKEN` is set. Enabling it also requires
-`DISCORD_GUILD_ID` and `DISCORD_WATCH_CHANNEL_ID`.
+Add a `type: "discord"` entry to `gateways`, with a stable `id`, token reference,
+`guildId`, and `reportChannelId`. The [configuration guide](docs/configuration.md)
+has JSON and Nix examples. You can configure several bot/guild connections;
+automation reports go to each running gateway.
+
+Legacy env mode supports one connection through `DISCORD_BOT_TOKEN`,
+`DISCORD_GUILD_ID`, and `DISCORD_WATCH_CHANNEL_ID`.
 
 Each automation posts to a private `automation: <name>` thread in the watch
 channel. Reports include runs with nothing to do, so you can see that the
@@ -295,8 +316,8 @@ internal history markers are removed before delivery.
 - `/automation list` shows schedules and next runs.
 - `/automation run name:<x>` queues a run.
 
-Administrators can trigger runs. Set `DISCORD_ADMIN_ROLE_IDS` to grant that
-access to additional roles.
+Administrators can trigger runs. Set the gateway's `adminRoleIds`, or
+`DISCORD_ADMIN_ROLE_IDS` in env mode, to grant access to additional roles.
 
 ### Bot permissions
 
@@ -318,17 +339,18 @@ on the thread itself.
 On startup, blitzcrank replaces the configured guild's command set. Use a
 separate Discord application for this bot.
 
-### Private operations inbox
+### Private operations inboxes
 
-Set `DISCORD_INBOX_CHANNEL_ID` and enable Message Content Intent in the Discord
-developer portal. Grant the bot the same thread permissions in the inbox.
+List watched text channels in the gateway's `inboxChannelIds` and enable Message
+Content Intent in the Discord developer portal. Grant the bot the same thread
+permissions in every inbox. Env mode accepts one `DISCORD_INBOX_CHANNEL_ID`.
 Restrict channel access to trusted users: access allows service changes and
 searches of prior conversations.
 
 Each plain-text message goes to a classifier with no service or read tools.
-For accepted messages, the host opens a private `blitzcrank: <topic>` thread,
-adds the sender, and posts a source card with the original text, author, and
-message link.
+For accepted messages, the host opens a private `blitzcrank: <topic>` thread in
+the originating inbox, adds the sender, and posts a source card with the
+original text, author, and message link.
 
 Replies continue one persistent agent session. It can use all configured
 service reads and typed mutations, including both Sonarr and Radarr. Multi-item
@@ -337,15 +359,19 @@ The host posts replies with mentions blocked. The agent cannot write to Discord
 or change Seerr issue status.
 
 The agent can search bounded snippets from earlier blitzcrank Seerr and Discord
-sessions. Searches exclude the current thread and automation transcripts.
+sessions across configured gateways. Gateways are not tenant boundaries.
+Searches exclude the current conversation and automation transcripts.
 History is untrusted context, not permission or current service evidence.
 Each thread retains service evidence, but the agent must read mutable state,
 file paths, and reusable Anvil slugs again before using them.
 
 Private threads are visible to the invited sender and members with Manage
 Threads permission. Those members can also drive the conversation by replying.
-Use `BLITZCRANK_DISCORD_TRIAGE_MODEL` to choose a cheaper model for the initial
-classification pass.
+Use the gateway's `triageModel`, or `BLITZCRANK_DISCORD_TRIAGE_MODEL` in env mode,
+to choose a cheaper model for the initial classification pass.
+
+Keep gateway ID `discord` when migrating an existing env deployment to preserve
+its conversation sessions and evidence. Other gateway IDs have separate storage.
 
 ## Safety rules
 

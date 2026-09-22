@@ -8,6 +8,254 @@
 let
   cfg = config.services.blitzcrank;
   stateDir = "/var/lib/blitzcrank";
+  effectiveAuthFile =
+    if cfg.config != null && cfg.config.authPath != null then cfg.config.authPath else cfg.authFile;
+  jsonFormat = pkgs.formats.json { };
+  stripNulls =
+    value:
+    if builtins.isAttrs value then
+      lib.mapAttrs (_: stripNulls) (lib.filterAttrs (_: item: item != null) value)
+    else if builtins.isList value then
+      map stripNulls (builtins.filter (item: item != null) value)
+    else
+      value;
+
+  secretType = lib.types.addCheck (lib.types.attrsOf lib.types.str) (
+    secret:
+    let
+      names = builtins.attrNames secret;
+    in
+    names == [ "env" ] || names == [ "file" ]
+  );
+
+  serviceType = lib.types.submodule {
+    options = {
+      url = lib.mkOption {
+        type = lib.types.str;
+        description = "Service base URL.";
+      };
+      apiKey = lib.mkOption {
+        type = secretType;
+        description = "API key reference, as either { env = \"NAME\"; } or { file = \"/path\"; }.";
+      };
+    };
+  };
+
+  structuredConfigType = lib.types.submodule {
+    options = {
+      version = lib.mkOption {
+        type = lib.types.enum [ 1 ];
+        default = 1;
+        description = "Configuration file format version.";
+      };
+      port = lib.mkOption {
+        type = lib.types.nullOr lib.types.port;
+        default = null;
+        description = "Listen port. Defaults to {option}`services.blitzcrank.port`.";
+      };
+      dataDir = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Runtime data directory. Defaults to the module-managed state directory.";
+      };
+      automationsDir = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Automation definitions directory. Defaults to the module convenience option.";
+      };
+      model = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Model for issue runs. Defaults to {option}`services.blitzcrank.model`.";
+      };
+      automationModel = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Default model for automation runs.";
+      };
+      automationModels = lib.mkOption {
+        type = lib.types.nullOr (lib.types.attrsOf lib.types.str);
+        default = null;
+        description = "Per-automation model overrides.";
+      };
+      authPath = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Writable pi authentication file. Defaults to the module convenience option.";
+      };
+      modelsPath = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Path to a pi models file.";
+      };
+      language = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Language for public comments and notes.";
+      };
+      webhookSecret = lib.mkOption {
+        type = lib.types.nullOr secretType;
+        default = null;
+        description = "Webhook secret reference.";
+      };
+      seerrBotUserId = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Seerr bot user ID.";
+      };
+      seerrBotUsername = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Seerr bot username.";
+      };
+      seerr = lib.mkOption {
+        type = serviceType;
+        description = "Required Seerr connection.";
+      };
+      sonarr = lib.mkOption {
+        type = lib.types.nullOr serviceType;
+        default = null;
+        description = "Sonarr connection.";
+      };
+      radarr = lib.mkOption {
+        type = lib.types.nullOr serviceType;
+        default = null;
+        description = "Radarr connection.";
+      };
+      sabnzbd = lib.mkOption {
+        type = lib.types.nullOr serviceType;
+        default = null;
+        description = "SABnzbd connection.";
+      };
+      jellyfin = lib.mkOption {
+        type = lib.types.nullOr serviceType;
+        default = null;
+        description = "Jellyfin connection.";
+      };
+      anvil = lib.mkOption {
+        type = lib.types.nullOr (
+          lib.types.submodule {
+            options = {
+              command = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "anvilctl command.";
+              };
+              socket = lib.mkOption {
+                type = lib.types.str;
+                description = "Anvil control socket.";
+              };
+            };
+          }
+        );
+        default = null;
+        description = "Anvil connection.";
+      };
+      media = lib.mkOption {
+        type = lib.types.nullOr (
+          lib.types.submodule {
+            options.roots = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              description = "Media roots available to media_probe.";
+            };
+          }
+        );
+        default = null;
+        description = "Media probing configuration.";
+      };
+      web = lib.mkOption {
+        type = lib.types.nullOr (
+          lib.types.submodule {
+            options = {
+              provider = lib.mkOption {
+                type = lib.types.enum [
+                  "none"
+                  "firecrawl"
+                ];
+                description = "External web provider.";
+              };
+              apiKey = lib.mkOption {
+                type = lib.types.nullOr secretType;
+                default = null;
+                description = "Web provider API key reference.";
+              };
+            };
+          }
+        );
+        default = null;
+        description = "External web lookup configuration.";
+      };
+      gateways = lib.mkOption {
+        type = lib.types.nullOr (
+          lib.types.listOf (
+            lib.types.submodule {
+              options = {
+                id = lib.mkOption { type = lib.types.str; };
+                type = lib.mkOption {
+                  type = lib.types.enum [ "discord" ];
+                };
+                token = lib.mkOption { type = secretType; };
+                guildId = lib.mkOption { type = lib.types.str; };
+                reportChannelId = lib.mkOption { type = lib.types.str; };
+                inboxChannelIds = lib.mkOption {
+                  type = lib.types.nullOr (lib.types.listOf lib.types.str);
+                  default = null;
+                };
+                model = lib.mkOption {
+                  type = lib.types.nullOr lib.types.str;
+                  default = null;
+                };
+                triageModel = lib.mkOption {
+                  type = lib.types.nullOr lib.types.str;
+                  default = null;
+                };
+                adminRoleIds = lib.mkOption {
+                  type = lib.types.nullOr (lib.types.listOf lib.types.str);
+                  default = null;
+                };
+              };
+            }
+          )
+        );
+        default = null;
+        description = "Configured host-side gateways.";
+      };
+    };
+  };
+
+  structuredDefaults = {
+    version = 1;
+    port = cfg.port;
+    dataDir = stateDir;
+    automationsDir = toString cfg.automationsDir;
+    model = cfg.model;
+    authPath = cfg.authFile;
+    language = cfg.language;
+    web = {
+      provider = cfg.webProvider;
+    }
+    // lib.optionalAttrs (cfg.webProvider == "firecrawl") {
+      apiKey.env = "FIRECRAWL_API_KEY";
+    };
+  }
+  // lib.optionalAttrs (cfg.automationModel != null) {
+    automationModel = cfg.automationModel;
+  }
+  // lib.optionalAttrs (cfg.automationModels != { }) {
+    automationModels = cfg.automationModels;
+  }
+  // lib.optionalAttrs (cfg.mediaRoots != [ ]) {
+    media.roots = cfg.mediaRoots;
+  };
+  generatedConfig =
+    if cfg.config == null then
+      null
+    else
+      jsonFormat.generate "blitzcrank-config.json" (
+        structuredDefaults // stripNulls cfg.config
+      );
+  effectiveMediaRoots =
+    if cfg.config != null && cfg.config.media != null then cfg.config.media.roots else cfg.mediaRoots;
 
   # Seeds {option}`authFile` from a read-only secret (sops, agenix, ...) that
   # systemd exposes as a credential. The live file must stay writable — pi
@@ -18,12 +266,12 @@ let
   seedAuthFile = pkgs.writeShellScript "blitzcrank-seed-auth" ''
     set -eu
     seed="$CREDENTIALS_DIRECTORY/auth-seed"
-    stamp="${cfg.authFile}.seed-sha256"
+    stamp="${effectiveAuthFile}.seed-sha256"
     sum="$(${pkgs.coreutils}/bin/sha256sum "$seed" | ${pkgs.coreutils}/bin/cut -d' ' -f1)"
-    if [ -s "${cfg.authFile}" ] && [ "$(${pkgs.coreutils}/bin/cat "$stamp" 2>/dev/null || true)" = "$sum" ]; then
+    if [ -s "${effectiveAuthFile}" ] && [ "$(${pkgs.coreutils}/bin/cat "$stamp" 2>/dev/null || true)" = "$sum" ]; then
       exit 0
     fi
-    ${pkgs.coreutils}/bin/install -m 600 "$seed" "${cfg.authFile}"
+    ${pkgs.coreutils}/bin/install -m 600 "$seed" "${effectiveAuthFile}"
     printf '%s\n' "$sum" > "$stamp"
   '';
 
@@ -257,6 +505,27 @@ in
       '';
     };
 
+    config = lib.mkOption {
+      type = lib.types.nullOr structuredConfigType;
+      default = null;
+      description = ''
+        Structured, versioned blitzcrank configuration. When set, the module
+        writes JSON with {function}`pkgs.formats.json` and points
+        BLITZCRANK_CONFIG at it. The port, model, automation, auth, language,
+        web-provider, and media-root convenience options supply defaults;
+        values here take precedence.
+
+        Secrets must use `{ env = "NAME"; }` or `{ file = "/path"; }`.
+        Inline secret strings are intentionally rejected so they cannot enter
+        the Nix store. The selected environment variables may come from
+        {option}`environmentFile`; file references may name systemd credential
+        paths.
+
+        Setting this switches off legacy environment configuration. Do not use
+        {option}`settings` at the same time.
+      '';
+    };
+
     settings = lib.mkOption {
       type = lib.types.attrsOf lib.types.str;
       default = { };
@@ -276,12 +545,16 @@ in
 
     assertions = [
       {
-        assertion = cfg.authSeedFile == null || lib.hasPrefix "${stateDir}/" cfg.authFile;
+        assertion = cfg.authSeedFile == null || lib.hasPrefix "${stateDir}/" effectiveAuthFile;
         message = "services.blitzcrank.authSeedFile requires authFile to live under ${stateDir}, the only path the sandboxed service can write.";
       }
       {
-        assertion = lib.all (root: lib.hasPrefix "/" root && root != "/") cfg.mediaRoots;
+        assertion = lib.all (root: lib.hasPrefix "/" root && root != "/") effectiveMediaRoots;
         message = "services.blitzcrank.mediaRoots entries must be absolute paths below /.";
+      }
+      {
+        assertion = cfg.config == null || cfg.settings == { };
+        message = "services.blitzcrank.settings cannot be used with structured services.blitzcrank.config.";
       }
     ];
 
@@ -291,33 +564,37 @@ in
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
 
-      environment = {
-        BLITZCRANK_PORT = toString cfg.port;
-        BLITZCRANK_MODEL = cfg.model;
-        BLITZCRANK_LANGUAGE = cfg.language;
-        BLITZCRANK_DATA_DIR = stateDir;
-        BLITZCRANK_AUTOMATIONS_DIR = cfg.automationsDir;
-        BLITZCRANK_AUTH_PATH = cfg.authFile;
-        BLITZCRANK_WEB_PROVIDER = cfg.webProvider;
-      }
-      // lib.optionalAttrs (cfg.automationModel != null) {
-        BLITZCRANK_AUTOMATION_MODEL = cfg.automationModel;
-      }
-      // lib.optionalAttrs (cfg.automationModels != { }) {
-        BLITZCRANK_AUTOMATION_MODELS = builtins.toJSON cfg.automationModels;
-      }
-      // lib.optionalAttrs (cfg.mediaRoots != [ ]) {
-        BLITZCRANK_MEDIA_ROOTS = lib.concatStringsSep ":" cfg.mediaRoots;
-      }
-      // cfg.settings;
+      environment =
+        if generatedConfig != null then
+          { BLITZCRANK_CONFIG = generatedConfig; }
+        else
+          {
+            BLITZCRANK_PORT = toString cfg.port;
+            BLITZCRANK_MODEL = cfg.model;
+            BLITZCRANK_LANGUAGE = cfg.language;
+            BLITZCRANK_DATA_DIR = stateDir;
+            BLITZCRANK_AUTOMATIONS_DIR = cfg.automationsDir;
+            BLITZCRANK_AUTH_PATH = cfg.authFile;
+            BLITZCRANK_WEB_PROVIDER = cfg.webProvider;
+          }
+          // lib.optionalAttrs (cfg.automationModel != null) {
+            BLITZCRANK_AUTOMATION_MODEL = cfg.automationModel;
+          }
+          // lib.optionalAttrs (cfg.automationModels != { }) {
+            BLITZCRANK_AUTOMATION_MODELS = builtins.toJSON cfg.automationModels;
+          }
+          // lib.optionalAttrs (cfg.mediaRoots != [ ]) {
+            BLITZCRANK_MEDIA_ROOTS = lib.concatStringsSep ":" cfg.mediaRoots;
+          }
+          // cfg.settings;
 
       # ffprobe for media_probe; it is looked up on PATH.
-      path = lib.optional (cfg.mediaRoots != [ ]) pkgs.ffmpeg-headless;
+      path = lib.optional (effectiveMediaRoots != [ ]) pkgs.ffmpeg-headless;
 
       # Media roots must exist before the probe can read them; without this a
       # late NFS/CIFS mount is invisible inside the unit's mount namespace.
-      unitConfig = lib.mkIf (cfg.mediaRoots != [ ]) {
-        RequiresMountsFor = cfg.mediaRoots;
+      unitConfig = lib.mkIf (effectiveMediaRoots != [ ]) {
+        RequiresMountsFor = effectiveMediaRoots;
       };
 
       serviceConfig = {
@@ -332,7 +609,7 @@ in
         # looks at unit start, which hides datasets mounted later.
         ProtectSystem = "strict";
         # Media libraries under /home stay reachable; nothing is writable.
-        ProtectHome = if lib.any (lib.hasPrefix "/home") cfg.mediaRoots then "read-only" else true;
+        ProtectHome = if lib.any (lib.hasPrefix "/home") effectiveMediaRoots then "read-only" else true;
         PrivateTmp = true;
         NoNewPrivileges = true;
         RestrictSUIDSGID = true;

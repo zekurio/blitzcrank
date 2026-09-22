@@ -8,6 +8,7 @@ import type { WebToolNames } from "../agent/prompt.ts"
 import { resolveModel, runAgentTurnEffect } from "../agent/session.ts"
 import type { Config } from "../config.ts"
 import { EvidenceStore } from "../evidence.ts"
+import type { ConversationRuntime } from "../gateways/chat/runtime.ts"
 import type { SerialQueue } from "../queue.ts"
 import { RunContext } from "../tools/context.ts"
 import { buildDiscordTools, type SessionFileRef } from "../tools/index.ts"
@@ -88,19 +89,20 @@ requester's language.
   not emit Seerr directive blocks.`
 }
 
-export class DiscordAgent {
+export class DiscordAgent implements ConversationRuntime {
   private readonly evidence: EvidenceStore
 
   constructor(
     private readonly config: Config,
+    private readonly gatewayId: string,
     private readonly modelRuntime: ModelRuntime,
     private readonly modelSpec: string,
     private readonly triageModelSpec: string,
     private readonly queue: SerialQueue,
   ) {
     this.evidence = new EvidenceStore(
-      path.join(config.dataDir, "evidence", "discord"),
-      "discord",
+      conversationEvidenceDir(config.dataDir, gatewayId),
+      gatewayId,
     )
   }
 
@@ -130,7 +132,7 @@ export class DiscordAgent {
       console.log(
         `[discord] triage message=${messageId} respond=${decision.respond}`,
       )
-      return decision
+      return { respond: decision.respond, title: decision.threadName }
     })
   }
 
@@ -166,7 +168,11 @@ export class DiscordAgent {
 
   private respondEffect(threadId: string, content: string) {
     return Effect.gen({ self: this }, function* () {
-      const sessionDir = conversationSessionDir(this.config.dataDir, threadId)
+      const sessionDir = conversationSessionDir(
+        this.config.dataDir,
+        this.gatewayId,
+        threadId,
+      )
       const ctx = new RunContext({
         prior: yield* this.evidence.loadEffect(threadId),
       })
@@ -215,9 +221,28 @@ export class DiscordAgent {
   }
 }
 
-function conversationSessionDir(dataDir: string, threadId: string): string {
-  if (!/^\d{1,32}$/.test(threadId)) {
-    throw new Error(`invalid Discord thread id "${threadId}"`)
+export function conversationSessionDir(
+  dataDir: string,
+  gatewayId: string,
+  conversationId: string,
+): string {
+  if (!/^[\w-]{1,64}$/.test(conversationId)) {
+    throw new Error(`invalid conversation id "${conversationId}"`)
   }
-  return path.join(dataDir, "sessions", "discord", threadId)
+  if (gatewayId === "discord") {
+    return path.join(dataDir, "sessions", "discord", conversationId)
+  }
+  return path.join(
+    dataDir,
+    "sessions",
+    "gateways",
+    gatewayId,
+    "conversations",
+    conversationId,
+  )
+}
+
+function conversationEvidenceDir(dataDir: string, gatewayId: string): string {
+  if (gatewayId === "discord") return path.join(dataDir, "evidence", "discord")
+  return path.join(dataDir, "evidence", "gateways", gatewayId)
 }

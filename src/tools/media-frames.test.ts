@@ -62,7 +62,7 @@ test("frame tool follows current model capabilities and configured roots", () =>
     jellyfin: { url: "http://jellyfin.test", apiKey: "test" },
     anvil: { command: "anvilctl", socket: "/tmp/anvil.sock" },
     media: { roots: ["/tmp/media"] },
-    discord: undefined,
+    gateways: [],
   }
   const ctx = new RunContext()
   for (const builder of [buildServiceTools, buildDiscordTools]) {

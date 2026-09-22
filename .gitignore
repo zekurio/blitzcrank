@@ -6,6 +6,7 @@ dist/
 .env
 .env.*
 !.env.example
+/blitzcrank.json
 
 # direnv
 .direnv/

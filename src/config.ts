@@ -1,4 +1,11 @@
-import { isAbsolute, resolve } from "node:path"
+import { readFile } from "node:fs/promises"
+import { dirname, isAbsolute, resolve } from "node:path"
+
+import { Effect } from "effect"
+import { Check, Errors } from "typebox/value"
+
+import { configFromEnv } from "./config/env.ts"
+import { ConfigSchema, type FileConfig, type Secret } from "./config/schema.ts"
 
 export interface ServiceConfig {
   url: string
@@ -11,13 +18,16 @@ export interface AnvilConfig {
 }
 
 export interface DiscordConfig {
+  /** Stable instance name, also used to namespace persistent conversations. */
+  id: string
+  type: "discord"
   token: string
   /** Guild whose commands are registered; interactions elsewhere are refused. */
   guildId: string
   /** Text channel the per-automation report threads live in. */
-  watchChannelId: string
-  /** Text channel whose messages are triaged into private conversations. */
-  inboxChannelId: string | undefined
+  reportChannelId: string
+  /** Text channels whose messages are triaged into private conversations. */
+  inboxChannelIds: string[]
   /** Model for accepted private conversations. */
   model: string | undefined
   /** Cheap model that decides whether an inbox message needs a response. */
@@ -28,6 +38,9 @@ export interface DiscordConfig {
    */
   adminRoleIds: string[]
 }
+
+/** Add future adapters as discriminated variants, not optional Discord fields. */
+export type GatewayConfig = DiscordConfig
 
 export interface MediaConfig {
   /** Absolute directory roots media_probe may read; nothing else is readable. */
@@ -81,205 +94,207 @@ export interface Config {
   anvil: AnvilConfig | undefined
   /** Enables media reads; frame extraction also requires model image support. */
   media: MediaConfig | undefined
-  /** Reports, commands, and optional triaged private operations threads. */
-  discord: DiscordConfig | undefined
+  /** Independently connected host-side messaging gateways. */
+  gateways: GatewayConfig[]
 }
 
-type EnvJson =
-  | string
-  | number
-  | boolean
-  | null
-  | EnvJson[]
-  | { [key: string]: EnvJson }
-
-function service(prefix: string): ServiceConfig | undefined {
-  const url = process.env[`${prefix}_URL`]
-  const apiKey = process.env[`${prefix}_API_KEY`]
-  if (!url || !apiKey) return undefined
-  return { url: url.replace(/\/+$/, ""), apiKey }
-}
-
-/** A port that silently becomes NaN would bind nowhere useful. */
-function number(
-  name: string,
-  value: string | undefined,
-  fallback: number,
-): number {
-  if (value === undefined || value.trim() === "") return fallback
-  const parsed = Number(value)
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    throw new Error(`${name} must be a non-negative number, got "${value}"`)
-  }
-  return parsed
-}
-
-/** A structured env value is strict: malformed routing must stop startup. */
-export function parseAutomationModels(
-  value: string | undefined,
-): AutomationModelMap {
-  if (value === undefined || value.trim() === "") return {}
-
-  let parsed: EnvJson
-  try {
-    // SAFETY: JSON.parse can produce only values covered by EnvJson.
-    parsed = JSON.parse(value) as EnvJson
-  } catch {
-    throw new Error(
-      "BLITZCRANK_AUTOMATION_MODELS must be a JSON object mapping automation names to model specs",
+/**
+ * Selecting a file replaces env settings, rather than silently merging them.
+ * Only explicit secret references (and the SDK's own auth env) use env in file
+ * mode. A missing or invalid selected file never falls back to legacy config.
+ */
+export function loadConfigEffect(
+  env: NodeJS.ProcessEnv = process.env,
+): Effect.Effect<Config, Error> {
+  return Effect.gen(function* () {
+    const selected = env.BLITZCRANK_CONFIG
+    if (selected !== undefined && !selected.trim()) {
+      return yield* Effect.fail(new Error("BLITZCRANK_CONFIG must name a file"))
+    }
+    const file = selected === undefined ? undefined : resolve(selected)
+    const baseDir = file === undefined ? process.cwd() : dirname(file)
+    const raw =
+      file === undefined
+        ? yield* Effect.try({
+            try: () => configFromEnv(env),
+            catch: configError,
+          })
+        : yield* readTextEffect(file).pipe(
+            Effect.flatMap((text) =>
+              Effect.try({
+                try: (): unknown => JSON.parse(text),
+                catch: () =>
+                  new Error("BLITZCRANK_CONFIG must contain valid JSON"),
+              }),
+            ),
+          )
+    const input = yield* Effect.try({
+      try: () => validateConfig(raw),
+      catch: configError,
+    })
+    const secret = (value: Secret, name: string) =>
+      resolveSecretEffect(value, name, env, baseDir)
+    const service = (value: FileConfig["seerr"], name: string) =>
+      secret(value.apiKey, `${name}.apiKey`).pipe(
+        Effect.map((apiKey) => ({
+          url: value.url.replace(/\/+$/, ""),
+          apiKey,
+        })),
+      )
+    const gateways = yield* Effect.forEach(input.gateways ?? [], (gateway) =>
+      secret(gateway.token, `gateways.${gateway.id}.token`).pipe(
+        Effect.map(
+          (token): GatewayConfig => ({
+            ...gateway,
+            token,
+            inboxChannelIds: gateway.inboxChannelIds ?? [],
+            adminRoleIds: gateway.adminRoleIds ?? [],
+            model: gateway.model,
+            triageModel: gateway.triageModel,
+          }),
+        ),
+      ),
     )
-  }
-  if (!isEnvObject(parsed)) {
-    throw new Error(
-      "BLITZCRANK_AUTOMATION_MODELS must be a JSON object mapping automation names to model specs",
+    // Match discord.js's optional token-prefix normalization, or the same
+    // bot/guild could connect twice and duplicate triage and reports.
+    const identities = gateways.map((gateway) =>
+      JSON.stringify([
+        gateway.token.replace(/^(Bot|Bearer)\s*/i, ""),
+        gateway.guildId,
+      ]),
     )
-  }
-
-  const entries = Object.entries(parsed)
-  const models: AutomationModelMap = {}
-  for (const [name, model] of entries) {
-    if (!isString(model) || model.trim() === "") {
-      throw new Error(
-        `BLITZCRANK_AUTOMATION_MODELS[${JSON.stringify(name)}] must be a non-empty model spec`,
+    if (new Set(identities).size !== identities.length) {
+      return yield* Effect.fail(
+        new Error("gateways must not connect the same Discord bot/guild twice"),
       )
     }
-    models[name] = model
-  }
-  return models
-}
-
-function isEnvObject(value: EnvJson): value is { [key: string]: EnvJson } {
-  return value !== null && Object(value) === value && !Array.isArray(value)
-}
-
-function isString(value: EnvJson): value is string {
-  return typeof value === "string"
-}
-
-/** Colon-separated absolute paths, PATH-style. */
-function absoluteRoots(name: string, value: string | undefined): string[] {
-  const roots = (value ?? "")
-    .split(":")
-    .map((root) => root.trim())
-    .filter((root) => root.length > 0)
-  for (const root of roots) {
-    if (!isAbsolute(root) || root.includes("\0")) {
-      throw new Error(`${name} entries must be absolute paths, got "${root}"`)
+    return {
+      port: input.port ?? 8484,
+      dataDir: resolve(baseDir, input.dataDir ?? "data"),
+      automationsDir: resolve(baseDir, input.automationsDir ?? "automations"),
+      webhookSecret:
+        input.webhookSecret === undefined
+          ? undefined
+          : yield* secret(input.webhookSecret, "webhookSecret"),
+      model: input.model,
+      automationModel: input.automationModel,
+      automationModels: input.automationModels ?? {},
+      authPath:
+        input.authPath === undefined
+          ? undefined
+          : resolve(baseDir, input.authPath),
+      modelsPath:
+        input.modelsPath === undefined
+          ? undefined
+          : resolve(baseDir, input.modelsPath),
+      language: input.language ?? "German",
+      web:
+        input.web?.provider === "firecrawl"
+          ? {
+              provider: "firecrawl",
+              apiKey: yield* secret(input.web.apiKey, "web.apiKey"),
+            }
+          : { provider: "none" },
+      seerrBotUserId: input.seerrBotUserId,
+      seerrBotUsername: input.seerrBotUsername,
+      seerr: yield* service(input.seerr, "seerr"),
+      sonarr:
+        input.sonarr === undefined
+          ? undefined
+          : yield* service(input.sonarr, "sonarr"),
+      radarr:
+        input.radarr === undefined
+          ? undefined
+          : yield* service(input.radarr, "radarr"),
+      sabnzbd:
+        input.sabnzbd === undefined
+          ? undefined
+          : yield* service(input.sabnzbd, "sabnzbd"),
+      jellyfin:
+        input.jellyfin === undefined
+          ? undefined
+          : yield* service(input.jellyfin, "jellyfin"),
+      anvil:
+        input.anvil === undefined
+          ? undefined
+          : {
+              command: input.anvil.command ?? "anvilctl",
+              socket: input.anvil.socket,
+            },
+      media: input.media?.roots.length
+        ? { roots: input.media.roots.map((root) => resolve(root)) }
+        : undefined,
+      gateways,
     }
-    if (resolve(root) === "/") {
-      throw new Error(`${name} must name directories, not the whole filesystem`)
+  })
+}
+
+function validateConfig(value: unknown): FileConfig {
+  if (!Check(ConfigSchema, value)) {
+    // TypeBox messages describe constraints, never rejected secret values.
+    const errors = Errors(ConfigSchema, value)
+      .map((error) => `${error.instancePath || "/"} ${error.message}`)
+      .join("; ")
+    throw new Error(`Invalid configuration: ${errors}`)
+  }
+  const ids = (value.gateways ?? []).map((gateway) => gateway.id)
+  if (new Set(ids).size !== ids.length) {
+    throw new Error("gateways must have unique ids")
+  }
+  for (const name of [
+    "seerr",
+    "sonarr",
+    "radarr",
+    "sabnzbd",
+    "jellyfin",
+  ] as const) {
+    const service = value[name]
+    if (service === undefined) continue
+    const url = URL.parse(service.url)
+    if (!url || !["http:", "https:"].includes(url.protocol)) {
+      throw new Error(`${name}.url must be an HTTP(S) URL`)
     }
   }
-  return roots.map((root) => resolve(root))
+  if (value.anvil && !isAbsolute(value.anvil.socket)) {
+    throw new Error("anvil.socket must be an absolute path")
+  }
+  for (const root of value.media?.roots ?? []) {
+    if (!isAbsolute(root) || resolve(root) === "/") {
+      throw new Error("media.roots must name absolute directories below /")
+    }
+  }
+  return value
 }
 
-/**
- * All three ids are required together: a bot that cannot find its channel
- * would report into the void, so half a configuration is a startup error.
- */
-function discord(): DiscordConfig | undefined {
-  const token = process.env.DISCORD_BOT_TOKEN
-  if (!token) return undefined
-  const guildId = process.env.DISCORD_GUILD_ID
-  const watchChannelId = process.env.DISCORD_WATCH_CHANNEL_ID
-  if (!guildId || !watchChannelId) {
-    throw new Error(
-      "DISCORD_BOT_TOKEN requires DISCORD_GUILD_ID and DISCORD_WATCH_CHANNEL_ID",
-    )
-  }
-  return {
-    token,
-    guildId,
-    watchChannelId,
-    inboxChannelId: process.env.DISCORD_INBOX_CHANNEL_ID,
-    model: process.env.BLITZCRANK_DISCORD_MODEL,
-    triageModel: process.env.BLITZCRANK_DISCORD_TRIAGE_MODEL,
-    adminRoleIds: (process.env.DISCORD_ADMIN_ROLE_IDS ?? "")
-      .split(",")
-      .map((id) => id.trim())
-      .filter((id) => id.length > 0),
-  }
+function readTextEffect(file: string) {
+  return Effect.tryPromise({
+    try: () => readFile(file, "utf8"),
+    catch: () => new Error(`Cannot read configuration file ${file}`),
+  })
 }
 
-function anvil(): AnvilConfig | undefined {
-  const configuredSocket = process.env.ANVIL_CONTROL_SOCKET
-  if (configuredSocket === undefined) return undefined
-  const socket = configuredSocket.trim()
-  if (socket === "" || !isAbsolute(socket) || socket.includes("\0")) {
-    throw new Error("ANVIL_CONTROL_SOCKET must be an absolute path")
-  }
-  const command = (process.env.ANVIL_COMMAND ?? "anvilctl").trim()
-  if (command === "" || command.includes("\0")) {
-    throw new Error("ANVIL_COMMAND must be a non-empty executable name or path")
-  }
-  return { command, socket }
+function configError(cause: unknown): Error {
+  return cause instanceof Error ? cause : new Error("Invalid configuration")
 }
 
-/** Media roots unset means the probe tool is not registered at all. */
-function media(): MediaConfig | undefined {
-  const roots = absoluteRoots(
-    "BLITZCRANK_MEDIA_ROOTS",
-    process.env.BLITZCRANK_MEDIA_ROOTS,
-  )
-  if (roots.length === 0) return undefined
-  return { roots }
-}
-
-/**
- * Web access is explicit opt-in: an unset provider means no external web
- * tools, even if a stray FIRECRAWL_API_KEY exists in the environment (the
- * same variable name is used by other tools, so its presence is not consent).
- */
-function web(): WebConfig {
-  const provider = process.env.BLITZCRANK_WEB_PROVIDER ?? "none"
-  if (process.env.FIRECRAWL_URL) {
-    throw new Error(
-      "FIRECRAWL_URL is not supported; web tools use the hosted Firecrawl API",
-    )
-  }
-  if (provider === "none") return { provider }
-  if (provider !== "firecrawl") {
-    throw new Error(
-      `BLITZCRANK_WEB_PROVIDER must be firecrawl or none, got "${provider}"`,
-    )
-  }
-  const apiKey = process.env.FIRECRAWL_API_KEY
-  if (!apiKey) {
-    throw new Error(
-      "BLITZCRANK_WEB_PROVIDER=firecrawl requires FIRECRAWL_API_KEY",
-    )
-  }
-  return { provider, apiKey }
-}
-
-export function loadConfig(): Config {
-  const seerr = service("SEERR")
-  if (!seerr) {
-    throw new Error("SEERR_URL and SEERR_API_KEY are required")
-  }
-  return {
-    port: number("BLITZCRANK_PORT", process.env.BLITZCRANK_PORT, 8484),
-    dataDir: process.env.BLITZCRANK_DATA_DIR ?? "data",
-    automationsDir: process.env.BLITZCRANK_AUTOMATIONS_DIR ?? "automations",
-    webhookSecret: process.env.BLITZCRANK_WEBHOOK_SECRET,
-    model: process.env.BLITZCRANK_MODEL,
-    automationModel: process.env.BLITZCRANK_AUTOMATION_MODEL,
-    automationModels: parseAutomationModels(
-      process.env.BLITZCRANK_AUTOMATION_MODELS,
-    ),
-    authPath: process.env.BLITZCRANK_AUTH_PATH,
-    modelsPath: process.env.BLITZCRANK_MODELS_PATH,
-    language: process.env.BLITZCRANK_LANGUAGE ?? "German",
-    web: web(),
-    seerrBotUserId: process.env.SEERR_BOT_USER_ID,
-    seerrBotUsername: process.env.SEERR_BOT_USERNAME,
-    seerr,
-    sonarr: service("SONARR"),
-    radarr: service("RADARR"),
-    sabnzbd: service("SABNZBD"),
-    jellyfin: service("JELLYFIN"),
-    anvil: anvil(),
-    media: media(),
-    discord: discord(),
-  }
+function resolveSecretEffect(
+  value: Secret,
+  name: string,
+  env: NodeJS.ProcessEnv,
+  baseDir: string,
+): Effect.Effect<string, Error> {
+  return Effect.gen(function* () {
+    const resolved =
+      typeof value === "string"
+        ? value
+        : "env" in value
+          ? env[value.env]
+          : (yield* readTextEffect(resolve(baseDir, value.file))).trimEnd()
+    if (resolved === undefined || !resolved.trim() || resolved.includes("\0")) {
+      return yield* Effect.fail(
+        new Error(`${name} must resolve to a non-empty secret`),
+      )
+    }
+    return resolved
+  })
 }

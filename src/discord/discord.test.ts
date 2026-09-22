@@ -1,6 +1,9 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
+import { ChannelType } from "discord.js"
+import { Effect, Exit } from "effect"
+
 import type { Config } from "../config.ts"
 import { RunContext } from "../tools/context.ts"
 import {
@@ -8,7 +11,14 @@ import {
   buildServiceTools,
   type SessionFileRef,
 } from "../tools/index.ts"
-import { conversationThreadName, discordMessageChunks } from "./bot.ts"
+import { conversationSessionDir } from "./agent.ts"
+import {
+  conversationThreadName,
+  discordMessageChunks,
+  discordMessageRoute,
+  verifyDiscordInboxesEffect,
+  type DiscordMessageRouteInput,
+} from "./bot.ts"
 import {
   DISCORD_TRIAGE_TOOL,
   parseDiscordTriage,
@@ -57,7 +67,7 @@ test("Discord conversations receive mutations and conversation history", () => {
     jellyfin: { url: "http://jellyfin.test", apiKey: "test" },
     anvil: { command: "anvilctl", socket: "/tmp/anvil.sock" },
     media: { roots: ["/tmp/media"] },
-    discord: undefined,
+    gateways: [],
   }
   const allRef: SessionFileRef = { current: undefined }
   const discordRef: SessionFileRef = { current: undefined }
@@ -89,5 +99,137 @@ test("Discord output stays inside platform limits", () => {
   assert.equal(
     conversationThreadName(`  Playback\n${"x".repeat(120)}  `).length,
     100,
+  )
+})
+
+const baseMessage: DiscordMessageRouteInput = {
+  inGuild: true,
+  guildId: "guild",
+  channelId: "inbox-a",
+  channelType: ChannelType.GuildText,
+  channelIsThread: false,
+  threadParentId: null,
+  threadOwnerId: null,
+  threadName: "",
+  authorIsBot: false,
+  webhookId: null,
+  content: "Please fix playback",
+}
+
+test("Discord routes every watched inbox and refuses untrusted messages", () => {
+  const route = (message: Partial<DiscordMessageRouteInput> = {}) =>
+    discordMessageRoute(
+      { ...baseMessage, ...message },
+      "guild",
+      ["inbox-a", "inbox-b"],
+      "blitzcrank",
+    )
+
+  assert.equal(route(), "inbox")
+  assert.equal(route({ channelId: "inbox-b" }), "inbox")
+  assert.equal(route({ guildId: "other" }), undefined)
+  assert.equal(route({ channelId: "unknown" }), undefined)
+  assert.equal(route({ authorIsBot: true }), undefined)
+  assert.equal(route({ webhookId: "hook" }), undefined)
+  assert.equal(route({ content: " \n " }), undefined)
+  assert.equal(route({ channelType: ChannelType.GuildVoice }), undefined)
+})
+
+test("Discord accepts only bot-owned private conversation threads", () => {
+  const route = (message: Partial<DiscordMessageRouteInput> = {}) =>
+    discordMessageRoute(
+      {
+        ...baseMessage,
+        channelId: "thread",
+        channelType: ChannelType.PrivateThread,
+        channelIsThread: true,
+        threadParentId: "inbox-b",
+        threadOwnerId: "blitzcrank",
+        threadName: "blitzcrank: playback",
+        ...message,
+      },
+      "guild",
+      ["inbox-a", "inbox-b"],
+      "blitzcrank",
+    )
+
+  assert.equal(route(), "conversation")
+  assert.equal(route({ threadParentId: "unknown" }), undefined)
+  assert.equal(route({ threadOwnerId: "someone-else" }), undefined)
+  assert.equal(route({ threadName: "unrelated" }), undefined)
+  assert.equal(route({ channelType: ChannelType.PublicThread }), undefined)
+  assert.equal(route({ channelIsThread: false }), undefined)
+})
+
+test("Discord startup verifies all configured inbox channels", async () => {
+  const fetched: string[] = []
+  const logged: string[] = []
+  const fetchGuild = async (guildId: string) => {
+    assert.equal(guildId, "guild")
+    return {
+      channels: {
+        fetch: async (channelId: string) => {
+          fetched.push(channelId)
+          return {
+            id: channelId,
+            name: channelId,
+            type: ChannelType.GuildText,
+            guildId: "guild",
+          }
+        },
+      },
+    }
+  }
+
+  await Effect.runPromise(
+    verifyDiscordInboxesEffect(
+      { guildId: "guild", inboxChannelIds: ["inbox-a", "inbox-b"] },
+      fetchGuild,
+      (message) => logged.push(message),
+    ),
+  )
+
+  assert.deepEqual(fetched, ["inbox-a", "inbox-b"])
+  assert.equal(logged.length, 2)
+})
+
+test("Discord startup refuses non-text or wrong-guild inbox channels", async () => {
+  for (const channel of [
+    {
+      id: "inbox",
+      name: "voice",
+      type: ChannelType.GuildVoice,
+      guildId: "guild",
+    },
+    {
+      id: "inbox",
+      name: "foreign",
+      type: ChannelType.GuildText,
+      guildId: "other",
+    },
+  ]) {
+    const exit = await Effect.runPromiseExit(
+      verifyDiscordInboxesEffect(
+        { guildId: "guild", inboxChannelIds: ["inbox"] },
+        async () => ({ channels: { fetch: async () => channel } }),
+        () => undefined,
+      ),
+    )
+    assert.equal(Exit.isFailure(exit), true)
+  }
+})
+
+test("conversation storage preserves legacy paths and namespaces gateways", () => {
+  assert.equal(
+    conversationSessionDir("/data", "discord", "123"),
+    "/data/sessions/discord/123",
+  )
+  assert.equal(
+    conversationSessionDir("/data", "family-chat", "123"),
+    "/data/sessions/gateways/family-chat/conversations/123",
+  )
+  assert.notEqual(
+    conversationSessionDir("/data", "family-chat", "123"),
+    conversationSessionDir("/data", "friends-chat", "123"),
   )
 })

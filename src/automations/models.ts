@@ -18,7 +18,7 @@ export function assertKnownAutomationModels(
   for (const name of Object.keys(modelSpecs)) {
     if (!names.has(name)) {
       throw new Error(
-        `BLITZCRANK_AUTOMATION_MODELS references unknown automation "${name}"`,
+        `automationModels references unknown automation "${name}"`,
       )
     }
   }

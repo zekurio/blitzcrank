@@ -30,8 +30,11 @@
   80 columns, 2 spaces, no semicolons, double quotes, sorted imports.
   `no-console` is deliberately off: console output to journald is the logging
   strategy.
-- Config is env-only (`src/config.ts`, every knob documented in
-  `.env.example`); never commit `.env`. For Nix changes, `nix flake show` must
+- Config uses versioned JSON selected by `BLITZCRANK_CONFIG` (`src/config.ts`,
+  schema in `src/config/schema.ts`, documented in `docs/configuration.md`).
+  With no file selected, `.env.example` documents the legacy env adapter.
+  File mode does not merge env settings; secrets use explicit env/file references.
+  Never commit `.env` or secret values. For Nix changes, `nix flake show` must
   evaluate (flakes only see git-tracked files); `nix flake check` builds the
   linux package.
 - The default branch is `main`.
@@ -127,8 +130,10 @@ behavioural difference described.
   no spend ceiling — the deployment runs on subscription auth, where a dollar
   figure derived from list prices would be fiction.
 - Discord (`src/discord/`) stays a host-side surface; no agent tool may write to
-  it. Without `DISCORD_INBOX_CHANNEL_ID`, the gateway still declares no intents.
-  With an inbox, it declares only Guilds, GuildMessages, and MessageContent. It
+  it. Gateways use the lifecycle/conversation interfaces in `src/gateways/chat/`;
+  platform adapters own authorization and optional thread behavior.
+  Without any `inboxChannelIds`, a Discord gateway declares no intents.
+  With inboxes, it declares only Guilds, GuildMessages, and MessageContent. It
   ignores other guilds/channels, bots, webhooks, and empty messages. A typed
   triage pass with no service/read tools may create one private thread and add
   the sender. The host then posts a bot-authored source card with the original
@@ -148,9 +153,12 @@ behavioural difference described.
   agent gets no
   Discord write tool. Slash-command triggers remain separately authorized
   against the configured guild plus
-  administrator or `DISCORD_ADMIN_ROLE_IDS`, and fail closed. A Discord
-  _startup_ failure degrades to no reports or conversations and is only logged;
-  malformed Discord config stays fatal in `loadConfig`.
+  administrator or configured `adminRoleIds`, and fail closed. A gateway
+  _startup_ failure disables only that connection and is logged; malformed
+  configuration stays fatal in `loadConfigEffect`. All gateways share the
+  serial queue, and reports fan out to running gateways. Gateway IDs namespace
+  sessions and evidence; `discord` retains legacy paths. History can search
+  across gateways, so these are not tenant boundaries.
 - Automations (`automations/*.md`) are trusted operator instructions, but their
   runs get only the exact tools in their declared `mutation_tools` allowlist,
   plus the always-on read tools. "Always-on read tools" means exactly

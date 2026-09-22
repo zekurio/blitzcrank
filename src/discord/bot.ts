@@ -10,7 +10,7 @@ import {
   type ChatInputCommandInteraction,
   type Message,
 } from "discord.js"
-import { Effect, Exit } from "effect"
+import { Effect } from "effect"
 
 import { sdkPromise, SdkError } from "../agent/effect.ts"
 import type {
@@ -18,8 +18,12 @@ import type {
   TriggerResult,
 } from "../automations/dispatcher.ts"
 import type { AutomationReport } from "../automations/runner.ts"
-import type { Config, DiscordConfig } from "../config.ts"
-import type { DiscordAgent } from "./agent.ts"
+import type { DiscordConfig } from "../config.ts"
+import {
+  initializeGateway,
+  type ConversationRuntime,
+  type GatewayRuntime,
+} from "../gateways/chat/runtime.ts"
 import { AUTOMATION_COMMAND, syncCommandsEffect } from "./commands.ts"
 import { formatAutomationReport } from "./report.ts"
 import { AutomationThreads } from "./threads.ts"
@@ -31,14 +35,14 @@ export interface DiscordDeps {
   listAutomations: () => AutomationInfo[]
   /** Enqueues a checked-in automation named by a signed interaction. */
   triggerAutomation: (name: string) => TriggerResult
-  chat: DiscordAgent | undefined
+  chat: ConversationRuntime | undefined
 }
 
 /**
  * Host-side Discord surface: automation reports, commands, and private
  * media-operations conversations. No agent tool can write to Discord.
  */
-export class DiscordBot {
+export class DiscordBot implements GatewayRuntime {
   private constructor(
     private readonly client: Client<true>,
     private readonly discord: DiscordConfig,
@@ -47,25 +51,25 @@ export class DiscordBot {
     private readonly deps: DiscordDeps,
   ) {}
 
-  static startEffect(config: Config, deps: DiscordDeps) {
-    return Effect.gen(function* () {
-      const discord = config.discord
-      if (!discord)
-        return yield* Effect.fail(
-          new SdkError({
-            message: "DiscordBot.start without discord config",
-            cause: undefined,
-          }),
-        )
+  get id(): string {
+    return this.discord.id
+  }
 
+  static startEffect(
+    discord: DiscordConfig,
+    language: string,
+    deps: DiscordDeps,
+  ) {
+    return Effect.gen(function* () {
       const client = new Client({
-        intents: discord.inboxChannelId
-          ? [
-              GatewayIntentBits.Guilds,
-              GatewayIntentBits.GuildMessages,
-              GatewayIntentBits.MessageContent,
-            ]
-          : [],
+        intents:
+          discord.inboxChannelIds.length > 0
+            ? [
+                GatewayIntentBits.Guilds,
+                GatewayIntentBits.GuildMessages,
+                GatewayIntentBits.MessageContent,
+              ]
+            : [],
         allowedMentions: { parse: [] },
       })
       client.on(Events.Error, (err) => console.error("[discord] client:", err))
@@ -80,33 +84,17 @@ export class DiscordBot {
         const threads = new AutomationThreads(
           logged,
           discord.guildId,
-          discord.watchChannelId,
+          discord.reportChannelId,
         )
-        const bot = new DiscordBot(
-          logged,
-          discord,
-          config.language,
-          threads,
-          deps,
-        )
+        const bot = new DiscordBot(logged, discord, language, threads, deps)
         // Login already opened the gateway socket, so from here on a failure must
         // close it: the caller has no handle yet, so the socket would leak and
         // keep the process alive.
         yield* bot.finishStartEffect()
         return bot
-      }).pipe(
-        // Observe interruption after setup finishes, before handing out the client.
-        Effect.uninterruptible,
-        Effect.onExit((exit) =>
-          Exit.isFailure(exit)
-            ? sdkPromise(() => client.destroy()).pipe(
-                Effect.catchCause((cause) =>
-                  Effect.sync(() =>
-                    console.error("[discord] startup cleanup:", cause),
-                  ),
-                ),
-              )
-            : Effect.void,
+      }).pipe((setup) =>
+        initializeGateway(discord.id, setup, () =>
+          sdkPromise(() => client.destroy()),
         ),
       )
     })
@@ -114,6 +102,18 @@ export class DiscordBot {
 
   private finishStartEffect() {
     return Effect.gen({ self: this }, function* () {
+      yield* this.threads.verifyEffect()
+      if (this.discord.inboxChannelIds.length > 0) {
+        if (!this.deps.chat) {
+          return yield* Effect.fail(
+            new SdkError({
+              message: "Discord inbox configured without chat dependencies",
+              cause: undefined,
+            }),
+          )
+        }
+        yield* this.verifyInboxEffect()
+      }
       yield* syncCommandsEffect(
         this.client,
         this.discord.guildId,
@@ -133,16 +133,7 @@ export class DiscordBot {
           ),
         )
       })
-      if (!this.discord.inboxChannelId) return
-      if (!this.deps.chat) {
-        return yield* Effect.fail(
-          new SdkError({
-            message: "Discord inbox configured without chat dependencies",
-            cause: undefined,
-          }),
-        )
-      }
-      yield* this.verifyInboxEffect()
+      if (this.discord.inboxChannelIds.length === 0) return
       this.client.on(Events.MessageCreate, async (message) => {
         // Gateway event emitters cannot await. This listener owns its failure.
         await Effect.runPromise(
@@ -190,34 +181,44 @@ export class DiscordBot {
   private onMessageEffect(message: Message) {
     return Effect.gen({ self: this }, function* () {
       const chat = this.deps.chat
-      const inboxChannelId = this.discord.inboxChannelId
-      if (!chat || !inboxChannelId) return
-      if (!message.inGuild() || message.guildId !== this.discord.guildId) return
-      if (
-        message.author.bot ||
-        message.webhookId ||
-        message.content.trim() === ""
+      const inboxChannelIds = this.discord.inboxChannelIds
+      if (!chat || inboxChannelIds.length === 0) return
+      const route = discordMessageRoute(
+        {
+          inGuild: message.inGuild(),
+          guildId: message.guildId,
+          channelId: message.channelId,
+          channelType: message.channel.type,
+          channelIsThread: message.channel.isThread(),
+          threadParentId: message.channel.isThread()
+            ? message.channel.parentId
+            : null,
+          threadOwnerId: message.channel.isThread()
+            ? message.channel.ownerId
+            : null,
+          threadName: message.channel.isThread() ? message.channel.name : "",
+          authorIsBot: message.author.bot,
+          webhookId: message.webhookId,
+          content: message.content,
+        },
+        this.discord.guildId,
+        inboxChannelIds,
+        this.client.user.id,
       )
-        return
-
-      if (message.channelId === inboxChannelId) {
+      if (route === "inbox") {
+        if (!message.inGuild()) return
         yield* this.onInboxMessageEffect(message, chat)
         return
       }
-      if (
-        !message.channel.isThread() ||
-        message.channel.type !== ChannelType.PrivateThread ||
-        message.channel.parentId !== inboxChannelId ||
-        message.channel.ownerId !== this.client.user.id ||
-        !message.channel.name.startsWith(CONVERSATION_PREFIX)
-      ) {
-        return
-      }
+      if (route !== "conversation" || !message.channel.isThread()) return
       yield* this.enqueueReplyEffect(message.channel, message.content, chat)
     })
   }
 
-  private onInboxMessageEffect(message: Message<true>, chat: DiscordAgent) {
+  private onInboxMessageEffect(
+    message: Message<true>,
+    chat: ConversationRuntime,
+  ) {
     return Effect.gen({ self: this }, function* () {
       if (message.channel.type !== ChannelType.GuildText) return
       const decision = yield* chat.triageEffect(message.id, message.content)
@@ -226,7 +227,7 @@ export class DiscordBot {
       const channel = message.channel
       const thread = yield* sdkPromise(() =>
         channel.threads.create({
-          name: conversationThreadName(decision.threadName),
+          name: conversationThreadName(decision.title),
           type: ChannelType.PrivateThread,
           invitable: false,
           autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
@@ -256,7 +257,7 @@ export class DiscordBot {
   private enqueueReplyEffect(
     thread: AnyThreadChannel,
     content: string,
-    chat: DiscordAgent,
+    chat: ConversationRuntime,
   ) {
     return Effect.gen({ self: this }, function* () {
       const status = yield* sdkPromise(() =>
@@ -283,25 +284,11 @@ export class DiscordBot {
   }
 
   private verifyInboxEffect() {
-    return Effect.gen({ self: this }, function* () {
-      const inboxChannelId = this.discord.inboxChannelId
-      if (!inboxChannelId) return
-      const guild = yield* sdkPromise(() =>
-        this.client.guilds.fetch(this.discord.guildId),
-      )
-      const channel = yield* sdkPromise(() =>
-        guild.channels.fetch(inboxChannelId),
-      )
-      if (!channel || channel.type !== ChannelType.GuildText) {
-        return yield* Effect.fail(
-          new SdkError({
-            message: `DISCORD_INBOX_CHANNEL_ID ${inboxChannelId} is not a text channel`,
-            cause: undefined,
-          }),
-        )
-      }
-      console.log(`[discord] inbox #${channel.name} (${channel.id})`)
-    })
+    return verifyDiscordInboxesEffect(
+      this.discord,
+      (guildId) => this.client.guilds.fetch(guildId),
+      (message) => console.log(`[discord:${this.id}] ${message}`),
+    )
   }
 
   private onCommandEffect(interaction: ChatInputCommandInteraction) {
@@ -379,6 +366,85 @@ export class DiscordBot {
       .join("\n")
       .slice(0, 1900)
   }
+}
+
+export interface DiscordMessageRouteInput {
+  inGuild: boolean
+  guildId: string | null
+  channelId: string
+  channelType: ChannelType
+  channelIsThread: boolean
+  threadParentId: string | null
+  threadOwnerId: string | null
+  threadName: string
+  authorIsBot: boolean
+  webhookId: string | null
+  content: string
+}
+
+export function discordMessageRoute(
+  message: DiscordMessageRouteInput,
+  guildId: string,
+  inboxChannelIds: readonly string[],
+  botUserId: string,
+): "inbox" | "conversation" | undefined {
+  if (!message.inGuild || message.guildId !== guildId) return undefined
+  if (message.authorIsBot || message.webhookId || message.content.trim() === "")
+    return undefined
+  if (
+    inboxChannelIds.includes(message.channelId) &&
+    message.channelType === ChannelType.GuildText
+  )
+    return "inbox"
+  if (
+    message.channelIsThread &&
+    message.channelType === ChannelType.PrivateThread &&
+    message.threadParentId &&
+    inboxChannelIds.includes(message.threadParentId) &&
+    message.threadOwnerId === botUserId &&
+    message.threadName.startsWith(CONVERSATION_PREFIX)
+  )
+    return "conversation"
+  return undefined
+}
+
+interface InboxGuild {
+  channels: {
+    fetch(channelId: string): Promise<{
+      id: string
+      name: string
+      type: ChannelType
+      guildId: string
+    } | null>
+  }
+}
+
+export function verifyDiscordInboxesEffect(
+  discord: Pick<DiscordConfig, "guildId" | "inboxChannelIds">,
+  fetchGuild: (guildId: string) => Promise<InboxGuild>,
+  log: (message: string) => void = console.log,
+) {
+  return Effect.gen(function* () {
+    const guild = yield* sdkPromise(() => fetchGuild(discord.guildId))
+    for (const inboxChannelId of discord.inboxChannelIds) {
+      const channel = yield* sdkPromise(() =>
+        guild.channels.fetch(inboxChannelId),
+      )
+      if (
+        !channel ||
+        channel.type !== ChannelType.GuildText ||
+        channel.guildId !== discord.guildId
+      ) {
+        return yield* Effect.fail(
+          new SdkError({
+            message: `Discord inbox ${inboxChannelId} is not a text channel in guild ${discord.guildId}`,
+            cause: undefined,
+          }),
+        )
+      }
+      log(`inbox #${channel.name} (${channel.id})`)
+    }
+  })
 }
 
 export function conversationThreadName(title: string): string {
