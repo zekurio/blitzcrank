@@ -18,14 +18,8 @@ const service = Type.Object(
   { url: text, apiKey: secret },
   { additionalProperties: false },
 )
-const discord = Type.Object(
+const discordGuild = Type.Object(
   {
-    id: Type.String({
-      pattern: "^[a-z0-9]+(-[a-z0-9]+)*$",
-      maxLength: 64,
-    }),
-    type: Type.Literal("discord"),
-    token: secret,
     guildId: snowflake,
     reportChannelId: snowflake,
     inboxChannelIds: Type.Optional(
@@ -38,7 +32,6 @@ const discord = Type.Object(
   { additionalProperties: false },
 )
 
-/** The file and legacy environment adapter go through the same validation. */
 export const ConfigSchema = Type.Object(
   {
     version: Type.Literal(1),
@@ -83,7 +76,22 @@ export const ConfigSchema = Type.Object(
         ),
       ]),
     ),
-    gateways: Type.Optional(Type.Array(discord)),
+    gateways: Type.Optional(
+      Type.Object(
+        {
+          discord: Type.Optional(
+            Type.Object(
+              {
+                token: secret,
+                guilds: Type.Array(discordGuild, { minItems: 1 }),
+              },
+              { additionalProperties: false },
+            ),
+          ),
+        },
+        { additionalProperties: false },
+      ),
+    ),
   },
   { additionalProperties: false },
 )

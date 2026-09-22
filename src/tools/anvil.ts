@@ -622,10 +622,10 @@ export function buildAnvilTools(
   ctx: RunContext,
 ): ToolDefinition[] {
   if (!path.isAbsolute(cfg.socket) || cfg.socket.includes("\0")) {
-    throw new Error("ANVIL_CONTROL_SOCKET must be an absolute path")
+    throw new Error("anvil.socket must be an absolute path")
   }
   if (cfg.command.trim() === "" || cfg.command.includes("\0")) {
-    throw new Error("ANVIL_COMMAND must be a non-empty executable name or path")
+    throw new Error("anvil.command must be a non-empty executable name or path")
   }
 
   // Numeric IDs are never reused and may survive issue resumption. Slugs have

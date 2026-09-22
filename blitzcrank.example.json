@@ -10,5 +10,5 @@
     "apiKey": { "env": "SEERR_API_KEY" }
   },
   "web": { "provider": "none" },
-  "gateways": []
+  "gateways": {}
 }

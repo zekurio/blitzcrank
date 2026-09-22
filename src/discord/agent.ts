@@ -94,15 +94,14 @@ export class DiscordAgent implements ConversationRuntime {
 
   constructor(
     private readonly config: Config,
-    private readonly gatewayId: string,
     private readonly modelRuntime: ModelRuntime,
     private readonly modelSpec: string,
     private readonly triageModelSpec: string,
     private readonly queue: SerialQueue,
   ) {
     this.evidence = new EvidenceStore(
-      conversationEvidenceDir(config.dataDir, gatewayId),
-      gatewayId,
+      path.join(config.dataDir, "evidence", "discord"),
+      "discord",
     )
   }
 
@@ -168,11 +167,7 @@ export class DiscordAgent implements ConversationRuntime {
 
   private respondEffect(threadId: string, content: string) {
     return Effect.gen({ self: this }, function* () {
-      const sessionDir = conversationSessionDir(
-        this.config.dataDir,
-        this.gatewayId,
-        threadId,
-      )
+      const sessionDir = conversationSessionDir(this.config.dataDir, threadId)
       const ctx = new RunContext({
         prior: yield* this.evidence.loadEffect(threadId),
       })
@@ -223,26 +218,11 @@ export class DiscordAgent implements ConversationRuntime {
 
 export function conversationSessionDir(
   dataDir: string,
-  gatewayId: string,
   conversationId: string,
 ): string {
   if (!/^[\w-]{1,64}$/.test(conversationId)) {
     throw new Error(`invalid conversation id "${conversationId}"`)
   }
-  if (gatewayId === "discord") {
-    return path.join(dataDir, "sessions", "discord", conversationId)
-  }
-  return path.join(
-    dataDir,
-    "sessions",
-    "gateways",
-    gatewayId,
-    "conversations",
-    conversationId,
-  )
-}
-
-function conversationEvidenceDir(dataDir: string, gatewayId: string): string {
-  if (gatewayId === "discord") return path.join(dataDir, "evidence", "discord")
-  return path.join(dataDir, "evidence", "gateways", gatewayId)
+  // Discord thread IDs are globally unique, including across guilds.
+  return path.join(dataDir, "sessions", "discord", conversationId)
 }

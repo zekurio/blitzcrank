@@ -1,18 +1,68 @@
-import { Cause, Effect, Exit } from "effect"
+import { Cause, Effect, Fiber } from "effect"
 
 import type { AutomationReport } from "../../automations/runner.ts"
 
-/** A running outbound/inbound chat gateway. */
+/** One owned outbound/inbound chat gateway, including while connecting. */
 export interface GatewayRuntime {
   readonly id: string
+  startEffect(): Effect.Effect<void, unknown>
   reportEffect(report: AutomationReport): Effect.Effect<void, unknown>
   stopEffect(): Effect.Effect<void, unknown>
 }
 
 /**
- * Platform adapters own their channel, thread, and authorization rules. The
- * conversation runner only needs a stable opaque id and delivery callbacks.
+ * Own the gateway for the host lifetime without delaying HTTP startup.
+ * SDK login promises cannot safely be interrupted. Shutdown waits for settlement;
+ * the host's process deadline is the hard boundary for an SDK that never settles.
  */
+export class GatewayConnection {
+  private status: "connecting" | "ready" | "failed" = "connecting"
+  private readonly startup: Fiber.Fiber<void>
+
+  constructor(private readonly gateway: GatewayRuntime) {
+    this.startup = Effect.runFork(
+      Effect.suspend(() => gateway.startEffect()).pipe(
+        Effect.map(() => {
+          this.status = "ready"
+          console.log(`[gateway:${gateway.id}] connected`)
+        }),
+        Effect.catchCause((cause) =>
+          Effect.sync(() => {
+            this.status = "failed"
+            console.error(
+              `[gateway:${gateway.id}] startup failed:`,
+              Cause.squash(cause),
+            )
+          }),
+        ),
+        Effect.uninterruptible,
+      ),
+    )
+  }
+
+  get state() {
+    return this.status
+  }
+
+  reportEffect(report: AutomationReport): Effect.Effect<void, unknown> {
+    return Effect.suspend(() => {
+      if (this.status === "ready") return this.gateway.reportEffect(report)
+      console.warn(
+        `[gateway:${this.gateway.id}] ${this.status}; report not delivered`,
+      )
+      return Effect.void
+    })
+  }
+
+  stopEffect(): Effect.Effect<void, unknown> {
+    return Effect.gen({ self: this }, function* () {
+      yield* Fiber.await(this.startup)
+      yield* this.gateway.stopEffect()
+    })
+  }
+}
+
+/** Platform adapters own channel authorization and message delivery. */
 export interface ConversationRuntime {
   triageEffect(
     messageId: string,
@@ -24,105 +74,4 @@ export interface ConversationRuntime {
     deliver: (response: string) => Effect.Effect<void, unknown>,
     fail: () => Effect.Effect<void, unknown>,
   ): boolean
-}
-
-/**
- * Setup is interruptible; no agent work exists yet. A failed or timed-out
- * adapter must close its pending connection before the host discards it.
- */
-export function initializeGateway<A, E>(
-  id: string,
-  setup: Effect.Effect<A, E>,
-  cleanup: () => Effect.Effect<void, unknown>,
-  timeoutMs = 30_000,
-) {
-  return setup.pipe(
-    Effect.interruptible,
-    Effect.timeout(timeoutMs),
-    Effect.onExit((exit) =>
-      Exit.isFailure(exit)
-        ? Effect.suspend(cleanup).pipe(
-            Effect.timeout(5_000),
-            Effect.interruptible,
-            Effect.catchCause((cause) =>
-              Effect.sync(() =>
-                console.error(
-                  `[gateway:${id}] startup cleanup failed:`,
-                  Cause.squash(cause),
-                ),
-              ),
-            ),
-          )
-        : Effect.void,
-    ),
-  )
-}
-
-export function connectGateways(
-  adapters: ReadonlyArray<{
-    id: string
-    start: () => Effect.Effect<GatewayRuntime, unknown>
-  }>,
-): Effect.Effect<GatewayRuntime[]> {
-  return Effect.forEach(
-    adapters,
-    (adapter) =>
-      Effect.suspend(adapter.start).pipe(
-        Effect.catchCause((cause) =>
-          Effect.sync(() => {
-            console.error(
-              `[gateway:${adapter.id}] startup failed; continuing without it:`,
-              Cause.squash(cause),
-            )
-            return undefined
-          }),
-        ),
-      ),
-    { concurrency: "unbounded" },
-  ).pipe(
-    Effect.map((gateways) =>
-      gateways.filter((gateway) => gateway !== undefined),
-    ),
-  )
-}
-
-export function publishToGateways(
-  gateways: readonly GatewayRuntime[],
-  report: AutomationReport,
-): Effect.Effect<void> {
-  return Effect.forEach(
-    gateways,
-    (gateway) =>
-      Effect.suspend(() => gateway.reportEffect(report)).pipe(
-        Effect.catchCause((cause) =>
-          Effect.sync(() =>
-            console.error(
-              `[gateway:${gateway.id}] report failed:`,
-              Cause.squash(cause),
-            ),
-          ),
-        ),
-      ),
-    { concurrency: "unbounded", discard: true },
-  )
-}
-
-export function stopGateways(
-  gateways: readonly GatewayRuntime[],
-): Effect.Effect<void> {
-  return Effect.forEach(
-    gateways,
-    (gateway) =>
-      Effect.suspend(() => gateway.stopEffect()).pipe(
-        Effect.catchCause((cause) =>
-          Effect.sync(() =>
-            console.error(
-              `[gateway:${gateway.id}] stop failed:`,
-              Cause.squash(cause),
-            ),
-          ),
-        ),
-      ),
-    { concurrency: "unbounded", discard: true },
-  )
 }

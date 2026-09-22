@@ -11,7 +11,6 @@ import {
   buildServiceTools,
   type SessionFileRef,
 } from "../tools/index.ts"
-import { conversationSessionDir } from "./agent.ts"
 import {
   conversationThreadName,
   discordMessageChunks,
@@ -67,7 +66,7 @@ test("Discord conversations receive mutations and conversation history", () => {
     jellyfin: { url: "http://jellyfin.test", apiKey: "test" },
     anvil: { command: "anvilctl", socket: "/tmp/anvil.sock" },
     media: { roots: ["/tmp/media"] },
-    gateways: [],
+    gateways: { discord: undefined },
   }
   const allRef: SessionFileRef = { current: undefined }
   const discordRef: SessionFileRef = { current: undefined }
@@ -217,19 +216,4 @@ test("Discord startup refuses non-text or wrong-guild inbox channels", async () 
     )
     assert.equal(Exit.isFailure(exit), true)
   }
-})
-
-test("conversation storage preserves legacy paths and namespaces gateways", () => {
-  assert.equal(
-    conversationSessionDir("/data", "discord", "123"),
-    "/data/sessions/discord/123",
-  )
-  assert.equal(
-    conversationSessionDir("/data", "family-chat", "123"),
-    "/data/sessions/gateways/family-chat/conversations/123",
-  )
-  assert.notEqual(
-    conversationSessionDir("/data", "family-chat", "123"),
-    conversationSessionDir("/data", "friends-chat", "123"),
-  )
 })

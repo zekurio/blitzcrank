@@ -18,11 +18,10 @@ import type {
   TriggerResult,
 } from "../automations/dispatcher.ts"
 import type { AutomationReport } from "../automations/runner.ts"
-import type { DiscordConfig } from "../config.ts"
-import {
-  initializeGateway,
-  type ConversationRuntime,
-  type GatewayRuntime,
+import type { DiscordConfig, DiscordGuildConfig } from "../config.ts"
+import type {
+  ConversationRuntime,
+  GatewayRuntime,
 } from "../gateways/chat/runtime.ts"
 import { AUTOMATION_COMMAND, syncCommandsEffect } from "./commands.ts"
 import { formatAutomationReport } from "./report.ts"
@@ -35,7 +34,7 @@ export interface DiscordDeps {
   listAutomations: () => AutomationInfo[]
   /** Enqueues a checked-in automation named by a signed interaction. */
   triggerAutomation: (name: string) => TriggerResult
-  chat: ConversationRuntime | undefined
+  chats: ReadonlyMap<string, ConversationRuntime>
 }
 
 /**
@@ -43,82 +42,78 @@ export interface DiscordDeps {
  * media-operations conversations. No agent tool can write to Discord.
  */
 export class DiscordBot implements GatewayRuntime {
-  private constructor(
-    private readonly client: Client<true>,
+  private readonly client: Client
+  private readonly threads: ReadonlyMap<string, AutomationThreads>
+  readonly id = "discord"
+
+  constructor(
     private readonly discord: DiscordConfig,
     private readonly language: string,
-    private readonly threads: AutomationThreads,
     private readonly deps: DiscordDeps,
-  ) {}
-
-  get id(): string {
-    return this.discord.id
-  }
-
-  static startEffect(
-    discord: DiscordConfig,
-    language: string,
-    deps: DiscordDeps,
   ) {
-    return Effect.gen(function* () {
-      const client = new Client({
-        intents:
-          discord.inboxChannelIds.length > 0
-            ? [
-                GatewayIntentBits.Guilds,
-                GatewayIntentBits.GuildMessages,
-                GatewayIntentBits.MessageContent,
-              ]
-            : [],
-        allowedMentions: { parse: [] },
-      })
-      client.on(Events.Error, (err) => console.error("[discord] client:", err))
-
-      const ready = new Promise<Client<true>>((resolve) =>
-        client.once(Events.ClientReady, resolve),
-      )
-      return yield* Effect.gen(function* () {
-        yield* sdkPromise(() => client.login(discord.token))
-        const logged = yield* sdkPromise(() => ready)
-
-        const threads = new AutomationThreads(
-          logged,
-          discord.guildId,
-          discord.reportChannelId,
-        )
-        const bot = new DiscordBot(logged, discord, language, threads, deps)
-        // Login already opened the gateway socket, so from here on a failure must
-        // close it: the caller has no handle yet, so the socket would leak and
-        // keep the process alive.
-        yield* bot.finishStartEffect()
-        return bot
-      }).pipe((setup) =>
-        initializeGateway(discord.id, setup, () =>
-          sdkPromise(() => client.destroy()),
-        ),
-      )
+    this.client = new Client({
+      intents: discord.guilds.some((guild) => guild.inboxChannelIds.length > 0)
+        ? [
+            GatewayIntentBits.Guilds,
+            GatewayIntentBits.GuildMessages,
+            GatewayIntentBits.MessageContent,
+          ]
+        : [],
+      allowedMentions: { parse: [] },
     })
+    this.client.on(Events.Error, (err) =>
+      console.error("[discord] client:", err),
+    )
+    this.threads = new Map(
+      discord.guilds.map((guild) => [
+        guild.guildId,
+        new AutomationThreads(
+          this.client,
+          guild.guildId,
+          guild.reportChannelId,
+        ),
+      ]),
+    )
   }
 
-  private finishStartEffect() {
+  startEffect() {
     return Effect.gen({ self: this }, function* () {
-      yield* this.threads.verifyEffect()
-      if (this.discord.inboxChannelIds.length > 0) {
-        if (!this.deps.chat) {
+      const ready = new Promise<Client<true>>((resolve) =>
+        this.client.once(Events.ClientReady, resolve),
+      )
+      // The host owns this attempt until it settles. Interrupting login can
+      // reconnect after destroy() in discord.js, so never time it out here.
+      yield* sdkPromise(() => this.client.login(this.discord.token))
+      const logged = yield* sdkPromise(() => ready)
+      yield* this.finishStartEffect(logged)
+    }).pipe(Effect.uninterruptible)
+  }
+
+  private finishStartEffect(logged: Client<true>) {
+    return Effect.gen({ self: this }, function* () {
+      for (const guild of this.discord.guilds) {
+        yield* this.threads.get(guild.guildId)!.verifyEffect()
+        if (
+          guild.inboxChannelIds.length > 0 &&
+          !this.deps.chats.has(guild.guildId)
+        ) {
           return yield* Effect.fail(
             new SdkError({
-              message: "Discord inbox configured without chat dependencies",
+              message:
+                `Discord guild ${guild.guildId} has an inbox configured` +
+                " without chat dependencies",
               cause: undefined,
             }),
           )
         }
-        yield* this.verifyInboxEffect()
+        if (guild.inboxChannelIds.length > 0)
+          yield* this.verifyInboxEffect(guild)
+        yield* syncCommandsEffect(
+          logged,
+          guild.guildId,
+          this.deps.listAutomations().map((info) => info.name),
+        )
       }
-      yield* syncCommandsEffect(
-        this.client,
-        this.discord.guildId,
-        this.deps.listAutomations().map((info) => info.name),
-      )
       this.client.on(Events.InteractionCreate, async (interaction) => {
         // The listener only enqueues; run lifecycles stay with the serial queue.
         // Nothing awaits it, so it must contain its own failures.
@@ -133,7 +128,10 @@ export class DiscordBot implements GatewayRuntime {
           ),
         )
       })
-      if (this.discord.inboxChannelIds.length === 0) return
+      if (
+        !this.discord.guilds.some((guild) => guild.inboxChannelIds.length > 0)
+      )
+        return
       this.client.on(Events.MessageCreate, async (message) => {
         // Gateway event emitters cannot await. This listener owns its failure.
         await Effect.runPromise(
@@ -151,27 +149,21 @@ export class DiscordBot implements GatewayRuntime {
 
   /** A broken report sink must never fail the run it reports on. */
   reportEffect(report: AutomationReport) {
-    return Effect.gen({ self: this }, function* () {
-      const thread = yield* this.threads.getEffect(report.name).pipe(
-        Effect.catchCause((cause) =>
-          Effect.sync(() => {
-            console.error(
-              `[discord] no thread for ${report.name} (locked or deleted by hand?):`,
-              cause,
-            )
-            return undefined
-          }),
-        ),
-      )
-      if (!thread) return
-      yield* sdkPromise(() => thread.send(formatAutomationReport(report))).pipe(
-        Effect.catchCause((cause) =>
-          Effect.sync(() =>
-            console.error(`[discord] report for ${report.name}:`, cause),
+    return Effect.forEach(
+      this.threads.values(),
+      (threads) =>
+        threads.getEffect(report.name).pipe(
+          Effect.flatMap((thread) =>
+            sdkPromise(() => thread.send(formatAutomationReport(report))),
+          ),
+          Effect.catchCause((cause) =>
+            Effect.sync(() =>
+              console.error(`[discord] report for ${report.name}:`, cause),
+            ),
           ),
         ),
-      )
-    })
+      { concurrency: "unbounded", discard: true },
+    )
   }
 
   stopEffect() {
@@ -180,9 +172,12 @@ export class DiscordBot implements GatewayRuntime {
 
   private onMessageEffect(message: Message) {
     return Effect.gen({ self: this }, function* () {
-      const chat = this.deps.chat
-      const inboxChannelIds = this.discord.inboxChannelIds
-      if (!chat || inboxChannelIds.length === 0) return
+      const guild = this.discord.guilds.find(
+        (candidate) => candidate.guildId === message.guildId,
+      )
+      if (!guild) return
+      const chat = this.deps.chats.get(guild.guildId)
+      if (!chat || guild.inboxChannelIds.length === 0) return
       const route = discordMessageRoute(
         {
           inGuild: message.inGuild(),
@@ -201,9 +196,9 @@ export class DiscordBot implements GatewayRuntime {
           webhookId: message.webhookId,
           content: message.content,
         },
-        this.discord.guildId,
-        inboxChannelIds,
-        this.client.user.id,
+        guild.guildId,
+        guild.inboxChannelIds,
+        this.client.user!.id,
       )
       if (route === "inbox") {
         if (!message.inGuild()) return
@@ -283,18 +278,23 @@ export class DiscordBot implements GatewayRuntime {
     })
   }
 
-  private verifyInboxEffect() {
+  private verifyInboxEffect(guild: DiscordGuildConfig) {
     return verifyDiscordInboxesEffect(
-      this.discord,
+      guild,
       (guildId) => this.client.guilds.fetch(guildId),
-      (message) => console.log(`[discord:${this.id}] ${message}`),
+      (message) => console.log(`[discord:${guild.guildId}] ${message}`),
     )
   }
 
   private onCommandEffect(interaction: ChatInputCommandInteraction) {
     return Effect.gen({ self: this }, function* () {
       if (interaction.commandName !== AUTOMATION_COMMAND) return
-      if (!this.authorized(interaction)) {
+      const guild = this.discord.guilds.find(
+        (candidate) => candidate.guildId === interaction.guildId,
+      )
+      // Unknown guilds get no acknowledgement. This check must precede auth.
+      if (!guild) return
+      if (!this.authorized(interaction, guild)) {
         console.warn(
           `[discord] refused /${AUTOMATION_COMMAND} from ${interaction.user.tag}` +
             ` in guild=${interaction.guildId ?? "-"}`,
@@ -338,17 +338,19 @@ export class DiscordBot implements GatewayRuntime {
    * either a guild administrator or a configured admin role. The permission
    * bits come from Discord's signed interaction payload, not from user input.
    */
-  private authorized(interaction: ChatInputCommandInteraction): boolean {
-    if (interaction.guildId !== this.discord.guildId) return false
+  private authorized(
+    interaction: ChatInputCommandInteraction,
+    guild: DiscordGuildConfig,
+  ): boolean {
     if (interaction.memberPermissions?.has(PermissionFlagsBits.Administrator))
       return true
-    if (this.discord.adminRoleIds.length === 0) return false
+    if (guild.adminRoleIds.length === 0) return false
     const member = interaction.member
     if (!member) return false
     const roles = Array.isArray(member.roles)
       ? member.roles
       : [...member.roles.cache.keys()]
-    return roles.some((role) => this.discord.adminRoleIds.includes(role))
+    return roles.some((role) => guild.adminRoleIds.includes(role))
   }
 
   private listText(): string {
@@ -420,7 +422,7 @@ interface InboxGuild {
 }
 
 export function verifyDiscordInboxesEffect(
-  discord: Pick<DiscordConfig, "guildId" | "inboxChannelIds">,
+  discord: Pick<DiscordGuildConfig, "guildId" | "inboxChannelIds">,
   fetchGuild: (guildId: string) => Promise<InboxGuild>,
   log: (message: string) => void = console.log,
 ) {

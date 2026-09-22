@@ -4,7 +4,6 @@ import { dirname, isAbsolute, resolve } from "node:path"
 import { Effect } from "effect"
 import { Check, Errors } from "typebox/value"
 
-import { configFromEnv } from "./config/env.ts"
 import { ConfigSchema, type FileConfig, type Secret } from "./config/schema.ts"
 
 export interface ServiceConfig {
@@ -17,11 +16,7 @@ export interface AnvilConfig {
   socket: string
 }
 
-export interface DiscordConfig {
-  /** Stable instance name, also used to namespace persistent conversations. */
-  id: string
-  type: "discord"
-  token: string
+export interface DiscordGuildConfig {
   /** Guild whose commands are registered; interactions elsewhere are refused. */
   guildId: string
   /** Text channel the per-automation report threads live in. */
@@ -39,8 +34,14 @@ export interface DiscordConfig {
   adminRoleIds: string[]
 }
 
-/** Add future adapters as discriminated variants, not optional Discord fields. */
-export type GatewayConfig = DiscordConfig
+export interface DiscordConfig {
+  token: string
+  guilds: DiscordGuildConfig[]
+}
+
+export interface GatewayConfig {
+  discord: DiscordConfig | undefined
+}
 
 export interface MediaConfig {
   /** Absolute directory roots media_probe may read; nothing else is readable. */
@@ -94,40 +95,28 @@ export interface Config {
   anvil: AnvilConfig | undefined
   /** Enables media reads; frame extraction also requires model image support. */
   media: MediaConfig | undefined
-  /** Independently connected host-side messaging gateways. */
-  gateways: GatewayConfig[]
+  /** Host-side messaging gateway configuration. */
+  gateways: GatewayConfig
 }
 
-/**
- * Selecting a file replaces env settings, rather than silently merging them.
- * Only explicit secret references (and the SDK's own auth env) use env in file
- * mode. A missing or invalid selected file never falls back to legacy config.
- */
 export function loadConfigEffect(
   env: NodeJS.ProcessEnv = process.env,
 ): Effect.Effect<Config, Error> {
   return Effect.gen(function* () {
     const selected = env.BLITZCRANK_CONFIG
-    if (selected !== undefined && !selected.trim()) {
+    if (selected === undefined || !selected.trim()) {
       return yield* Effect.fail(new Error("BLITZCRANK_CONFIG must name a file"))
     }
-    const file = selected === undefined ? undefined : resolve(selected)
-    const baseDir = file === undefined ? process.cwd() : dirname(file)
-    const raw =
-      file === undefined
-        ? yield* Effect.try({
-            try: () => configFromEnv(env),
-            catch: configError,
-          })
-        : yield* readTextEffect(file).pipe(
-            Effect.flatMap((text) =>
-              Effect.try({
-                try: (): unknown => JSON.parse(text),
-                catch: () =>
-                  new Error("BLITZCRANK_CONFIG must contain valid JSON"),
-              }),
-            ),
-          )
+    const file = resolve(selected)
+    const baseDir = dirname(file)
+    const raw = yield* readTextEffect(file).pipe(
+      Effect.flatMap((text) =>
+        Effect.try({
+          try: (): unknown => JSON.parse(text),
+          catch: () => new Error("BLITZCRANK_CONFIG must contain valid JSON"),
+        }),
+      ),
+    )
     const input = yield* Effect.try({
       try: () => validateConfig(raw),
       catch: configError,
@@ -141,33 +130,24 @@ export function loadConfigEffect(
           apiKey,
         })),
       )
-    const gateways = yield* Effect.forEach(input.gateways ?? [], (gateway) =>
-      secret(gateway.token, `gateways.${gateway.id}.token`).pipe(
-        Effect.map(
-          (token): GatewayConfig => ({
-            ...gateway,
-            token,
-            inboxChannelIds: gateway.inboxChannelIds ?? [],
-            adminRoleIds: gateway.adminRoleIds ?? [],
-            model: gateway.model,
-            triageModel: gateway.triageModel,
-          }),
-        ),
-      ),
-    )
-    // Match discord.js's optional token-prefix normalization, or the same
-    // bot/guild could connect twice and duplicate triage and reports.
-    const identities = gateways.map((gateway) =>
-      JSON.stringify([
-        gateway.token.replace(/^(Bot|Bearer)\s*/i, ""),
-        gateway.guildId,
-      ]),
-    )
-    if (new Set(identities).size !== identities.length) {
-      return yield* Effect.fail(
-        new Error("gateways must not connect the same Discord bot/guild twice"),
-      )
-    }
+    const discord =
+      input.gateways?.discord === undefined
+        ? undefined
+        : {
+            token: yield* secret(
+              input.gateways.discord.token,
+              "gateways.discord.token",
+            ),
+            guilds: input.gateways.discord.guilds.map(
+              (guild): DiscordGuildConfig => ({
+                ...guild,
+                inboxChannelIds: guild.inboxChannelIds ?? [],
+                adminRoleIds: guild.adminRoleIds ?? [],
+                model: guild.model,
+                triageModel: guild.triageModel,
+              }),
+            ),
+          }
     return {
       port: input.port ?? 8484,
       dataDir: resolve(baseDir, input.dataDir ?? "data"),
@@ -224,7 +204,7 @@ export function loadConfigEffect(
       media: input.media?.roots.length
         ? { roots: input.media.roots.map((root) => resolve(root)) }
         : undefined,
-      gateways,
+      gateways: { discord },
     }
   })
 }
@@ -237,9 +217,10 @@ function validateConfig(value: unknown): FileConfig {
       .join("; ")
     throw new Error(`Invalid configuration: ${errors}`)
   }
-  const ids = (value.gateways ?? []).map((gateway) => gateway.id)
-  if (new Set(ids).size !== ids.length) {
-    throw new Error("gateways must have unique ids")
+  const guildIds =
+    value.gateways?.discord?.guilds.map((guild) => guild.guildId) ?? []
+  if (new Set(guildIds).size !== guildIds.length) {
+    throw new Error("gateways.discord.guilds must have unique guildIds")
   }
   for (const name of [
     "seerr",

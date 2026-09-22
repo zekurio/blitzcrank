@@ -21,13 +21,11 @@ import {
 import { AutomationRunner } from "./automations/runner.ts"
 import { AutomationScheduler } from "./automations/scheduler.ts"
 import { CaseStore } from "./casefile.ts"
-import { loadConfigEffect, type Config, type GatewayConfig } from "./config.ts"
+import { loadConfigEffect, type Config, type DiscordConfig } from "./config.ts"
 import { DiscordAgent } from "./discord/agent.ts"
 import { DiscordBot } from "./discord/bot.ts"
 import {
-  connectGateways,
-  publishToGateways,
-  stopGateways,
+  GatewayConnection,
   type GatewayRuntime,
 } from "./gateways/chat/runtime.ts"
 import { createCommentGateEffect } from "./gateways/seerr/comment-gate.ts"
@@ -47,10 +45,10 @@ interface Models {
   runtime: ModelRuntime
   issueSpec: string
   automationSpec: string
-  gateways: ReadonlyMap<string, GatewayModels>
+  discord: ReadonlyMap<string, ConversationModels>
 }
 
-interface GatewayModels {
+interface ConversationModels {
   conversationSpec: string
   triageSpec: string
 }
@@ -58,7 +56,7 @@ interface GatewayModels {
 interface AutomationWork {
   dispatcher: AutomationDispatcher
   scheduler: AutomationScheduler
-  gateways: GatewayRuntime[]
+  discord: GatewayConnection | undefined
 }
 
 function main(): Effect.Effect<void, unknown> {
@@ -82,17 +80,14 @@ function main(): Effect.Effect<void, unknown> {
     const app = createGatewayApp(config, cases, issueWork, automationWork)
     const server = createServer(app)
     server.listen(config.port, () => {
-      for (const gateway of config.gateways) {
-        const running = automationWork.gateways.some(
-          (candidate) => candidate.id === gateway.id,
-        )
+      for (const guild of config.gateways.discord?.guilds ?? []) {
         console.error(
-          running
-            ? `  ${gateway.type}:${gateway.id}: reports ${gateway.reportChannelId}` +
-                (gateway.inboxChannelIds.length > 0
-                  ? `, inboxes ${gateway.inboxChannelIds.join(",")}`
+          automationWork.discord?.state === "ready"
+            ? `  discord:${guild.guildId}: reports ${guild.reportChannelId}` +
+                (guild.inboxChannelIds.length > 0
+                  ? `, inboxes ${guild.inboxChannelIds.join(",")}`
                   : "")
-            : `  ${gateway.type}:${gateway.id}: DEGRADED (startup failed)`,
+            : `  discord:${guild.guildId}: ${automationWork.discord?.state ?? "disabled"}`,
         )
       }
     })
@@ -107,17 +102,19 @@ function loadModels(
   return Effect.gen(function* () {
     const issueSpec = config.model ?? DEFAULT_MODEL
     const automationSpec = config.automationModel ?? issueSpec
-    const gateways = new Map(
-      config.gateways.map((gateway) => {
-        const conversationSpec = gateway.model ?? issueSpec
-        return [
-          gateway.id,
-          {
-            conversationSpec,
-            triageSpec: gateway.triageModel ?? conversationSpec,
-          },
-        ]
-      }),
+    const discord = new Map(
+      (config.gateways.discord?.guilds ?? [])
+        .filter((guild) => guild.inboxChannelIds.length > 0)
+        .map((guild) => {
+          const conversationSpec = guild.model ?? issueSpec
+          return [
+            guild.guildId,
+            {
+              conversationSpec,
+              triageSpec: guild.triageModel ?? conversationSpec,
+            },
+          ] as const
+        }),
     )
     const runtimeOptions: CreateModelRuntimeOptions = {}
     if (config.authPath) runtimeOptions.authPath = config.authPath
@@ -136,18 +133,17 @@ function loadModels(
           config.automationModels,
         ),
       ),
-      ...config.gateways.flatMap((gateway) => {
-        if (gateway.inboxChannelIds.length === 0) return []
-        const specs = gateways.get(gateway.id)
-        return specs ? [specs.conversationSpec, specs.triageSpec] : []
-      }),
+      ...Array.from(discord.values()).flatMap((specs) => [
+        specs.conversationSpec,
+        specs.triageSpec,
+      ]),
     ])
     for (const spec of configuredSpecs) resolveModel(runtime, spec)
     return {
       runtime,
       issueSpec,
       automationSpec,
-      gateways,
+      discord,
     }
   })
 }
@@ -158,71 +154,61 @@ function startAutomations(
   models: Models,
   queue: SerialQueue,
 ): Effect.Effect<AutomationWork, unknown> {
-  return Effect.gen(function* () {
+  return Effect.sync(() => {
     const runner = new AutomationRunner(
       config,
       models.runtime,
       models.automationSpec,
       config.automationModels,
     )
-    let gateways: GatewayRuntime[] = []
     const dispatcher = new AutomationDispatcher({
       definitions,
       queue,
       run: (definition) => runner.runEffect(definition),
-      publish: (report) => publishToGateways(gateways, report),
+      publish: (report) => discord?.reportEffect(report) ?? Effect.void,
       nextRun: (name) => scheduler.nextRun(name),
     })
     const scheduler = new AutomationScheduler((definition) =>
       dispatcher.dispatch(definition),
     )
+    const discordConfig = config.gateways.discord
+    const discord = discordConfig
+      ? new GatewayConnection(
+          createDiscord(config, discordConfig, dispatcher, models, queue),
+        )
+      : undefined
     scheduler.start(definitions)
-    gateways = yield* startGateways(config, dispatcher, models, queue)
-    return { dispatcher, scheduler, gateways }
+    return { dispatcher, scheduler, discord }
   })
 }
 
-function startGateways(
+function createDiscord(
   config: Config,
+  discord: DiscordConfig,
   dispatcher: AutomationDispatcher,
   models: Models,
   queue: SerialQueue,
-): Effect.Effect<GatewayRuntime[]> {
-  return connectGateways(
-    config.gateways.map((gateway) => ({
-      id: gateway.id,
-      start: () => startGateway(config, gateway, dispatcher, models, queue),
-    })),
-  )
-}
-
-function startGateway(
-  config: Config,
-  gateway: GatewayConfig,
-  dispatcher: AutomationDispatcher,
-  models: Models,
-  queue: SerialQueue,
-): Effect.Effect<GatewayRuntime, unknown> {
-  return Effect.gen(function* () {
-    const gatewayModels = models.gateways.get(gateway.id)
-    if (!gatewayModels)
-      return yield* Effect.die(`missing models for ${gateway.id}`)
-    const chat =
-      gateway.inboxChannelIds.length > 0
-        ? new DiscordAgent(
+): GatewayRuntime {
+  const chats = new Map(
+    Array.from(
+      models.discord,
+      ([guildId, specs]) =>
+        [
+          guildId,
+          new DiscordAgent(
             config,
-            gateway.id,
             models.runtime,
-            gatewayModels.conversationSpec,
-            gatewayModels.triageSpec,
+            specs.conversationSpec,
+            specs.triageSpec,
             queue,
-          )
-        : undefined
-    return yield* DiscordBot.startEffect(gateway, config.language, {
-      listAutomations: () => dispatcher.list(),
-      triggerAutomation: (name) => dispatcher.trigger(name),
-      chat,
-    })
+          ),
+        ] as const,
+    ),
+  )
+  return new DiscordBot(discord, config.language, {
+    listAutomations: () => dispatcher.list(),
+    triggerAutomation: (name) => dispatcher.trigger(name),
+    chats,
   })
 }
 
@@ -308,7 +294,7 @@ function installShutdown(
       automationWork.scheduler.stop()
       issueWork.revisits.stop()
       // Persisted revisit plans return at boot. Stop all new queue admission now;
-      // Gateways stay connected until the drain finishes so reports can land.
+      // Discord stays connected until the drain finishes so reports can land.
       issueWork.queue.close()
       const deadline = (yield* Clock.currentTimeMillis) + SHUTDOWN_GRACE_MS
       yield* withDeadline(
@@ -323,11 +309,24 @@ function installShutdown(
         deadline,
         "[shutdown] grace period expired with runs still in flight; exiting anyway",
       )
-      yield* withDeadline(
-        stopGateways(automationWork.gateways),
-        deadline,
-        "[shutdown] gateway clients did not close in time",
-      )
+      if (automationWork.discord) {
+        yield* withDeadline(
+          automationWork.discord
+            .stopEffect()
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.sync(() =>
+                  console.error(
+                    "[shutdown] discord client:",
+                    Cause.squash(cause),
+                  ),
+                ),
+              ),
+            ),
+          deadline,
+          "[shutdown] discord client did not close in time",
+        )
+      }
       console.log("[shutdown] bye")
       process.exit(0)
     })

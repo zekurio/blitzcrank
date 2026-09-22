@@ -150,13 +150,6 @@ export function buildHistoryTool(
               selected,
               files,
             )
-            if (selected === "discord") {
-              yield* collectFiles(
-                path.join(sessionsRoot, "gateways"),
-                selected,
-                files,
-              )
-            }
           }
 
           const results: HistoryMatch[] = []

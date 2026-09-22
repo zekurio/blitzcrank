@@ -36,9 +36,9 @@ Import and configure the module:
 
   services.blitzcrank = {
     enable = true;
-    model = "openai-codex/gpt-5.2-codex";
     environmentFile = "/run/secrets/blitzcrank.env";
     config = {
+      model = "openai-codex/gpt-5.2-codex";
       seerr = {
         url = "http://jellyseerr.local:5055";
         apiKey.env = "SEERR_API_KEY";
@@ -54,7 +54,8 @@ Put the referenced `SEERR_API_KEY` and `BLITZCRANK_WEBHOOK_SECRET` in the
 environment file. Add optional service URLs and their key references under
 `config`. The module generates JSON without storing secret values in the Nix
 store. See the [configuration guide](docs/configuration.md) for multiple Discord
-inboxes, gateway instances, and migration from legacy env settings.
+guilds and inboxes. Application settings belong under `config`; there is no
+env-only configuration mode.
 
 The service stores case files, session transcripts, Discord conversations, and
 provider credentials in `/var/lib/blitzcrank`. Keep `auth.json` writable so pi
@@ -68,8 +69,8 @@ For OAuth or subscription authentication, run this on the deployed host:
 sudo blitzcrank-pi
 ```
 
-Use `/login` or `/logout` in the pi CLI. The helper uses
-`/var/lib/blitzcrank` as its agent directory and stops `blitzcrank.service`
+Use `/login` or `/logout` in the pi CLI. The helper uses the directory containing
+`config.authPath` as its agent directory and stops `blitzcrank.service`
 while the CLI owns the auth file. On exit or interruption, it restores the
 service's previous running or stopped state. It needs an interactive terminal
 and works over SSH.
@@ -81,17 +82,16 @@ services.blitzcrank.authSeedFile = "/run/secrets/pi_auth_json";
 ```
 
 The module loads the secret as a systemd credential. It copies the secret to
-`authFile` only when that file is missing or the secret changes, so ordinary
-rebuilds preserve refreshed tokens. Use this option if you customize
-`authFile`; the interactive helper always writes the default path.
+`config.authPath` only when that file is missing or the secret changes, so ordinary
+rebuilds preserve refreshed tokens. Auth files must be named `auth.json` and
+live beneath the module's managed state directory.
 
 The unmanaged CLI is also available as `blitz-pi`. Use `blitzcrank-pi` to
 manage the deployed service's credentials.
 
 ### HTTP endpoints
 
-The server listens on `port`, which defaults to `8484`, or `BLITZCRANK_PORT` in
-legacy env mode.
+The server listens on `port`, which defaults to `8484`.
 
 | Method | Path                     | Purpose                   |
 | ------ | ------------------------ | ------------------------- |
@@ -110,11 +110,11 @@ Open **Settings → Notifications → Webhook** in Jellyseerr and configure:
 | Setting              | Value                                         |
 | -------------------- | --------------------------------------------- |
 | URL                  | `http://<blitzcrank-host>:8484/webhook/seerr` |
-| Authorization header | Your `BLITZCRANK_WEBHOOK_SECRET`, if set      |
+| Authorization header | The resolved `webhookSecret`, if set          |
 | Payload              | Keep the default JSON template                |
 | Notification types   | Enable the Issue events                       |
 
-Set `SEERR_BOT_USERNAME` to the bot's display name and `SEERR_BOT_USER_ID` to
+Set `seerrBotUsername` to the bot's display name and `seerrBotUserId` to
 the user it should comment as. These identify the bot's comments and prevent
 webhook loops.
 
@@ -170,32 +170,36 @@ Set `BLITZCRANK_CONFIG` to a versioned JSON config file. Start with
 [configuration guide](docs/configuration.md) for every field, secret references,
 and Nix support. Optional service tools are available only when configured.
 
-Without `BLITZCRANK_CONFIG`, legacy env configuration still works.
-[`.env.example`](.env.example) lists its settings. The env names below describe
-that mode; in file mode, use the corresponding structured fields.
+`BLITZCRANK_CONFIG` is required. Environment variables supply only explicit
+secret references and provider authentication, not application settings.
+[`.env.example`](.env.example) shows the selector and example secret inputs.
 
 ### Model selection
 
 Model values use `provider/model[:thinking]`.
 
-| Setting                           | Applies to                                   | Default or fallback                  |
-| --------------------------------- | -------------------------------------------- | ------------------------------------ |
-| `BLITZCRANK_MODEL`                | Issue runs                                   | `anthropic/claude-sonnet-4-5:medium` |
-| `BLITZCRANK_AUTOMATION_MODEL`     | Automations                                  | `BLITZCRANK_MODEL`                   |
-| `BLITZCRANK_AUTOMATION_MODELS`    | Named automation overrides, as a JSON object | Automation default                   |
-| `BLITZCRANK_DISCORD_MODEL`        | Discord conversations                        | `BLITZCRANK_MODEL`                   |
-| `BLITZCRANK_DISCORD_TRIAGE_MODEL` | Discord inbox classification                 | Conversation model                   |
+| Setting                                 | Applies to                                   | Default or fallback                  |
+| --------------------------------------- | -------------------------------------------- | ------------------------------------ |
+| `model`                                 | Issue runs                                   | `anthropic/claude-sonnet-4-5:medium` |
+| `automationModel`                       | Automations                                  | `model`                              |
+| `automationModels`                      | Named automation overrides, as a JSON object | Automation default                   |
+| `gateways.discord.guilds[].model`       | Discord conversations in that guild          | `model`                              |
+| `gateways.discord.guilds[].triageModel` | Discord inbox classification in that guild   | Conversation model                   |
 
 For example, this overrides one automation:
 
-```dotenv
-BLITZCRANK_AUTOMATION_MODELS={"stale-import-handler":"openai-codex/gpt-5.6-terra:high"}
+```json
+{
+  "automationModels": {
+    "stale-import-handler": "openai-codex/gpt-5.6-terra:high"
+  }
+}
 ```
 
 The Nix module exposes automation defaults and overrides as:
 
 ```nix
-services.blitzcrank = {
+services.blitzcrank.config = {
   automationModel = "anthropic/claude-sonnet-4-5:medium";
   automationModels.stale-import-handler = "openai-codex/gpt-5.6-terra:high";
 };
@@ -214,14 +218,14 @@ pi reads the usual provider environment variables, such as
 a writable pi `auth.json`.
 
 On NixOS, use the [provider login helper](#provider-login). Elsewhere, log in
-with pi and set `BLITZCRANK_AUTH_PATH` to its writable auth file. The default
+with pi and set `authPath` to its writable auth file. The default
 is `~/.pi/agent/auth.json`.
 
-Set `BLITZCRANK_MODELS_PATH` to a `models.json` file to define custom providers.
+Set `modelsPath` to a `models.json` file to define custom providers.
 
 ### Media inspection
 
-Set `BLITZCRANK_MEDIA_ROOTS` to colon-separated absolute directories containing
+Set `media.roots` to an array of absolute directories containing
 media and completed downloads. `media_probe` uses ffprobe to inspect streams,
 including their languages. `media_frames` uses ffmpeg to return up to six JPEG
 frames at requested timestamps for wrong-movie or wrong-episode reports. Frame
@@ -233,9 +237,10 @@ Frames and stream metadata do not authorize changes or establish target IDs.
 
 ### Web access
 
-Set `BLITZCRANK_WEB_PROVIDER=firecrawl` and `FIRECRAWL_API_KEY` to add web
-search and extraction to issue runs and Discord conversations. Web access is
-off by default. On NixOS, use `services.blitzcrank.webProvider`.
+Set `web` to
+`{ "provider": "firecrawl", "apiKey": { "env": "FIRECRAWL_API_KEY" } }`
+and supply that secret to add web search and extraction to issue runs and
+Discord conversations. Web access is off by default.
 
 `web_search` returns snippets. `web_extract` opens one page per call, and only
 if the current run's search returned its URL. Web content is untrusted and
@@ -246,11 +251,11 @@ it cannot enforce a remote fetcher's DNS and redirect policy.
 
 ### Anvil
 
-Set `ANVIL_CONTROL_SOCKET` to enable status reads, exact-path job lookups,
+Set `anvil.socket` to enable status reads, exact-path job lookups,
 diagnostics, and retry of a diagnosed failed encode. Anvil tools use `anvilctl`
 over its control socket. They never open its store.
 
-`ANVIL_COMMAND` defaults to `anvilctl`. Set an absolute path if the executable
+`anvil.command` defaults to `anvilctl`. Set an absolute path if the executable
 is not on the service's `PATH`. On NixOS, use Anvil's standalone client package
 and grant access to its socket group:
 
@@ -286,7 +291,7 @@ Automations get read tools plus their declared mutation tools. Model selection
 belongs in deployment configuration, not the task file. Changing a model does
 not change tool access or evidence requirements.
 
-NixOS uses the bundled definitions by default. Set `automationsDir` to use your
+NixOS uses the bundled definitions by default. Set `config.automationsDir` to use your
 own. The bundled `stale-import-handler` requires Sonarr, Radarr, and Anvil.
 Startup fails if a declared tool is unavailable, a model override names an
 unknown automation, or a selected model is unavailable.
@@ -300,15 +305,12 @@ validated `status` and `body` as the report.
 
 ### Automation reports and commands
 
-Add a `type: "discord"` entry to `gateways`, with a stable `id`, token reference,
-`guildId`, and `reportChannelId`. The [configuration guide](docs/configuration.md)
-has JSON and Nix examples. You can configure several bot/guild connections;
-automation reports go to each running gateway.
+Configure `gateways.discord.token` and a `gateways.discord.guilds` list.
+Each guild has a `guildId`, `reportChannelId`, and optional inbox and role
+settings. The [configuration guide](docs/configuration.md) has JSON and Nix
+examples. One bot client serves every configured guild through one connection.
 
-Legacy env mode supports one connection through `DISCORD_BOT_TOKEN`,
-`DISCORD_GUILD_ID`, and `DISCORD_WATCH_CHANNEL_ID`.
-
-Each automation posts to a private `automation: <name>` thread in the watch
+Each automation posts to a private `automation: <name>` thread in each report
 channel. Reports include runs with nothing to do, so you can see that the
 schedule is still working. The report header shows the structured status;
 internal history markers are removed before delivery.
@@ -316,13 +318,14 @@ internal history markers are removed before delivery.
 - `/automation list` shows schedules and next runs.
 - `/automation run name:<x>` queues a run.
 
-Administrators can trigger runs. Set the gateway's `adminRoleIds`, or
-`DISCORD_ADMIN_ROLE_IDS` in env mode, to grant access to additional roles.
+Administrators can trigger runs. Set each guild's `adminRoleIds` to grant
+access to additional roles. Messages and commands from unconfigured guilds
+are ignored.
 
 ### Bot permissions
 
 Invite the bot with the `bot` and `applications.commands` scopes. Grant these
-permissions in the watch channel:
+permissions in each report channel:
 
 - View Channel
 - Send Messages
@@ -331,19 +334,19 @@ permissions in the watch channel:
 - Manage Threads
 - Read Message History, which lets the bot find archived report threads
 
-Keep the watch channel admin-only. blitzcrank does not edit permissions.
+Keep report channels admin-only. blitzcrank does not edit permissions.
 If you need to remove a report thread, delete it; the next run creates another.
 Avoid locking threads, since reviving one requires Manage Threads permission
 on the thread itself.
 
-On startup, blitzcrank replaces the configured guild's command set. Use a
+On startup, blitzcrank replaces each configured guild's command set. Use a
 separate Discord application for this bot.
 
 ### Private operations inboxes
 
-List watched text channels in the gateway's `inboxChannelIds` and enable Message
+List watched text channels in each guild's `inboxChannelIds` and enable Message
 Content Intent in the Discord developer portal. Grant the bot the same thread
-permissions in every inbox. Env mode accepts one `DISCORD_INBOX_CHANNEL_ID`.
+permissions in every inbox.
 Restrict channel access to trusted users: access allows service changes and
 searches of prior conversations.
 
@@ -359,7 +362,7 @@ The host posts replies with mentions blocked. The agent cannot write to Discord
 or change Seerr issue status.
 
 The agent can search bounded snippets from earlier blitzcrank Seerr and Discord
-sessions across configured gateways. Gateways are not tenant boundaries.
+sessions across configured guilds. Guilds are not tenant boundaries.
 Searches exclude the current conversation and automation transcripts.
 History is untrusted context, not permission or current service evidence.
 Each thread retains service evidence, but the agent must read mutable state,
@@ -367,11 +370,11 @@ file paths, and reusable Anvil slugs again before using them.
 
 Private threads are visible to the invited sender and members with Manage
 Threads permission. Those members can also drive the conversation by replying.
-Use the gateway's `triageModel`, or `BLITZCRANK_DISCORD_TRIAGE_MODEL` in env mode,
+Use the guild's `triageModel`
 to choose a cheaper model for the initial classification pass.
 
-Keep gateway ID `discord` when migrating an existing env deployment to preserve
-its conversation sessions and evidence. Other gateway IDs have separate storage.
+Conversation sessions and evidence use Discord's globally unique thread IDs.
+Adding a guild does not create another client or a separate state directory.
 
 ## Safety rules
 
@@ -405,7 +408,9 @@ pnpm 11, and TypeScript. The current nixpkgs revision supplies Node 24:
 ```bash
 nix develop          # or: direnv allow
 pnpm install
-cp .env.example .env # fill in service URLs and API keys
+cp blitzcrank.example.json blitzcrank.json # configure services
+cp .env.example .env # fill in referenced secrets and provider authentication
+set -a; . ./.env; set +a # or let direnv load .env
 pnpm dev             # tsx watch
 ```
 

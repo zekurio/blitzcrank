@@ -32,8 +32,9 @@
   strategy.
 - Config uses versioned JSON selected by `BLITZCRANK_CONFIG` (`src/config.ts`,
   schema in `src/config/schema.ts`, documented in `docs/configuration.md`).
-  With no file selected, `.env.example` documents the legacy env adapter.
-  File mode does not merge env settings; secrets use explicit env/file references.
+  Selecting a file is required; there is no env configuration adapter.
+  Secrets use explicit env/file references. The Nix module generates JSON from
+  `services.blitzcrank.config` and owns the fixed `/var/lib/blitzcrank` state path.
   Never commit `.env` or secret values. For Nix changes, `nix flake show` must
   evaluate (flakes only see git-tracked files); `nix flake check` builds the
   linux package.
@@ -105,7 +106,7 @@ behavioural difference described.
   builtin `read`. Never enable `bash`, `edit`, or `write` in the runner.
 - `media_probe` (ffprobe) is read-only, accepts only exact paths extracted from
   declared service/Anvil path fields in the current run, is gated on
-  `BLITZCRANK_MEDIA_ROOTS`, and resolves targets with `realpath` _before_ the
+  `media.roots`, and resolves targets with `realpath` _before_ the
   containment check, so no symlink reads outside the roots. It deliberately
   does not call `ctx.recordRead`: stream titles are release-group text and must never satisfy
   an ID evidence gate. Do not "fix" that.
@@ -117,7 +118,7 @@ behavioural difference described.
   backup stay operator-only — their blast radius is a library or the database.
 - Web search/extract (`web_search`, `web_extract`) is read-only, granted to
   issue runs and Discord conversation replies only by the configured web
-  provider (`BLITZCRANK_WEB_PROVIDER`, default `none`). No pi extensions are
+  provider (`web.provider`, default `none`). No pi extensions are
   loaded anywhere. Firecrawl uses only the hosted API; custom endpoints are
   rejected because Blitzcrank cannot enforce a remote fetcher's DNS and
   redirect policy. `web_extract` accepts only URLs `web_search` returned in
@@ -132,9 +133,11 @@ behavioural difference described.
 - Discord (`src/discord/`) stays a host-side surface; no agent tool may write to
   it. Gateways use the lifecycle/conversation interfaces in `src/gateways/chat/`;
   platform adapters own authorization and optional thread behavior.
-  Without any `inboxChannelIds`, a Discord gateway declares no intents.
+  `gateways.discord` configures one bot token and one client for all its guilds.
+  Without any `inboxChannelIds` across those guilds, it declares no intents.
   With inboxes, it declares only Guilds, GuildMessages, and MessageContent. It
-  ignores other guilds/channels, bots, webhooks, and empty messages. A typed
+  routes by guild before authorization and ignores unconfigured guilds/channels,
+  bots, webhooks, and empty messages. A typed
   triage pass with no service/read tools may create one private thread and add
   the sender. The host then posts a bot-authored source card with the original
   text, author tag, and message link. It never impersonates the sender. Discord
@@ -152,13 +155,18 @@ behavioural difference described.
   reply. The host posts replies with `allowedMentions: { parse: [] }` and the
   agent gets no
   Discord write tool. Slash-command triggers remain separately authorized
-  against the configured guild plus
-  administrator or configured `adminRoleIds`, and fail closed. A gateway
-  _startup_ failure disables only that connection and is logged; malformed
-  configuration stays fatal in `loadConfigEffect`. All gateways share the
-  serial queue, and reports fan out to running gateways. Gateway IDs namespace
-  sessions and evidence; `discord` retains legacy paths. History can search
-  across gateways, so these are not tenant boundaries.
+  against the receiving guild plus
+  administrator or its configured `adminRoleIds`, and fail closed. A Discord
+  _startup_ failure disables Discord and is logged, without stopping HTTP;
+  malformed configuration stays fatal in `loadConfigEffect`. HTTP starts
+  independently of the one owned login fiber. Do not interrupt or discard a
+  pending SDK login: discord.js can reconnect after destroy during startup.
+  Shutdown waits for settlement within the host's process-exit deadline.
+  All guilds share
+  the serial queue, and reports fan out to their configured report channels.
+  Discord's globally unique thread IDs key sessions and evidence under
+  `sessions/discord` and `evidence/discord`. History can search across guilds,
+  so these are not tenant boundaries.
 - Automations (`automations/*.md`) are trusted operator instructions, but their
   runs get only the exact tools in their declared `mutation_tools` allowlist,
   plus the always-on read tools. "Always-on read tools" means exactly
