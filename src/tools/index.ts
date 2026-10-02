@@ -109,6 +109,22 @@ export function buildDiscordTools(
   return tools
 }
 
+/** Inline answers cannot mutate services or search private conversations. */
+export function buildDiscordAnswerTools(
+  config: Config,
+  ctx: RunContext,
+): ToolDefinition[] {
+  const names = new Set([
+    "seerr_request",
+    "sonarr_request",
+    "radarr_request",
+    "jellyfin_request",
+  ])
+  return buildServiceTools(config, ctx, { current: undefined }).filter((tool) =>
+    names.has(tool.name),
+  )
+}
+
 export type MediaScope = "movie" | "tv" | undefined
 
 export interface IssueToolDeps {

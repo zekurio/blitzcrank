@@ -318,7 +318,7 @@ on the thread itself.
 On startup, blitzcrank replaces the configured guild's command set. Use a
 separate Discord application for this bot.
 
-### Private operations inbox
+### Support inbox
 
 Set `DISCORD_INBOX_CHANNEL_ID` and enable Message Content Intent in the Discord
 developer portal. Grant the bot the same thread permissions in the inbox.
@@ -326,12 +326,26 @@ Restrict channel access to trusted users: access allows service changes and
 searches of prior conversations.
 
 Each plain-text message goes to a classifier with no service or read tools.
-For accepted messages, the host opens a private `blitzcrank: <topic>` thread,
-adds the sender, and posts a source card with the original text, author, and
-message link.
+Quick questions about releases and availability get a reply in the channel.
+These answers have only the Seerr, Sonarr, Radarr, and Jellyfin GET tools,
+plus web tools when configured. They use fresh sessions without saved evidence
+or private conversation history. Replying to the bot includes that one earlier
+answer from the same channel as context for the next question.
 
-Replies continue one persistent agent session. It can use all configured
-service reads and typed mutations, including both Sonarr and Radarr. Multi-item
+Troubleshooting and service changes open a private thread named for the full
+show or movie title and the problem, such as
+`Die Tagebücher der Apothekerin: Folge fehlt`. Naming instructions preserve the
+media title and shorten the problem description first to fit Discord's limit.
+The host adds the sender and posts a source card with the original text, author, and
+message link. Conversation IDs are stored independently of thread names, so
+renaming a thread does not break replies. Existing `blitzcrank: <topic>` threads
+are adopted on their next reply.
+
+Discord's typing indicator runs during an active reply. Answers arrive as new
+messages, without a working placeholder. Typing failures do not fail the reply.
+
+Private-thread replies continue one persistent agent session. It can use all
+configured service reads and typed mutations, including both Sonarr and Radarr. Multi-item
 or destructive work requires prior conversation approval for the exact scope.
 The host posts replies with mentions blocked. The agent cannot write to Discord
 or change Seerr issue status.
