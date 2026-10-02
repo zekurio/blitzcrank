@@ -130,8 +130,14 @@ behavioural difference described.
   it. Without `DISCORD_INBOX_CHANNEL_ID`, the gateway still declares no intents.
   With an inbox, it declares only Guilds, GuildMessages, and MessageContent. It
   ignores other guilds/channels, bots, webhooks, and empty messages. A typed
-  triage pass with no service/read tools may create one private thread and add
-  the sender. The host then posts a bot-authored source card with the original
+  triage pass with no service/read tools chooses ignore, an inline answer, or a
+  private thread. Inline answers get only Seerr/Sonarr/Radarr/Jellyfin GET tools
+  plus configured web tools and builtin skill read, with fresh sessions and no
+  carried evidence or private history. Reply context is limited to one earlier
+  bot answer in the same channel. For troubleshooting or changes, the host may
+  create one private thread and add the sender. It records conversation identity
+  independently of the thread title; existing `blitzcrank:` threads are adopted
+  on their next reply. The host posts a bot-authored source card with the original
   text, author tag, and message link. It never impersonates the sender. Discord
   channel and private-thread permissions are the host-side authorization
   boundary for service changes. The thread's durable agent session gets every

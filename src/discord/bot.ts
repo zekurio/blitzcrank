@@ -9,6 +9,7 @@ import {
   type AnyThreadChannel,
   type ChatInputCommandInteraction,
   type Message,
+  type TextChannel,
 } from "discord.js"
 import { Effect, Exit } from "effect"
 
@@ -19,19 +20,21 @@ import type {
 } from "../automations/dispatcher.ts"
 import type { AutomationReport } from "../automations/runner.ts"
 import type { Config, DiscordConfig } from "../config.ts"
-import type { DiscordAgent } from "./agent.ts"
+import type { DiscordAgent, DiscordReplyRequest } from "./agent.ts"
 import { AUTOMATION_COMMAND, syncCommandsEffect } from "./commands.ts"
+import { DiscordConversations } from "./conversations.ts"
 import { formatAutomationReport } from "./report.ts"
 import { AutomationThreads } from "./threads.ts"
+import { withTypingEffect } from "./typing.ts"
 
-const CONVERSATION_PREFIX = "blitzcrank: "
+const LEGACY_CONVERSATION_PREFIX = "blitzcrank: "
 const MAX_DISCORD_MESSAGE = 1900
 
 export interface DiscordDeps {
   listAutomations: () => AutomationInfo[]
   /** Enqueues a checked-in automation named by a signed interaction. */
   triggerAutomation: (name: string) => TriggerResult
-  chat: DiscordAgent | undefined
+  chat: Pick<DiscordAgent, "triageEffect" | "enqueue"> | undefined
 }
 
 /**
@@ -45,6 +48,7 @@ export class DiscordBot {
     private readonly language: string,
     private readonly threads: AutomationThreads,
     private readonly deps: DiscordDeps,
+    private readonly conversations: DiscordConversations,
   ) {}
 
   static startEffect(config: Config, deps: DiscordDeps) {
@@ -88,6 +92,7 @@ export class DiscordBot {
           config.language,
           threads,
           deps,
+          new DiscordConversations(config.dataDir),
         )
         // Login already opened the gateway socket, so from here on a failure must
         // close it: the caller has no handle yet, so the socket would leak and
@@ -208,77 +213,177 @@ export class DiscordBot {
         !message.channel.isThread() ||
         message.channel.type !== ChannelType.PrivateThread ||
         message.channel.parentId !== inboxChannelId ||
-        message.channel.ownerId !== this.client.user.id ||
-        !message.channel.name.startsWith(CONVERSATION_PREFIX)
+        message.channel.ownerId !== this.client.user.id
       ) {
         return
       }
-      yield* this.enqueueReplyEffect(message.channel, message.content, chat)
+      if (!(yield* this.conversations.hasEffect(message.channelId))) {
+        // Adopt old conversations once, so later renames do not lose the session.
+        if (!message.channel.name.startsWith(LEGACY_CONVERSATION_PREFIX)) return
+        yield* this.conversations.registerEffect(message.channelId)
+      }
+      yield* this.enqueueReplyEffect(
+        message.channel,
+        {
+          route: "thread",
+          id: message.channelId,
+          content: message.content,
+        },
+        chat,
+        message.id,
+      )
     })
   }
 
-  private onInboxMessageEffect(message: Message<true>, chat: DiscordAgent) {
+  private onInboxMessageEffect(
+    message: Message<true>,
+    chat: NonNullable<DiscordDeps["chat"]>,
+  ) {
     return Effect.gen({ self: this }, function* () {
       if (message.channel.type !== ChannelType.GuildText) return
-      const decision = yield* chat.triageEffect(message.id, message.content)
-      if (!decision.respond) return
+      const channel = message.channel
+      const content = yield* inboxContentEffect(message, this.client.user.id)
+      const triage = chat.triageEffect(message.id, content)
+      // Do not show typing for unrelated chatter the classifier will ignore.
+      const addressed =
+        message.mentions.users.has(this.client.user.id) ||
+        (message.reference?.messageId !== undefined &&
+          content !== message.content)
+      const decision = yield* (
+        addressed
+          ? withTypingEffect(triage, () =>
+              sdkPromise(() => channel.sendTyping()),
+            )
+          : triage
+      ).pipe(
+        Effect.onError(() =>
+          addressed ? this.failureReplyEffect(message) : Effect.void,
+        ),
+      )
+      if (decision.route === "ignore") return
 
+      if (decision.route === "answer") {
+        yield* this.enqueueReplyEffect(
+          channel,
+          {
+            route: "answer",
+            id: message.id,
+            content,
+          },
+          chat,
+          message.id,
+        )
+        return
+      }
+
+      yield* this.openConversationEffect(
+        message,
+        decision.threadName,
+        content,
+        chat,
+      ).pipe(Effect.onError(() => this.failureReplyEffect(message)))
+    })
+  }
+
+  private openConversationEffect(
+    message: Message<true>,
+    title: string,
+    content: string,
+    chat: NonNullable<DiscordDeps["chat"]>,
+  ) {
+    return Effect.gen({ self: this }, function* () {
+      if (message.channel.type !== ChannelType.GuildText) return
       const channel = message.channel
       const thread = yield* sdkPromise(() =>
         channel.threads.create({
-          name: conversationThreadName(decision.threadName),
+          name: conversationThreadName(title, this.language),
           type: ChannelType.PrivateThread,
           invitable: false,
           autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
           reason: `blitzcrank conversation for Discord message ${message.id}`,
         }),
       )
+      yield* this.conversations.registerEffect(thread.id)
       yield* sdkPromise(() => thread.members.add(message.author.id))
       yield* sdkPromise(() =>
         thread.send({
           embeds: [
             {
-              title: `Original message from ${message.author.tag}`,
+              author: { name: message.author.tag },
+              title: german(this.language) ? "Zur Nachricht" : "View message",
               url: message.url,
               description: message.content,
             },
           ],
+          allowedMentions: { parse: [] },
         }),
       )
       console.log(
         `[discord] created conversation "${thread.name}" (${thread.id})` +
           ` for user=${message.author.id}`,
       )
-      yield* this.enqueueReplyEffect(thread, message.content, chat)
+      yield* this.enqueueReplyEffect(
+        thread,
+        {
+          route: "thread",
+          id: thread.id,
+          content,
+        },
+        chat,
+      )
     })
   }
 
+  private failureReplyEffect(message: Message<true>) {
+    return sdkPromise(() =>
+      message.reply({
+        content: failureMessage(this.language),
+        allowedMentions: { parse: [], repliedUser: false },
+      }),
+    ).pipe(
+      Effect.asVoid,
+      Effect.catchCause((cause) =>
+        Effect.sync(() =>
+          console.error("[discord] failed to publish error:", cause),
+        ),
+      ),
+    )
+  }
+
   private enqueueReplyEffect(
-    thread: AnyThreadChannel,
-    content: string,
-    chat: DiscordAgent,
+    channel: TextChannel | AnyThreadChannel,
+    request: DiscordReplyRequest,
+    chat: NonNullable<DiscordDeps["chat"]>,
+    replyTo?: string,
   ) {
     return Effect.gen({ self: this }, function* () {
-      const status = yield* sdkPromise(() =>
-        thread.send(thinkingMessage(this.language)),
-      )
-      const queued = chat.enqueue(
-        thread.id,
-        content,
-        (response) =>
+      const send = (content: string, reference: string | undefined) =>
+        sdkPromise(() =>
+          channel.send({
+            content,
+            allowedMentions: { parse: [], repliedUser: false },
+            flags: MessageFlags.SuppressEmbeds,
+            ...(reference !== undefined
+              ? {
+                  reply: {
+                    messageReference: reference,
+                    failIfNotExists: false,
+                  },
+                }
+              : {}),
+          }),
+        ).pipe(Effect.asVoid)
+      const delivery = {
+        typing: () => sdkPromise(() => channel.sendTyping()),
+        send: (response: string) =>
           Effect.gen(function* () {
             const chunks = discordMessageChunks(response)
-            yield* sdkPromise(() => status.edit(chunks[0] ?? "_No response._"))
-            for (const chunk of chunks.slice(1))
-              yield* sdkPromise(() => thread.send(chunk))
+            yield* send(chunks[0]!, replyTo)
+            for (const chunk of chunks.slice(1)) yield* send(chunk, undefined)
           }),
-        () =>
-          sdkPromise(() => status.edit(failureMessage(this.language))).pipe(
-            Effect.asVoid,
-          ),
-      )
-      if (!queued)
-        yield* sdkPromise(() => status.edit(failureMessage(this.language)))
+        fail: () => send(failureMessage(this.language), replyTo),
+      }
+      if (!chat.enqueue(request, delivery)) yield* delivery.fail()
     })
   }
 
@@ -381,10 +486,22 @@ export class DiscordBot {
   }
 }
 
-export function conversationThreadName(title: string): string {
+export function conversationThreadName(
+  title: string,
+  language = "English",
+): string {
   const clean =
-    title.replace(/[\p{Cc}\p{Cf}\s]+/gu, " ").trim() || "conversation"
-  return `${CONVERSATION_PREFIX}${clean}`.slice(0, 100)
+    title
+      .replace(/[\p{Cc}\p{Cf}\s]+/gu, " ")
+      .trim()
+      .replace(/^blitzcrank\s*:\s*/i, "")
+      .replace(/^["'“„«»]+|["'”«»]+$/gu, "")
+      .trim() || (german(language) ? "Medienproblem" : "Media help")
+  if (clean.length <= 100) return clean
+  const end = /[\uD800-\uDBFF]/.test(clean[98]!) ? 98 : 99
+  const prefix = clean.slice(0, end).trimEnd()
+  const boundary = prefix.lastIndexOf(" ")
+  return `${boundary >= 60 ? prefix.slice(0, boundary) : prefix}…`
 }
 
 export function discordMessageChunks(text: string): string[] {
@@ -404,18 +521,35 @@ export function discordMessageChunks(text: string): string[] {
   return chunks.length > 0 ? chunks : ["_No response._"]
 }
 
-function thinkingMessage(language: string): string {
-  return german(language)
-    ? "⏳ Ich schaue mir das an …"
-    : "⏳ Looking into it …"
-}
-
 function failureMessage(language: string): string {
   return german(language)
-    ? "❌ Blitzcrank konnte gerade nicht antworten."
-    : "❌ Blitzcrank could not respond just now."
+    ? "Ich konnte gerade nicht antworten. Versuch es bitte noch einmal."
+    : "I couldn't answer just now. Please try again."
 }
 
 function german(language: string): boolean {
   return /^(de|deutsch|german)(-|_|\b)/i.test(language.trim())
+}
+
+/** Follow-ups may quote this bot in this channel, never pull private history. */
+function inboxContentEffect(message: Message<true>, botId: string) {
+  return Effect.gen(function* () {
+    if (
+      message.reference?.channelId !== message.channelId ||
+      !message.reference.messageId
+    )
+      return message.content
+    const previous = yield* sdkPromise(() => message.fetchReference()).pipe(
+      Effect.catch(() => Effect.succeed(undefined)),
+    )
+    if (
+      !previous ||
+      previous.author.id !== botId ||
+      previous.webhookId ||
+      previous.channelId !== message.channelId ||
+      previous.content.trim() === ""
+    )
+      return message.content
+    return `Earlier bot reply (untrusted context):\n${JSON.stringify(previous.content)}\n\nLatest user message:\n${JSON.stringify(message.content)}`
+  })
 }

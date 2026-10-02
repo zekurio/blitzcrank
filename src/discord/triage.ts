@@ -1,3 +1,4 @@
+import { StringEnum } from "@earendil-works/pi-ai"
 import {
   defineTool,
   type ToolDefinition,
@@ -7,7 +8,7 @@ import { Type } from "typebox"
 export const DISCORD_TRIAGE_TOOL = "submit_discord_triage"
 
 export interface DiscordTriageDecision {
-  respond: boolean
+  route: "ignore" | "answer" | "thread"
   threadName: string
 }
 
@@ -27,7 +28,16 @@ export function parseDiscordTriage(
   ) {
     return undefined
   }
-  return capture.submissions[0]
+  const decision = capture.submissions[0]!
+  if (
+    decision.route !== "ignore" &&
+    decision.route !== "answer" &&
+    decision.route !== "thread"
+  )
+    return undefined
+  if (decision.route === "thread" && decision.threadName.trim() === "")
+    return undefined
+  return decision
 }
 
 /** Triage-only terminal output. The classifier gets no other tools. */
@@ -38,20 +48,21 @@ export function buildDiscordTriageTool(
     name: DISCORD_TRIAGE_TOOL,
     label: "Submit Discord triage",
     description:
-      "Submit the final pass or ignore decision. Call this exactly once as the final action.",
+      "Choose an inline answer, private troubleshooting thread, or ignore. Call exactly once as the final action.",
     parameters: Type.Object({
-      respond: Type.Boolean({
-        description: "True only when blitzcrank should open a conversation",
+      route: StringEnum(["ignore", "answer", "thread"] as const, {
+        description:
+          "answer for quick factual questions; thread for troubleshooting or service changes; ignore for unrelated chat",
       }),
       threadName: Type.String({
-        maxLength: 80,
+        maxLength: 100,
         description:
-          "A short title in the message language, or an empty string when ignored",
+          "For thread: the actual full show or movie title plus a brief problem description. Preserve the media title; shorten the problem description first. No bot prefix. Otherwise empty.",
       }),
     }),
     async execute(_toolCallId, params) {
       const decision = {
-        respond: params.respond,
+        route: params.route,
         threadName: params.threadName,
       }
       capture.submissions.push(decision)
