@@ -160,8 +160,55 @@ export interface AgentTurnOptions {
   logPrefix: string
   /** Register builtin read for loading deployment skills. Default true. */
   builtinRead?: boolean
+  /** These tools must run alone and close tool execution on success. */
+  terminalToolNames?: readonly string[]
   /** Stops the live turn after any tool call already in flight returns. */
   signal?: AbortSignal | undefined
+}
+
+/**
+ * Pi prepares tool calls from the full assistant message before execution.
+ * Inspect that message in its native hook, so even a mutation listed before
+ * the terminal call is blocked. Keep the SDK's hooks for result normalization.
+ */
+export function installTerminalToolGate(
+  agent: Pick<AgentSession["agent"], "beforeToolCall" | "afterToolCall">,
+  terminalToolNames: readonly string[],
+): () => void {
+  const terminalNames = new Set(terminalToolNames)
+  const before = agent.beforeToolCall
+  const after = agent.afterToolCall
+  let submitted = false
+  agent.beforeToolCall = async (context, signal) => {
+    const calls = context.assistantMessage.content.filter(
+      (block) => block.type === "toolCall",
+    )
+    if (submitted)
+      return {
+        block: true,
+        reason: "A terminal result has already been submitted.",
+      }
+    if (
+      calls.length !== 1 &&
+      calls.some((call) => terminalNames.has(call.name))
+    )
+      return {
+        block: true,
+        reason: "Submit a terminal result as the only tool call in its batch.",
+      }
+    return before?.(context, signal)
+  }
+  agent.afterToolCall = async (context, signal) => {
+    if (!context.isError && terminalNames.has(context.toolCall.name))
+      submitted = true
+    return after?.(context, signal)
+  }
+  return () => {
+    if (before) agent.beforeToolCall = before
+    if (!before) delete agent.beforeToolCall
+    if (after) agent.afterToolCall = after
+    if (!after) delete agent.afterToolCall
+  }
 }
 
 /**
@@ -320,7 +367,9 @@ export function runSessionEffect(
     | "abort"
     | "prompt"
     | "dispose"
-  >,
+  > & {
+    agent: Pick<AgentSession["agent"], "beforeToolCall" | "afterToolCall">
+  },
   opts: Pick<
     AgentTurnOptions,
     | "modelSpec"
@@ -329,6 +378,7 @@ export function runSessionEffect(
     | "onToolExecutionEnd"
     | "signal"
     | "prompt"
+    | "terminalToolNames"
   > & { modelRuntime: Pick<ModelRuntime, "checkAuth"> },
   resumed: boolean,
 ): Effect.Effect<AgentTurnResult, SdkError> {
@@ -338,6 +388,14 @@ export function runSessionEffect(
         Effect.sync(() => session.dispose()),
       )
       yield* sdkPromise(() => session.bindExtensions({ mode: "print" }))
+
+      if (opts.terminalToolNames?.length) {
+        const restore = installTerminalToolGate(
+          session.agent,
+          opts.terminalToolNames,
+        )
+        yield* Effect.addFinalizer(() => Effect.sync(restore))
+      }
 
       if (opts.sessionFileRef) opts.sessionFileRef.current = session.sessionFile
 

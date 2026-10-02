@@ -15,7 +15,7 @@ export interface Directives {
   revisitInMs: number | undefined
   revisitReason: string | undefined
   comment: string
-  /** True when no directive block was found and defaults were applied. */
+  /** True when the header is invalid; all actions and public text are withheld. */
   malformed: boolean
 }
 
@@ -27,7 +27,9 @@ export function parseGoDuration(value: string): number | undefined {
   const match = value.trim().match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/)
   if (!match || (!match[1] && !match[2] && !match[3])) return undefined
   const [, h, m, s] = match
-  return (Number(h ?? 0) * 3600 + Number(m ?? 0) * 60 + Number(s ?? 0)) * 1000
+  const ms =
+    (Number(h ?? 0) * 3600 + Number(m ?? 0) * 60 + Number(s ?? 0)) * 1000
+  return Number.isFinite(ms) ? ms : undefined
 }
 
 function clampRevisit(ms: number): number {
@@ -35,6 +37,13 @@ function clampRevisit(ms: number): number {
 }
 
 export function parseDirectives(finalText: string): Directives {
+  const malformed: Directives = {
+    resolve: false,
+    revisitInMs: undefined,
+    revisitReason: undefined,
+    comment: "",
+    malformed: true,
+  }
   let text = finalText.trim()
   // Tolerate a fenced response (` ```text ... ``` `).
   const fence = text.match(/^```[a-z]*\n([\s\S]*?)\n?```$/)
@@ -43,15 +52,7 @@ export function parseDirectives(finalText: string): Directives {
   const lines = text.split("\n")
   const first = lines[0]?.trim() ?? ""
   const resolveMatch = first.match(/^RESOLVE_ISSUE:\s*(yes|no)\s*$/i)
-  if (!resolveMatch) {
-    return {
-      resolve: false,
-      revisitInMs: undefined,
-      revisitReason: undefined,
-      comment: text,
-      malformed: true,
-    }
-  }
+  if (!resolveMatch) return malformed
 
   let revisitInMs: number | undefined
   let revisitReason: string | undefined
@@ -61,26 +62,35 @@ export function parseDirectives(finalText: string): Directives {
     if (line === "") break
     const revisitIn = line.match(/^REVISIT_IN:\s*(\S+)\s*$/i)
     if (revisitIn) {
+      if (revisitInMs !== undefined) return malformed
       const parsed = parseGoDuration(revisitIn[1]!)
-      if (parsed !== undefined) revisitInMs = clampRevisit(parsed)
+      if (parsed === undefined) return malformed
+      revisitInMs = clampRevisit(parsed)
       continue
     }
     const reason = line.match(/^REVISIT_REASON:\s*(.+)$/i)
     if (reason) {
+      if (revisitReason !== undefined) return malformed
       revisitReason = reason[1]!.trim()
       continue
     }
-    // Unknown directive line: stop treating it as part of the block.
-    break
+    // Every nonempty line before the separator must be a valid header.
+    return malformed
   }
 
-  if (revisitInMs === undefined) revisitReason = undefined
+  if ((revisitInMs === undefined) !== (revisitReason === undefined))
+    return malformed
+
+  const comment = lines.slice(index).join("\n").trim()
+  // A blank line cannot turn a split or contradictory header into public text.
+  if (/^\s*(?:RESOLVE_ISSUE|REVISIT_IN|REVISIT_REASON)\b/im.test(comment))
+    return malformed
 
   return {
     resolve: resolveMatch[1]!.toLowerCase() === "yes",
     revisitInMs,
     revisitReason,
-    comment: lines.slice(index).join("\n").trim(),
+    comment,
     malformed: false,
   }
 }

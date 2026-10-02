@@ -1,11 +1,42 @@
 ---
 name: sonarr
-description: Diagnose and safely remediate Sonarr-managed TV series, seasons, episodes, queues, imports, files, and quality upgrades. Load for show or episode problems, especially missing, corrupt, wrong, stalled, or repeatedly replaced media.
+description: Answer series, season, and episode availability or air-date questions using Sonarr tracking, imports, candidates, and calendar. Also diagnose and safely remediate missing, corrupt, wrong, stalled, or repeatedly replaced TV media.
 ---
 
 # Sonarr
 
 `sonarr_request` is GET-only and accepts `purpose` and a relative `/api/v3/...` `path`. Mutations use the typed tools, require `reason`, and require every target ID to pass the run's Sonarr evidence gate. Issue, Discord, and automation runs are uncapped; automation scope comes from its exact mutation-tool allowlist.
+
+## Availability and dates
+
+For factual questions, use reads only. Resolve the exact series and TVDB ID,
+then `GET /api/v3/series?tvdbId={tvdbId}` and
+`GET /api/v3/series/{seriesId}` for tracking and monitoring. If title identity
+is missing, use `GET /api/v3/series/lookup?term={urlEncodedTitle}`; lookup
+metadata does not establish that the series is tracked or imported.
+
+- Episodes/imports: `GET /api/v3/episode?seriesId={seriesId}&includeEpisodeFile=true`.
+  Match the requested season/episode; use
+  `GET /api/v3/episodefile?seriesId={seriesId}` when file details are needed.
+- Acquiring: `GET /api/v3/queue/details?seriesId={seriesId}&includeSeries=true&includeEpisode=true`.
+- Candidates, when relevant to why an episode is not acquired:
+  `GET /api/v3/release?episodeId={episodeId}`; for a season,
+  `GET /api/v3/release?seriesId={seriesId}&seasonNumber={seasonNumber}`.
+  Read `approved`, `rejected`, and `rejections` alongside quality and
+  custom-format scores. This GET lists candidates; it does not grab them.
+  Rejected candidates explain local acceptance decisions, not global source
+  absence.
+- Dates: `GET /api/v3/calendar?start={urlEncodedISODate}&end={urlEncodedISODate}&unmonitored=true&includeSeries=true&includeEpisodeFile=true`.
+  Match series and episode IDs within a bounded date window. `airDate` and
+  `airDateUtc` describe airing, not a guaranteed homelab availability date.
+  State timezone uncertainty when relevant.
+
+Sonarr describes tracking, acquisition, and imports; Jellyfin describes actual
+serving/playback. Check Jellyfin for "can I watch it?" and use web only for missing
+external context. A service auth/error or no matching result leaves that source's
+answer unknown, not a global "unavailable". A successful empty series list means
+not tracked in Sonarr, not unaired. Continue useful independent services;
+Jellyfin HTTP 401 does not block Sonarr reads. Do not repeat the same failed call.
 
 ## Identity and evidence
 
@@ -18,14 +49,14 @@ Release/queue/history/file `languages` are release-name parsing (`MULTi`, `DL`, 
 - TVDB/title/series: `GET /api/v3/series?tvdbId={tvdbId}`, `GET /api/v3/series/lookup?term={query}`, `GET /api/v3/series`
 - Episodes/calendar: `GET /api/v3/episode?seriesId={seriesId}`, `GET /api/v3/calendar?start={urlEncodedISODate}&end={urlEncodedISODate}&includeSeries=true&includeEpisodeFile=true`
 - Files: `GET /api/v3/episodefile/{episodeFileId}`, `GET /api/v3/episodefile?seriesId={seriesId}`
-- History: `GET /api/v3/history?seriesId={seriesId}&page=1&pageSize=20&sortKey=date&sortDirection=descending`
+- History: `GET /api/v3/history/series?seriesId={seriesId}`
 - Queue: `GET /api/v3/queue?page=1&pageSize=50&includeUnknownSeriesItems=true`
-- Blocklist: `GET /api/v3/blocklist?page=1&pageSize=50&seriesId={seriesId}`
+- Blocklist: `GET /api/v3/blocklist?page=1&pageSize=50&seriesIds={seriesId}`
 - Profiles: `GET /api/v3/qualityprofile`; when supported, `GET /api/v3/languageprofile`
 - Manual import: `GET /api/v3/manualimport?folder={urlEncodedFolder}&downloadId={urlEncodedDownloadId}`
 - Status: `GET /api/v3/system/status`
 
-Resolve `tvdbId` (never substitute IMDb or anime enrichment or construct unverified links), then record series ID, type, path, monitoring, profile, exact episode IDs, files, queue, newest history, blocklist, and profiles. Exhaust this local evidence and narrow search results before speculating about public availability. Prefer Sonarr `airDate`/`airDateUtc` and state timezone uncertainty. Correlate download IDs through read-only `sabnzbd_request`; SAB completion is not import.
+For troubleshooting, resolve `tvdbId` (never substitute IMDb or anime enrichment or construct unverified links), then record series ID, type, path, monitoring, profile, exact episode IDs, files, queue, newest history, blocklist, and profiles. Use relevant local evidence and narrow candidate results before speculating about public availability. Prefer Sonarr `airDate`/`airDateUtc` and state timezone uncertainty. Correlate download IDs through read-only `sabnzbd_request`; SAB completion is not import.
 
 Anvil is item evidence only when `anvil_job_lookup` matches an exact absolute queue `outputPath`, or exact SAB `storage` linked by `downloadId`/`nzo_id`; `anvil_status`, guessed paths, and title matches are insufficient. Never remove, blocklist, retry, search, refresh, manual-import, or force-import an exact active Anvil wait.
 

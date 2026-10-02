@@ -111,10 +111,12 @@ webhook loops.
 ### What happens after a report
 
 1. Jellyseerr sends the issue webhook. blitzcrank queues an agent run.
-2. The agent reads service state and uses dedicated tools to make verified
-   changes. Movie issues get Radarr tools; TV issues get Sonarr tools. An
-   unknown media type gets neither.
-3. The host posts the result, resolves the issue if requested, and schedules
+2. The host fetches the current issue and includes it as recorded service
+   evidence. If that read fails, no agent run starts.
+3. The agent reads further service state and uses dedicated tools to make
+   verified changes. Movie issues get Radarr tools; TV issues get Sonarr tools.
+   An unknown media type gets neither.
+4. The host posts the result, resolves the issue if requested, and schedules
    a revisit if work needs time to finish.
 
 Each issue keeps one agent session and its service evidence across replies.
@@ -379,7 +381,11 @@ The agent can change media services, so the tool layer enforces these limits:
   its conversation and service evidence.
 - The host posts comments, resolves issues, and schedules revisits. The agent
   returns `RESOLVE_ISSUE` and optional `REVISIT_IN` and `REVISIT_REASON`
-  directives. Malformed directives result in no comment.
+  directives. Invalid or duplicate headers, incomplete revisit pairs, and
+  missing comment separators produce no comment, resolution, or revisit.
+- Automation reports and Discord triage decisions must be sole terminal tool
+  calls. The session rejects every call in a mixed terminal batch before
+  execution, and blocks further tools after successful submission.
 
 [AGENTS.md](AGENTS.md) records the full safety invariants and their rationale.
 The [legacy deployment notes](docs/research/legacy.md) describe the earlier Go
@@ -412,6 +418,21 @@ Run `pnpm verify` before opening a pull request. It checks formatting, lint,
 and types. [AGENTS.md](AGENTS.md) covers code style and contribution rules;
 [`skills/`](skills) and [`docs/research/`](docs/research) contain agent domain
 knowledge and API references.
+
+### Prompt changes
+
+Keep deterministic rules in the host or tools and test them there. The host
+fetches current issues, selects follow-up text, validates output, and owns
+delivery. Tool schemas, evidence gates, and read-back verification define
+operations; prompts need not repeat their mechanics.
+
+Prompts retain decisions code cannot infer: diagnosis, authorized scope,
+uncertainty, and what to tell the user. Service-specific endpoints and playbooks
+belong in skills. For availability questions, use Arr tracking, import, release,
+and calendar evidence; Jellyfin establishes serving state, and web sources fill
+external gaps. An unavailable source does not invalidate independent evidence.
+Test prompt composition separately from model behavior. A string assertion
+cannot prove that a model will choose the right service.
 
 ## Contributing
 

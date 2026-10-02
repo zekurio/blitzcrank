@@ -1,24 +1,58 @@
 # Pi SDK: headless Node integration guide
 
-Research date: 2026-09-08. Installed/published version inspected: **0.85.1**.
+Installed/published version inspected: **1.0.0**, upgraded from **0.85.1**.
 
 ## Recommendation
 
 For a headless service, use the high-level SDK in **`@earendil-works/pi-coding-agent`**. It exposes `createAgentSession()`, resource/skill loading, model authentication, custom tools, events, and session persistence without requiring the TUI.
 
 ```bash
-pnpm add @earendil-works/pi-coding-agent@0.85.1 \
-  @earendil-works/pi-ai@0.85.1 \
+pnpm add --save-exact @earendil-works/pi-coding-agent@1.0.0 \
+  @earendil-works/pi-ai@1.0.0 \
   typebox@1.1.38
 ```
 
-`@earendil-works/pi-coding-agent@0.85.1` already depends on `@earendil-works/pi-agent-core`, `@earendil-works/pi-ai`, and `typebox`. Declare `@earendil-works/pi-ai` and `typebox` directly because application code below imports them directly. Install `@earendil-works/pi-agent-core@0.85.1` directly only if application code imports its low-level `Agent` or types.
+`@earendil-works/pi-coding-agent@1.0.0` already depends on `@earendil-works/pi-agent-core`, `@earendil-works/pi-ai`, and `typebox`. Declare `@earendil-works/pi-ai` and `typebox` directly because application code below imports them directly. Install `@earendil-works/pi-agent-core@1.0.0` directly only if application code imports its low-level `Agent` or types.
 
 Confirmed with the published package registry:
 
-- `@earendil-works/pi-coding-agent`: `0.85.1`
-- `@earendil-works/pi-agent-core`: `0.85.1`
-- `@earendil-works/pi-ai`: `0.85.1`
+- `@earendil-works/pi-coding-agent`: `1.0.0`
+- `@earendil-works/pi-agent-core`: `1.0.0`
+- `@earendil-works/pi-ai`: `1.0.0`
+
+### 1.0.0 upgrade check
+
+Both direct SDK dependencies use exact `1.0.0` pins. The lockfile resolves
+agent-core to `1.0.0` too. Registry `latest` points to this stable release for
+both direct packages. No unrelated direct dependencies were upgraded.
+
+The published SDK still supports Blitzcrank's `ModelRuntime`,
+`DefaultResourceLoader`, `createAgentSession`, `bindExtensions`, custom tools,
+session persistence, and live event subscriptions. Type checking the application
+against the installed release requires no SDK call-site migration.
+The SDK's own TypeBox dependency is now `1.3.27`; Blitzcrank's direct `1.1.38`
+schemas remain type-compatible and are unchanged.
+Tool-call arguments now use the SDK's JSON type; scripted test messages use
+`ToolCall["arguments"]` rather than `Record<string, unknown>`.
+
+Native `session.agent.beforeToolCall` and `afterToolCall` hooks still receive
+the full `assistantMessage`. A before hook can return `block: true` to prevent
+execution. `terminate: true` is a batch termination hint, not a guarantee that
+siblings cannot run: every result in the batch must request termination.
+The SDK installs its own hooks; compose with them rather than replacing their
+behavior. In particular, its after hook normalizes image results after extension
+result handlers. Re-test terminal-tool enforcement against this installed release
+when changing the host's hook composition.
+
+`noExtensions: true` also disables the built-in extensions in this release,
+including MCP, codemode, tool-search, and the llama.cpp provider. Blitzcrank
+keeps that setting and explicitly grants its tools. The 1.0.0 fullscreen TUI
+default does not affect headless sessions. See the
+[published changelog](https://github.com/earendil-works/pi/blob/v1.0.0/packages/coding-agent/CHANGELOG.md).
+
+Resumed sessions still need a fresh prompt and tool list. Final answers must
+come from the current run's live event stream, not the saved message history.
+The host waits for active tools and their verification reads before aborting.
 
 ### 0.85.1 upgrade check
 
@@ -239,16 +273,23 @@ Tool calls execute in parallel by default. File-mutating custom tools should use
 
 ## Run one prompt and obtain the final answer
 
-`await session.prompt(text)` waits until the accepted run has completed, including tool calls and retries. It returns `void`; read the transcript afterward.
+`await session.prompt(text)` waits until the accepted run has completed, including tool calls and retries. It returns no final answer. Capture assistant messages from the live event stream so a resumed turn with no new answer cannot reuse a previous turn's directives.
 
 ```ts
 import type { AssistantMessage } from "@earendil-works/pi-ai"
 
-await session.prompt("Summarize the account status.")
+let lastAssistant: AssistantMessage | undefined
+const unsubscribe = session.subscribe((event) => {
+  if (event.type === "message_end" && event.message.role === "assistant") {
+    lastAssistant = event.message
+  }
+})
 
-const lastAssistant = [...session.messages]
-  .reverse()
-  .find((m): m is AssistantMessage => m.role === "assistant")
+try {
+  await session.prompt("Summarize the account status.")
+} finally {
+  unsubscribe()
+}
 
 if (!lastAssistant) throw new Error("Agent produced no assistant message")
 if (lastAssistant.stopReason === "error") {
@@ -261,7 +302,7 @@ const finalText = lastAssistant.content
   .join("")
 ```
 
-The examples also access `session.state.messages`; the public documentation emphasizes `session.messages` and `session.agent.state.messages`. Prefer `session.messages` unless a particular installed declaration requires otherwise.
+`session.messages` includes saved history. Use it for inspection, not to identify the answer produced by the current turn.
 
 ### Event logging and streaming
 
@@ -458,7 +499,7 @@ For replacing the active session at runtime (`newSession()`, `switchSession()`, 
 
 ### Node and modules
 
-- `@earendil-works/pi-coding-agent@0.85.1` declares **Node.js `>=22.19.0`**.
+- `@earendil-works/pi-coding-agent@1.0.0` declares **Node.js `>=22.19.0`**.
 - The package is ESM (`"type": "module"`) and only declares an `import` export. Use ESM TypeScript/JavaScript (`"type": "module"`, `module: "NodeNext"`/`"Node16"`, or equivalent). Do not assume `require()`/CommonJS support.
 - Extensions are loaded through `jiti`, so extension `.ts` files can be loaded without separately compiling them, but the host service itself should use its normal TypeScript build/runtime setup.
 
@@ -508,7 +549,7 @@ so avoiding temporary files does not remove images from session history.
 
 ### Stopping an issue turn
 
-The installed 0.85.1 `AgentSession.abort()` cancels retries, signals the agent,
+The installed 1.0.0 `AgentSession.abort()` cancels retries, signals the agent,
 and waits for idle. Blitzcrank waits for active tool calls to finish before
 calling it, so a mutation can finish its verification read. Pi emits tool start
 events while preparing a parallel batch. The custom tool wrapper therefore
@@ -526,6 +567,27 @@ session with a fresh prompt and tool list.
 - Calling `prompt()` while the session is streaming requires `streamingBehavior: "steer" | "followUp"`; otherwise it throws.
 - `prompt()` completing means the run and retries have completed. The lower-level `Agent.waitForIdle()` is also available as `session.agent.waitForIdle()`.
 - Extension code that calls TUI-only APIs must check `ctx.mode === "tui"`; UI-capable extension APIs should check `ctx.hasUI`. Plain custom tool definitions should avoid UI dependencies in headless mode.
+
+### Terminal custom tools
+
+The installed 1.0.0 SDK exposes native `session.agent.beforeToolCall` and
+`afterToolCall` hooks. The before hook receives the full `assistantMessage`,
+not just the current call, and `{ block: true, reason }` prevents execution.
+Pi prepares parallel calls before running them. `terminate: true` is only a
+batch completion hint, not an execution barrier: the loop stops only when every
+result in the batch requests termination.
+
+Blitzcrank composes the native hooks after binding the session. For configured
+terminal tools, every call in a mixed or duplicate batch is blocked before any
+tool executes, including builtin reads. A successful terminal execution closes
+the per-turn gate to later calls. Failed submissions leave it open for correction.
+The SDK's existing hooks still normalize results. No extension is loaded for this
+gate, and final-report parsers still check exact-one submission in the final live
+assistant message.
+
+The session tests exercise these batches through the installed 1.0.0 SDK with
+scripted assistant messages, including rejected siblings, duplicate reports,
+correction after a failed submission, and preserved native hooks.
 
 ## Suggested service factory
 
@@ -594,4 +656,5 @@ For maximum determinism, use `tools: options.tools.map(t => t.name)` rather than
 - Every file under installed `examples/sdk/`
 - All top-level `dist/*.d.ts` files in installed `@earendil-works/pi-agent-core`, including `index.d.ts`, `agent.d.ts`, and `types.d.ts`
 - Relevant coding-agent declarations for SDK options, resources, skills, tools, and agent sessions
-- Installed package metadata and live `npm view` package versions
+- Installed 1.0.0 package metadata and live `pnpm view` package versions
+- Published 1.0.0 coding-agent changelog and installed native tool-hook source

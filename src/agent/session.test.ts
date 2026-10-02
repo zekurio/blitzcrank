@@ -1,11 +1,36 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import type { AssistantMessage } from "@earendil-works/pi-ai"
-import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent"
+import {
+  createAssistantMessageEventStream,
+  InMemoryCredentialStore,
+  type AssistantMessage,
+  type ToolCall,
+} from "@earendil-works/pi-ai"
+import {
+  createAgentSession,
+  DefaultResourceLoader,
+  defineTool,
+  ModelRuntime,
+  SessionManager,
+  SettingsManager,
+  type AgentSessionEvent,
+  type ToolDefinition,
+} from "@earendil-works/pi-coding-agent"
 import { Effect } from "effect"
+import { Type } from "typebox"
 
-import { runSessionEffect } from "./session.ts"
+import {
+  AUTOMATION_REPORT_TOOL,
+  buildAutomationReportTool,
+  parseAutomationReport,
+} from "../automations/report.ts"
+import {
+  buildDiscordTriageTool,
+  DISCORD_TRIAGE_TOOL,
+  parseDiscordTriage,
+} from "../discord/triage.ts"
+import { installTerminalToolGate, runSessionEffect } from "./session.ts"
 
 const message: AssistantMessage = {
   role: "assistant",
@@ -29,6 +54,7 @@ function sessionHarness() {
   const events: string[] = []
   let listener: ((event: AgentSessionEvent) => void) | undefined
   const session = {
+    agent: {},
     sessionFile: "/test/session.jsonl",
     // A resumed transcript must never supply this turn's final answer.
     messages: [
@@ -133,4 +159,213 @@ test("successful sessions return only the live final answer", async () => {
   )
   assert.equal(turn.text, "Fresh answer")
   assert.deepEqual(h.events, ["unsubscribe", "dispose"])
+})
+
+/** Exercise the installed SDK's parallel preparation and execution, not a mock. */
+async function terminalSession(tools: ToolDefinition[], terminalName: string) {
+  const cwd = process.cwd()
+  const loader = new DefaultResourceLoader({
+    cwd,
+    agentDir: cwd,
+    noExtensions: true,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    noContextFiles: true,
+    systemPromptOverride: () => "test",
+    appendSystemPromptOverride: () => [],
+  })
+  await loader.reload()
+  const modelRuntime = await ModelRuntime.create({
+    credentials: new InMemoryCredentialStore(),
+  })
+  const model = modelRuntime.getModel("anthropic", "claude-sonnet-4-5")!
+  const { session } = await createAgentSession({
+    cwd,
+    agentDir: cwd,
+    modelRuntime,
+    model,
+    resourceLoader: loader,
+    customTools: tools,
+    tools: tools.map((tool) => tool.name),
+    sessionManager: SessionManager.inMemory(cwd),
+    settingsManager: SettingsManager.inMemory({
+      compaction: { enabled: false },
+      retry: { enabled: false },
+    }),
+  })
+  await session.bindExtensions({ mode: "print" })
+  const restoreGate = installTerminalToolGate(session.agent, [terminalName])
+  const errors: string[] = []
+  session.subscribe((event) => {
+    if (event.type === "tool_execution_end" && event.isError)
+      errors.push(event.toolName)
+  })
+  return {
+    session,
+    errors,
+    restoreGate,
+    async batch(names: string[], args: ToolCall["arguments"]) {
+      let streamed = false
+      session.agent.streamFunction = () => {
+        const stream = createAssistantMessageEventStream()
+        const reason = streamed || names.length === 0 ? "stop" : "toolUse"
+        const reply: AssistantMessage = {
+          ...message,
+          stopReason: reason,
+          content: streamed
+            ? []
+            : names.map((name, index) => ({
+                type: "toolCall" as const,
+                id: `${name}-${index}`,
+                name,
+                arguments: name === terminalName ? args : {},
+              })),
+        }
+        streamed = true
+        stream.push({ type: "done", reason, message: reply })
+        return stream
+      }
+      await session.agent.prompt("test")
+    },
+  }
+}
+
+test("terminal batches block reports and mutations in either order and duplicate submissions", async () => {
+  for (const names of [
+    [AUTOMATION_REPORT_TOOL, "mutate"],
+    ["mutate", AUTOMATION_REPORT_TOOL],
+    [AUTOMATION_REPORT_TOOL, AUTOMATION_REPORT_TOOL],
+  ]) {
+    const capture = { submissions: [] }
+    let mutations = 0
+    const mutate = defineTool({
+      name: "mutate",
+      label: "mutate",
+      description: "test mutation",
+      parameters: Type.Object({}),
+      async execute() {
+        mutations += 1
+        return { content: [], details: {} }
+      },
+    })
+    const h = await terminalSession(
+      [mutate, buildAutomationReportTool(capture)],
+      AUTOMATION_REPORT_TOOL,
+    )
+    try {
+      await h.batch(names, { status: "ok", body: "unaccepted" })
+      assert.equal(mutations, 0)
+      assert.equal(capture.submissions.length, 0)
+      assert.deepEqual(h.errors, names)
+      assert.equal(parseAutomationReport(capture, names).malformed, true)
+
+      await h.batch(["mutate"], {})
+      assert.equal(mutations, 1)
+      await h.batch([AUTOMATION_REPORT_TOOL], {
+        status: "invalid",
+        body: "schema failure",
+      })
+      assert.equal(capture.submissions.length, 0)
+      await h.batch([AUTOMATION_REPORT_TOOL], {
+        status: "ok",
+        body: "accepted",
+      })
+      assert.deepEqual(capture.submissions, [
+        { status: "ok", body: "accepted" },
+      ])
+      assert.equal(
+        parseAutomationReport(capture, [AUTOMATION_REPORT_TOOL]).malformed,
+        false,
+      )
+      await h.batch([AUTOMATION_REPORT_TOOL], {
+        status: "fehler",
+        body: "overwrite",
+      })
+      await h.batch(["mutate"], {})
+      assert.equal(mutations, 1)
+      assert.deepEqual(capture.submissions, [
+        { status: "ok", body: "accepted" },
+      ])
+    } finally {
+      h.session.dispose()
+    }
+  }
+})
+
+test("failed terminal execution permits correction and retains SDK hooks", async () => {
+  let submissions = 0
+  const terminal = defineTool({
+    name: "terminal",
+    label: "terminal",
+    description: "test terminal",
+    parameters: Type.Object({ fail: Type.Boolean() }),
+    async execute(_id, params) {
+      if (params.fail) throw new Error("submission failed")
+      submissions += 1
+      return { content: [], details: {}, terminate: true }
+    },
+  })
+  const h = await terminalSession([terminal], "terminal")
+  h.restoreGate()
+  const before = h.session.agent.beforeToolCall
+  const after = h.session.agent.afterToolCall
+  const hooks: string[] = []
+  h.session.agent.beforeToolCall = async (...args) => {
+    hooks.push("before")
+    return before?.(...args)
+  }
+  h.session.agent.afterToolCall = async (...args) => {
+    hooks.push("after")
+    return after?.(...args)
+  }
+  const observedBefore = h.session.agent.beforeToolCall
+  const observedAfter = h.session.agent.afterToolCall
+  const restore = installTerminalToolGate(h.session.agent, ["terminal"])
+  try {
+    await h.batch(["terminal"], { fail: true })
+    assert.equal(submissions, 0)
+    await h.batch(["terminal"], { fail: false })
+    assert.equal(submissions, 1)
+    assert.deepEqual(hooks, ["before", "after", "before", "after"])
+    await h.batch(["terminal"], { fail: false })
+    assert.equal(submissions, 1)
+    assert.deepEqual(hooks, ["before", "after", "before", "after"])
+    restore()
+    assert.equal(h.session.agent.beforeToolCall, observedBefore)
+    assert.equal(h.session.agent.afterToolCall, observedAfter)
+  } finally {
+    h.session.dispose()
+  }
+})
+
+test("Discord terminal submissions normalize names and reject duplicates and later calls", async () => {
+  for (const route of ["ignore", "answer", "thread"] as const) {
+    const capture = { submissions: [] }
+    const h = await terminalSession(
+      [buildDiscordTriageTool(capture)],
+      DISCORD_TRIAGE_TOOL,
+    )
+    try {
+      await h.batch([DISCORD_TRIAGE_TOOL, DISCORD_TRIAGE_TOOL], {
+        route,
+        threadName: "  Media title  ",
+      })
+      assert.equal(capture.submissions.length, 0)
+      await h.batch([DISCORD_TRIAGE_TOOL], {
+        route,
+        threadName: "  Media title  ",
+      })
+      await h.batch([DISCORD_TRIAGE_TOOL], {
+        route: "thread",
+        threadName: "overwrite",
+      })
+      assert.deepEqual(parseDiscordTriage(capture, [DISCORD_TRIAGE_TOOL]), {
+        route,
+        threadName: route === "thread" ? "Media title" : "",
+      })
+    } finally {
+      h.session.dispose()
+    }
+  }
 })

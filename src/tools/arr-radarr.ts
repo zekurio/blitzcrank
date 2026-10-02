@@ -112,7 +112,10 @@ export function buildRadarrTools(
       cfg,
       ctx,
       "Radarr read",
-      "Read Radarr (movies) state via /api/v3 paths: movie, moviefile, queue, history, blocklist.",
+      "Check movie availability and release dates in Radarr via GET /api/v3 paths: " +
+        "movie for tracking/monitoring, moviefile for imported files, queue/history for acquisition, " +
+        "release for candidates/rejection reasons, calendar for cinema/digital/physical dates, blocklist. " +
+        "Load the radarr skill for exact availability/date workflows.",
     ),
     movieCommandTool(cfg, ctx, {
       toolName: "radarr_search",

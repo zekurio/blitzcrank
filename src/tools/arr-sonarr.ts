@@ -344,7 +344,10 @@ export function buildSonarrTools(
       cfg,
       ctx,
       "Sonarr read",
-      "Read Sonarr (TV) state via /api/v3 paths: series, episode, episodefile, queue, history, blocklist, wanted/missing.",
+      "Check series/episode availability and air dates in Sonarr via GET /api/v3 paths: " +
+        "series/episode for tracking/monitoring, episodefile for imported files, queue/history for acquisition, " +
+        "release for candidates/rejection reasons, calendar for episode air dates, blocklist, wanted/missing. " +
+        "Load the sonarr skill for exact availability/date workflows.",
     ),
     sonarrSearchTool(cfg, ctx, probeAvailable),
     refreshSeriesTool(cfg, ctx),

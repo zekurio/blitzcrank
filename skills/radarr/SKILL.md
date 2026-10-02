@@ -1,11 +1,38 @@
 ---
 name: radarr
-description: Diagnose and safely remediate Radarr-managed movies, releases, queues, imports, files, and quality upgrades. Load for movie problems involving missing, corrupt, wrong, stalled, or repeatedly replaced media.
+description: Answer movie availability and release-date questions using Radarr tracking, imports, candidates, and calendar. Also diagnose and safely remediate missing, corrupt, wrong, stalled, or repeatedly replaced movies.
 ---
 
 # Radarr
 
 `radarr_request` is GET-only and accepts `purpose` and a relative `/api/v3/...` `path`. Mutations use the typed tools, require `reason`, and require every target ID to pass the run's Radarr evidence gate. Issue, Discord, and automation runs are uncapped; automation scope comes from its exact mutation-tool allowlist.
+
+## Availability and dates
+
+For factual questions, use reads only. Resolve the exact title/year and TMDB ID,
+then `GET /api/v3/movie?tmdbId={tmdbId}` and `GET /api/v3/movie/{movieId}`
+for tracking, monitoring, minimum availability, and file state. If title identity
+is missing, use `GET /api/v3/movie/lookup?term={urlEncodedTitle}`; lookup metadata
+does not establish that the movie is tracked or imported.
+
+- Imported: `GET /api/v3/moviefile?movieId={movieId}`.
+- Acquiring: `GET /api/v3/queue/details?movieId={movieId}&includeMovie=true`.
+- Candidates, when relevant to why it is not acquired:
+  `GET /api/v3/release?movieId={movieId}`. Read `approved`, `rejected`, and
+  `rejections` alongside quality and custom-format scores. This GET lists
+  candidates; it does not grab them. Rejected candidates explain local
+  acceptance decisions, not global source absence.
+- Dates: `GET /api/v3/calendar?start={urlEncodedISODate}&end={urlEncodedISODate}&unmonitored=true`.
+  Match the movie ID within a bounded date window. Distinguish `inCinemas`,
+  `digitalRelease`, and `physicalRelease` when present. These are release
+  metadata, not a guaranteed homelab availability date.
+
+Radarr describes tracking, acquisition, and imports; Jellyfin describes actual
+serving/playback. Check Jellyfin for "can I watch it?" and use web only for missing
+external context. A service auth/error or no matching result leaves that source's
+answer unknown, not a global "unavailable". A successful empty movie list means
+not tracked in Radarr, not unreleased. Continue useful independent services;
+Jellyfin HTTP 401 does not block Radarr reads. Do not repeat the same failed call.
 
 ## Identity and evidence
 
@@ -24,9 +51,9 @@ Release/queue/history/file `languages` are release-name parsing (`MULTi`, `DL`, 
 - TMDB/title/movie: `GET /api/v3/movie?tmdbId={tmdbId}`, `GET /api/v3/movie/lookup?term={query}`, `GET /api/v3/movie/{movieId}`
 - Calendar: `GET /api/v3/calendar?start={urlEncodedISODate}&end={urlEncodedISODate}`
 - Files: `GET /api/v3/moviefile/{movieFileId}`, `GET /api/v3/moviefile?movieId={movieId}`
-- History: `GET /api/v3/history?movieId={movieId}&page=1&pageSize=20&sortKey=date&sortDirection=descending`
+- History: `GET /api/v3/history?movieIds={movieId}&page=1&pageSize=20&sortKey=date&sortDirection=descending`
 - Queue: `GET /api/v3/queue?page=1&pageSize=50&includeUnknownMovieItems=true`
-- Blocklist: `GET /api/v3/blocklist?page=1&pageSize=50&movieId={movieId}`
+- Blocklist: `GET /api/v3/blocklist?page=1&pageSize=50&movieIds={movieId}`
 - Profiles: `GET /api/v3/qualityprofile`
 - Manual import: `GET /api/v3/manualimport?folder={urlEncodedFolder}&downloadId={urlEncodedDownloadId}`
 - Status: `GET /api/v3/system/status`
