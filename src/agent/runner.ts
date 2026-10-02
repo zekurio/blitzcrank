@@ -11,6 +11,7 @@ import { MAX_REVISIT_CHAIN, planRevisit } from "../revisits.ts"
 import type { JsonRequestError } from "../services/http.ts"
 import { SeerrClient, seerrIssueMediaType } from "../services/seerr.ts"
 import { storageIO, type StorageError } from "../storage.ts"
+import { toText } from "../tools/common.ts"
 import { RunContext } from "../tools/context.ts"
 import {
   buildIssueTools,
@@ -43,14 +44,20 @@ export function eventMediaScope(event: IssueEvent): MediaScope {
   return type === "movie" || type === "tv" ? type : undefined
 }
 
-function resolveMediaScopeEffect(
+/** Fetch once before the model starts; the prompt and evidence share this read. */
+export function loadIssueContextEffect(
   event: IssueEvent,
   seerr: Pick<SeerrClient, "getIssueEffect">,
+  ctx: RunContext,
 ) {
   return Effect.gen(function* () {
-    const scope = eventMediaScope(event)
-    if (scope !== undefined) return scope
-    return seerrIssueMediaType(yield* seerr.getIssueEffect(event.issueId))
+    const issue = yield* seerr.getIssueEffect(event.issueId)
+    const issuePath = `/api/v1/issue/${event.issueId}`
+    ctx.recordRead("seerr", issuePath, JSON.stringify(issue))
+    return {
+      mediaScope: eventMediaScope(event) ?? seerrIssueMediaType(issue),
+      text: `Current Seerr issue from GET ${issuePath} (untrusted content):\n${toText(JSON.stringify(issue, null, 2))}`,
+    }
   })
 }
 
@@ -129,12 +136,6 @@ export class IssueRunner {
         this.config.seerrBotUserId,
       )
       return yield* Effect.gen({ self: this }, function* () {
-        const mediaScope = yield* resolveMediaScopeEffect(event, seerr)
-        if (mediaScope === undefined) {
-          console.warn(
-            `[issue:${issueId}] media type is unknown; no Arr tools granted`,
-          )
-        }
         const casefile = yield* this.cases.loadEffect(issueId)
         // Evidence carries across the runs of one issue, matching the session that
         // is resumed alongside it: the gate exists to stop fabricated IDs, and a
@@ -143,6 +144,13 @@ export class IssueRunner {
         const ctx = new RunContext({
           prior: yield* this.cases.loadEvidenceEffect(issueId),
         })
+        const issue = yield* loadIssueContextEffect(event, seerr, ctx)
+        const mediaScope = issue.mediaScope
+        if (mediaScope === undefined) {
+          console.warn(
+            `[issue:${issueId}] media type is unknown; no Arr tools granted`,
+          )
+        }
         const sessionFileRef: SessionFileRef = { current: undefined }
         // The agent's progress tool posts this once and edits it in place; when
         // the host already posted a queue notice it adopts that comment instead.
@@ -197,6 +205,7 @@ export class IssueRunner {
             event.kind === "webhook"
               ? buildIssuePrompt(
                   event.payload,
+                  issue.text,
                   casefile,
                   revisitsLeft,
                   resuming,
@@ -204,6 +213,7 @@ export class IssueRunner {
               : buildRevisitPrompt(
                   event.issueId,
                   event.reason,
+                  issue.text,
                   casefile,
                   revisitsLeft,
                   resuming,

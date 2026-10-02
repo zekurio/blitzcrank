@@ -24,7 +24,7 @@
   `pnpm fmt` / `pnpm lint` / `pnpm typecheck`.
 - `pnpm verify` (format check, lint, and typecheck) must pass before a coding
   task is complete.
-- pi SDK packages are pinned exact (`@earendil-works/*@0.85.1`); bump them
+- pi SDK packages are pinned exact (`@earendil-works/*@1.0.0`); bump them
   deliberately and re-verify against `docs/research/pi-sdk.md`.
 - Formatting is oxfmt, linting is oxlint (type-aware) — not Prettier/ESLint.
   80 columns, 2 spaces, no semicolons, double quotes, sorted imports.

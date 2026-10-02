@@ -16,6 +16,7 @@ import type { AutomationDefinition } from "./definitions.ts"
 import { modelSpecForAutomation } from "./models.ts"
 import { buildAutomationSystemPrompt } from "./prompt.ts"
 import {
+  AUTOMATION_REPORT_TOOL,
   buildAutomationReportTool,
   parseAutomationReport,
   type AutomationReportCapture,
@@ -110,6 +111,7 @@ export class AutomationRunner {
         modelSpec,
         systemPrompt: buildAutomationSystemPrompt(this.config, def),
         tools,
+        terminalToolNames: [AUTOMATION_REPORT_TOOL],
         prompt: def.body,
         sessionDir: path.join(this.config.dataDir, "sessions", "automations"),
         // Automations never resume: each tick is a fresh sweep of current state,

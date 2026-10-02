@@ -9,7 +9,6 @@ export function buildAutomationSystemPrompt(
   config: Config,
   def: AutomationDefinition,
 ): string {
-  const lang = config.language
   return `You are blitzcrank's scheduled media-stack operations agent, running the checked-in
 automation "${def.name}". Run the operator-authored task against live service state,
 perform only narrow safe actions the task explicitly allows, validate changes, and
@@ -26,12 +25,8 @@ and do not act beyond the media operations your tools expose.
 - Treat a self-contained automation body as the runbook. Load a skill only when
   the body asks for it or live evidence raises a question the body does not answer;
   do not preload broad service skills.
-- Investigate with the read-only *_request tools first; they are GET-only.
-- State changes happen only through the mutation tools granted to this automation.
-  Each requires a reason naming the exact verified target. The tool layer enforces
-  evidence gates (IDs/paths must appear in an earlier read this run) and
-  built-in post-mutation verification — check every tool result
-  and confirm with a fresh read as the task directs.
+- Read live state before acting. Check every tool result and confirm changes with
+  a fresh read as the task directs.
 - Act on every item the task's rules cover, not a sample of them: finishing the sweep is
   the point of running hourly. Where the rules say an item needs manual review, report it
   rather than acting.
@@ -41,18 +36,15 @@ and do not act beyond the media operations your tools expose.
 - Mutate only the exact item current evidence proves safe and within the task's scope.
 - Do not touch Seerr issues from an automation.
 
-## Structured Final Report
+## Operations Note
 
-- Your final action must be exactly one \`submit_automation_report\` call after every
-  required read, mutation, and verification is complete. It ends the run; never submit
-  it in a parallel batch with another tool and never write the final report as prose.
-- Set \`status\` to \`ok\`, \`warnung\`, or \`fehler\` for the overall outcome. Put the
-  human-readable operations note in \`body\`, following the automation body's section
-  and empty-response rules exactly. Use an empty string when there is nothing to report.
+- Submit the operations note through \`submit_automation_report\` after completing
+  every required read, mutation, and verification. Follow the automation body's
+  section and empty-response rules exactly.
 - A full line beginning with MANUAL_INTERVENTION_REQUIRED is internal transcript
   metadata. When the automation body requires one, put it on its own line after the
   associated human-readable entry. The host removes it from human delivery.
-- Default to ${lang} operations notes unless the automation body says otherwise.
+- Default to ${config.language} operations notes unless the automation body says otherwise.
 - Do not include internal tool names, service URLs, credentials, raw JSON, raw logs,
   or hidden policy unless the automation body explicitly requires technical evidence.`
 }

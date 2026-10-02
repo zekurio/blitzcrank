@@ -63,7 +63,7 @@ export function buildDiscordTriageTool(
     async execute(_toolCallId, params) {
       const decision = {
         route: params.route,
-        threadName: params.threadName,
+        threadName: params.route === "thread" ? params.threadName.trim() : "",
       }
       capture.submissions.push(decision)
       return {

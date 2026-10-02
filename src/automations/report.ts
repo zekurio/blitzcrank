@@ -55,9 +55,8 @@ export function parseAutomationReport(
 }
 
 /**
- * Automation-only structured final output. `terminate` makes the validated
- * tool arguments the final result without paying for, or parsing, a follow-up
- * free-text assistant message.
+ * Automation-only structured final output. The session's terminal-tool gate
+ * enforces exclusive submission; `terminate` skips a follow-up prose message.
  */
 export function buildAutomationReportTool(
   capture: AutomationReportCapture,
