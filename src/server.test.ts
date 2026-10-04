@@ -27,7 +27,6 @@ test("Seerr commands require authorization and never enqueue agent work", async 
     radarr: { url: "http://radarr.test", apiKey: "test" },
     sabnzbd: { url: "http://sabnzbd.test", apiKey: "test" },
     jellyfin: { url: "http://jellyfin.test", apiKey: "test" },
-    anvil: { command: "anvilctl", socket: "/tmp/anvil.sock" },
     media: { roots: ["/tmp/media"] },
     discord: undefined,
   }

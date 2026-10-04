@@ -1,6 +1,6 @@
 # Effect v4 migration
 
-First slice: shared HTTP and `anvilctl` I/O, pinned to
+First slice: shared HTTP and child-process I/O, pinned to
 `effect@4.0.0-rc.112`. The existing Promise functions execute the new
 Effect-returning functions, so this slice can merge independently.
 
@@ -16,12 +16,12 @@ Effect-returning functions, so this slice can merge independently.
 - `jsonRequest` and `execFileText` remain Promise adapters. In this pinned
   v4 release, `Effect.runPromise` rejects with the original typed failure,
   preserving the `instanceof` checks for Arr HTTP 404 verification and
-  Anvil exit-code handling.
+  child-process exit-code handling.
 - HTTP deadlines cover both fetching headers and consuming the body, use
   the Effect clock, and abort the underlying fetch. Effect interruption
   reaches both fetch and the local child process. Caller abort signals are
   combined with the Effect signal. Aborting a client does not roll back a
-  remote mutation or cancel an Anvil daemon job.
+  remote mutation.
 - Neither adapter retries. SABnzbd mutations use GET, so the HTTP method
   alone cannot establish whether retrying is safe. Verification failure must
   continue to return the completed mutation's result without repeating it.
@@ -32,7 +32,7 @@ build is disabled; this slice does not use MessagePack.
 
 ## Service tool composition
 
-The second slice moves Seerr, Sonarr, Radarr, Jellyfin, SABnzbd, and Anvil
+The second slice moves Seerr, Sonarr, Radarr, Jellyfin, and SABnzbd
 tools onto the native Effect I/O functions. Reads, mutation gates, writes,
 and verification compose as Effects; `Effect.runPromise` sits at the pi SDK
 tool callbacks. Tool names, schemas, allowlists, and evidence rules stay the
@@ -44,9 +44,7 @@ same.
   including a thrown parser error, preserves the completed write's result;
   fiber interruption stays interrupted.
 - Synchronous guards enter the typed failure channel as `ToolError`, keeping
-  their existing messages. Arr deletion verification catches only HTTP 404;
-  Anvil's legacy `job show` fallback still requires the exact unknown-command
-  error. Anvil retry reservations still precede the first I/O call.
+  their existing messages. Arr deletion verification catches only HTTP 404.
 
 SDK tool cancellation policy is unchanged: issue stop still waits for active
 tools before aborting the session.

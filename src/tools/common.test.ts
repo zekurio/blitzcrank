@@ -12,7 +12,9 @@ test("mutation gates are lazy and run before the counter or write factory", asyn
   let writes = 0
   const mutation = runMutation(ctx, {
     kind: "delete",
-    evidence: [{ service: "anvil", value: 7, hint: "job", identity: true }],
+    evidence: [
+      { service: "sonarr", value: 7, hint: "episode file", identity: true },
+    ],
     perform: () => {
       writes += 1
       return Effect.succeed({ id: 7 })
@@ -20,7 +22,7 @@ test("mutation gates are lazy and run before the counter or write factory", asyn
   })
   assert.equal(writes, 0)
   assert.deepEqual(ctx.counts, { mutations: 0, deletes: 0 })
-  ctx.recordRead("anvil", "jobs", '{"id":7}')
+  ctx.recordRead("sonarr", "/api/v3/episodefile", '{"id":7}')
   const rejected = await Effect.runPromise(
     mutation.pipe(
       Effect.catchTag("ToolError", (error) => Effect.succeed(error)),
@@ -31,7 +33,7 @@ test("mutation gates are lazy and run before the counter or write factory", asyn
   assert.equal(writes, 0)
   assert.deepEqual(ctx.counts, { mutations: 0, deletes: 0 })
 
-  ctx.recordIdentity("anvil", 7)
+  ctx.recordIdentity("sonarr", 7)
   assert.deepEqual(await Effect.runPromise(mutation), { result: { id: 7 } })
   assert.equal(writes, 1)
   assert.deepEqual(ctx.counts, { mutations: 1, deletes: 1 })

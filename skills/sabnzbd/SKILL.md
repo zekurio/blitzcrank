@@ -1,6 +1,6 @@
 ---
 name: sabnzbd
-description: Diagnose and safely remediate SABnzbd queue, history, download, repair, unpack, post-processing, and Arr handoff failures. Load when a Sonarr or Radarr job is stalled, failed, missing after grab, or waiting on downloader or Anvil state.
+description: Diagnose and safely remediate SABnzbd queue, history, download, repair, unpack, post-processing, and Arr handoff failures. Load when a Sonarr or Radarr job is stalled, failed, missing after grab, or waiting on downloader state.
 ---
 
 # SABnzbd
@@ -14,7 +14,7 @@ Issue, Discord, and automation runs are uncapped; automation scope comes from
 its exact mutation-tool allowlist.
 
 SAB downloads, verifies, repairs, unpacks, and writes output. Completion does
-not prove Arr import or Jellyfin playback; Anvil may intervene. Arr owns release
+not prove Arr import or Jellyfin playback. Arr owns release
 suitability, blocklisting, replacement, import, and rename, so prefer Arr-level
 remediation while it tracks the release.
 
@@ -34,9 +34,9 @@ remediation while it tracks the release.
    its Arr state is also handled.
 
 For file-language questions, exact completed `storage` can feed `media_probe`.
-If SAB is complete but Arr reports files not ready, use `anvil_job_lookup` only
-with exact `storage` correlated by download ID or exact Arr `outputPath`.
-`anvil_status`, title, names, or guessed paths cannot correlate an item.
+If SAB is complete but Arr reports files not ready, correlate exact `storage`
+by download ID with Arr `outputPath`, then inspect import errors, path mapping,
+permissions, and any unfinished post-processing. Never guess a path from a title.
 
 ## Typed mutations
 
@@ -63,19 +63,18 @@ permission, or space evidence first. Preserve failed history until Arr can
 observe and blocklist it.
 
 For complete-but-missing media, compare category/storage with Arr import/path
-mapping and Anvil; do not redownload a valid payload that is inaccessible or
-encoding. For duplicates/orphans, compare IDs, category, title, and submitter;
+mapping; do not redownload a valid payload that is inaccessible or still
+being processed. For duplicates/orphans, compare IDs, category, title, and submitter;
 never delete the copy Arr expects. Delete only a confirmed orphan from the
 correct list, with `deleteFiles: true` solely when data destruction is intended
 and justified.
 
-Only exact active Anvil-job evidence plus Arr file-not-ready evidence proves an
-Anvil wait. While waiting, do not force/manual import, remove, blocklist, retry,
-search, or refresh. Failed/skipped Anvil work is a blocker; complete still
-needs Arr/Jellyfin verification.
+While repair, unpack, or post-processing is progressing, wait rather than
+force/manual import, remove, blocklist, retry, search, or refresh. Completion
+still needs Arr/Jellyfin verification.
 
 In a Seerr issue, call `report_progress` first and finish with the required
 `RESOLVE_ISSUE` directive block; keep it open while downloading, repairing,
-encoding, importing, scanning, or awaiting verification. In Discord, answer
+post-processing, importing, scanning, or awaiting verification. In Discord, answer
 directly without Seerr directives or promises of a later check. Claim mutation
 only after successful verification. Never call Seerr comment/resolve APIs.

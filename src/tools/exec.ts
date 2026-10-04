@@ -6,7 +6,7 @@ import { Data, Effect } from "effect"
 const MAX_ERROR_DETAIL_CHARS = 8_000
 const execFileAsync = promisify(execFile)
 
-/** Carries the helper's exit status, which is part of anvilctl's contract. */
+/** Carries the helper's exit status alongside its error output. */
 export class ExecError extends Data.TaggedError("ExecError")<{
   message: string
   exitCode: number | undefined
@@ -32,7 +32,7 @@ export function execFileText(
 }
 
 /**
- * Runs a local helper binary (currently anvilctl) and returns stdout.
+ * Runs a local helper binary (ffprobe) and returns stdout.
  * Never uses a shell: arguments are passed as an array, so nothing in a path
  * or id can be interpreted as a command. Failures throw with the tool's own
  * stderr, which pi hands back to the model as a tool error.

@@ -13,7 +13,7 @@ test("evidence snapshots resume without per-run paths or counters", async () => 
     const store = new EvidenceStore(dir, "test")
     const first = new RunContext()
     first.recordRead("sonarr", "/api/v3/series/7", '{"id":7}')
-    first.recordIdentity("anvil", 19)
+    first.recordIdentity("sonarr", 19)
     first.recordPath("sonarr", "/downloads/show", "outputPath")
     first.recordProbe("/downloads/show/episode.mkv")
     first.noteMutation("delete")
@@ -22,7 +22,7 @@ test("evidence snapshots resume without per-run paths or counters", async () => 
     const resumed = new RunContext({ prior: await store.load("123") })
 
     assert.equal(resumed.sawValue("sonarr", 7), true)
-    assert.equal(resumed.sawIdentity("anvil", 19), true)
+    assert.equal(resumed.sawIdentity("sonarr", 19), true)
     assert.equal(resumed.sawProbe("/downloads/show/episode.mkv"), true)
     assert.equal(resumed.sawRecordedPath("/downloads/show"), false)
     assert.deepEqual(resumed.counts, { mutations: 0, deletes: 0 })

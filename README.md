@@ -3,7 +3,7 @@
 blitzcrank investigates media problems reported in Jellyseerr. It uses the
 [pi SDK](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) to read
 service state, apply fixes through dedicated tools, and report back on the issue.
-It connects to Seerr, Sonarr, Radarr, SABnzbd, Jellyfin, and optionally Anvil.
+It connects to Seerr, Sonarr, Radarr, SABnzbd, and Jellyfin.
 
 A report such as "wrong language" or "episode won't play" starts an agent
 session. Follow-up comments continue that session. Scheduled automations handle
@@ -230,29 +230,6 @@ cannot authorize a change.
 Firecrawl must use its hosted API. blitzcrank rejects custom endpoints because
 it cannot enforce a remote fetcher's DNS and redirect policy.
 
-### Anvil
-
-Set `ANVIL_CONTROL_SOCKET` to enable status reads, exact-path job lookups,
-diagnostics, and retry of a diagnosed failed encode. Anvil tools use `anvilctl`
-over its control socket. They never open its store.
-
-`ANVIL_COMMAND` defaults to `anvilctl`. Set an absolute path if the executable
-is not on the service's `PATH`. On NixOS, use Anvil's standalone client package
-and grant access to its socket group:
-
-```nix
-services.blitzcrank.settings = {
-  ANVIL_CONTROL_SOCKET = "/run/anvil/anvild.sock";
-  ANVIL_COMMAND =
-    "${inputs.anvil.packages.${pkgs.system}.anvilctl}/bin/anvilctl";
-};
-systemd.services.blitzcrank.serviceConfig.SupplementaryGroups = [ "anvil" ];
-```
-
-Job lookups correlate exact paths only. Empty or incomplete results mean the
-state is unknown. Retry is the only Anvil mutation available to the agent;
-cancellation and library or store maintenance remain operator-only.
-
 ## Run automations
 
 Automation definitions live in [`automations/`](automations). Each Markdown
@@ -273,7 +250,7 @@ belongs in deployment configuration, not the task file. Changing a model does
 not change tool access or evidence requirements.
 
 NixOS uses the bundled definitions by default. Set `automationsDir` to use your
-own. The bundled `stale-import-handler` requires Sonarr, Radarr, and Anvil.
+own. The bundled `stale-import-handler` requires Sonarr and Radarr.
 Startup fails if a declared tool is unavailable, a model override names an
 unknown automation, or a selected model is unavailable.
 
@@ -355,8 +332,8 @@ or change Seerr issue status.
 The agent can search bounded snippets from earlier blitzcrank Seerr and Discord
 sessions. Searches exclude the current thread and automation transcripts.
 History is untrusted context, not permission or current service evidence.
-Each thread retains service evidence, but the agent must read mutable state,
-file paths, and reusable Anvil slugs again before using them.
+Each thread retains service evidence, but the agent must read mutable state
+and file paths again before using them.
 
 Private threads are visible to the invited sender and members with Manage
 Threads permission. Those members can also drive the conversation by replying.

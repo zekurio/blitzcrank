@@ -77,23 +77,17 @@ For missing German audio:
   it, this is availability, not repair.
 - If present but unavailable in playback, inspect Jellyfin refresh/stream
   selection/client preferences.
-- If present before import but absent after, inspect Anvil/conversion; another
-  grab of the same release is not the fix.
+- If present before import but absent after, inspect post-processing and import
+  history; another grab of the same release is not the fix.
 
-Ask Anvil first when available: `anvil_job_lookup` with
-`includeStreamSelection` for a current exact-path job, or `anvil_job_show` for
-an already evidenced historical job. A normal record distinguishes language
-not requested from requested-but-source-missing and survives source deletion.
-No record, `cleanup_disabled`, or unreadable decisions remain unknown.
-
-When needed, compare exact service-returned paths at three stages: SAB `storage`
-or Arr `outputPath`; Anvil's reported converted destination; imported
+When needed, compare exact service-returned paths before and after import:
+SAB `storage` or Arr `outputPath`, then imported
 `episodeFile.path`/`movieFile.path`.
 
-- Present in source, absent later: conversion dropped it. Check the decision;
-  `language_not_requested` means profile behavior, not necessarily a bug.
+- Present in source, absent later: investigate post-processing and import history
+  to establish where it disappeared.
 - Absent in source: it never existed despite naming.
-- Present throughout: acquisition/conversion are sound; investigate playback.
+- Present throughout: investigate playback.
 
 If any stage path is unavailable, name the unchecked stage rather than assume.
 Never report an Arr language field as a probe or probe every episode by reflex.

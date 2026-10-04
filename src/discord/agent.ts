@@ -28,7 +28,7 @@ const TRIAGE_SYSTEM_PROMPT = `You triage messages in blitzcrank's shared media-s
 
 - Ignore unrelated chat, messages aimed at others, or text without a clear media/service
   question. Relevant topics include movies, TV, releases, availability, playback, requests,
-  and this deployment's Seerr, Arr, SABnzbd, Jellyfin, or Anvil services.
+  and this deployment's Seerr, Arr, SABnzbd, or Jellyfin services.
 - Choose answer for factual release-date or library-availability questions. Choose thread
   for investigation, playback/download failures, missing/wrong media, or requests to add,
   retry, replace, or remove media. "Is it available?" is answer; "it should be here but

@@ -76,7 +76,6 @@ test("Discord conversations receive mutations and conversation history", () => {
     radarr: { url: "http://radarr.test", apiKey: "test" },
     sabnzbd: { url: "http://sabnzbd.test", apiKey: "test" },
     jellyfin: { url: "http://jellyfin.test", apiKey: "test" },
-    anvil: { command: "anvilctl", socket: "/tmp/anvil.sock" },
     media: { roots: ["/tmp/media"] },
     discord: undefined,
   }
@@ -98,7 +97,6 @@ test("Discord conversations receive mutations and conversation history", () => {
   assert.ok(discordNames.includes("radarr_delete_movie_file"))
   assert.ok(discordNames.includes("sabnzbd_delete_job"))
   assert.ok(discordNames.includes("jellyfin_refresh_item"))
-  assert.ok(discordNames.includes("anvil_retry_job"))
 
   assert.deepEqual(
     buildDiscordAnswerTools(config, new RunContext()).map((tool) => tool.name),
