@@ -22,7 +22,6 @@ export {
   type ParsedModelSpec,
 } from "./durable-model.ts"
 
-export const DEFAULT_MODEL = "anthropic/claude-sonnet-4-5"
 export function modelAnchor(spec: string): string {
   const parsed = parseModelSpec(spec)
   return `${BOT_COMMENT_MARKER} ${parsed.modelId}:${parsed.thinkingLevel}]`

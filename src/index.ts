@@ -2,14 +2,12 @@ import { mkdir } from "node:fs/promises"
 import { createServer, type Server } from "node:http"
 import path from "node:path"
 
-import {
-  ModelRuntime,
-  type CreateModelRuntimeOptions,
-} from "@earendil-works/pi-coding-agent"
+import { ModelRuntime } from "@earendil-works/pi-coding-agent"
 import { Cause, Clock, Effect, Option } from "effect"
 
 import { IssueRunner } from "./agent/runner.ts"
-import { DEFAULT_MODEL, resolveModel } from "./agent/session.ts"
+import { resolveModel } from "./agent/session.ts"
+import { modelRuntimeOptions } from "./auth.ts"
 import {
   loadAutomationsEffect,
   type AutomationDefinition,
@@ -54,7 +52,7 @@ interface AutomationWork {
   discord: DiscordBot | undefined
 }
 
-function main(): Effect.Effect<void, unknown> {
+export function startServerEffect(): Effect.Effect<void, unknown> {
   return Effect.gen(function* () {
     const config = loadConfig()
     const automations = yield* loadAutomationsEffect(config.automationsDir)
@@ -107,15 +105,12 @@ function loadModels(
   automations: AutomationDefinition[],
 ): Effect.Effect<Models, unknown> {
   return Effect.gen(function* () {
-    const issueSpec = config.model ?? DEFAULT_MODEL
+    const issueSpec = config.model
     const automationSpec = config.automationModel ?? issueSpec
     const discordSpec = config.discord?.model ?? issueSpec
     const discordTriageSpec = config.discord?.triageModel ?? discordSpec
-    const runtimeOptions: CreateModelRuntimeOptions = {}
-    if (config.authPath) runtimeOptions.authPath = config.authPath
-    if (config.modelsPath) runtimeOptions.modelsPath = config.modelsPath
     const runtime = yield* Effect.tryPromise(() =>
-      ModelRuntime.create(runtimeOptions),
+      ModelRuntime.create(modelRuntimeOptions(config)),
     )
     assertKnownAutomationModels(automations, config.automationModels)
     const configuredSpecs = new Set([
@@ -368,14 +363,3 @@ function withDeadline(
     if (Option.isNone(result)) console.warn(timeoutLog)
   })
 }
-
-Effect.runFork(
-  main().pipe(
-    Effect.catchCause((cause) =>
-      Effect.sync(() => {
-        console.error("fatal:", Cause.squash(cause))
-        process.exit(1)
-      }),
-    ),
-  ),
-)

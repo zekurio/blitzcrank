@@ -20,18 +20,22 @@
   paths unless the operator requests them.
 - Single pnpm package, strict ESM TypeScript (`module: NodeNext`,
   `exactOptionalPropertyTypes`), no build step in dev. Node >= 24.0.0 (the dev
-  shell uses the default Node.js from the pinned nixpkgs input), pnpm only —
+  shell uses the default Node.js from the pinned devenv nixpkgs input), pnpm only —
   never npm, yarn, or Bun.
-- Enter the development environment explicitly with `nix develop`, or run
-  individual commands with `nix develop --command`, for example
-  `nix develop --command pnpm verify`. The shell supplies Node, pnpm 11,
-  ffmpeg/ffprobe, and the checkout's pinned CLI as `blitz-pi`. Install project
-  dependencies with `pnpm install --frozen-lockfile`.
+- Enter the development environment explicitly with `devenv shell`, or run
+  individual commands with `devenv shell --`, for example
+  `devenv shell -- pnpm verify`. The shell supplies Node, pnpm 11, and
+  ffmpeg/ffprobe. Install dependencies with `pnpm install --frozen-lockfile`.
+- Pi is an SDK dependency, not a packaged CLI. Use `pnpm auth` locally or
+  `blitzcrank auth` in the built package. Credentials default to
+  `<BLITZCRANK_DATA_DIR>/auth.json`; no ambient Pi auth or models config is loaded.
+- `BLITZCRANK_MODEL` is required. Role-specific overrides inherit this
+  operator-selected model; never add a built-in model fallback.
 - No automatic shell activation or `.env` loading. For local configuration,
   copy `.env.example` to `.env` and run
-  `pnpm exec tsx watch --env-file=.env src/index.ts`. `pnpm dev` and `pnpm start`
+  `pnpm exec tsx watch --env-file=.env src/cli.ts`. `pnpm dev` and `pnpm start`
   use the caller's exported environment; compiled local runs can use
-  `node --env-file=.env dist/index.js`.
+  `node --env-file=.env dist/cli.js`.
 - `pnpm dev` (tsx watch), `pnpm build` + `pnpm start` (tsc → `dist/`),
   `pnpm fmt` / `pnpm lint` / `pnpm typecheck`.
 - `pnpm verify` (format check, lint, and typecheck) must pass before a coding
@@ -46,7 +50,9 @@
   `no-console` is deliberately off: console output to journald is the logging
   strategy.
 - Config is env-only (`src/config.ts`, every knob documented in
-  `.env.example`); never commit `.env`. For Nix changes, `nix flake show` must
+  `.env.example`); never commit `.env`. Development uses `devenv.nix`,
+  `devenv.yaml`, and `devenv.lock`; the flake supplies deployment packages,
+  the NixOS module, and the formatter. For Nix changes, `nix flake show` must
   evaluate (flakes only see git-tracked files); `nix flake check` builds the
   linux package.
 - The default branch is `main`.

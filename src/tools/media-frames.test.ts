@@ -45,7 +45,7 @@ test("frame tool follows current model capabilities and configured roots", () =>
     dataDir: "/tmp/blitzcrank-test",
     automationsDir: "/tmp/blitzcrank-test/automations",
     webhookSecret: undefined,
-    model: undefined,
+    model: "anthropic/claude-sonnet-4-5",
     automationModel: undefined,
     automationModels: {},
     authPath: undefined,

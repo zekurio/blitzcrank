@@ -45,19 +45,27 @@ export interface Config {
   automationsDir: string
   /** Shared secret checked against the Authorization header of incoming webhooks. */
   webhookSecret: string | undefined
-  /** Model for issue runs, e.g. "anthropic/claude-sonnet-4-5". */
-  model: string | undefined
+  /**
+   * Required base model for issue runs, e.g. "anthropic/claude-sonnet-4-5".
+   * Automations and Discord inherit this choice unless overridden; blitzcrank
+   * deliberately ships no built-in model default.
+   */
+  model: string
   /** Default model for automations; absent inherits `model`. */
   automationModel: string | undefined
   /** Per-automation model overrides, keyed by automation name. */
   automationModels: AutomationModelMap
   /**
-   * pi auth.json holding API keys and OAuth credentials (e.g. openai-codex).
+   * Explicit auth file holding API keys and OAuth credentials.
    * Must be writable: OAuth tokens auto-refresh and are persisted back.
-   * Defaults to pi's own ~/.pi/agent/auth.json when unset.
+   * Blitzcrank's own auth lives at `<dataDir>/auth.json`
+   * when unset; ambient pi state such as `~/.pi/agent/auth.json` is never read.
    */
   authPath: string | undefined
-  /** pi models.json declaring custom providers. */
+  /**
+   * Explicit pi models.json declaring custom providers. Only this path is
+   * loaded; unset loads no models file rather than discovering one.
+   */
   modelsPath: string | undefined
   /** Language for public comments (default German, matching the deployment). */
   language: string
@@ -194,6 +202,20 @@ function discord(): DiscordConfig | undefined {
   }
 }
 
+/**
+ * The operator's base model choice is mandatory: a built-in default would let
+ * an upgrade silently change which model runs the deployment.
+ */
+function requiredModel(): string {
+  const value = process.env.BLITZCRANK_MODEL
+  if (value === undefined || value.trim() === "") {
+    throw new Error(
+      "BLITZCRANK_MODEL must name a model, e.g. provider/model[:thinking]",
+    )
+  }
+  return value
+}
+
 /** Media roots unset means the probe tool is not registered at all. */
 function media(): MediaConfig | undefined {
   const roots = absoluteRoots(
@@ -241,7 +263,7 @@ export function loadConfig(): Config {
     dataDir: process.env.BLITZCRANK_DATA_DIR ?? "data",
     automationsDir: process.env.BLITZCRANK_AUTOMATIONS_DIR ?? "automations",
     webhookSecret: process.env.BLITZCRANK_WEBHOOK_SECRET,
-    model: process.env.BLITZCRANK_MODEL,
+    model: requiredModel(),
     automationModel: process.env.BLITZCRANK_AUTOMATION_MODEL,
     automationModels: parseAutomationModels(
       process.env.BLITZCRANK_AUTOMATION_MODELS,

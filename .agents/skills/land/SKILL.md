@@ -107,10 +107,10 @@ unrelated version bumps, changelog requirements, or contribution attestations.
 Use Node 24 or newer as required by `package.json#engines`, and pnpm 11.
 The current CI pins pnpm `11.25.0` and Node `24`. Media tests need `ffmpeg` and
 `ffprobe`; the default development shell supplies them alongside Node and pnpm.
-Sources: `package.json`, `.github/workflows/checks.yml`, `flake.nix` under
-`devShells`, and `src/tools/media.test.ts` / `src/tools/media-frames.test.ts`.
-Enter the shell explicitly with `nix develop`, or prefix individual checks with
-`nix develop --command`. An equivalent verified environment is also acceptable.
+Sources: `package.json`, `.github/workflows/checks.yml`, `devenv.nix`,
+and `src/tools/media.test.ts` / `src/tools/media-frames.test.ts`.
+Enter the shell explicitly with `devenv shell`, or prefix individual checks with
+`devenv shell --`. An equivalent verified environment is also acceptable.
 Do not install system packages or change machine configuration without permission.
 
 Run the following local checks on the final candidate:
