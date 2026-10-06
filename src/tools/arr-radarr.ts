@@ -1,7 +1,4 @@
-import {
-  defineTool,
-  type ToolDefinition,
-} from "@earendil-works/pi-coding-agent"
+import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable"
 import { Effect } from "effect"
 import { Type } from "typebox"
 
@@ -29,20 +26,19 @@ function movieCommandTool(
   cfg: ServiceConfig,
   ctx: RunContext,
   command: MovieCommand,
-): ToolDefinition {
+): ToolRegistration {
   const service: ServiceName = "radarr"
   const movieId = command.idDescription
     ? Type.Integer({ minimum: 1, description: command.idDescription })
     : Type.Integer({ minimum: 1 })
   return defineTool({
     name: command.toolName,
-    label: command.label,
     description: command.description,
     parameters: Type.Object({
       reason: reasonParam(),
       movieId,
     }),
-    execute(_toolCallId, params) {
+    execute(params) {
       return Effect.runPromise(
         Effect.gen(function* () {
           const evidence = [
@@ -66,18 +62,17 @@ function movieCommandTool(
 function deleteMovieFileTool(
   cfg: ServiceConfig,
   ctx: RunContext,
-): ToolDefinition {
+): ToolRegistration {
   const service: ServiceName = "radarr"
   return defineTool({
     name: "radarr_delete_movie_file",
-    label: "Radarr: delete movie file",
     description:
       "Delete one movie file from disk (e.g. verified corrupt), so a replacement can be searched. This removes the only copy of the movie — evidence must be strong. The moviefile id must pass the Radarr evidence gate.",
     parameters: Type.Object({
       reason: reasonParam(),
       movieFileId: Type.Integer({ minimum: 1 }),
     }),
-    execute(_toolCallId, params) {
+    execute(params) {
       return Effect.runPromise(
         Effect.gen(function* () {
           const path = `/api/v3/moviefile/${params.movieFileId}`
@@ -104,7 +99,7 @@ function deleteMovieFileTool(
 export function buildRadarrTools(
   cfg: ServiceConfig,
   ctx: RunContext,
-): ToolDefinition[] {
+): ToolRegistration[] {
   const service: ServiceName = "radarr"
   return [
     arrReadTool(

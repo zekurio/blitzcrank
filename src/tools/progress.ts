@@ -1,7 +1,4 @@
-import {
-  defineTool,
-  type ToolDefinition,
-} from "@earendil-works/pi-coding-agent"
+import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable"
 import { Effect } from "effect"
 import { Type } from "typebox"
 
@@ -11,6 +8,7 @@ import { textResult, toolCheck } from "./common.ts"
 /** The run's single live status comment on the issue. */
 export interface StatusComment {
   id: number | undefined
+  calls?: number
 }
 
 /** Max report_progress calls per run; keeps status churn bounded. */
@@ -22,11 +20,9 @@ export function buildProgressTool(
   anchor: string,
   language: string,
   status: StatusComment,
-): ToolDefinition {
-  let calls = 0
+): ToolRegistration {
   return defineTool({
     name: "report_progress",
-    label: "Report issue progress",
     description:
       `Publish or rewrite this run's single live status line: one short user-facing ${language} sentence ` +
       "describing what you are doing right now. Call it as your first action, then again only when the work " +
@@ -38,16 +34,16 @@ export function buildProgressTool(
         description: `One concise ${language} sentence tailored to this issue`,
       }),
     }),
-    execute(_toolCallId, params) {
+    execute(params) {
       return Effect.runPromise(
         Effect.gen(function* () {
           yield* toolCheck(() => {
-            if (calls >= MAX_PROGRESS_UPDATES) {
+            if ((status.calls ?? 0) >= MAX_PROGRESS_UPDATES) {
               throw new Error(
                 `report_progress may be called at most ${MAX_PROGRESS_UPDATES} times per run`,
               )
             }
-            calls++
+            status.calls = (status.calls ?? 0) + 1
             const message = params.message.trim()
             if (!message) throw new Error("message must not be empty")
           })

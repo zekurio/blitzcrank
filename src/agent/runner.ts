@@ -4,13 +4,18 @@ import path from "node:path"
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent"
 import { Effect, Semaphore } from "effect"
 
-import { CaseStore, clampEntry, type CaseFile } from "../casefile.ts"
+import {
+  CaseStore,
+  clampEntries,
+  clampEntry,
+  type CaseFile,
+} from "../casefile.ts"
 import type { Config } from "../config.ts"
 import type { SeerrWebhookPayload } from "../gateways/seerr/types.ts"
+import { JobStore } from "../jobs.ts"
 import { MAX_REVISIT_CHAIN, planRevisit } from "../revisits.ts"
-import type { JsonRequestError } from "../services/http.ts"
 import { SeerrClient, seerrIssueMediaType } from "../services/seerr.ts"
-import { storageIO, type StorageError } from "../storage.ts"
+import { storageIO } from "../storage.ts"
 import { toText } from "../tools/common.ts"
 import { RunContext } from "../tools/context.ts"
 import {
@@ -32,6 +37,8 @@ import {
   resolveModel,
   runAgentTurnEffect,
   usageAnchor,
+  type AgentTurnOptions,
+  type AgentTurnResult,
 } from "./session.ts"
 
 export type IssueEvent =
@@ -77,6 +84,7 @@ export class IssueRunner {
     private readonly config: Config,
     private readonly modelRuntime: ModelRuntime,
     private readonly modelSpec: string,
+    private readonly jobs: JobStore = new JobStore(),
   ) {
     this.cases = new CaseStore(path.join(config.dataDir, "cases"))
   }
@@ -120,23 +128,33 @@ export class IssueRunner {
     event: IssueEvent,
     status: StatusComment = { id: undefined },
     signal?: AbortSignal,
+    requestId?: string,
   ): Promise<RunOutcome> {
-    return Effect.runPromise(this.runEffect(event, status, signal))
+    return Effect.runPromise(this.runEffect(event, status, signal, requestId))
   }
 
   runEffect(
     event: IssueEvent,
     status: StatusComment = { id: undefined },
     signal?: AbortSignal,
-  ): Effect.Effect<RunOutcome, SdkError | StorageError | JsonRequestError> {
+    requestId?: string,
+  ): Effect.Effect<RunOutcome, unknown> {
     return Effect.gen({ self: this }, function* () {
       const { issueId } = event
+      const runId = requestId ?? this.jobs.create("issue", { event }).id
       const seerr = new SeerrClient(
         this.config.seerr,
         this.config.seerrBotUserId,
       )
       return yield* Effect.gen({ self: this }, function* () {
-        const casefile = yield* this.cases.loadEffect(issueId)
+        // Every recovery projects this same baseline plus this submission's
+        // totals. A crash after saving cannot count the run twice.
+        const casefile = yield* this.jobs.actionEffect(
+          runId,
+          "case-baseline",
+          this.cases.loadEffect(issueId),
+          { replaySafe: true },
+        )
         // Evidence carries across the runs of one issue, matching the session that
         // is resumed alongside it: the gate exists to stop fabricated IDs, and a
         // real ID does not become fabricated by being a day old. Mutation and
@@ -161,16 +179,18 @@ export class IssueRunner {
           MAX_REVISIT_CHAIN -
             (event.kind === "revisit" ? (casefile.revisit?.chain ?? 0) : 0),
         )
-        // Checked here, not just inside the session factory, because the prompt
-        // depends on the answer: a resumed run gets a short delta prompt, and
-        // sending that to a session that silently started blank would leave the
-        // agent working an issue it was never told about.
-        const resuming =
-          casefile.sessionFile !== undefined &&
-          (yield* storageIO(() => stat(casefile.sessionFile!)).pipe(
-            Effect.map((s) => s.isFile()),
-            Effect.catch(() => Effect.succeed(false)),
-          ))
+        // The clean cut never opens old coding-agent JSONL. Existing case
+        // summaries remain useful when the first Durable conversation starts.
+        const storageFile = path.join(
+          this.config.dataDir,
+          "sessions",
+          "issues",
+          `${encodeURIComponent(issueId)}.sqlite`,
+        )
+        const resuming = yield* storageIO(() => stat(storageFile)).pipe(
+          Effect.map((s) => s.isFile()),
+          Effect.catch(() => Effect.succeed(false)),
+        )
 
         const web = buildWebProvider(this.config.web)
         const tools = [
@@ -189,19 +209,10 @@ export class IssueRunner {
           ...web.tools,
         ]
 
-        const turn = yield* runAgentTurnEffect({
-          modelRuntime: this.modelRuntime,
-          modelSpec: this.modelSpec,
-          systemPrompt: buildSystemPrompt(
-            this.config,
-            {
-              search: web.searchTool,
-              extract: web.extractTool,
-            },
-            tools.map((tool) => tool.name),
-          ),
-          tools,
-          prompt:
+        const prompt = yield* this.jobs.actionEffect(
+          runId,
+          "prompt",
+          Effect.sync(() =>
             event.kind === "webhook"
               ? buildIssuePrompt(
                   event.payload,
@@ -218,8 +229,26 @@ export class IssueRunner {
                   revisitsLeft,
                   resuming,
                 ),
-          sessionDir: path.join(this.config.dataDir, "sessions", "issues"),
-          resumeFile: resuming ? casefile.sessionFile : undefined,
+          ),
+          { replaySafe: true },
+        )
+        const turn = yield* runAgentTurnEffect({
+          modelRuntime: this.modelRuntime,
+          modelSpec: this.modelSpec,
+          systemPrompt: buildSystemPrompt(
+            this.config,
+            {
+              search: web.searchTool,
+              extract: web.extractTool,
+            },
+            tools.map((tool) => tool.name),
+          ),
+          tools,
+          prompt,
+          storageFile,
+          requestId: runId,
+          runContext: ctx,
+          hostState: issueToolState(casefile, status),
           sessionFileRef,
           logPrefix: `issue:${issueId}`,
           signal,
@@ -228,30 +257,14 @@ export class IssueRunner {
         // Usage is recorded before any Seerr call: a failure while commenting must
         // not make a run invisible in the issue's running total.
         const { mutations, deletes } = ctx.counts
-        casefile.spend = {
-          runs: casefile.spend.runs + 1,
-          tokens: casefile.spend.tokens + turn.usage.newTokens,
-          inputTokens:
-            casefile.spend.inputTokens === undefined
-              ? undefined
-              : casefile.spend.inputTokens + turn.usage.inputTokens,
-          outputTokens:
-            casefile.spend.outputTokens === undefined
-              ? undefined
-              : casefile.spend.outputTokens + turn.usage.outputTokens,
-          costUsd:
-            casefile.spend.costUsd === undefined
-              ? undefined
-              : casefile.spend.costUsd + (turn.usage.costUsd ?? 0),
-          deletes: casefile.spend.deletes + deletes,
-        }
+        projectSpend(casefile, turn, deletes)
         // Recorded before the directive block is even parsed: a run that mutated
         // and then crashed still has to show what it did.
         casefile.sessionFile = turn.sessionFile
         yield* this.cases.saveEffect(casefile)
         yield* this.cases.saveEvidenceEffect(issueId, ctx.snapshot)
 
-        if (signal?.aborted) {
+        if (signal?.aborted || turn.failure) {
           casefile.runs.push({
             at: new Date().toISOString(),
             trigger: event.kind,
@@ -266,7 +279,10 @@ export class IssueRunner {
           casefile.revisit = undefined
           yield* this.cases.saveEffect(casefile)
           return yield* Effect.fail(
-            new SdkError({ message: "issue run stopped", cause: undefined }),
+            new SdkError({
+              message: turn.failure?.message ?? "issue run stopped",
+              cause: turn.failure,
+            }),
           )
         }
 
@@ -283,30 +299,41 @@ export class IssueRunner {
           return yield* Effect.fail(
             new SdkError({ message: "issue run stopped", cause: undefined }),
           )
-        yield* publishCommentEffect(
-          seerr,
-          issueId,
-          status,
-          comment
-            ? `${comment}\n\n${usageAnchor(
-                this.modelSpec,
-                casefile.spend.tokens,
-                casefile.spend.inputTokens,
-                casefile.spend.outputTokens,
-                turn.usage.costUsd === undefined
-                  ? undefined
-                  : casefile.spend.costUsd,
-                turn.usage.costUsd,
-              )}`
-            : undefined,
+        // Once publication begins its outcome can be uncertain. Never retract
+        // a handle that might now contain the final answer after a crash.
+        yield* this.jobs.actionEffect(
+          runId,
+          "publish-comment",
+          publishCommentEffect(
+            seerr,
+            issueId,
+            status,
+            comment
+              ? `${comment}\n\n${usageAnchor(
+                  this.modelSpec,
+                  casefile.spend.tokens,
+                  casefile.spend.inputTokens,
+                  casefile.spend.outputTokens,
+                  turn.usage.costUsd === undefined
+                    ? undefined
+                    : casefile.spend.costUsd,
+                  turn.usage.costUsd,
+                )}`
+              : undefined,
+          ).pipe(Effect.as({ comment: comment ?? null })),
         )
+        status.id = undefined
 
         if (!directives.malformed && directives.resolve) {
           if (signal?.aborted)
             return yield* Effect.fail(
               new SdkError({ message: "issue run stopped", cause: undefined }),
             )
-          yield* seerr.setStatusEffect(issueId, "resolved")
+          yield* this.jobs.actionEffect(
+            runId,
+            "resolve-issue",
+            seerr.setStatusEffect(issueId, "resolved"),
+          )
           // A closed issue keeps its case file (audit trail, and `spend.deletes`
           // must not reset if it is reopened) but drops the bulky raw evidence.
           yield* this.cases.forgetEvidenceEffect(issueId)
@@ -314,8 +341,14 @@ export class IssueRunner {
 
         // Host-written, so continuity survives a run that never called the tool.
         if (comment) casefile.lastAnswer = clampEntry(comment)
+        const completedAt = yield* this.jobs.actionEffect(
+          runId,
+          "completed-at",
+          Effect.sync(() => Date.now()),
+          { replaySafe: true },
+        )
         casefile.runs.push({
-          at: new Date().toISOString(),
+          at: new Date(completedAt).toISOString(),
           trigger: event.kind === "revisit" ? "revisit" : "webhook",
           mutations,
           deletes,
@@ -334,7 +367,7 @@ export class IssueRunner {
           producedNews:
             mutations > 0 || (comment !== undefined && comment !== ""),
           maxChain: MAX_REVISIT_CHAIN,
-          now: Date.now(),
+          now: completedAt,
         })
         if (plan.refused) console.warn(`[issue:${issueId}] ${plan.refused}`)
         // A resolved issue is closed: never wake it again on an old schedule.
@@ -344,29 +377,205 @@ export class IssueRunner {
         return { issueId, directives, casefile }
       }).pipe(
         Effect.onExit(() =>
-          // A successful publication clears the handle; only a live status remains.
-          publishCommentEffect(seerr, issueId, status, undefined).pipe(
-            Effect.catchCause((cause) =>
-              Effect.sync(() => {
-                console.error(
-                  `[issue:${issueId}] failed to retract status comment:`,
-                  cause,
-                )
-              }),
+          this.jobs
+            .actionEffect(
+              runId,
+              "retract-status",
+              this.retractStatusEffect(issueId, status, runId),
+            )
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.sync(() => {
+                  console.error(
+                    `[issue:${issueId}] failed to retract status comment:`,
+                    cause,
+                  )
+                }),
+              ),
             ),
-          ),
         ),
       )
     }).pipe(Effect.uninterruptible)
   }
 
-  retractStatus(issueId: string, status: StatusComment): Promise<void> {
-    return Effect.runPromise(this.retractStatusEffect(issueId, status))
+  /** Recovery of a stopped job restores audit/state but cannot call the model. */
+  cancelEffect(
+    event: IssueEvent,
+    status: StatusComment,
+    requestId: string,
+  ): Effect.Effect<void, unknown> {
+    return Effect.gen({ self: this }, function* () {
+      const storageFile = path.join(
+        this.config.dataDir,
+        "sessions",
+        "issues",
+        `${encodeURIComponent(event.issueId)}.sqlite`,
+      )
+      const began = this.jobs
+        .actions(requestId)
+        .some((action) => action.key === "case-baseline" && action.completed)
+      const exists = yield* storageIO(() => stat(storageFile)).pipe(
+        Effect.map((file) => file.isFile()),
+        Effect.catch(() => Effect.succeed(false)),
+      )
+      if (began && exists) {
+        const casefile = yield* this.jobs.actionEffect(
+          requestId,
+          "case-baseline",
+          this.cases.loadEffect(event.issueId),
+          { replaySafe: true },
+        )
+        const ctx = new RunContext({
+          prior: yield* this.cases.loadEvidenceEffect(event.issueId),
+        })
+        const turn = yield* runAgentTurnEffect({
+          modelRuntime: this.modelRuntime,
+          modelSpec: this.modelSpec,
+          storageFile,
+          requestId,
+          systemPrompt: "This host job was cancelled. Do not execute work.",
+          prompt: "",
+          tools: [],
+          builtinRead: false,
+          runContext: ctx,
+          hostState: issueToolState(casefile, status),
+          sessionFileRef: undefined,
+          logPrefix: `issue:${event.issueId}:cancel`,
+          signal: AbortSignal.abort(),
+        })
+        projectSpend(casefile, turn, ctx.counts.deletes)
+        casefile.sessionFile = turn.sessionFile
+        casefile.revisit = undefined
+        const publication = this.jobs
+          .actions(requestId)
+          .find((action) => action.key === "publish-comment")
+        const published = publication?.completed
+          ? yield* this.jobs.actionEffect<{ comment: string | null }, Error>(
+              requestId,
+              "publish-comment",
+              Effect.fail(new Error("Missing recorded comment outcome")),
+            )
+          : undefined
+        if (published?.comment)
+          casefile.lastAnswer = clampEntry(published.comment)
+        casefile.runs.push({
+          at: new Date().toISOString(),
+          trigger: event.kind,
+          mutations: ctx.counts.mutations,
+          deletes: ctx.counts.deletes,
+          tokens: turn.usage.newTokens,
+          inputTokens: turn.usage.inputTokens,
+          outputTokens: turn.usage.outputTokens,
+          commented: Boolean(published?.comment),
+          resolved: this.jobs
+            .actions(requestId)
+            .some(
+              (action) => action.key === "resolve-issue" && action.completed,
+            ),
+        })
+        yield* this.cases.saveEffect(casefile)
+        yield* this.cases.saveEvidenceEffect(event.issueId, ctx.snapshot)
+      }
+      yield* this.jobs.actionEffect(
+        requestId,
+        "retract-status",
+        this.retractStatusEffect(event.issueId, status, requestId),
+      )
+    }).pipe(Effect.uninterruptible)
   }
 
-  retractStatusEffect(issueId: string, status: StatusComment) {
-    const seerr = new SeerrClient(this.config.seerr, this.config.seerrBotUserId)
-    return publishCommentEffect(seerr, issueId, status, undefined)
+  retractStatus(
+    issueId: string,
+    status: StatusComment,
+    requestId?: string,
+  ): Promise<void> {
+    return Effect.runPromise(
+      this.retractStatusEffect(issueId, status, requestId),
+    )
+  }
+
+  retractStatusEffect(
+    issueId: string,
+    status: StatusComment,
+    requestId?: string,
+  ) {
+    return Effect.suspend(() => {
+      // Consult durable intent, not a flag in this process: even initialization
+      // can fail while recovering a job whose comment was already published.
+      if (
+        requestId !== undefined &&
+        this.jobs
+          .actions(requestId)
+          .some((action) => action.key === "publish-comment")
+      )
+        return Effect.void
+      const seerr = new SeerrClient(
+        this.config.seerr,
+        this.config.seerrBotUserId,
+      )
+      return publishCommentEffect(seerr, issueId, status, undefined)
+    })
+  }
+}
+
+function issueToolState(
+  casefile: CaseFile,
+  status: StatusComment,
+): NonNullable<AgentTurnOptions["hostState"]> {
+  return {
+    capture: () => ({
+      statusId: status.id ?? null,
+      progressCalls: status.calls ?? 0,
+      summary: {
+        ...casefile.summary,
+        hypothesis: casefile.summary.hypothesis ?? null,
+      },
+    }),
+    restore: (value) => {
+      if (value === null || typeof value !== "object" || Array.isArray(value))
+        throw new Error("Invalid persisted issue tool state")
+      const summary = value.summary
+      if (
+        summary === null ||
+        typeof summary !== "object" ||
+        Array.isArray(summary)
+      )
+        throw new Error("Invalid persisted issue summary")
+      status.id =
+        typeof value.statusId === "number" ? value.statusId : undefined
+      status.calls =
+        typeof value.progressCalls === "number" ? value.progressCalls : 0
+      casefile.summary = {
+        hypothesis: clampEntry(summary.hypothesis),
+        facts: clampEntries(summary.facts),
+        ruledOut: clampEntries(summary.ruledOut),
+        openQuestions: clampEntries(summary.openQuestions),
+      }
+    },
+  }
+}
+
+function projectSpend(
+  casefile: CaseFile,
+  turn: AgentTurnResult,
+  deletes: number,
+): void {
+  casefile.spend = {
+    runs: casefile.spend.runs + 1,
+    tokens: casefile.spend.tokens + turn.usage.newTokens,
+    inputTokens:
+      casefile.spend.inputTokens === undefined
+        ? undefined
+        : casefile.spend.inputTokens + turn.usage.inputTokens,
+    outputTokens:
+      casefile.spend.outputTokens === undefined
+        ? undefined
+        : casefile.spend.outputTokens + turn.usage.outputTokens,
+    costUsd:
+      casefile.spend.costUsd === undefined
+        ? undefined
+        : casefile.spend.costUsd + (turn.usage.costUsd ?? 0),
+    deletes: casefile.spend.deletes + deletes,
   }
 }
 

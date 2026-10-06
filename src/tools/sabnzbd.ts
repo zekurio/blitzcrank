@@ -1,8 +1,5 @@
 import { StringEnum } from "@earendil-works/pi-ai"
-import {
-  defineTool,
-  type ToolDefinition,
-} from "@earendil-works/pi-coding-agent"
+import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable"
 import { Effect } from "effect"
 import { Type } from "typebox"
 
@@ -34,7 +31,7 @@ interface JobAction {
 export function buildSabnzbdTools(
   cfg: ServiceConfig,
   ctx: RunContext,
-): ToolDefinition[] {
+): ToolRegistration[] {
   const sabCall = createSabCall(cfg)
   const verifyList = createListVerifier(ctx, sabCall)
   return [
@@ -93,7 +90,7 @@ function createListVerifier(ctx: RunContext, sabCall: SabCall): VerifyList {
     })
 }
 
-function sabReadTool(cfg: ServiceConfig, ctx: RunContext): ToolDefinition {
+function sabReadTool(cfg: ServiceConfig, ctx: RunContext): ToolRegistration {
   return makeReadTool(
     {
       service: "sabnzbd",
@@ -127,19 +124,18 @@ function jobActionTool(
   sabCall: SabCall,
   verifyList: VerifyList,
   action: JobAction,
-): ToolDefinition {
+): ToolRegistration {
   const nzoId = action.idDescription
     ? Type.String({ minLength: 1, description: action.idDescription })
     : Type.String({ minLength: 1 })
   return defineTool({
     name: `sabnzbd_${action.name}_job`,
-    label: action.label,
     description: action.description,
     parameters: Type.Object({
       reason: reasonParam(),
       nzoId,
     }),
-    execute(_toolCallId, params) {
+    execute(params) {
       return Effect.runPromise(
         Effect.gen(function* () {
           const outcome = yield* runMutation(ctx, {
@@ -163,10 +159,9 @@ function deleteJobTool(
   ctx: RunContext,
   sabCall: SabCall,
   verifyList: VerifyList,
-): ToolDefinition {
+): ToolRegistration {
   return defineTool({
     name: "sabnzbd_delete_job",
-    label: "SABnzbd: delete job",
     description:
       "Remove one job from the SABnzbd queue or history. deleteFiles=true also deletes downloaded data and is recorded as a deletion. Prefer Arr-level queue removal when the Arr still tracks the item; never orphan an Arr that is waiting on this job. The nzo_id must pass the SABnzbd evidence gate.",
     parameters: Type.Object({
@@ -178,7 +173,7 @@ function deleteJobTool(
           "Also delete downloaded data from disk (counts as a deletion)",
       }),
     }),
-    execute(_toolCallId, params) {
+    execute(params) {
       return Effect.runPromise(
         Effect.gen(function* () {
           const outcome = yield* runMutation(ctx, {

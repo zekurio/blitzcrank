@@ -1,7 +1,7 @@
 # blitzcrank
 
 blitzcrank investigates media problems reported in Jellyseerr. It uses the
-[pi SDK](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) to read
+[Pi Durable](https://www.npmjs.com/package/@earendil-works/pi-durable) to read
 service state, apply fixes through dedicated tools, and report back on the issue.
 It connects to Seerr, Sonarr, Radarr, SABnzbd, and Jellyfin.
 
@@ -47,9 +47,11 @@ Put service URLs, API keys, and `BLITZCRANK_WEBHOOK_SECRET` in the environment
 file. `SEERR_URL` and `SEERR_API_KEY` are required. See
 [`.env.example`](.env.example) for every setting.
 
-The service stores case files, session transcripts, Discord conversations, and
+The service stores its job journal, SQLite conversations, case files, and
 provider credentials in `/var/lib/blitzcrank`. Keep `auth.json` writable so pi
-can refresh OAuth tokens.
+can refresh OAuth tokens. Only one service process may own this state directory.
+Back up the directory with the service stopped, or use SQLite-aware backups
+that include committed WAL data.
 
 ### Provider login
 
@@ -140,7 +142,39 @@ issue. The pause survives restarts. blitzcrank ignores ordinary comments until
 an authorized user posts `/blitzcrank resume`.
 
 Resuming allows new events. It does not replay stopped work or undo completed
-changes. Usage and session evidence remain in the audit record.
+changes. If cancellation cleanup has not finished, new events for that issue
+remain blocked until it settles. Usage and session evidence remain in the audit
+record.
+
+### Recovery and the Durable cutover
+
+Pi Durable is the only agent execution backend. Accepted issue, automation,
+and Discord reply jobs are recorded before admission returns. After a restart,
+the host restores pending jobs with their original submission IDs. A completed
+submission returns its recorded answer instead of running the model again.
+Service reads declared replay-safe can resume; mutations are never blindly
+replayed.
+
+If a crash leaves a mutation or public post with an uncertain outcome, the job
+fails closed for operator review. Inspect the service state and logs before
+requesting new work. Do not reset journal records to force a retry: the remote
+action may already have succeeded. Failed jobs and unresolved action intents
+remain in `jobs.sqlite`; ordinary failures are not retried in a loop.
+
+Operational runs and tool rounds remain serial. Durable recovery does not
+authorize two conversations to change the same media simultaneously. Fresh
+triggers rebuild their prompts and tool lists; an unfinished run whose policy
+changed during downtime stops rather than resume with stale permissions.
+
+Existing coding-agent JSONL files are left untouched but are not imported or
+searched by the new backend. Issues retain their case summaries and audit data;
+private Discord threads start new Durable conversations and may need users to
+restate earlier approvals. Provider login and subscription authentication are
+unchanged. There is no legacy-runtime switch.
+
+See the [runtime guide](docs/research/pi-sdk.md) for storage and recovery
+contracts. Pi Durable 1.0.3 is experimental despite its version number; all Pi
+packages are pinned and upgrades need recovery tests.
 
 ### Comment usage totals
 
@@ -187,7 +221,7 @@ services.blitzcrank = {
 };
 ```
 
-The pinned pi SDK 0.85.1 supports GPT-6 Astra. Use
+The pinned Pi provider catalog supports GPT-6 Astra. Use
 `openai-codex/gpt-6-astra:medium` for Codex subscription authentication or
 `openai/gpt-6-astra:medium` with `OPENAI_API_KEY`. Supported reasoning levels
 are `low`, `medium`, `high`, `xhigh`, and `max`. Your account must have access.
@@ -354,8 +388,9 @@ The agent can change media services, so the tool layer enforces these limits:
 - Issue, Discord, and automation runs have no mutation or deletion quotas.
   Changes remain counted and audited. Issue prompts require the agent to
   establish the full scope, tell the reporter, and act on exactly that scope.
-- Each resumed session gets a fresh system prompt and tool list while keeping
-  its conversation and service evidence.
+- Each new trigger gets a fresh system prompt and tool list while keeping its
+  conversation and service evidence. Interrupted submissions resume only under
+  the same checked policy; uncertain mutations stop for review.
 - The host posts comments, resolves issues, and schedules revisits. The agent
   returns `RESOLVE_ISSUE` and optional `REVISIT_IN` and `REVISIT_REASON`
   directives. Invalid or duplicate headers, incomplete revisit pairs, and

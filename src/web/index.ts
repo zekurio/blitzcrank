@@ -1,10 +1,10 @@
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent"
+import type { ToolRegistration } from "@earendil-works/pi-durable"
 
 import type { WebConfig } from "../config.ts"
 import { buildFirecrawlTools } from "./firecrawl.ts"
 
 export interface WebProvider {
-  tools: ToolDefinition[]
+  tools: ToolRegistration[]
   /** Registered tool names, so prompts can track capabilities exactly. */
   searchTool: string | undefined
   extractTool: string | undefined

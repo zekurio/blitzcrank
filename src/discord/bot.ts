@@ -20,7 +20,12 @@ import type {
 } from "../automations/dispatcher.ts"
 import type { AutomationReport } from "../automations/runner.ts"
 import type { Config, DiscordConfig } from "../config.ts"
-import type { DiscordAgent, DiscordReplyRequest } from "./agent.ts"
+import type {
+  DiscordAgent,
+  DiscordReplyDelivery,
+  DiscordReplyJob,
+  DiscordReplyRequest,
+} from "./agent.ts"
 import { AUTOMATION_COMMAND, syncCommandsEffect } from "./commands.ts"
 import { DiscordConversations } from "./conversations.ts"
 import { formatAutomationReport } from "./report.ts"
@@ -34,7 +39,12 @@ export interface DiscordDeps {
   listAutomations: () => AutomationInfo[]
   /** Enqueues a checked-in automation named by a signed interaction. */
   triggerAutomation: (name: string) => TriggerResult
-  chat: Pick<DiscordAgent, "triageEffect" | "enqueue"> | undefined
+  chat:
+    | Pick<
+        DiscordAgent,
+        "triageEffect" | "enqueue" | "restoreEffect" | "hasAccepted"
+      >
+    | undefined
 }
 
 /**
@@ -42,6 +52,8 @@ export interface DiscordDeps {
  * media-operations conversations. No agent tool can write to Discord.
  */
 export class DiscordBot {
+  private readonly admitting = new Set<string>()
+
   private constructor(
     private readonly client: Client<true>,
     private readonly discord: DiscordConfig,
@@ -148,6 +160,9 @@ export class DiscordBot {
         )
       }
       yield* this.verifyInboxEffect()
+      yield* this.deps.chat.restoreEffect((request) =>
+        this.restoreDeliveryEffect(request),
+      )
       this.client.on(Events.MessageCreate, async (message) => {
         // Gateway event emitters cannot await. This listener owns its failure.
         await Effect.runPromise(
@@ -193,6 +208,20 @@ export class DiscordBot {
   }
 
   private onMessageEffect(message: Message) {
+    return Effect.suspend(() => {
+      if (this.admitting.has(message.id)) return Effect.void
+      this.admitting.add(message.id)
+      return this.onAcceptedMessageEffect(message).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            this.admitting.delete(message.id)
+          }),
+        ),
+      )
+    })
+  }
+
+  private onAcceptedMessageEffect(message: Message) {
     return Effect.gen({ self: this }, function* () {
       const chat = this.deps.chat
       const inboxChannelId = this.discord.inboxChannelId
@@ -204,6 +233,7 @@ export class DiscordBot {
         message.content.trim() === ""
       )
         return
+      if (chat.hasAccepted(message.id)) return
 
       if (message.channelId === inboxChannelId) {
         yield* this.onInboxMessageEffect(message, chat)
@@ -230,7 +260,7 @@ export class DiscordBot {
           content: message.content,
         },
         chat,
-        message.id,
+        message,
       )
     })
   }
@@ -271,7 +301,7 @@ export class DiscordBot {
             content,
           },
           chat,
-          message.id,
+          message,
         )
         return
       }
@@ -330,6 +360,7 @@ export class DiscordBot {
           content,
         },
         chat,
+        message,
       )
     })
   }
@@ -352,38 +383,136 @@ export class DiscordBot {
 
   private enqueueReplyEffect(
     channel: TextChannel | AnyThreadChannel,
-    request: DiscordReplyRequest,
+    request: Pick<DiscordReplyRequest, "route" | "id" | "content">,
     chat: NonNullable<DiscordDeps["chat"]>,
-    replyTo?: string,
+    source: Message<true>,
   ) {
     return Effect.gen({ self: this }, function* () {
-      const send = (content: string, reference: string | undefined) =>
-        sdkPromise(() =>
-          channel.send({
-            content,
-            allowedMentions: { parse: [], repliedUser: false },
-            flags: MessageFlags.SuppressEmbeds,
-            ...(reference !== undefined
-              ? {
-                  reply: {
-                    messageReference: reference,
-                    failIfNotExists: false,
-                  },
-                }
-              : {}),
-          }),
-        ).pipe(Effect.asVoid)
-      const delivery = {
-        typing: () => sdkPromise(() => channel.sendTyping()),
-        send: (response: string) =>
-          Effect.gen(function* () {
-            const chunks = discordMessageChunks(response)
-            yield* send(chunks[0]!, replyTo)
-            for (const chunk of chunks.slice(1)) yield* send(chunk, undefined)
-          }),
-        fail: () => send(failureMessage(this.language), replyTo),
+      const replyTo = source.channelId === channel.id ? source.id : undefined
+      const delivery = this.replyDelivery(channel, replyTo)
+      if (
+        !chat.enqueue(
+          {
+            ...request,
+            channelId: channel.id,
+            guildId: source.guildId,
+            sourceMessageId: source.id,
+            sourceChannelId: source.channelId,
+            userId: source.author.id,
+            ...(replyTo ? { replyTo } : {}),
+          },
+          delivery,
+        )
+      )
+        yield* delivery.fail()
+    })
+  }
+
+  private replyDelivery(
+    channel: TextChannel | AnyThreadChannel,
+    replyTo: string | undefined,
+  ): DiscordReplyDelivery {
+    const send = (content: string, reference: string | undefined) =>
+      sdkPromise(() =>
+        channel.send({
+          content,
+          allowedMentions: { parse: [], repliedUser: false },
+          flags: MessageFlags.SuppressEmbeds,
+          ...(reference !== undefined
+            ? {
+                reply: {
+                  messageReference: reference,
+                  failIfNotExists: false,
+                },
+              }
+            : {}),
+        }),
+      ).pipe(Effect.asVoid)
+    return {
+      typing: () => sdkPromise(() => channel.sendTyping()),
+      send: (response: string) =>
+        Effect.gen(function* () {
+          const chunks = discordMessageChunks(response)
+          yield* send(chunks[0]!, replyTo)
+          for (const chunk of chunks.slice(1)) yield* send(chunk, undefined)
+        }),
+      fail: () => send(failureMessage(this.language), replyTo),
+    }
+  }
+
+  private restoreDeliveryEffect(request: DiscordReplyJob) {
+    return Effect.gen({ self: this }, function* () {
+      if (
+        request.guildId !== this.discord.guildId ||
+        !this.discord.inboxChannelId
+      )
+        throw new Error("Discord recovery guild/inbox scope removed")
+      const guild = yield* sdkPromise(() =>
+        this.client.guilds.fetch(this.discord.guildId),
+      )
+      const channel = yield* sdkPromise(() =>
+        guild.channels.fetch(request.channelId),
+      )
+      if (!channel) throw new Error("Discord recovery channel removed")
+      if (request.route === "answer") {
+        if (
+          channel.type !== ChannelType.GuildText ||
+          channel.id !== this.discord.inboxChannelId ||
+          request.id !== request.sourceMessageId ||
+          request.sourceChannelId !== channel.id
+        )
+          throw new Error("Discord recovery inline scope changed")
+      } else {
+        if (
+          channel.type !== ChannelType.PrivateThread ||
+          channel.parentId !== this.discord.inboxChannelId ||
+          channel.ownerId !== this.client.user.id ||
+          request.id !== channel.id ||
+          !(yield* this.conversations.hasEffect(channel.id)) ||
+          (request.sourceChannelId !== channel.id &&
+            request.sourceChannelId !== this.discord.inboxChannelId)
+        )
+          throw new Error("Discord recovery private thread scope changed")
+        yield* sdkPromise(() => channel.members.fetch(request.userId))
+        if (channel.archived || channel.locked)
+          throw new Error("Discord recovery thread closed")
       }
-      if (!chat.enqueue(request, delivery)) yield* delivery.fail()
+      if (
+        channel.type !== ChannelType.GuildText &&
+        channel.type !== ChannelType.PrivateThread
+      )
+        throw new Error("Discord recovery channel type changed")
+      const requester = yield* sdkPromise(() =>
+        guild.members.fetch(request.userId),
+      )
+      const bot = yield* sdkPromise(() =>
+        guild.members.fetch(this.client.user.id),
+      )
+      const sendPermission = channel.isThread()
+        ? PermissionFlagsBits.SendMessagesInThreads
+        : PermissionFlagsBits.SendMessages
+      for (const member of [requester, bot]) {
+        if (
+          !channel
+            .permissionsFor(member)
+            ?.has([PermissionFlagsBits.ViewChannel, sendPermission])
+        )
+          throw new Error("Discord recovery permission revoked")
+      }
+      const sourceChannel =
+        request.sourceChannelId === channel.id
+          ? channel
+          : yield* sdkPromise(() =>
+              guild.channels.fetch(request.sourceChannelId),
+            )
+      if (!sourceChannel?.isTextBased())
+        throw new Error("Discord recovery source channel removed")
+      const source = yield* sdkPromise(() =>
+        sourceChannel.messages.fetch(request.sourceMessageId),
+      )
+      if (source.author.id !== request.userId || source.author.bot)
+        throw new Error("Discord recovery source identity changed")
+      return this.replyDelivery(channel, request.replyTo)
     })
   }
 

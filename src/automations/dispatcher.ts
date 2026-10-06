@@ -1,5 +1,7 @@
 import { Effect } from "effect"
 
+import { JobStore } from "../jobs.ts"
+import type { Job } from "../jobs.ts"
 import type { SerialQueue } from "../queue.ts"
 import type { AutomationDefinition } from "./definitions.ts"
 import type { AutomationReport } from "./runner.ts"
@@ -20,7 +22,11 @@ export interface DispatcherDeps {
   /** Automations loaded at boot; nothing else can ever be dispatched. */
   definitions: AutomationDefinition[]
   queue: SerialQueue
-  run: (def: AutomationDefinition) => Effect.Effect<AutomationReport, unknown>
+  jobs?: JobStore
+  run: (
+    def: AutomationDefinition,
+    runId: string,
+  ) => Effect.Effect<AutomationReport, unknown>
   /** Report hand-off (Discord today). A broken sink must not leak a slot. */
   publish: (report: AutomationReport) => Effect.Effect<void, unknown>
   /** Next cron occurrence, for `list()`; owned by the scheduler. */
@@ -39,25 +45,80 @@ export interface DispatcherDeps {
  */
 export class AutomationDispatcher {
   private readonly inFlight = new Set<string>()
+  private readonly jobs: JobStore
 
-  constructor(private readonly deps: DispatcherDeps) {}
+  constructor(private readonly deps: DispatcherDeps) {
+    this.jobs = deps.jobs ?? new JobStore()
+  }
 
   /** Cron entry point: dispatch an already-loaded definition. */
   dispatch(def: AutomationDefinition): TriggerResult {
-    if (this.deps.queue.closed || this.inFlight.has(def.name)) {
+    if (
+      this.deps.queue.closed ||
+      this.inFlight.has(def.name) ||
+      this.jobs
+        .pending("automation")
+        .some((job) => job.busyKey === `automation:${def.name}`)
+    ) {
       console.warn(
         `[automation:${def.name}] already queued or running; skipped`,
       )
       return "busy"
     }
+    const loaded = this.deps.definitions.find(
+      (candidate) => candidate.name === def.name,
+    )
+    if (!loaded) return "unknown"
+    const job = this.jobs.create(
+      "automation",
+      { name: loaded.name, definition: loaded },
+      {
+        busyKey: `automation:${loaded.name}`,
+      },
+    )
+    this.schedule(job, job.payload.definition)
+    return "queued"
+  }
+
+  /** Call after report delivery is ready and before accepting cron ticks. */
+  restore(): void {
+    if (this.deps.queue.closed) throw new Error("queue is closed")
+    for (const job of this.jobs.pending("automation")) {
+      const payload = job.payload as {
+        name?: unknown
+        definition?: Partial<AutomationDefinition>
+      } | null
+      const def = this.deps.definitions.find(
+        (candidate) => candidate.name === payload?.name,
+      )
+      if (
+        !def ||
+        definitionPolicy(def) !== definitionPolicy(payload?.definition)
+      ) {
+        this.jobs.markFailed(job.id, "Automation definition removed or changed")
+        console.error(
+          `[automation:${job.id}] definition removed or changed; not resumed`,
+        )
+        continue
+      }
+      if (!this.inFlight.has(def.name)) this.schedule(job, def)
+    }
+  }
+
+  private schedule(job: Job, def: AutomationDefinition): void {
     this.inFlight.add(def.name)
-    this.deps.queue.enqueueEffect(() =>
-      Effect.suspend(() => this.deps.run(def)).pipe(
-        Effect.flatMap((report) => this.deps.publish(report)),
+    this.jobs.enqueue(this.deps.queue, job, () =>
+      Effect.suspend(() => this.deps.run(def, job.id)).pipe(
+        Effect.flatMap((report) =>
+          this.jobs.actionEffect(
+            job.id,
+            "publish",
+            Effect.suspend(() => this.deps.publish(report)),
+          ),
+        ),
         Effect.ensuring(Effect.sync(() => this.inFlight.delete(def.name))),
       ),
     )
-    return "queued"
   }
 
   /** HTTP and Discord entry point: dispatch by name. */
@@ -82,4 +143,18 @@ export class AutomationDispatcher {
   get active(): string[] {
     return [...this.inFlight]
   }
+}
+
+/** Source paths change on every Nix package build; they are not run policy. */
+function definitionPolicy(
+  definition: Partial<AutomationDefinition> | undefined,
+): string {
+  return JSON.stringify([
+    definition?.name,
+    definition?.description,
+    definition?.schedule,
+    definition?.enabled,
+    definition?.mutationTools,
+    definition?.body,
+  ])
 }

@@ -1,6 +1,6 @@
 import path from "node:path"
 
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent"
+import type { ToolRegistration } from "@earendil-works/pi-durable"
 
 import type { CaseFile } from "../casefile.ts"
 import type { Config } from "../config.ts"
@@ -33,8 +33,8 @@ export function buildServiceTools(
   ctx: RunContext,
   sessionFileRef: SessionFileRef,
   modelInput: readonly ("text" | "image")[] = [],
-): ToolDefinition[] {
-  const tools: ToolDefinition[] = [...buildSeerrTools(config.seerr, ctx)]
+): ToolRegistration[] {
+  const tools: ToolRegistration[] = [...buildSeerrTools(config.seerr, ctx)]
   if (config.sonarr) {
     tools.push(
       ...buildSonarrTools(config.sonarr, ctx, config.media !== undefined),
@@ -87,7 +87,7 @@ export function buildDiscordTools(
   ctx: RunContext,
   sessionFileRef: SessionFileRef,
   modelInput: readonly ("text" | "image")[] = [],
-): ToolDefinition[] {
+): ToolRegistration[] {
   const tools = buildServiceTools(
     config,
     ctx,
@@ -107,7 +107,7 @@ export function buildDiscordTools(
 export function buildDiscordAnswerTools(
   config: Config,
   ctx: RunContext,
-): ToolDefinition[] {
+): ToolRegistration[] {
   const names = new Set([
     "seerr_request",
     "sonarr_request",
@@ -144,7 +144,7 @@ export interface IssueToolDeps {
  * This keeps the model's tool surface small and fails closed when Seerr cannot
  * identify the media.
  */
-export function buildIssueTools(deps: IssueToolDeps): ToolDefinition[] {
+export function buildIssueTools(deps: IssueToolDeps): ToolRegistration[] {
   const tools = buildServiceTools(
     deps.config,
     deps.ctx,

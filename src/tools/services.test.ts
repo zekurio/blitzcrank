@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent"
+import type { ToolRegistration } from "@earendil-works/pi-durable"
 
 import type { JsonValue } from "../services/http.js"
 import { buildRadarrTools } from "./arr-radarr.js"
@@ -11,15 +11,16 @@ import { RunContext } from "./context.js"
 import { buildJellyfinTools } from "./jellyfin.js"
 import { buildSabnzbdTools } from "./sabnzbd.js"
 import { buildSeerrTools } from "./seerr.js"
+import { executeTool } from "./test-fixture.js"
 
 function execute(
-  tools: ToolDefinition[],
+  tools: ToolRegistration[],
   name: string,
   params: Record<string, unknown>,
 ) {
   const tool = tools.find((candidate) => candidate.name === name)
   assert.ok(tool)
-  return tool.execute("test", params, undefined, undefined, undefined as never)
+  return executeTool(tool, params)
 }
 
 const cases = [
@@ -136,6 +137,15 @@ for (const example of cases) {
     })
 
     const params = { reason: "fix the verified item", ...example.params }
+    assert.equal(
+      tools.find((tool) => tool.name === `${example.service}_request`)?.replay,
+      "safe",
+    )
+    for (const tool of tools) {
+      if (tool.name !== `${example.service}_request`) {
+        assert.notEqual(tool.replay, "safe", tool.name)
+      }
+    }
     await assert.rejects(execute(tools, example.mutation, params), ToolError)
     await assert.rejects(
       execute(tools, `${example.service}_request`, {
@@ -155,6 +165,7 @@ for (const example of cases) {
     assert.deepEqual(calls, example.calls)
     assert.deepEqual(bodies, example.body === undefined ? [] : [example.body])
     assert.deepEqual(ctx.counts, { mutations: 1, deletes: 0 })
+    assert.ok(result.content)
     assert.equal(result.content[0]?.type, "text")
     if (result.content[0]?.type === "text") {
       const outcome = JSON.parse(result.content[0].text) as {

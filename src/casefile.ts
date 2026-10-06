@@ -74,10 +74,9 @@ export interface CaseFile {
    */
   lastAnswer: string | undefined
   /**
-   * The pi session JSONL to resume, so a follow-up comment continues the same
-   * conversation instead of re-deriving it from `summary`. Host-written and
-   * re-validated against the filesystem before use: a missing file makes the
-   * SDK start a blank session silently rather than fail.
+   * The Durable conversation database used by the latest run. Old JSONL paths
+   * are retained until the first Durable turn but never opened or imported.
+   * The host derives new storage paths from the issue identity, not this field.
    */
   sessionFile: string | undefined
   runs: CaseRun[]

@@ -1,10 +1,7 @@
 import { readdir, realpath, stat } from "node:fs/promises"
 import path from "node:path"
 
-import {
-  defineTool,
-  type ToolDefinition,
-} from "@earendil-works/pi-coding-agent"
+import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable"
 import { Effect } from "effect"
 import { Type } from "typebox"
 
@@ -62,12 +59,11 @@ const PROBE_TIMEOUT_MS = 30_000
 export function buildMediaTools(
   cfg: MediaConfig,
   ctx: RunContext,
-): ToolDefinition[] {
+): ToolRegistration[] {
   let probes = 0
   return [
     defineTool({
       name: "media_probe",
-      label: "Probe media file",
       description:
         "Inspect the real audio/subtitle/video streams of a media file with ffprobe. This is the only trustworthy " +
         "answer to which languages a file contains: Sonarr/Radarr `languages` is parsed from the release name " +
@@ -85,7 +81,8 @@ export function buildMediaTools(
             "Absolute file or release-directory path from a declared path field this run (Arr file path or queue outputPath, SABnzbd storage, or Jellyfin MediaSources Path); never a guessed, carried, or user-supplied path",
         }),
       }),
-      execute(_toolCallId, params, signal) {
+      execute(params, _api, context) {
+        const signal = context.abortSignal
         return Effect.runPromise(
           Effect.gen(function* () {
             const requested = yield* toolCheck(() => {

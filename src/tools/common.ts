@@ -1,9 +1,6 @@
 import path from "node:path"
 
-import {
-  defineTool,
-  type ToolDefinition,
-} from "@earendil-works/pi-coding-agent"
+import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable"
 import { Cause, Data, Effect } from "effect"
 import { Type } from "typebox"
 
@@ -22,10 +19,7 @@ export function toText(data: TextResultValue): string {
   return `${text.slice(0, MAX_RESULT_CHARS)}\n... [truncated ${text.length - MAX_RESULT_CHARS} chars — narrow your query]`
 }
 
-export type ToolResultDetails = Record<
-  string,
-  string | number | boolean | null | undefined
->
+export type ToolResultDetails = Record<string, string | number | boolean | null>
 
 export function textResult(
   data: TextResultValue,
@@ -106,10 +100,10 @@ export interface ReadToolSpec<E> {
 export function makeReadTool<E>(
   spec: ReadToolSpec<E>,
   ctx: RunContext,
-): ToolDefinition {
+): ToolRegistration {
   return defineTool({
     name: `${spec.service}_request`,
-    label: spec.label,
+    replay: "safe",
     description: `${spec.description} Read-only (GET): all state changes go through dedicated tools.`,
     parameters: Type.Object({
       purpose: Type.String({
@@ -121,7 +115,7 @@ export function makeReadTool<E>(
           "Service-relative path starting with /, including any query string. Never a full URL or credentials.",
       }),
     }),
-    execute(_toolCallId, params) {
+    execute(params) {
       return Effect.runPromise(
         Effect.gen(function* () {
           yield* toolCheck(() => {
