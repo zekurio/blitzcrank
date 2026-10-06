@@ -147,6 +147,11 @@ and fully cancelled jobs do not automatically restart. Failed records retain
 their errors, and action records distinguish completed publication from
 uncertain intent.
 
+An unresolved cancellation still owns the issue's case projection. New triggers
+for that issue are withheld even after `/resume`, and already accepted later jobs
+stay queued rather than running against unfinished cleanup. Other issues can
+continue. Successful cleanup releases this hold before later work can run.
+
 For an uncertain action:
 
 1. Read the logged job ID and failure.

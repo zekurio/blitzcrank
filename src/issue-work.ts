@@ -74,7 +74,11 @@ export class IssueWork {
           }
           admitted.push(job)
         }
-        for (const job of admitted) this.admit(job)
+        for (const job of admitted) {
+          // A failed older cleanup still owns this issue's case projection.
+          // Leave later accepted work queued for a future recovery attempt.
+          if (!this.isCancelling(job.payload.event.issueId)) this.admit(job)
+        }
       }),
     )
   }
@@ -82,6 +86,7 @@ export class IssueWork {
   hasPending(issueId: string): boolean {
     return (
       this.active?.issueId === issueId ||
+      this.isCancelling(issueId) ||
       [...this.pending].some((pending) => pending.issueId === issueId)
     )
   }
@@ -93,16 +98,7 @@ export class IssueWork {
     mediaScope: ReturnType<typeof eventMediaScope>,
     dueAt?: string,
   ): void {
-    if (
-      this.jobs
-        .pending("issue")
-        .some(
-          (job) =>
-            job.status === "cancelling" &&
-            issueJob(job).payload.event.issueId === issueId,
-        )
-    )
-      return
+    if (this.isCancelling(issueId)) return
     this.revisits.scheduleEffect(issueId, delayMs, () =>
       this.enqueueEffect(
         { kind: "revisit", issueId, reason, mediaScope },
@@ -157,6 +153,12 @@ export class IssueWork {
         return yield* Effect.fail(new Error("queue is closed"))
       if (yield* this.cases.isPausedEffect(event.issueId)) {
         console.log(`[issue:${event.issueId}] paused; event ignored`)
+        return "paused"
+      }
+      if (this.isCancelling(event.issueId)) {
+        console.log(
+          `[issue:${event.issueId}] cancellation cleanup pending; event ignored`,
+        )
         return "paused"
       }
       // Shutdown may close admission while the pause marker is being read.
@@ -298,9 +300,7 @@ export class IssueWork {
       }).pipe(
         Effect.catchCause((cause) =>
           controller.signal.aborted
-            ? this.clearRevisit(event.issueId).pipe(
-                Effect.flatMap(() => Effect.failCause(cause)),
-              )
+            ? this.recoverCancellation(pending.job)
             : Effect.failCause(cause),
         ),
         Effect.ensuring(
@@ -372,6 +372,16 @@ export class IssueWork {
 
   private revision(issueId: string): number {
     return this.revisions.get(issueId) ?? 0
+  }
+
+  private isCancelling(issueId: string): boolean {
+    return this.jobs
+      .pending("issue")
+      .some(
+        (job) =>
+          job.status === "cancelling" &&
+          issueJob(job).payload.event.issueId === issueId,
+      )
   }
 
   private bumpRevision(issueId: string): void {

@@ -217,6 +217,139 @@ async function waitForDrain(work: IssueWork): Promise<void> {
   }
 }
 
+test("a thrown active stop finishes cleanup before later issue work can run", async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "blitzcrank-stop-settle-"))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const jobs = new JobStore()
+  t.after(() => jobs.close())
+  const cases = new CaseStore(dir)
+  const started = Deferred.makeUnsafe<void>()
+  const cleaning = Deferred.makeUnsafe<void>()
+  const finishCleanup = Deferred.makeUnsafe<void>()
+  let runs = 0
+  let cleanups = 0
+  const work = new IssueWork(
+    {
+      notifyQueuedEffect: () => Effect.succeed({ id: undefined }),
+      retractStatusEffect: () => Effect.void,
+      runEffect: (event, _status, signal) =>
+        Effect.gen(function* () {
+          runs++
+          if (runs === 1) {
+            yield* Deferred.succeed(started, undefined)
+            // Match IssueRunner's actual stopped-turn outcome, not a successful
+            // mock result: its exit handler has already finished verification.
+            return yield* Effect.callback<RunOutcome, Error>((resume) => {
+              signal?.addEventListener(
+                "abort",
+                () => resume(Effect.fail(new Error("issue run stopped"))),
+                { once: true },
+              )
+            })
+          }
+          const casefile = yield* cases.loadEffect(event.issueId)
+          casefile.summary.facts = ["Newer issue findings"]
+          yield* cases.saveEffect(casefile)
+          return {
+            issueId: event.issueId,
+            casefile,
+            directives: parseDirectives(""),
+          }
+        }),
+      cancelEffect: () =>
+        Effect.gen(function* () {
+          cleanups++
+          yield* Deferred.succeed(cleaning, undefined)
+          yield* Deferred.await(finishCleanup)
+          const casefile = yield* cases.loadEffect("12")
+          casefile.summary.facts = ["Stopped run projected"]
+          yield* cases.saveEffect(casefile)
+        }),
+    },
+    cases,
+    jobs,
+  )
+  t.after(() => work.revisits.stop())
+  const event = {
+    kind: "webhook" as const,
+    issueId: "12",
+    payload: { notification_type: "ISSUE_COMMENT" as const },
+  }
+  await work.enqueue(event)
+  await Effect.runPromise(Deferred.await(started))
+  await work.stop("12")
+  await Effect.runPromise(Deferred.await(cleaning))
+  await work.resume("12")
+  assert.equal(await work.enqueue(event), "paused")
+  assert.equal(jobs.records().length, 1)
+  assert.equal(jobs.records()[0]?.status, "cancelling")
+  await Effect.runPromise(Deferred.succeed(finishCleanup, undefined))
+  await Effect.runPromise(work.queue.drainEffect())
+  assert.equal(jobs.records()[0]?.status, "cancelled")
+  assert.equal(jobs.pending().length, 0)
+  assert.equal(await work.enqueue(event), "queued")
+  await Effect.runPromise(work.queue.drainEffect())
+  await Effect.runPromise(work.restoreEffect())
+  assert.equal(runs, 2)
+  assert.equal(cleanups, 1)
+  assert.deepEqual((await cases.load("12")).summary.facts, [
+    "Newer issue findings",
+  ])
+  work.armRevisit("12", 60_000, "Check completion", "tv")
+  assert.equal(work.revisits.pending, 1)
+})
+
+test("unresolved cancellation withholds accepted work without completing it", async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "blitzcrank-stop-blocked-"))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const jobs = new JobStore()
+  t.after(() => jobs.close())
+  const cases = new CaseStore(dir)
+  const event = {
+    kind: "webhook" as const,
+    issueId: "12",
+    payload: { notification_type: "ISSUE_COMMENT" as const },
+  }
+  const older = jobs.create("issue", { event, runsAhead: 0 })
+  jobs.requestCancel(older.id)
+  const later = jobs.create("issue", { event, runsAhead: 0 })
+  let cleanupAvailable = false
+  let runs = 0
+  const work = new IssueWork(
+    {
+      notifyQueuedEffect: () => Effect.succeed({ id: undefined }),
+      retractStatusEffect: () => Effect.void,
+      cancelEffect: () =>
+        cleanupAvailable
+          ? Effect.void
+          : Effect.fail(new Error("cleanup outcome requires review")),
+      runEffect: () =>
+        cases.loadEffect("12").pipe(
+          Effect.map((casefile) => {
+            runs++
+            return { issueId: "12", casefile, directives: parseDirectives("") }
+          }),
+        ),
+    },
+    cases,
+    jobs,
+  )
+  await Effect.runPromise(work.restoreEffect())
+  assert.equal(work.queue.size, 0)
+  assert.equal(jobs.get(older.id)?.status, "cancelling")
+  assert.equal(jobs.get(later.id)?.status, "queued")
+  await work.resume("12")
+  assert.equal(await work.enqueue(event), "paused")
+  assert.equal(jobs.records().length, 2)
+  assert.equal(runs, 0)
+  cleanupAvailable = true
+  await Effect.runPromise(work.restoreEffect())
+  await Effect.runPromise(work.queue.drainEffect())
+  assert.equal(jobs.get(older.id)?.status, "cancelled")
+  assert.equal(jobs.get(later.id)?.status, "completed")
+  assert.equal(runs, 1)
+})
+
 test("pause survives restart and concurrent resume follows stop", async (t) => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "blitzcrank-pause-"))
   t.after(() => rm(dir, { force: true, recursive: true }))

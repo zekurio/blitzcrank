@@ -142,7 +142,9 @@ issue. The pause survives restarts. blitzcrank ignores ordinary comments until
 an authorized user posts `/blitzcrank resume`.
 
 Resuming allows new events. It does not replay stopped work or undo completed
-changes. Usage and session evidence remain in the audit record.
+changes. If cancellation cleanup has not finished, new events for that issue
+remain blocked until it settles. Usage and session evidence remain in the audit
+record.
 
 ### Recovery and the Durable cutover
 

@@ -14,6 +14,7 @@ import { Effect } from "effect"
 
 import { CaseStore } from "../casefile.ts"
 import type { Config } from "../config.ts"
+import { IssueWork } from "../issue-work.ts"
 import { JobStore } from "../jobs.ts"
 import { HttpError } from "../services/http.ts"
 import { SeerrClient } from "../services/seerr.ts"
@@ -301,6 +302,85 @@ test("a completed issue submission recovers without another post or usage increm
   assert.equal(posts, 1)
   assert.equal(deletes, 0)
 })
+
+test(
+  "the real Durable issue runner settles active cancellation before resume",
+  { timeout: 10_000 },
+  async (t) => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "blitzcrank-real-stop-"))
+    t.after(() => rm(dir, { recursive: true, force: true }))
+    const runtime = await ModelRuntime.create({
+      credentials: new InMemoryCredentialStore(),
+    })
+    runtime.checkAuth = async () => ({ type: "api_key" })
+    let signalStarted = () => {}
+    const started = new Promise<void>((resolve) => {
+      signalStarted = resolve
+    })
+    let requests = 0
+    runtime.streamSimple = (_model, _context, options) => {
+      requests++
+      const stream = createAssistantMessageEventStream()
+      const aborted: AssistantMessage = {
+        role: "assistant",
+        content: [],
+        api: "anthropic-messages",
+        provider: "anthropic",
+        model: "claude-sonnet-4-5",
+        timestamp: 1,
+        stopReason: "aborted",
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+      }
+      options?.signal?.addEventListener(
+        "abort",
+        () => {
+          stream.push({ type: "error", reason: "aborted", error: aborted })
+        },
+        { once: true },
+      )
+      signalStarted()
+      return stream
+    }
+    t.mock.method(SeerrClient.prototype, "getIssueEffect", () =>
+      Effect.succeed({ id: 42, media: { mediaType: "movie" } }),
+    )
+    const jobs = new JobStore()
+    t.after(() => jobs.close())
+    const cases = new CaseStore(path.join(dir, "cases"))
+    const runner = new IssueRunner(
+      testConfig(dir),
+      runtime,
+      "anthropic/claude-sonnet-4-5",
+      jobs,
+    )
+    const work = new IssueWork(runner, cases, jobs)
+    t.after(() => work.revisits.stop())
+    await work.enqueue({
+      kind: "webhook",
+      issueId: "42",
+      payload: { notification_type: "ISSUE_CREATED" },
+    })
+    await started
+    await work.stop("42")
+    await Effect.runPromise(work.queue.drainEffect())
+    assert.equal(jobs.records()[0]?.status, "cancelled")
+    assert.equal(jobs.pending().length, 0)
+    assert.equal((await cases.load("42")).spend.runs, 1)
+    await work.resume("42")
+    await Effect.runPromise(work.restoreEffect())
+    assert.equal((await cases.load("42")).spend.runs, 1)
+    assert.equal(requests, 1)
+    work.armRevisit("42", 60_000, "Check import", "movie")
+    assert.equal(work.revisits.pending, 1)
+  },
+)
 
 function testConfig(dataDir: string): Config {
   return {
