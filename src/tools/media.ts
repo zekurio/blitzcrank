@@ -78,7 +78,7 @@ export function buildMediaTools(
         }),
         path: Type.String({
           description:
-            "Absolute file or release-directory path from a declared path field this run (Arr file path or queue outputPath, SABnzbd storage, Jellyfin MediaSources Path, or Anvil source/destination); never a guessed, carried, or user-supplied path",
+            "Absolute file or release-directory path from a declared path field this run (Arr file path or queue outputPath, SABnzbd storage, or Jellyfin MediaSources Path); never a guessed, carried, or user-supplied path",
         }),
       }),
       execute(params, _api, context) {
@@ -96,8 +96,8 @@ export function buildMediaTools(
               const requested = params.path.trim()
               if (!ctx.sawRecordedPath(requested)) {
                 throw new Error(
-                  `evidence gate: ${requested} was not returned in a declared service or Anvil path field this run. ` +
-                    "Probe only an exact path from Sonarr/Radarr, SABnzbd, Jellyfin, or Anvil; " +
+                  `evidence gate: ${requested} was not returned in a declared service path field this run. ` +
+                    "Probe only an exact path from Sonarr/Radarr, SABnzbd, or Jellyfin; " +
                     "never use issue text, carried evidence, or a reconstructed path.",
                 )
               }

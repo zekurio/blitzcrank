@@ -5,6 +5,8 @@ This document records the battle-tested Go-hosted Blitzcrank design represented 
 > The original `.pi/` artifacts were removed from the repository after their
 > knowledge was distilled here and into `skills/` and `src/agent/prompt.ts`;
 > file paths mentioned below refer to that retired layout.
+> Anvil support has also been removed from Blitzcrank; its references below
+> describe the historical integration only and are not current capabilities.
 
 ## 1. Architecture overview
 

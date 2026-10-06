@@ -5,11 +5,6 @@ export interface ServiceConfig {
   apiKey: string
 }
 
-export interface AnvilConfig {
-  command: string
-  socket: string
-}
-
 export interface DiscordConfig {
   token: string
   /** Guild whose commands are registered; interactions elsewhere are refused. */
@@ -77,8 +72,6 @@ export interface Config {
   radarr: ServiceConfig | undefined
   sabnzbd: ServiceConfig | undefined
   jellyfin: ServiceConfig | undefined
-  /** Enables Anvil correlation and retry tools when its control socket is set. */
-  anvil: AnvilConfig | undefined
   /** Enables media reads; frame extraction also requires model image support. */
   media: MediaConfig | undefined
   /** Reports, commands, and optional triaged private operations threads. */
@@ -201,20 +194,6 @@ function discord(): DiscordConfig | undefined {
   }
 }
 
-function anvil(): AnvilConfig | undefined {
-  const configuredSocket = process.env.ANVIL_CONTROL_SOCKET
-  if (configuredSocket === undefined) return undefined
-  const socket = configuredSocket.trim()
-  if (socket === "" || !isAbsolute(socket) || socket.includes("\0")) {
-    throw new Error("ANVIL_CONTROL_SOCKET must be an absolute path")
-  }
-  const command = (process.env.ANVIL_COMMAND ?? "anvilctl").trim()
-  if (command === "" || command.includes("\0")) {
-    throw new Error("ANVIL_COMMAND must be a non-empty executable name or path")
-  }
-  return { command, socket }
-}
-
 /** Media roots unset means the probe tool is not registered at all. */
 function media(): MediaConfig | undefined {
   const roots = absoluteRoots(
@@ -278,7 +257,6 @@ export function loadConfig(): Config {
     radarr: service("RADARR"),
     sabnzbd: service("SABNZBD"),
     jellyfin: service("JELLYFIN"),
-    anvil: anvil(),
     media: media(),
     discord: discord(),
   }

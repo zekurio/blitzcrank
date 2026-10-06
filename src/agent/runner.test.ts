@@ -322,7 +322,6 @@ function testConfig(dataDir: string): Config {
     radarr: undefined,
     sabnzbd: undefined,
     jellyfin: undefined,
-    anvil: undefined,
     media: undefined,
     discord: undefined,
   }

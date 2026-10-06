@@ -10,6 +10,7 @@ import {
 import os from "node:os"
 import path from "node:path"
 import test from "node:test"
+import { fileURLToPath } from "node:url"
 
 import { Effect } from "effect"
 
@@ -18,8 +19,10 @@ import {
   loadAutomationsEffect,
 } from "./automations/definitions.ts"
 import { CaseStore, emptyCase } from "./casefile.ts"
+import type { Config } from "./config.ts"
 import { StorageError } from "./storage.ts"
 import { RunContext } from "./tools/context.ts"
+import { buildServiceTools, isReadTool } from "./tools/index.ts"
 
 test("native case storage preserves pause failures, atomic writes, and evidence durability", async (t) => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "blitzcrank-storage-"))
@@ -51,14 +54,14 @@ test("native case storage preserves pause failures, atomic writes, and evidence 
 
   const context = new RunContext()
   context.recordRead("sonarr", "/series/9", '{"id":9}')
-  context.recordIdentity("anvil", 17)
+  context.recordIdentity("sonarr", 17)
   context.recordPath("sonarr", "/media/show", "path")
   await Effect.runPromise(store.saveEvidenceEffect("7", context.snapshot))
   const resumed = new RunContext({
     prior: await Effect.runPromise(store.loadEvidenceEffect("7")),
   })
   assert.equal(resumed.sawValue("sonarr", 9), true)
-  assert.equal(resumed.sawIdentity("anvil", 17), true)
+  assert.equal(resumed.sawIdentity("sonarr", 17), true)
   assert.equal(resumed.sawRecordedPath("/media/show"), false)
   await Effect.runPromise(store.forgetEvidenceEffect("7"))
   assert.equal(
@@ -122,15 +125,15 @@ test("automation loading keeps missing directories optional and invalid definiti
   )
   await writeFile(
     path.join(dir, "check.md"),
-    "---\nname: check\nschedule: '0 * * * *'\nmutation_tools: [anvil_retry_job]\n---\nCheck jobs.",
+    "---\nname: check\nschedule: '0 * * * *'\nmutation_tools: [sonarr_manual_import]\n---\nCheck imports.",
   )
   assert.deepEqual(
     (await Effect.runPromise(loadAutomationsEffect(dir)))[0]?.mutationTools,
-    ["anvil_retry_job"],
+    ["sonarr_manual_import"],
   )
   await writeFile(
     path.join(dir, "check.md"),
-    "---\nname: check\nschedule: '0 * * * *'\nmutation_tools: [anvil_retry_job, anvil_retry_job]\n---\nCheck jobs.",
+    "---\nname: check\nschedule: '0 * * * *'\nmutation_tools: [sonarr_manual_import, sonarr_manual_import]\n---\nCheck imports.",
   )
   await assert.rejects(
     Effect.runPromise(loadAutomationsEffect(dir)),
@@ -138,4 +141,44 @@ test("automation loading keeps missing directories optional and invalid definiti
       error instanceof AutomationDefinitionError &&
       error.message.includes("duplicate"),
   )
+})
+
+test("bundled automations have available mutation tools with only Seerr and both Arrs", async () => {
+  const config: Config = {
+    port: 0,
+    dataDir: "/tmp/blitzcrank-test",
+    automationsDir: fileURLToPath(new URL("../automations", import.meta.url)),
+    webhookSecret: undefined,
+    model: undefined,
+    automationModel: undefined,
+    automationModels: {},
+    authPath: undefined,
+    modelsPath: undefined,
+    language: "English",
+    web: { provider: "none" },
+    seerrBotUserId: undefined,
+    seerrBotUsername: undefined,
+    seerr: { url: "http://seerr.test", apiKey: "test" },
+    sonarr: { url: "http://sonarr.test", apiKey: "test" },
+    radarr: { url: "http://radarr.test", apiKey: "test" },
+    sabnzbd: undefined,
+    jellyfin: undefined,
+    media: undefined,
+    discord: undefined,
+  }
+  const definitions = await Effect.runPromise(
+    loadAutomationsEffect(config.automationsDir),
+  )
+  assert.ok(definitions.length > 0)
+  const names = new Set(
+    buildServiceTools(config, new RunContext(), { current: undefined }).map(
+      (tool) => tool.name,
+    ),
+  )
+  for (const definition of definitions) {
+    for (const name of definition.mutationTools) {
+      assert.ok(names.has(name), `${definition.name} requires ${name}`)
+      assert.equal(isReadTool(name), false, `${name} must be a mutation`)
+    }
+  }
 })

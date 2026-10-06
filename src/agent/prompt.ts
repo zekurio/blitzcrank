@@ -45,17 +45,6 @@ const CAPABILITY_LINES: ReadonlyArray<readonly [string, string]> = [
     "- For wrong movie/episode reports, use `media_frames` with the media-probe skill; scenes alone may not identify an episode.",
   ],
   [
-    "anvil_retry_job",
-    "- `anvil_retry_job` can resume spent work; verify the cause is gone before retrying.",
-  ],
-  [
-    "anvil_status",
-    `- Load the Anvil skill for pre-import delays or stream-selection questions.
-  Daemon health is not job evidence; an empty lookup is unknown. Confirm absence only
-  against a complete list. Inspect stream decisions before probing when available.
-  Persistent expired leases or retrying jobs need an operator.`,
-  ],
-  [
     "media_probe",
     `- Before concluding a track is absent, lost in conversion, or present in a replacement,
   use \`media_probe\` on the actual file, including pre-import downloads. Release-name
@@ -122,7 +111,7 @@ ${SERVICE_EVIDENCE_RULES}
 ## Revisits
 
 - Revisit only pending work that can be verified, not questions awaiting the reporter.
-  Name exactly what to check. Use 10–15m for nearly complete downloads/running encodes,
+  Name exactly what to check. Use 10–15m for nearly complete downloads/imports,
   hours for barely started work. No requested revisit means no further check.
 - A revisit is not a new request: read and act only on its named work. Comment only for
   user-visible news; otherwise leave the comment empty.

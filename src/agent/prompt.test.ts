@@ -81,18 +81,17 @@ test("only fresh issue sessions get fallback notes; revisits carry current state
 
 test("issue capability guidance follows registered tools, not configured services", () => {
   const prompt = buildSystemPrompt({ language: "German" }, noWeb, [])
-  assert.doesNotMatch(prompt, /`media_probe`|`media_frames`|`anvil_retry_job`/)
+  assert.doesNotMatch(prompt, /`media_probe`|`media_frames`/)
   assert.match(prompt, /external availability cannot be checked/)
   assert.match(prompt, /Establish the full extent before changing anything/)
   assert.match(prompt, /Act on exactly the verified set/)
   const capable = buildSystemPrompt(
     { language: "German" },
     { search: "web_search", extract: "web_extract" },
-    ["media_probe", "media_frames", "anvil_retry_job", "anvil_status"],
+    ["media_probe", "media_frames"],
   )
   assert.match(capable, /`media_probe`/)
   assert.match(capable, /`media_frames`/)
-  assert.match(capable, /`anvil_retry_job`/)
   assert.match(capable, /`web_search`/)
 })
 

@@ -59,7 +59,6 @@ test("frame tool follows current model capabilities and configured roots", () =>
     radarr: { url: "http://radarr.test", apiKey: "test" },
     sabnzbd: { url: "http://sabnzbd.test", apiKey: "test" },
     jellyfin: { url: "http://jellyfin.test", apiKey: "test" },
-    anvil: { command: "anvilctl", socket: "/tmp/anvil.sock" },
     media: { roots: ["/tmp/media"] },
     discord: undefined,
   }
@@ -96,7 +95,7 @@ test("frame tool follows current model capabilities and configured roots", () =>
     )
   }
   assert.equal(isReadTool("media_frames"), true)
-  assert.equal(isReadTool("anvil_retry_job"), false)
+  assert.equal(isReadTool("sonarr_manual_import"), false)
   for (const modelInput of [["text", "image"], ["text"]] as const) {
     const tools = buildIssueTools({
       config,
@@ -120,17 +119,6 @@ test("frame tool follows current model capabilities and configured roots", () =>
       false,
     )
   }
-  const noAnvil = { ...config, anvil: undefined }
-  const names = buildServiceTools(noAnvil, ctx, { current: undefined }, [
-    "image",
-  ]).map((tool) => tool.name)
-  assert.ok(
-    buildSystemPrompt(
-      noAnvil,
-      { search: undefined, extract: undefined },
-      names,
-    ).includes("`media_frames`"),
-  )
 })
 
 test("frames decode at requested positions without recording mutation evidence", async (t) => {

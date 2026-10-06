@@ -97,8 +97,8 @@ Safety checks belong inside execution as well as any hooks. Durable skips
 entire assistant batch before allowing any sibling and persists successful
 termination.
 
-Carried stable IDs keep their existing semantics. Reusable Anvil slugs, exact
-media paths, and web extraction grants do not become permanent permissions.
+Carried stable IDs keep their existing semantics. Exact media paths and web
+extraction grants do not become permanent permissions.
 Mutable state still needs fresh service reads; media probe output never supplies
 ID evidence.
 
