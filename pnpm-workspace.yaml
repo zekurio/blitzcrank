@@ -1,3 +1,7 @@
+overrides:
+  # oxfmt 0.59.0 pins a worker pool affected by GHSA-85c8-ppgw-ccpr.
+  "oxfmt@0.59.0>tinypool": 2.1.2
+
 allowBuilds:
   esbuild: true
   "@google/genai": false
