@@ -13,7 +13,7 @@ test("Seerr commands require authorization and never enqueue agent work", async 
     dataDir: "/tmp/blitzcrank-test",
     automationsDir: "/tmp/blitzcrank-test/automations",
     webhookSecret: undefined,
-    model: undefined,
+    model: "anthropic/claude-sonnet-4-5",
     automationModel: undefined,
     automationModels: {},
     authPath: undefined,

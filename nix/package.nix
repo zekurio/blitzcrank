@@ -42,9 +42,7 @@ stdenv.mkDerivation (finalAttrs: {
     mkdir -p $out/lib/blitzcrank
     cp -r dist node_modules skills automations package.json $out/lib/blitzcrank/
     makeWrapper ${nodejs}/bin/node $out/bin/blitzcrank \
-      --add-flags "$out/lib/blitzcrank/dist/index.js"
-    makeWrapper ${nodejs}/bin/node $out/bin/blitz-pi \
-      --add-flags "$out/lib/blitzcrank/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"
+      --add-flags "$out/lib/blitzcrank/dist/cli.js"
     runHook postInstall
   '';
 

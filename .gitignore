@@ -7,7 +7,9 @@ dist/
 .env.*
 !.env.example
 
-# direnv
+# devenv / direnv
+.devenv*
+devenv.local.nix
 .direnv/
 
 # local Pi resources

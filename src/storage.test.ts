@@ -149,7 +149,7 @@ test("bundled automations have available mutation tools with only Seerr and both
     dataDir: "/tmp/blitzcrank-test",
     automationsDir: fileURLToPath(new URL("../automations", import.meta.url)),
     webhookSecret: undefined,
-    model: undefined,
+    model: "anthropic/claude-sonnet-4-5",
     automationModel: undefined,
     automationModels: {},
     authPath: undefined,

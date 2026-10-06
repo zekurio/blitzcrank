@@ -388,7 +388,7 @@ function testConfig(dataDir: string): Config {
     port: 8484,
     automationsDir: "automations",
     webhookSecret: undefined,
-    model: undefined,
+    model: "anthropic/claude-sonnet-4-5",
     automationModel: undefined,
     automationModels: {},
     authPath: undefined,

@@ -9,6 +9,12 @@ let
   cfg = config.services.blitzcrank;
   stateDir = "/var/lib/blitzcrank";
 
+  authEnvironment =
+    lib.mapAttrsToList (
+      name: value: "--setenv=${name}=${toString value}"
+    ) config.systemd.services.blitzcrank.environment
+    ++ lib.optional (cfg.environmentFile != null) "--property=EnvironmentFile=${cfg.environmentFile}";
+
   # Seeds {option}`authFile` from a read-only secret (sops, agenix, ...) that
   # systemd exposes as a credential. The live file must stay writable — pi
   # refreshes OAuth tokens in place — so the secret is copied, not linked, and
@@ -27,33 +33,41 @@ let
     printf '%s\n' "$sum" > "$stamp"
   '';
 
-  statePi = pkgs.writeShellApplication {
-    name = "blitzcrank-pi";
+  cli = pkgs.writeShellApplication {
+    name = "blitzcrank";
     runtimeInputs = [
       pkgs.coreutils
       pkgs.systemd
       pkgs.util-linux
     ];
     text = ''
+      # Keep one CLI. Only auth needs access to the service-owned state.
+      if [ "''${1:-}" != auth ] || [ "$#" -lt 2 ]; then
+        exec ${lib.getExe cfg.package} "$@"
+      fi
+      case "''${2:-}" in
+        -h | --help | help) exec ${lib.getExe cfg.package} "$@" ;;
+      esac
+
       if [ "$(id -u)" -ne 0 ]; then
-        echo "blitzcrank-pi must be run as root (try sudo)" >&2
+        echo "service authentication must be run as root (try sudo blitzcrank auth)" >&2
         exit 1
       fi
       if [ ! -t 0 ] || [ ! -t 1 ]; then
-        echo "blitzcrank-pi requires an interactive terminal" >&2
+        echo "service authentication requires an interactive terminal" >&2
         exit 1
       fi
 
-      exec 9>/run/blitzcrank-pi.lock
+      exec 9>/run/blitzcrank-auth.lock
       if ! flock --nonblock 9; then
-        echo "another blitzcrank-pi session is already running" >&2
+        echo "another blitzcrank auth command is already running" >&2
         exit 1
       fi
 
       # Recover a transient unit left behind if the previous helper was killed.
-      systemctl stop blitzcrank-pi.service >/dev/null 2>&1 || true
+      systemctl stop blitzcrank-auth.service >/dev/null 2>&1 || true
 
-      restore_stamp=/run/blitzcrank-pi.restore
+      restore_stamp=/run/blitzcrank-auth.restore
       restore_service=0
       if [ -e "$restore_stamp" ]; then
         restore_service=1
@@ -69,7 +83,7 @@ let
       cleanup() {
         status=$?
         trap - EXIT HUP INT TERM
-        systemctl stop blitzcrank-pi.service >/dev/null 2>&1 || true
+        systemctl stop blitzcrank-auth.service >/dev/null 2>&1 || true
         if [ "$restore_service" -eq 1 ]; then
           if systemctl start blitzcrank.service; then
             rm -f "$restore_stamp"
@@ -89,8 +103,8 @@ let
       systemctl stop blitzcrank.service
 
       systemd-run \
-        --unit=blitzcrank-pi.service \
-        --description="Interactive pi instance for blitzcrank" \
+        --unit=blitzcrank-auth.service \
+        --description="Blitzcrank provider authentication" \
         --service-type=exec \
         --property=Conflicts=blitzcrank.service \
         --property=DynamicUser=yes \
@@ -99,13 +113,12 @@ let
         --property=NoNewPrivileges=yes \
         --property=ProtectSystem=strict \
         --property=PrivateTmp=yes \
-        --setenv=PI_CODING_AGENT_DIR=${stateDir} \
+        ${lib.escapeShellArgs authEnvironment} \
         --working-directory=${stateDir} \
         --pty \
         --wait \
         --collect \
-        ${lib.getExe' cfg.package "blitz-pi"} \
-        --no-session
+        ${lib.getExe cfg.package} "$@"
     '';
   };
 in
@@ -125,14 +138,14 @@ in
     };
 
     model = lib.mkOption {
-      type = lib.types.str;
-      default = "anthropic/claude-sonnet-4-5";
-      example = "openai-codex/gpt-5.2-codex:high";
+      type = lib.types.nonEmptyStr;
+      example = "openai/gpt-6-astra:high";
       description = ''
-        Model for issue runs as provider/model with an optional thinking suffix.
+        Required model for issue runs as provider/model with an optional thinking suffix.
+        There is no built-in model choice.
         API-key providers (anthropic, openai, ...) authenticate via environment
         variables from {option}`environmentFile`. OAuth providers
-        (openai-codex, ...) authenticate via the auth file, see
+        (openai, ...) authenticate via the auth file, see
         {option}`authFile`.
       '';
     };
@@ -140,7 +153,7 @@ in
     automationModel = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
-      example = "openai-codex/gpt-5.6-terra:high";
+      example = "openai/gpt-5.6-terra:high";
       description = ''
         Default model for automation runs as provider/model with an optional
         thinking suffix. Null inherits {option}`model`.
@@ -151,7 +164,7 @@ in
       type = lib.types.attrsOf lib.types.str;
       default = { };
       example = {
-        stale-import-handler = "openai-codex/gpt-5.6-terra:high";
+        stale-import-handler = "openai/gpt-5.6-terra:high";
       };
       description = ''
         Per-automation model overrides keyed by automation name. Entries use
@@ -185,11 +198,12 @@ in
       type = lib.types.str;
       default = "${stateDir}/auth.json";
       description = ''
-        pi auth.json with provider credentials. Required for OAuth providers
-        such as openai-codex. With the default path, bootstrap interactively
-        with {command}`sudo blitzcrank-pi`, or declaratively via
+        Writable auth.json with provider credentials. Required for OAuth providers
+        such as openai with ChatGPT subscription auth. Bootstrap interactively
+        with {command}`sudo blitzcrank auth login openai`, or declaratively via
         {option}`authSeedFile`. It must stay writable because OAuth tokens
-        auto-refresh and are persisted back.
+        auto-refresh and are persisted back. The auth helper also stores a
+        stable installation UUID at {option}`authFile` + ".device-id".
       '';
     };
 
@@ -270,7 +284,7 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    environment.systemPackages = [ statePi ];
+    environment.systemPackages = [ cli ];
 
     assertions = [
       {

@@ -73,7 +73,7 @@ test("Discord conversations receive mutations and conversation history", () => {
     dataDir: "/tmp/blitzcrank-test",
     automationsDir: "/tmp/blitzcrank-test/automations",
     webhookSecret: undefined,
-    model: undefined,
+    model: "anthropic/claude-sonnet-4-5",
     automationModel: undefined,
     automationModels: {},
     authPath: undefined,
