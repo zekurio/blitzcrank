@@ -1,8 +1,5 @@
 import { StringEnum } from "@earendil-works/pi-ai"
-import {
-  defineTool,
-  type ToolDefinition,
-} from "@earendil-works/pi-coding-agent"
+import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable"
 import { Effect } from "effect"
 import { Type } from "typebox"
 
@@ -19,7 +16,7 @@ import { assertSeerrLifecycleOwned } from "./safety.ts"
 export function buildSeerrTools(
   cfg: ServiceConfig,
   ctx: RunContext,
-): ToolDefinition[] {
+): ToolRegistration[] {
   const request = (path: string) =>
     jsonRequestEffect(cfg.url, path, { headers: { "X-Api-Key": cfg.apiKey } })
 
@@ -43,10 +40,9 @@ function createRequestTool(
   cfg: ServiceConfig,
   ctx: RunContext,
   request: (path: string) => Effect.Effect<JsonValue, JsonRequestError>,
-): ToolDefinition {
+): ToolRegistration {
   return defineTool({
     name: "seerr_create_request",
-    label: "Seerr: create media request",
     description:
       "Create a new Jellyseerr media request (e.g. re-request media that was reported missing and is absent from the Arr). The tmdbId must come from a read this run.",
     parameters: Type.Object({
@@ -62,7 +58,7 @@ function createRequestTool(
         }),
       ),
     }),
-    execute(_toolCallId, params) {
+    execute(params) {
       return Effect.runPromise(
         Effect.gen(function* () {
           const body = {

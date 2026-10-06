@@ -1,20 +1,21 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent"
+import type { ToolRegistration } from "@earendil-works/pi-durable"
 
 import { HttpError } from "../services/http.js"
 import { ToolError } from "../tools/common.js"
+import { executeTool } from "../tools/test-fixture.js"
 import { buildFirecrawlTools } from "./firecrawl.js"
 
 function execute(
-  tools: ToolDefinition[],
+  tools: ToolRegistration[],
   name: string,
   params: Record<string, unknown>,
 ) {
   const tool = tools.find((candidate) => candidate.name === name)
   assert.ok(tool)
-  return tool.execute("test", params, undefined, undefined, undefined as never)
+  return executeTool(tool, params)
 }
 
 test("web Effects preserve the per-run extraction gate and hosted API boundary", async (t) => {
@@ -83,7 +84,7 @@ test("web Effects preserve the per-run extraction gate and hosted API boundary",
   )
   assert.equal(calls[1]?.body.url, "https://example.com/release")
   assert.equal(calls[1]?.body.timeout, 45_000)
-  assert.equal(result.content[0]?.type, "text")
+  assert.equal(result.content?.[0]?.type, "text")
   assert.match(JSON.stringify(result.content), /One; Two/)
   await assert.rejects(
     execute(buildFirecrawlTools(config), "web_extract", {

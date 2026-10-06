@@ -1,7 +1,4 @@
-import {
-  defineTool,
-  type ToolDefinition,
-} from "@earendil-works/pi-coding-agent"
+import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable"
 import { Effect } from "effect"
 import { Type } from "typebox"
 
@@ -151,10 +148,9 @@ function sonarrSearchTool(
   cfg: ServiceConfig,
   ctx: RunContext,
   probeAvailable: boolean,
-): ToolDefinition {
+): ToolRegistration {
   return defineTool({
     name: "sonarr_search",
-    label: "Sonarr: trigger search",
     description:
       "Trigger a Sonarr search: whole series, one season, or specific episodes. The series id (and episode ids, if given) must come from Sonarr reads this run. " +
       "Scope is enforced: a search affecting more than one episode must state the true episode count in expectedEpisodeCount, and replacing two or more existing " +
@@ -180,7 +176,7 @@ function sonarrSearchTool(
         }),
       ),
     }),
-    execute: (_toolCallId, params) =>
+    execute: (params) =>
       Effect.runPromise(executeSonarrSearch(cfg, ctx, probeAvailable, params)),
   })
 }
@@ -262,17 +258,16 @@ function isString<Value>(value: Value): value is Value & string {
 function refreshSeriesTool(
   cfg: ServiceConfig,
   ctx: RunContext,
-): ToolDefinition {
+): ToolRegistration {
   return defineTool({
     name: "sonarr_refresh_series",
-    label: "Sonarr: refresh series",
     description:
       "Refresh a series' metadata and rescan its files (RefreshSeries). The series id must come from a Sonarr read this run.",
     parameters: Type.Object({
       reason: reasonParam(),
       seriesId: Type.Integer({ minimum: 1 }),
     }),
-    execute(_toolCallId, params) {
+    execute(params) {
       return Effect.runPromise(
         Effect.gen(function* () {
           const service: ServiceName = "sonarr"
@@ -297,17 +292,16 @@ function refreshSeriesTool(
 function deleteEpisodeFileTool(
   cfg: ServiceConfig,
   ctx: RunContext,
-): ToolDefinition {
+): ToolRegistration {
   return defineTool({
     name: "sonarr_delete_episode_file",
-    label: "Sonarr: delete episode file",
     description:
       "Delete one episode file from disk (e.g. verified corrupt), so a replacement can be searched. Call it once per file when a whole verified set is wrong. The episodefile id must pass the Sonarr evidence gate.",
     parameters: Type.Object({
       reason: reasonParam(),
       episodeFileId: Type.Integer({ minimum: 1 }),
     }),
-    execute(_toolCallId, params) {
+    execute(params) {
       return Effect.runPromise(
         Effect.gen(function* () {
           const service: ServiceName = "sonarr"
@@ -336,7 +330,7 @@ export function buildSonarrTools(
   cfg: ServiceConfig,
   ctx: RunContext,
   probeAvailable: boolean,
-): ToolDefinition[] {
+): ToolRegistration[] {
   const service: ServiceName = "sonarr"
   return [
     arrReadTool(

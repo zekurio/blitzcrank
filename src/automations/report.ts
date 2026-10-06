@@ -1,8 +1,5 @@
 import { StringEnum } from "@earendil-works/pi-ai"
-import {
-  defineTool,
-  type ToolDefinition,
-} from "@earendil-works/pi-coding-agent"
+import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable"
 import { Type } from "typebox"
 
 export const AUTOMATION_REPORT_TOOL = "submit_automation_report"
@@ -60,10 +57,10 @@ export function parseAutomationReport(
  */
 export function buildAutomationReportTool(
   capture: AutomationReportCapture,
-): ToolDefinition {
+): ToolRegistration {
   return defineTool({
     name: AUTOMATION_REPORT_TOOL,
-    label: "Submit automation report",
+    replay: "safe",
     description:
       "Submit the final structured automation result. Call this exactly once as the final action after every required read, mutation, and verification. The call ends the run.",
     parameters: Type.Object({
@@ -75,7 +72,7 @@ export function buildAutomationReportTool(
           "Human-readable operations note in the requested language, or an empty string when there are no actions or blockers to report",
       }),
     }),
-    async execute(_toolCallId, params) {
+    async execute(params) {
       capture.submissions.push({ status: params.status, body: params.body })
       return {
         content: [
@@ -85,7 +82,7 @@ export function buildAutomationReportTool(
           },
         ],
         details: { status: params.status, body: params.body },
-        terminate: true,
+        control: { terminate: true },
       }
     },
   })

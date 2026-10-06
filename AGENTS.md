@@ -2,7 +2,7 @@
 
 - blitzcrank is an agentic webhook gateway for a private media homelab: a
   Jellyseerr issue webhook wakes a serial run queue (`src/server.ts` →
-  `src/queue.ts`), which opens one pi SDK agent session (`src/agent/`) that
+  `src/jobs.ts` → `src/queue.ts`), which opens one Pi Durable conversation (`src/agent/`) that
   investigates across Seerr/Sonarr/Radarr/SABnzbd/Jellyfin/Anvil and applies
   narrow verified fixes through typed tools (`src/tools/`). The host — never
   the agent — comments, resolves issues, and schedules revisits.
@@ -24,7 +24,7 @@
   `pnpm fmt` / `pnpm lint` / `pnpm typecheck`.
 - `pnpm verify` (format check, lint, and typecheck) must pass before a coding
   task is complete.
-- pi SDK packages are pinned exact (`@earendil-works/*@1.0.0`); bump them
+- Pi packages are pinned exact (`@earendil-works/*@1.0.3`); bump them
   deliberately and re-verify against `docs/research/pi-sdk.md`.
 - Formatting is oxfmt, linting is oxlint (type-aware) — not Prettier/ESLint.
   80 columns, 2 spaces, no semicolons, double quotes, sorted imports.
@@ -63,15 +63,21 @@ behavioural difference described.
   Keep that rule intact in `src/agent/prompt.ts`. Discord replies must establish
   the same extent and require prior conversation approval for the exact scope
   of multi-item or destructive work (`src/discord/agent.ts`).
-- An issue's session is resumed across its events (`casefile.sessionFile`,
-  `src/agent/session.ts`), carrying the evidence store
-  (`CaseStore.loadEvidence`/`saveEvidence`) — the gate stops fabricated IDs.
+- An issue's Durable SQLite conversation is resumed across its events
+  (`src/agent/session.ts`), carrying checkpointed evidence as well as the
+  case/evidence projection — the gate stops fabricated IDs.
   Arr and Anvil numeric IDs are not recycled, SAB `nzo_id`s are stable, and
-  reusable Anvil slugs are current-run-only. A resumed run must still build
-  its system prompt and tool list fresh (the SDK never replays them), and must take the
-  final assistant message from the live event stream, never
-  `session.messages.findLast`, or a run that produced nothing re-executes the
-  previous directive block.
+  reusable Anvil slugs are current-run-only. Every new trigger rebuilds its
+  system prompt and tool list. Recovery checks the stored policy before
+  scheduling; a changed policy or uncertain unsafe tool stops the run.
+  Take the final answer only from the exact durable submission's answer ID,
+  never the last assistant entry in conversation history. Replaying a completed
+  submission must not execute its tools again or double-count its usage.
+- Host jobs are durably admitted in `src/jobs.ts` before acceptance returns.
+  The journal enforces one process owner. Mutations and host publications are
+  replay-unsafe unless explicitly proven otherwise; an unresolved intent fails
+  closed for review. Cancelling a wait does not stop a Durable task. Host stop
+  still finishes active tool verification before aborting the conversation.
 - Issue runs grant Radarr tools for movies and Sonarr tools for TV shows. The
   host uses the webhook media type, then falls back to the live Seerr issue.
   An unknown type grants neither Arr, and revisits keep the resolved type.
@@ -114,8 +120,9 @@ behavioural difference described.
   backup stay operator-only — their blast radius is a library or the database.
 - Web search/extract (`web_search`, `web_extract`) is read-only, granted to
   issue runs and Discord conversation replies only by the configured web
-  provider (`BLITZCRANK_WEB_PROVIDER`, default `none`). No pi extensions are
-  loaded anywhere. Firecrawl uses only the hosted API; custom endpoints are
+  provider (`BLITZCRANK_WEB_PROVIDER`, default `none`). Only explicit host-owned
+  Durable tool bundles are installed; no discovered Pi extensions or ambient
+  resources are loaded. Firecrawl uses only the hosted API; custom endpoints are
   rejected because Blitzcrank cannot enforce a remote fetcher's DNS and
   redirect policy. `web_extract` accepts only URLs `web_search` returned in
   the same run and rejects non-public URL literals. Web content is untrusted

@@ -1,8 +1,5 @@
 import { StringEnum } from "@earendil-works/pi-ai"
-import {
-  defineTool,
-  type ToolDefinition,
-} from "@earendil-works/pi-coding-agent"
+import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable"
 import { Type } from "typebox"
 
 export const DISCORD_TRIAGE_TOOL = "submit_discord_triage"
@@ -43,10 +40,10 @@ export function parseDiscordTriage(
 /** Triage-only terminal output. The classifier gets no other tools. */
 export function buildDiscordTriageTool(
   capture: DiscordTriageCapture,
-): ToolDefinition {
+): ToolRegistration {
   return defineTool({
     name: DISCORD_TRIAGE_TOOL,
-    label: "Submit Discord triage",
+    replay: "safe",
     description:
       "Choose an inline answer, private troubleshooting thread, or ignore. Call exactly once as the final action.",
     parameters: Type.Object({
@@ -60,7 +57,7 @@ export function buildDiscordTriageTool(
           "For thread: the actual full show or movie title plus a brief problem description. Preserve the media title; shorten the problem description first. No bot prefix. Otherwise empty.",
       }),
     }),
-    async execute(_toolCallId, params) {
+    async execute(params) {
       const decision = {
         route: params.route,
         threadName: params.route === "thread" ? params.threadName.trim() : "",
@@ -69,7 +66,7 @@ export function buildDiscordTriageTool(
       return {
         content: [{ type: "text" as const, text: "Discord triage submitted." }],
         details: decision,
-        terminate: true,
+        control: { terminate: true },
       }
     },
   })

@@ -15,6 +15,7 @@ import {
   largestMediaFileEffect,
   resolveMediaPathEffect,
 } from "./media.js"
+import { executeTool } from "./test-fixture.js"
 
 const run = promisify(execFile)
 
@@ -70,13 +71,7 @@ test("media Effects resolve roots before reading and keep probe output out of ID
   const tool = buildMediaTools({ roots: [media] }, ctx)[0]
   assert.ok(tool)
   const execute = () =>
-    tool.execute(
-      "test",
-      { path: media, purpose: "Check language" },
-      undefined,
-      undefined,
-      undefined as never,
-    )
+    executeTool(tool, { path: media, purpose: "Check language" })
   await assert.rejects(execute(), ToolError)
   ctx.recordPath("sonarr", media, "path")
   const before = ctx.snapshot

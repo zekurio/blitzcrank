@@ -4,6 +4,7 @@ import os from "node:os"
 import path from "node:path"
 import test from "node:test"
 
+import type { ModelRuntime } from "@earendil-works/pi-coding-agent"
 import {
   ChannelType,
   type Message,
@@ -13,7 +14,11 @@ import { Deferred, Effect, Fiber } from "effect"
 import { TestClock } from "effect/testing"
 
 import { SdkError } from "../agent/effect.ts"
+import type { AgentTurnOptions, AgentTurnResult } from "../agent/session.ts"
 import type { Config } from "../config.ts"
+import { EvidenceStore } from "../evidence.ts"
+import { JobStore } from "../jobs.ts"
+import { SerialQueue } from "../queue.ts"
 import { RunContext } from "../tools/context.ts"
 import {
   buildDiscordAnswerTools,
@@ -21,7 +26,13 @@ import {
   buildServiceTools,
   type SessionFileRef,
 } from "../tools/index.ts"
-import type { DiscordReplyDelivery, DiscordReplyRequest } from "./agent.ts"
+import {
+  DiscordAgent,
+  discordSystemPrompt,
+  type DiscordReplyDelivery,
+  type DiscordReplyJob,
+  type DiscordReplyRequest,
+} from "./agent.ts"
 import {
   conversationThreadName,
   DiscordBot,
@@ -223,6 +234,7 @@ async function botHarness(
   const requests: DiscordReplyRequest[] = []
   const deliveries: DiscordReplyDelivery[] = []
   const classified: string[] = []
+  const permissions = { allowed: true, member: true }
   const conversations = new DiscordConversations(dataDir)
   const thread = {
     id: "300",
@@ -231,7 +243,13 @@ async function botHarness(
     ownerId: "999",
     name: "Die Tagebücher der Apothekerin: Folge fehlt",
     isThread: () => true,
+    isTextBased: () => true,
+    permissionsFor: () => ({ has: () => permissions.allowed }),
     members: {
+      fetch: async () => {
+        if (!permissions.member) throw new Error("membership revoked")
+        return {}
+      },
       add: async (id: string) => {
         members.push(id)
       },
@@ -245,6 +263,11 @@ async function botHarness(
     id: "200",
     type: ChannelType.GuildText,
     isThread: () => false,
+    isTextBased: () => true,
+    permissionsFor: () => ({ has: () => permissions.allowed }),
+    messages: {
+      fetch: async () => ({ author: { id: "500", bot: false } }),
+    },
     threads: {
       create: async (options: (typeof created)[number]) => {
         created.push(options)
@@ -257,6 +280,8 @@ async function botHarness(
     sendTyping: () => Promise.resolve(),
   }
   const chat: NonNullable<DiscordDeps["chat"]> = {
+    restoreEffect: () => Effect.void,
+    hasAccepted: () => false,
     triageEffect: (_id, content) => {
       classified.push(content)
       return Effect.succeed({
@@ -272,7 +297,18 @@ async function botHarness(
   }
   // SDK-shaped test doubles; no gateway connection or Discord writes.
   const bot = Reflect.construct(DiscordBot, [
-    { user: { id: "999" } },
+    {
+      user: { id: "999" },
+      guilds: {
+        fetch: async () => ({
+          channels: {
+            fetch: async (id: string) =>
+              id === channel.id ? channel : id === thread.id ? thread : null,
+          },
+          members: { fetch: async (id: string) => ({ id }) },
+        }),
+      },
+    },
     { guildId: "100", inboxChannelId: "200" },
     "Deutsch",
     undefined,
@@ -304,6 +340,7 @@ async function botHarness(
     requests,
     deliveries,
     classified,
+    permissions,
     conversations,
     dataDir,
     receive: (value: object = message) =>
@@ -493,4 +530,403 @@ test("Discord output stays inside platform limits", () => {
     conversationThreadName(`  Playback\n${"x".repeat(120)}  `).length,
     100,
   )
+})
+
+class AdmissionQueue extends SerialQueue {
+  readonly tasks: (() => Effect.Effect<void, unknown>)[] = []
+
+  override enqueueEffect(task: () => Effect.Effect<void, unknown>): void {
+    this.tasks.push(task)
+  }
+}
+
+function journalAgent(dataDir: string, queue: SerialQueue, jobs: JobStore) {
+  return new DiscordAgent(
+    { dataDir } as Config,
+    {} as ModelRuntime,
+    "fake",
+    "fake",
+    queue,
+    jobs,
+  )
+}
+
+const journalRequest: DiscordReplyRequest = {
+  route: "answer",
+  id: "400",
+  content: "Is Dune available?",
+  channelId: "200",
+  guildId: "100",
+  sourceMessageId: "400",
+  sourceChannelId: "200",
+  userId: "500",
+  replyTo: "400",
+}
+
+test("reply admission persists content and scope before returning and deduplicates source IDs", async (t) => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), "discord-jobs-"))
+  t.after(() => rm(dataDir, { recursive: true, force: true }))
+  const file = path.join(dataDir, "jobs.sqlite")
+  const jobs = new JobStore(file)
+  const queue = new AdmissionQueue()
+  const agent = journalAgent(dataDir, queue, jobs)
+  const delivery: DiscordReplyDelivery = {
+    typing: () => Effect.void,
+    send: () => Effect.void,
+    fail: () => Effect.void,
+  }
+  assert.equal(agent.enqueue(journalRequest, delivery), true)
+  assert.equal(agent.enqueue(journalRequest, delivery), true)
+  assert.equal(queue.tasks.length, 1)
+  jobs.close()
+
+  const restored = new JobStore(file)
+  t.after(() => restored.close())
+  const payload = restored.get("discord:400")!.payload as DiscordReplyJob
+  assert.deepEqual(
+    { ...payload, timestamp: undefined },
+    { ...journalRequest, timestamp: undefined },
+  )
+  assert.match(
+    discordSystemPrompt(
+      "English",
+      { search: undefined, extract: undefined },
+      "answer",
+      payload.timestamp,
+    ),
+    new RegExp(payload.timestamp),
+  )
+  const recoveredQueue = new AdmissionQueue()
+  const recovered = journalAgent(dataDir, recoveredQueue, restored)
+  const observed: DiscordReplyJob[] = []
+  recovered["respondEffect"] = (request) => {
+    observed.push(request)
+    return Effect.succeed("Available.")
+  }
+  let posts = 0
+  await Effect.runPromise(
+    recovered.restoreEffect((request) => {
+      assert.deepEqual(request, payload)
+      return Effect.succeed({
+        ...delivery,
+        send: () => Effect.sync(() => void (posts += 1)),
+      })
+    }),
+  )
+  await Effect.runPromise(recoveredQueue.tasks[0]!())
+  assert.deepEqual(observed, [payload])
+  assert.equal(posts, 1)
+  assert.equal(restored.get("discord:400")!.status, "completed")
+  assert.equal(recovered.enqueue(journalRequest, delivery), true)
+  assert.equal(recoveredQueue.tasks.length, 1)
+})
+
+test("uncertain reply publication fails closed without a model run or contradictory failure post", async (t) => {
+  for (const completed of [false, true]) {
+    const dataDir = await mkdtemp(
+      path.join(os.tmpdir(), "discord-publication-"),
+    )
+    t.after(() => rm(dataDir, { recursive: true, force: true }))
+    const file = path.join(dataDir, "jobs.sqlite")
+    const jobs = new JobStore(file)
+    jobs.create(
+      "discord",
+      { ...journalRequest, timestamp: "2026-01-01T00:00:00.000Z" },
+      { id: "discord:400" },
+    )
+    await Effect.runPromiseExit(
+      jobs.actionEffect(
+        "discord:400",
+        "publication",
+        completed
+          ? Effect.succeed({ kind: "reply" })
+          : Effect.fail(new Error("lost Discord acknowledgement")),
+      ),
+    )
+    jobs.close()
+    const restored = new JobStore(file)
+    t.after(() => restored.close())
+    const queue = new AdmissionQueue()
+    const agent = journalAgent(dataDir, queue, restored)
+    agent["respondEffect"] = () => {
+      assert.fail("a publication intent must bypass the model")
+    }
+    let posts = 0
+    await Effect.runPromise(
+      agent.restoreEffect(() =>
+        Effect.succeed({
+          typing: () => Effect.void,
+          send: () => Effect.sync(() => void (posts += 1)),
+          fail: () => Effect.sync(() => void (posts += 1)),
+        }),
+      ),
+    )
+    const exit = await Effect.runPromiseExit(queue.tasks[0]!())
+    assert.equal(exit._tag, completed ? "Success" : "Failure")
+    assert.equal(posts, 0)
+    assert.equal(
+      restored.get("discord:400")!.status,
+      completed ? "completed" : "failed",
+    )
+  }
+})
+
+test("revoked recovery authorization persists failure without enqueueing or publishing", async () => {
+  const jobs = new JobStore()
+  const queue = new AdmissionQueue()
+  const agent = journalAgent("/tmp/unused", queue, jobs)
+  jobs.create(
+    "discord",
+    { ...journalRequest, timestamp: "2026-01-01T00:00:00.000Z" },
+    { id: "discord:400" },
+  )
+  await Effect.runPromise(
+    agent.restoreEffect(() => Effect.fail(new Error("membership revoked"))),
+  )
+  assert.equal(queue.tasks.length, 0)
+  assert.equal(jobs.get("discord:400")!.status, "failed")
+  assert.match(jobs.get("discord:400")!.error!, /membership revoked/)
+  jobs.close()
+})
+
+test("recovery fetches authorized channels and rejects changed guild, inbox, ownership, or permissions", async (t) => {
+  const inline = await botHarness(t, "answer")
+  await inline.receive()
+  const request: DiscordReplyJob = {
+    ...inline.requests[0]!,
+    timestamp: "2026-01-01T00:00:00.000Z",
+  }
+  const delivery = await Effect.runPromise(
+    inline.bot["restoreDeliveryEffect"](request),
+  )
+  await Effect.runPromise(delivery.send("Available."))
+  assert.equal(inline.sent.length, 1)
+  assert.deepEqual(inline.sent[0]!.allowedMentions, {
+    parse: [],
+    repliedUser: false,
+  })
+  for (const rejected of [
+    { ...request, guildId: "other" },
+    { ...request, channelId: "300" },
+    { ...request, sourceChannelId: "300" },
+  ])
+    await assert.rejects(
+      Effect.runPromise(inline.bot["restoreDeliveryEffect"](rejected)),
+    )
+  inline.permissions.allowed = false
+  await assert.rejects(
+    Effect.runPromise(inline.bot["restoreDeliveryEffect"](request)),
+    /permission revoked/,
+  )
+
+  const privateThread = await botHarness(t, "thread")
+  await privateThread.receive()
+  const privateRequest: DiscordReplyJob = {
+    ...privateThread.requests[0]!,
+    timestamp: request.timestamp,
+  }
+  await Effect.runPromise(
+    privateThread.bot["restoreDeliveryEffect"](privateRequest),
+  )
+  const threadCount = privateThread.created.length
+  privateThread.permissions.member = false
+  await assert.rejects(
+    Effect.runPromise(
+      privateThread.bot["restoreDeliveryEffect"](privateRequest),
+    ),
+    /membership revoked/,
+  )
+  privateThread.permissions.member = true
+  privateThread.thread.ownerId = "other"
+  await assert.rejects(
+    Effect.runPromise(
+      privateThread.bot["restoreDeliveryEffect"](privateRequest),
+    ),
+    /scope changed/,
+  )
+  assert.equal(privateThread.created.length, threadCount)
+})
+
+test("repeat gateway events cannot create two conversations concurrently or after acceptance", async (t) => {
+  const h = await botHarness(t, "thread")
+  await Promise.all([h.receive(), h.receive()])
+  assert.equal(h.created.length, 1)
+  h.chat.hasAccepted = () => true
+  await h.receive()
+  assert.equal(h.created.length, 1)
+})
+
+const emptyTurn = {
+  text: "Available.",
+  finalToolNames: [],
+  terminalToolResults: [],
+  successfulToolCounts: {},
+  usage: {
+    inputTokens: 0,
+    outputTokens: 0,
+    newTokens: 0,
+    billedTokens: 0,
+    costUsd: undefined,
+  },
+  sessionFile: undefined,
+  resumed: false,
+}
+
+function runtimeAgent(
+  dataDir: string,
+  queue: SerialQueue,
+  jobs: JobStore,
+  result: AgentTurnResult,
+  turns: AgentTurnOptions[],
+) {
+  return new DiscordAgent(
+    {
+      dataDir,
+      language: "English",
+      web: { provider: "none" },
+      seerr: { url: "http://never-called.test", apiKey: "fake" },
+    } as Config,
+    { getModel: () => ({ input: ["text"] }) } as unknown as ModelRuntime,
+    "fake/model",
+    "fake/triage",
+    queue,
+    jobs,
+    (options) => {
+      turns.push(options)
+      return Effect.succeed(result)
+    },
+  )
+}
+
+test("Durable replies use stable request IDs, isolated inline files, frozen policy time, and carried private evidence", async (t) => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), "discord-runtime-"))
+  t.after(() => rm(dataDir, { recursive: true, force: true }))
+  const jobs = new JobStore()
+  t.after(() => jobs.close())
+  const queue = new AdmissionQueue()
+  const turns: AgentTurnOptions[] = []
+  const agent = runtimeAgent(dataDir, queue, jobs, emptyTurn, turns)
+  const request: DiscordReplyJob = {
+    ...journalRequest,
+    timestamp: "2026-01-01T00:00:00.000Z",
+  }
+  await Effect.runPromise(agent["respondEffect"](request))
+  await Effect.runPromise(agent["respondEffect"](request))
+  assert.equal(turns[0]!.requestId, "400")
+  assert.equal(
+    turns[0]!.storageFile,
+    path.join(dataDir, "sessions", "inline", "400.sqlite"),
+  )
+  assert.equal(turns[0]!.systemPrompt, turns[1]!.systemPrompt)
+  assert.match(turns[0]!.systemPrompt, /2026-01-01T00:00:00.000Z/)
+  assert.deepEqual(
+    turns[0]!.tools.map((tool) => tool.name),
+    ["seerr_request"],
+  )
+
+  const ctx = new RunContext()
+  ctx.recordRead("seerr", "/api/v1/request/7", '{"id":7}')
+  const evidence = new EvidenceStore(
+    path.join(dataDir, "evidence", "discord"),
+    "discord",
+  )
+  await Effect.runPromise(evidence.saveEffect("300", ctx.snapshot))
+  await Effect.runPromise(
+    agent["respondEffect"]({
+      ...request,
+      route: "thread",
+      id: "300",
+      channelId: "300",
+    }),
+  )
+  const privateTurn = turns[2]!
+  assert.equal(privateTurn.requestId, "400")
+  assert.equal(
+    privateTurn.storageFile,
+    path.join(dataDir, "sessions", "discord", "300", "conversation.sqlite"),
+  )
+  assert.deepEqual(
+    privateTurn.runContext!.snapshot.evidence,
+    ctx.snapshot.evidence,
+  )
+  assert.equal(turns[0]!.runContext!.snapshot.evidence.length, 0)
+  assert.ok(
+    privateTurn.tools.some((tool) => tool.name === "thread_history_search"),
+  )
+  assert.ok(
+    privateTurn.tools.some((tool) => tool.name === "seerr_create_request"),
+  )
+})
+
+test("Durable recovery failures cannot publish stale model text or a contradictory error", async (t) => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), "discord-review-"))
+  t.after(() => rm(dataDir, { recursive: true, force: true }))
+  for (const kind of [
+    "unsafe-interrupted",
+    "policy-changed",
+    "unanswered",
+  ] as const) {
+    const jobs = new JobStore()
+    const queue = new AdmissionQueue()
+    const turns: AgentTurnOptions[] = []
+    const agent = runtimeAgent(
+      dataDir,
+      queue,
+      jobs,
+      {
+        ...emptyTurn,
+        text: "Old answer that must not be sent.",
+        failure: { kind, message: "operator review required", toolNames: [] },
+      },
+      turns,
+    )
+    let posts = 0
+    agent.enqueue(journalRequest, {
+      typing: () => Effect.void,
+      send: () => Effect.sync(() => void (posts += 1)),
+      fail: () => Effect.sync(() => void (posts += 1)),
+    })
+    const exit = await Effect.runPromiseExit(queue.tasks[0]!())
+    assert.equal(exit._tag, "Failure")
+    assert.equal(posts, 0)
+    assert.equal(jobs.get("discord:400")!.status, "failed")
+    assert.match(jobs.get("discord:400")!.error!, new RegExp(kind))
+    assert.deepEqual(jobs.actions("discord:400"), [])
+    jobs.close()
+  }
+})
+
+test("triage uses committed Durable terminal details without builtin skill read", async () => {
+  const turns: AgentTurnOptions[] = []
+  const jobs = new JobStore()
+  const agent = runtimeAgent(
+    "/tmp/unused",
+    new AdmissionQueue(),
+    jobs,
+    {
+      ...emptyTurn,
+      text: "",
+      finalToolNames: [DISCORD_TRIAGE_TOOL],
+      terminalToolResults: [
+        {
+          toolName: DISCORD_TRIAGE_TOOL,
+          toolCallId: "triage-1",
+          details: { route: "thread", threadName: "Dune: no sound" },
+        },
+      ],
+    },
+    turns,
+  )
+  assert.deepEqual(
+    await Effect.runPromise(agent.triageEffect("400", "Dune has no sound")),
+    { route: "thread", threadName: "Dune: no sound" },
+  )
+  assert.equal(turns[0]!.storageFile, undefined)
+  assert.equal(turns[0]!.requestId, "400")
+  assert.equal(turns[0]!.builtinRead, false)
+  assert.deepEqual(
+    turns[0]!.tools.map((tool) => tool.name),
+    [DISCORD_TRIAGE_TOOL],
+  )
+  jobs.close()
 })

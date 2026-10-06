@@ -1,8 +1,5 @@
 import { StringEnum } from "@earendil-works/pi-ai"
-import {
-  defineTool,
-  type ToolDefinition,
-} from "@earendil-works/pi-coding-agent"
+import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable"
 import { Effect } from "effect"
 import { Type } from "typebox"
 
@@ -43,7 +40,7 @@ export function arrReadTool(
   ctx: RunContext,
   label: string,
   description: string,
-): ToolDefinition {
+): ToolRegistration {
   return makeReadTool(
     {
       service,
@@ -164,10 +161,9 @@ export function manualImportTool(
   service: ServiceName,
   cfg: ServiceConfig,
   ctx: RunContext,
-): ToolDefinition {
+): ToolRegistration {
   return defineTool({
     name: `${service}_manual_import`,
-    label: `${service}: manual import`,
     description:
       `Run ${service}'s ManualImport command for verified candidates from a GET /api/v3/manualimport read this run. ` +
       "Trim each candidate to the fields the command needs " +
@@ -183,7 +179,7 @@ export function manualImportTool(
       }),
       importMode: StringEnum(["auto", "move", "copy"] as const),
     }),
-    execute(_toolCallId, params) {
+    execute(params) {
       return Effect.runPromise(
         Effect.gen(function* () {
           const evidence = yield* toolCheck(() =>
@@ -235,7 +231,7 @@ export function queueAndBlocklistTools(
   service: ServiceName,
   cfg: ServiceConfig,
   ctx: RunContext,
-): ToolDefinition[] {
+): ToolRegistration[] {
   const deps = { service, cfg, ctx }
   return [
     deleteQueueItemTool(deps),
@@ -251,10 +247,9 @@ interface ArrToolDeps {
   ctx: RunContext
 }
 
-function deleteQueueItemTool(deps: ArrToolDeps): ToolDefinition {
+function deleteQueueItemTool(deps: ArrToolDeps): ToolRegistration {
   return defineTool({
     name: `${deps.service}_delete_queue_item`,
-    label: `${deps.service}: remove queue item`,
     description: `Remove a stuck/failed download from the ${deps.service} queue, optionally blocklisting the release and removing it from the download client. With removeFromClient=true the downloaded data is destroyed and the call is recorded as a deletion. The queue item id must pass the ${deps.service} evidence gate.`,
     parameters: Type.Object({
       reason: reasonParam(),
@@ -268,7 +263,7 @@ function deleteQueueItemTool(deps: ArrToolDeps): ToolDefinition {
           "Also remove the job from the download client, destroying the downloaded data (default true)",
       }),
     }),
-    execute(_toolCallId, params) {
+    execute(params) {
       return Effect.runPromise(
         Effect.gen(function* () {
           return yield* executeQueueMutation(
@@ -289,10 +284,9 @@ function deleteQueueItemTool(deps: ArrToolDeps): ToolDefinition {
   })
 }
 
-function blocklistFromHistoryTool(deps: ArrToolDeps): ToolDefinition {
+function blocklistFromHistoryTool(deps: ArrToolDeps): ToolRegistration {
   return defineTool({
     name: `${deps.service}_blocklist_from_history`,
-    label: `${deps.service}: blocklist a past grab`,
     description:
       `Blocklist the release behind one ${deps.service} history record, so it is never grabbed again. Marks that grab as failed ` +
       `(POST /api/v3/history/failed/{id}), which is the only way to exclude a release that has left the queue. Use this on ` +
@@ -306,7 +300,7 @@ function blocklistFromHistoryTool(deps: ArrToolDeps): ToolDefinition {
       reason: reasonParam(),
       historyId: Type.Integer({ minimum: 1 }),
     }),
-    execute(_toolCallId, params) {
+    execute(params) {
       return Effect.runPromise(
         Effect.gen(function* () {
           const outcome = yield* runMutation(deps.ctx, {
@@ -338,16 +332,15 @@ function blocklistFromHistoryTool(deps: ArrToolDeps): ToolDefinition {
   })
 }
 
-function grabQueueItemTool(deps: ArrToolDeps): ToolDefinition {
+function grabQueueItemTool(deps: ArrToolDeps): ToolRegistration {
   return defineTool({
     name: `${deps.service}_grab_queue_item`,
-    label: `${deps.service}: force-grab queue item`,
     description: `Force ${deps.service} to grab a pending/delayed queue item now. The queue item id must come from a queue read this run.`,
     parameters: Type.Object({
       reason: reasonParam(),
       queueId: Type.Integer({ minimum: 1 }),
     }),
-    execute(_toolCallId, params) {
+    execute(params) {
       return Effect.runPromise(
         Effect.gen(function* () {
           return yield* executeQueueMutation(
@@ -368,16 +361,15 @@ function grabQueueItemTool(deps: ArrToolDeps): ToolDefinition {
   })
 }
 
-function removeFromBlocklistTool(deps: ArrToolDeps): ToolDefinition {
+function removeFromBlocklistTool(deps: ArrToolDeps): ToolRegistration {
   return defineTool({
     name: `${deps.service}_remove_from_blocklist`,
-    label: `${deps.service}: remove blocklist entry`,
     description: `Remove one entry from the ${deps.service} blocklist so that release can be grabbed again. The blocklist entry id must come from a blocklist read this run.`,
     parameters: Type.Object({
       reason: reasonParam(),
       blocklistId: Type.Integer({ minimum: 1 }),
     }),
-    execute(_toolCallId, params) {
+    execute(params) {
       return Effect.runPromise(
         Effect.gen(function* () {
           const outcome = yield* runMutation(deps.ctx, {

@@ -1,3 +1,4 @@
+import { mkdir } from "node:fs/promises"
 import { createServer, type Server } from "node:http"
 import path from "node:path"
 
@@ -26,10 +27,12 @@ import { DiscordAgent } from "./discord/agent.ts"
 import { DiscordBot } from "./discord/bot.ts"
 import { createCommentGateEffect } from "./gateways/seerr/comment-gate.ts"
 import { IssueWork } from "./issue-work.ts"
+import { JobStore } from "./jobs.ts"
 import { SerialQueue } from "./queue.ts"
 import { revisitDelay } from "./revisits.ts"
 import { createApp } from "./server.ts"
 import { SeerrClient } from "./services/seerr.ts"
+import { storageIO } from "./storage.ts"
 
 /**
  * Total shutdown budget. An active mutation gets time to finish and report,
@@ -56,16 +59,29 @@ function main(): Effect.Effect<void, unknown> {
     const config = loadConfig()
     const automations = yield* loadAutomationsEffect(config.automationsDir)
     const models = yield* loadModels(config, automations)
+    yield* storageIO(() => mkdir(config.dataDir, { recursive: true }))
+    const jobs = new JobStore(path.join(config.dataDir, "jobs.sqlite"))
     const cases = new CaseStore(path.join(config.dataDir, "cases"))
-    const issueWork = new IssueWork(
-      new IssueRunner(config, models.runtime, models.issueSpec),
-      cases,
+    const allowComment = createCommentGateEffect(
+      new SeerrClient(config.seerr, config.seerrBotUserId),
     )
+    const issueWork = new IssueWork(
+      new IssueRunner(config, models.runtime, models.issueSpec, jobs),
+      cases,
+      jobs,
+      (event) =>
+        event.kind === "webhook" &&
+        event.payload.notification_type === "ISSUE_COMMENT"
+          ? allowComment(event.payload)
+          : Effect.succeed(true),
+    )
+    yield* issueWork.restoreEffect()
     const automationWork = yield* startAutomations(
       config,
       automations,
       models,
       issueWork.queue,
+      jobs,
     )
     yield* restoreRevisits(cases, issueWork)
 
@@ -82,7 +98,7 @@ function main(): Effect.Effect<void, unknown> {
           : "  discord: DEGRADED (startup failed; reports and conversations disabled)",
       )
     })
-    installShutdown(server, issueWork, automationWork)
+    installShutdown(server, issueWork, automationWork, jobs)
   })
 }
 
@@ -132,6 +148,7 @@ function startAutomations(
   definitions: AutomationDefinition[],
   models: Models,
   queue: SerialQueue,
+  jobs: JobStore,
 ): Effect.Effect<AutomationWork, unknown> {
   return Effect.gen(function* () {
     const runner = new AutomationRunner(
@@ -144,15 +161,17 @@ function startAutomations(
     const dispatcher = new AutomationDispatcher({
       definitions,
       queue,
-      run: (definition) => runner.runEffect(definition),
+      jobs,
+      run: (definition, runId) => runner.runEffect(definition, runId),
       publish: (report) => discord?.reportEffect(report) ?? Effect.void,
       nextRun: (name) => scheduler.nextRun(name),
     })
     const scheduler = new AutomationScheduler((definition) =>
       dispatcher.dispatch(definition),
     )
+    discord = yield* startDiscord(config, dispatcher, models, queue, jobs)
+    dispatcher.restore()
     scheduler.start(definitions)
-    discord = yield* startDiscord(config, dispatcher, models, queue)
     return { dispatcher, scheduler, discord }
   })
 }
@@ -162,6 +181,7 @@ function startDiscord(
   dispatcher: AutomationDispatcher,
   models: Models,
   queue: SerialQueue,
+  jobs: JobStore,
 ): Effect.Effect<DiscordBot | undefined, unknown> {
   return Effect.gen(function* () {
     if (!config.discord) return undefined
@@ -172,6 +192,7 @@ function startDiscord(
           models.discordSpec,
           models.discordTriageSpec,
           queue,
+          jobs,
         )
       : undefined
     // Discord is an optional surface. A startup failure must not stop issue
@@ -203,6 +224,7 @@ function restoreRevisits(
     // Re-arm saved follow-ups. Spread overdue runs through revisitDelay.
     for (const file of yield* cases.pendingRevisitsEffect()) {
       if (yield* cases.isPausedEffect(file.issueId)) continue
+      if (issueWork.hasPending(file.issueId)) continue
       const delayMs = revisitDelay(file, Date.now())
       const revisit = file.revisit
       if (delayMs === undefined || !revisit) continue
@@ -211,6 +233,7 @@ function restoreRevisits(
         delayMs,
         revisit.reason,
         revisit.mediaScope,
+        revisit.dueAt,
       )
     }
   })
@@ -264,6 +287,7 @@ function installShutdown(
   server: Server,
   issueWork: IssueWork,
   automationWork: AutomationWork,
+  jobs: JobStore,
 ): void {
   let shuttingDown = false
   const shutdown = (signal: string) =>
@@ -292,6 +316,9 @@ function installShutdown(
         deadline,
         "[shutdown] grace period expired with runs still in flight; exiting anyway",
       )
+      // A deadline does not interrupt writes. Keep their journal open until the
+      // process exits; closing it under an active tool would lose its outcome.
+      if (issueWork.queue.size === 0) jobs.close()
       if (automationWork.discord) {
         yield* withDeadline(
           automationWork.discord

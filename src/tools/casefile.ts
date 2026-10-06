@@ -1,7 +1,4 @@
-import {
-  defineTool,
-  type ToolDefinition,
-} from "@earendil-works/pi-coding-agent"
+import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable"
 import { Type } from "typebox"
 
 import { clampEntries, clampEntry, type CaseFile } from "../casefile.ts"
@@ -16,10 +13,9 @@ import { textResult } from "./common.ts"
  * Only the summary is writable: run history, spend, and revisit chain are
  * host-written facts the agent must not be able to edit.
  */
-export function buildCaseFileTool(file: CaseFile): ToolDefinition {
+export function buildCaseFileTool(file: CaseFile): ToolRegistration {
   return defineTool({
     name: "update_case_file",
-    label: "Record durable findings",
     description:
       "Store what this run established about the issue, so the next run starts from it instead of re-deriving " +
       "everything and re-reading old transcripts. Call it once before your final response whenever you learned " +
@@ -49,7 +45,7 @@ export function buildCaseFileTool(file: CaseFile): ToolDefinition {
         }),
       ),
     }),
-    async execute(_toolCallId, params) {
+    async execute(params) {
       file.summary = {
         hypothesis: clampEntry(params.hypothesis),
         facts: clampEntries(params.facts),

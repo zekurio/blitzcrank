@@ -1,10 +1,7 @@
 import path from "node:path"
 
 import { StringEnum } from "@earendil-works/pi-ai"
-import {
-  defineTool,
-  type ToolDefinition,
-} from "@earendil-works/pi-coding-agent"
+import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable"
 import { Effect } from "effect"
 import { Type } from "typebox"
 
@@ -620,7 +617,7 @@ const SELECTION_PARAM =
 export function buildAnvilTools(
   cfg: AnvilConfig,
   ctx: RunContext,
-): ToolDefinition[] {
+): ToolRegistration[] {
   if (!path.isAbsolute(cfg.socket) || cfg.socket.includes("\0")) {
     throw new Error("ANVIL_CONTROL_SOCKET must be an absolute path")
   }
@@ -722,7 +719,7 @@ export function buildAnvilTools(
   return [
     defineTool({
       name: "anvil_status",
-      label: "Anvil daemon status",
+      replay: "safe",
       description:
         "Read factual Anvil daemon health and aggregate queue counts. This never proves that a specific media item is being encoded, " +
         "and its queue counts never establish item-level waiting.",
@@ -731,7 +728,8 @@ export function buildAnvilTools(
           description: "Why Anvil daemon health is needed for this diagnosis",
         }),
       }),
-      execute(_toolCallId, _params, signal) {
+      execute(_params, _api, context) {
+        const signal = context.abortSignal
         return Effect.runPromise(
           Effect.gen(function* () {
             const stdout = yield* anvilctl(["status"], signal)
@@ -745,7 +743,7 @@ export function buildAnvilTools(
     }),
     defineTool({
       name: "anvil_job_list",
-      label: "List current Anvil jobs",
+      replay: "safe",
       description:
         "List a bounded view of current Anvil jobs and filter it locally. Narrow by state when possible. " +
         "This avoids a wrong-path false negative only when both Anvil and blitzcrank report the output as complete; " +
@@ -775,7 +773,8 @@ export function buildAnvilTools(
           }),
         ),
       }),
-      execute(_toolCallId, params, signal) {
+      execute(params, _api, context) {
+        const signal = context.abortSignal
         return Effect.runPromise(
           Effect.gen(function* () {
             const limit = String(params.limit ?? 200)
@@ -808,7 +807,7 @@ export function buildAnvilTools(
     }),
     defineTool({
       name: "anvil_job_show",
-      label: "Show one Anvil job",
+      replay: "safe",
       description:
         "Read a compact diagnostic history of one Anvil job by id or slug: current state and, when output is complete, every attempt state/error, " +
         "failed events, resumable pipeline checkpoints, publish/cleanup operation, quality-search metric, and stream decisions. " +
@@ -824,7 +823,8 @@ export function buildAnvilTools(
             "Anvil numeric job id accepted by the evidence gate, or slug exactly as an Anvil read reported it in this run",
         }),
       }),
-      execute(_toolCallId, params, signal) {
+      execute(params, _api, context) {
+        const signal = context.abortSignal
         return Effect.runPromise(
           Effect.gen(function* () {
             const reference = params.job.trim()
@@ -849,7 +849,6 @@ export function buildAnvilTools(
     }),
     defineTool({
       name: "anvil_retry_job",
-      label: "Anvil: requeue a job",
       description:
         "Requeue one failed Anvil job that will not finish on its own, normally an encode blocking an import. " +
         "The interrupted encode restarts, while reusable analysis checkpoints and a journaled publish may resume. " +
@@ -864,7 +863,8 @@ export function buildAnvilTools(
             "Anvil numeric job id accepted by the evidence gate, or slug exactly as an Anvil read reported it in this run",
         }),
       }),
-      execute(_toolCallId, params, signal) {
+      execute(params, _api, context) {
+        const signal = context.abortSignal
         return Effect.runPromise(
           Effect.gen(function* () {
             const reference = params.job.trim()
@@ -953,7 +953,7 @@ export function buildAnvilTools(
     }),
     defineTool({
       name: "anvil_job_lookup",
-      label: "Find exact Anvil jobs",
+      replay: "safe",
       description:
         "Correlate one exact absolute path to current Anvil jobs. Matches a job's source, asset, destination, or destination " +
         "directory and reports which side hit in `matched_on`, so the encoder's input and converted output both resolve. " +
@@ -974,7 +974,8 @@ export function buildAnvilTools(
           }),
         ),
       }),
-      execute(_toolCallId, params, signal) {
+      execute(params, _api, context) {
+        const signal = context.abortSignal
         return Effect.runPromise(
           Effect.gen(function* () {
             const target = params.absolute_path

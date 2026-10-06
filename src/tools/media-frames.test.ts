@@ -18,6 +18,7 @@ import {
   isReadTool,
 } from "./index.ts"
 import { buildMediaFramesTool } from "./media-frames.ts"
+import { executeTool } from "./test-fixture.js"
 
 const run = promisify(execFile)
 
@@ -27,16 +28,14 @@ function execute(
   times: number[],
   signal?: AbortSignal,
 ) {
-  return tool.execute(
-    "test",
+  return executeTool(
+    tool,
     {
       purpose: "Check the reported episode",
       path: file,
       timestampsSeconds: times,
     },
     signal,
-    undefined,
-    undefined as never,
   )
 }
 
@@ -157,6 +156,11 @@ test("frames decode at requested positions without recording mutation evidence",
   const before = ctx.snapshot
   const tool = buildMediaFramesTool({ roots: [media] }, ctx)
   const result = await execute(tool, file, [0, 1, 2])
+  assert.ok(result.content)
+  assert.ok(result.details)
+  assert.ok(
+    typeof result.details === "object" && !Array.isArray(result.details),
+  )
   const images = result.content.filter((part) => part.type === "image")
   assert.equal(images.length, 3)
   assert.equal(new Set(images.map((image) => image.data)).size, 3)

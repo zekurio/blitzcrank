@@ -3,7 +3,7 @@ import { stat } from "node:fs/promises"
 import { promisify } from "node:util"
 
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai"
-import { defineTool } from "@earendil-works/pi-coding-agent"
+import { defineTool } from "@earendil-works/pi-durable"
 import { Effect } from "effect"
 import { Type } from "typebox"
 
@@ -19,7 +19,6 @@ const EXTRACTION_TIMEOUT_MS = 30_000
 export function buildMediaFramesTool(cfg: MediaConfig, ctx: RunContext) {
   return defineTool({
     name: "media_frames",
-    label: "Inspect video frames",
     description:
       "Extract up to six still images from an exact media file at requested timestamps in seconds. " +
       "Use title cards, credits, and scenes as supporting evidence for wrong movie or episode reports. " +
@@ -42,7 +41,8 @@ export function buildMediaFramesTool(cfg: MediaConfig, ctx: RunContext) {
           "Playback positions in seconds, in the desired result order",
       }),
     }),
-    execute(_toolCallId, params, signal) {
+    execute(params, _api, context) {
+      const signal = context.abortSignal
       return Effect.runPromise(
         Effect.gen(function* () {
           const times = params.timestampsSeconds

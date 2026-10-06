@@ -3,9 +3,20 @@ import test from "node:test"
 
 import { Cause, Effect, Exit } from "effect"
 
+import {
+  buildAutomationReportTool,
+  type AutomationReportCapture,
+} from "../automations/report.js"
+import {
+  buildDiscordTriageTool,
+  type DiscordTriageCapture,
+} from "../discord/triage.js"
 import { HttpError } from "../services/http.js"
+import { SeerrClient } from "../services/seerr.js"
 import { runMutation, ToolError } from "./common.js"
 import { RunContext } from "./context.js"
+import { buildProgressTool, type StatusComment } from "./progress.js"
+import { executeTool } from "./test-fixture.js"
 
 test("mutation gates are lazy and run before the counter or write factory", async () => {
   const ctx = new RunContext()
@@ -113,4 +124,46 @@ test("verification interruption stays interrupted", async () => {
   assert.ok(Exit.isFailure(exit))
   assert.ok(Cause.hasInterrupts(exit.cause))
   assert.equal(writes, 1)
+})
+
+test("terminal tools return native Durable control and captured details", async () => {
+  const report: AutomationReportCapture = { submissions: [] }
+  const reportTool = buildAutomationReportTool(report)
+  const submitted = { status: "ok", body: "Verified" }
+  const reportResult = await executeTool(reportTool, submitted)
+  assert.deepEqual(reportResult.control, { terminate: true })
+  assert.deepEqual(reportResult.details, submitted)
+  assert.deepEqual(report.submissions, [submitted])
+  assert.equal(reportTool.replay, "safe")
+
+  const triage: DiscordTriageCapture = { submissions: [] }
+  const triageTool = buildDiscordTriageTool(triage)
+  const decision = { route: "thread", threadName: " Show missing audio " }
+  const triageResult = await executeTool(triageTool, decision)
+  const normalized = { route: "thread", threadName: "Show missing audio" }
+  assert.deepEqual(triageResult.control, { terminate: true })
+  assert.deepEqual(triageResult.details, normalized)
+  assert.deepEqual(triage.submissions, [normalized])
+  assert.equal(triageTool.replay, "safe")
+})
+
+test("progress quota survives rebuilding the registration from host state", async (t) => {
+  const seerr = new SeerrClient(
+    { url: "http://seerr.test", apiKey: "test" },
+    undefined,
+  )
+  const update = t.mock.method(seerr, "updateCommentEffect", () => Effect.void)
+  const status: StatusComment = { id: 7, calls: 3 }
+  const build = () => buildProgressTool(seerr, 1, "anchor", "English", status)
+  const tool = build()
+  assert.notEqual(tool.replay, "safe")
+  await executeTool(tool, { message: "Checking the audio" })
+  assert.equal(status.calls, 4)
+  assert.equal(update.mock.callCount(), 1)
+  await assert.rejects(
+    executeTool(build(), { message: "Checking again" }),
+    /at most 4/,
+  )
+  assert.equal(status.calls, 4)
+  assert.equal(update.mock.callCount(), 1)
 })

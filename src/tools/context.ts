@@ -53,6 +53,12 @@ export interface RunContextInit {
   prior?: EvidenceSnapshot | undefined
 }
 
+/** Host-only recovery state. Paths and reusable slugs are never restored. */
+export interface DurableRunContext {
+  evidence: EvidenceSnapshot
+  counts: { mutations: number; deletes: number }
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
@@ -80,6 +86,24 @@ export class RunContext {
       identities: [...this.identities],
       probed: [...this.probed],
     }
+  }
+
+  get durableSnapshot(): DurableRunContext {
+    return { evidence: this.snapshot, counts: this.counts }
+  }
+
+  /** Replace, rather than merge, so repeated recovery does not inflate audit. */
+  restoreDurable(snapshot: DurableRunContext): void {
+    this.evidence.splice(0, this.evidence.length, ...snapshot.evidence.evidence)
+    this.identities.splice(
+      0,
+      this.identities.length,
+      ...snapshot.evidence.identities,
+    )
+    this.probed.splice(0, this.probed.length, ...snapshot.evidence.probed)
+    this.paths.splice(0)
+    this.mutations = snapshot.counts.mutations
+    this.deletes = snapshot.counts.deletes
   }
 
   recordRead(service: string, path: string, body: string): void {

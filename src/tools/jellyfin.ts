@@ -1,7 +1,4 @@
-import {
-  defineTool,
-  type ToolDefinition,
-} from "@earendil-works/pi-coding-agent"
+import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable"
 import { Effect } from "effect"
 import { Type } from "typebox"
 
@@ -17,7 +14,7 @@ import type { RunContext } from "./context.ts"
 export function buildJellyfinTools(
   cfg: ServiceConfig,
   ctx: RunContext,
-): ToolDefinition[] {
+): ToolRegistration[] {
   const request = (path: string, method: "GET" | "POST" = "GET") =>
     jsonRequestEffect(cfg.url, path, {
       method,
@@ -45,17 +42,16 @@ function refreshItemTool(
     path: string,
     method?: "GET" | "POST",
   ) => Effect.Effect<JsonValue, JsonRequestError>,
-): ToolDefinition {
+): ToolRegistration {
   return defineTool({
     name: "jellyfin_refresh_item",
-    label: "Jellyfin: refresh item",
     description:
       "Trigger a metadata refresh for one Jellyfin item. The item id must come from a Jellyfin read this run.",
     parameters: Type.Object({
       reason: reasonParam(),
       itemId: Type.String({ minLength: 1 }),
     }),
-    execute(_toolCallId, params) {
+    execute(params) {
       return Effect.runPromise(
         Effect.gen(function* () {
           const outcome = yield* runMutation(ctx, {

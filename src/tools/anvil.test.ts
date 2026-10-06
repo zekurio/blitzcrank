@@ -4,13 +4,14 @@ import os from "node:os"
 import path from "node:path"
 import { describe, test } from "node:test"
 
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent"
+import type { ToolRegistration } from "@earendil-works/pi-durable"
 import { Effect } from "effect"
 
 import { buildAnvilTools, interpretJobLookup } from "./anvil.ts"
 import { makeReadTool } from "./common.ts"
 import { RunContext } from "./context.ts"
 import { isReadTool } from "./index.ts"
+import { executeTool } from "./test-fixture.js"
 
 const SOURCE_PATH = "/mnt/downloads/complete/Show/episode.mkv"
 const CONVERTED_PATH = "/mnt/downloads/converted/Show/episode.mkv"
@@ -80,13 +81,13 @@ for (const field of ["droppedPath", "importedPath"]) {
 }
 
 async function execute(
-  tools: ToolDefinition[],
+  tools: ToolRegistration[],
   name: string,
   params: Record<string, unknown>,
 ) {
   const tool = tools.find((candidate) => candidate.name === name)
   assert.ok(tool, `missing tool ${name}`)
-  return tool.execute("test", params, undefined, undefined, undefined as never)
+  return executeTool(tool, params)
 }
 
 async function fakeAnvilctl(
@@ -287,7 +288,7 @@ describe("Anvil retry gates", () => {
       reason: "retry failed job 7 for the exact stalled episode",
       job: "7",
     })
-    const content = retried.content[0]
+    const content = retried.content?.[0]
     if (!content || content.type !== "text") {
       assert.fail("retry returned no text result")
     }
@@ -361,7 +362,7 @@ describe("Anvil retry gates", () => {
       purpose: "diagnose the failed attempt",
       job: "7",
     })
-    const content = shown.content[0]
+    const content = shown.content?.[0]
     if (!content || content.type !== "text") {
       assert.fail("show returned no text result")
     }
