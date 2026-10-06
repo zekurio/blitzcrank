@@ -1,10 +1,6 @@
 import type { Config } from "../config.ts"
 import type { AutomationDefinition } from "./definitions.ts"
 
-/**
- * Automation system prompt, ported from the legacy deployment (see
- * docs/research/legacy.md §2) and adapted to the typed tool model.
- */
 export function buildAutomationSystemPrompt(
   config: Config,
   def: AutomationDefinition,

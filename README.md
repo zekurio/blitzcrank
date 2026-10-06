@@ -146,7 +146,7 @@ changes. If cancellation cleanup has not finished, new events for that issue
 remain blocked until it settles. Usage and session evidence remain in the audit
 record.
 
-### Recovery and the Durable cutover
+### Recovery
 
 Pi Durable is the only agent execution backend. Accepted issue, automation,
 and Discord reply jobs are recorded before admission returns. After a restart,
@@ -166,15 +166,8 @@ authorize two conversations to change the same media simultaneously. Fresh
 triggers rebuild their prompts and tool lists; an unfinished run whose policy
 changed during downtime stops rather than resume with stale permissions.
 
-Existing coding-agent JSONL files are left untouched but are not imported or
-searched by the new backend. Issues retain their case summaries and audit data;
-private Discord threads start new Durable conversations and may need users to
-restate earlier approvals. Provider login and subscription authentication are
-unchanged. There is no legacy-runtime switch.
-
-See the [runtime guide](docs/research/pi-sdk.md) for storage and recovery
-contracts. Pi Durable 1.0.3 is experimental despite its version number; all Pi
-packages are pinned and upgrades need recovery tests.
+Pi Durable 1.0.3 is experimental despite its version number. All Pi packages are
+pinned, and upgrades need recovery tests.
 
 ### Comment usage totals
 
@@ -185,7 +178,7 @@ Each public comment ends with the model and the issue's cumulative token usage:
 ```
 
 API-key authentication adds a cumulative price estimate, such as `· $0.42`.
-Legacy issues without cost history show the current run's estimate instead.
+Issues without recorded cost history show the current run's estimate instead.
 Subscription authentication omits cost because API list prices do not represent
 subscription spending.
 
@@ -400,36 +393,44 @@ The agent can change media services, so the tool layer enforces these limits:
   execution, and blocks further tools after successful submission.
 
 [AGENTS.md](AGENTS.md) records the full safety invariants and their rationale.
-The [legacy deployment notes](docs/research/legacy.md) describe the earlier Go
-implementation.
 
 ## Develop locally
 
-The Nix dev shell includes the default Node.js from the pinned nixpkgs input,
-pnpm 11, and TypeScript. The current nixpkgs revision supplies Node 24:
+Enter the development shell explicitly with `nix develop`. It supplies Node.js
+from the pinned nixpkgs input, pnpm 11, ffmpeg, ffprobe, and `blitz-pi`. The current
+nixpkgs revision supplies Node 24. TypeScript and the other project tools come
+from `pnpm install`.
 
 ```bash
-nix develop          # or: direnv allow
-pnpm install
+nix develop
+pnpm install --frozen-lockfile
 cp .env.example .env # fill in service URLs and API keys
-pnpm dev             # tsx watch
+pnpm exec tsx watch --env-file=.env src/index.ts
 ```
 
-The shell exposes the checkout's pinned pi CLI as `blitz-pi` to avoid collisions
-with other `pi` installations.
+Nothing activates the shell or loads `.env` when you enter the checkout. The
+`--env-file` option loads local configuration explicitly; `pnpm dev` uses
+environment variables already exported by the caller.
 
-Without Nix, install Node >= 24.0.0 and pnpm 11, then follow the commands after
-`nix develop`. To compile and run the output:
+The shell exposes the checkout's pinned pi CLI as `blitz-pi` to avoid collisions
+with other `pi` installations. For a single command without entering an
+interactive shell, use `nix develop --command pnpm verify`.
+
+Without Nix, provide Node >= 24.0.0 and pnpm 11, then follow the commands after
+`nix develop`. Media tests also need ffmpeg and ffprobe. To compile and run with
+local configuration:
 
 ```bash
 pnpm build
-pnpm start
+node --env-file=.env dist/index.js
 ```
 
+Use `pnpm start` instead when configuration is already exported.
+
 Run `pnpm verify` before opening a pull request. It checks formatting, lint,
-and types. [AGENTS.md](AGENTS.md) covers code style and contribution rules;
-[`skills/`](skills) and [`docs/research/`](docs/research) contain agent domain
-knowledge and API references.
+and types. Run `pnpm test` for behavior changes. [AGENTS.md](AGENTS.md) covers code
+style and contribution rules; [`skills/`](skills) contains service-specific
+knowledge and API guidance.
 
 ### Prompt changes
 

@@ -1,8 +1,7 @@
 /**
  * Seerr (Jellyseerr/Overseerr) webhook payload.
  *
- * Shape follows the default webhook JSON payload template, verified against
- * the Jellyseerr source — see docs/research/seerr.md. Note: numeric IDs
+ * Shape follows Seerr's default webhook JSON payload template. Numeric IDs
  * (tmdbId, tvdbId, issue_id) are rendered as strings by the template.
  */
 export type SeerrNotificationType =

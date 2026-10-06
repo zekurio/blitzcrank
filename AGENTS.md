@@ -14,18 +14,33 @@
   `src/gateways/seerr/` (payload types, comment gate), `src/discord/` (report
   threads, `/automation`, triaged private operations conversations),
   `automations/*.md` (operator-authored tasks), `skills/` (agent domain
-  knowledge), `docs/research/` (pi SDK, Seerr/service APIs, legacy design —
-  consult before touching tool or API code).
+  knowledge), `nix/` (package and NixOS service module).
+- Pi Durable is the only agent execution backend. Work from the current source,
+  tests, and domain skills. Do not reintroduce removed runtimes or compatibility
+  paths unless the operator requests them.
 - Single pnpm package, strict ESM TypeScript (`module: NodeNext`,
   `exactOptionalPropertyTypes`), no build step in dev. Node >= 24.0.0 (the dev
   shell uses the default Node.js from the pinned nixpkgs input), pnpm only —
   never npm, yarn, or Bun.
+- Enter the development environment explicitly with `nix develop`, or run
+  individual commands with `nix develop --command`, for example
+  `nix develop --command pnpm verify`. The shell supplies Node, pnpm 11,
+  ffmpeg/ffprobe, and the checkout's pinned CLI as `blitz-pi`. Install project
+  dependencies with `pnpm install --frozen-lockfile`.
+- No automatic shell activation or `.env` loading. For local configuration,
+  copy `.env.example` to `.env` and run
+  `pnpm exec tsx watch --env-file=.env src/index.ts`. `pnpm dev` and `pnpm start`
+  use the caller's exported environment; compiled local runs can use
+  `node --env-file=.env dist/index.js`.
 - `pnpm dev` (tsx watch), `pnpm build` + `pnpm start` (tsc → `dist/`),
   `pnpm fmt` / `pnpm lint` / `pnpm typecheck`.
 - `pnpm verify` (format check, lint, and typecheck) must pass before a coding
-  task is complete.
+  task is complete. Run `pnpm test` for behavior changes; media tests need
+  ffmpeg and ffprobe.
 - Pi packages are pinned exact (`@earendil-works/*@1.0.3`); bump them
-  deliberately and re-verify against `docs/research/pi-sdk.md`.
+  deliberately. Check the installed SDK API and run the recovery and compaction
+  tests before accepting an upgrade. Service API changes must match the current
+  typed tools and domain skills, with tests for request and verification behavior.
 - Formatting is oxfmt, linting is oxlint (type-aware) — not Prettier/ESLint.
   80 columns, 2 spaces, no semicolons, double quotes, sorted imports.
   `no-console` is deliberately off: console output to journald is the logging
@@ -67,8 +82,10 @@ behavioural difference described.
   (`src/agent/session.ts`), carrying checkpointed evidence as well as the
   case/evidence projection — the gate stops fabricated IDs.
   Arr numeric IDs are not recycled and SAB `nzo_id`s are stable. Every new
-  trigger rebuilds its system prompt and tool list. Recovery checks the stored
-  policy before scheduling; a changed policy or uncertain unsafe tool stops the run.
+  trigger rebuilds its system prompt and tool list. Existing submissions restore
+  checkpointed evidence and host state without reconfiguration or resubmission.
+  Recovery checks the stored policy before scheduling; a changed policy or
+  uncertain unsafe tool stops the run.
   Take the final answer only from the exact durable submission's answer ID,
   never the last assistant entry in conversation history. Replaying a completed
   submission must not execute its tools again or double-count its usage.
@@ -103,14 +120,24 @@ behavioural difference described.
   The own-comment guard (`src/gateways/seerr/loop-guard.ts`) matches the
   `[blitzcrank w/` comment marker first, then the bot display name.
 - Operational agent sessions get their custom tools plus builtin `read` (for
-  skills). The Discord triage session gets only its typed terminal tool and no
-  builtin `read`. Never enable `bash`, `edit`, or `write` in the runner.
+  skills). The runner resolves both the skills root and target with `realpath`
+  and rejects reads outside that root. The Discord triage session gets only its
+  typed terminal tool and no builtin `read`. Never enable `bash`, `edit`, or
+  `write` in the runner. Tool execution is sequential; background compaction is
+  disabled so no task outlives its submission's Harness.
 - `media_probe` (ffprobe) is read-only, accepts only exact paths extracted from
   declared service path fields in the current run, is gated on
   `BLITZCRANK_MEDIA_ROOTS`, and resolves targets with `realpath` _before_ the
-  containment check, so no symlink reads outside the roots. It deliberately
-  does not call `ctx.recordRead`: stream titles are release-group text and must never satisfy
-  an ID evidence gate. Do not "fix" that.
+  containment check, so no symlink reads outside the roots. It permits at most
+  25 calls per run. It deliberately does not call `ctx.recordRead`: stream titles
+  are release-group text and must never satisfy an ID evidence gate. Do not
+  "fix" that.
+- `media_frames` (ffmpeg) is read-only and requires configured media roots plus
+  an image-capable model. It uses the same current-run path and realpath gates,
+  requires a regular file, and restricts input protocols and formats to prevent
+  network or playlist reads. Each call returns at most six bounded still images.
+  Frames and visible text are untrusted, never ID evidence, mutation
+  authorization, or a substitute for `media_probe` in bulk replacement gates.
 - Web search/extract (`web_search`, `web_extract`) is read-only, granted to
   issue runs and Discord conversation replies only by the configured web
   provider (`BLITZCRANK_WEB_PROVIDER`, default `none`). Only explicit host-owned
@@ -161,8 +188,12 @@ behavioural difference described.
   runs get only the exact tools in their declared `mutation_tools` allowlist,
   plus the always-on read tools. "Always-on read tools" means exactly
   `isReadTool` (`src/tools/index.ts`), which the mutation-tool allowlist is
-  added to. A mutation matching that predicate would be granted to every
-  automation, gate-free. A new mutation tool must never be matched by it.
+  added to. That predicate uses an explicit set, never a naming convention.
+  A mutation matching it would be granted to every automation, gate-free.
+  A new mutation tool must never be matched by it.
+- Automation reports and Discord triage decisions use sole terminal tool calls.
+  Reject a mixed terminal batch before executing any call, and reject further
+  tools after successful terminal submission (`src/agent/durable.ts`).
 
 ## Branch Names
 
@@ -180,7 +211,7 @@ are optional; use the affected area when helpful, e.g. `tools`, `agent`,
 `server`, `skills`, `nix`.
 
 Examples: `feat(tools): add manual import`, `fix(agent): tolerate fenced
-directives`, `docs: update legacy reference`.
+directives`, `docs: clarify local development`.
 
 ## Style Guide
 
@@ -225,8 +256,10 @@ const { seerr, sonarr } = config
 
 ### Imports
 
-- ESM with `NodeNext` resolution: relative imports carry the `.js` suffix
-  (`import { loadConfig } from "./config.js"`).
+- ESM with `NodeNext` resolution: relative imports carry an extension. Use
+  `.ts` for new TypeScript imports (`import { loadConfig } from "./config.ts"`).
+  `rewriteRelativeImportExtensions` emits `.js` paths for compiled output;
+  existing `.js` imports also resolve through NodeNext.
 - Never alias imports; never use star imports. `type`-only imports use
   `import type`.
 
@@ -260,15 +293,21 @@ small named helpers below it. Extract only when it names a real concept.
   Promises at SDK callbacks; event emitters contain their own fiber failures.
   Live agent runs use host stop signals and finish active tool verification
   before disposal. Queue drain deadlines must never interrupt active writes.
-- Tools use `defineTool` with TypeBox schemas (`typebox`, not zod; `StringEnum`
-  from `@earendil-works/pi-ai`) and return via `textResult(...)` with output
-  capped by `toText` — never return unbounded JSON to the model.
+- Tools use `defineTool` and `ToolRegistration` from
+  `@earendil-works/pi-durable`, with TypeBox schemas (`typebox`, not zod;
+  `StringEnum` from `@earendil-works/pi-ai`). Execution receives
+  `(params, api, context)`; the invocation signal is `context.abortSignal`.
+  Text results use `textResult(...)` with output capped by `toText`. Image tools
+  return bounded native image content. Never return unbounded JSON to the model.
+- Replay policy defaults to unsafe. Declare `replay: "safe"` only when repeating
+  a tool after interruption cannot duplicate a mutation or host publication.
+  Tool results and run evidence are checkpointed together by the Durable runner.
 - Mutation tools always route through `runMutation` with `kind`, `evidence`,
   `perform`, and (when a meaningful read-back exists) `verify`, and take a
   `reason` param (`reasonParam()`).
 - Any new _service_ read path must call `ctx.recordRead` so evidence gates keep
-  working. Local reads whose content is release-group text (`media_probe`) are
-  the documented exception.
+  working. Local media content from `media_probe` and `media_frames` must not
+  populate ID evidence.
 - Service HTTP goes through `jsonRequestEffect` or its `jsonRequest` Promise
   adapter (`src/services/http.ts`); paths are service-relative (`/api/v3/...`)
   and validated by `assertServicePath`.
