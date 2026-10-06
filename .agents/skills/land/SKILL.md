@@ -98,9 +98,9 @@ in the PR and final result. See `AGENTS.md`, "Safety Invariants," and
 Check related documentation and tests. New or renamed tools require the prompt
 and relevant domain skill updates described by `AGENTS.md`, "Repo Patterns."
 Configuration changes require `.env.example` updates. SDK changes require exact
-pins and verification against `docs/research/pi-sdk.md`; dependency changes must
-also leave the Nix dependency hash valid. Do not add unrelated version bumps,
-changelog requirements, or contribution attestations.
+pins and verification of the installed API plus recovery and compaction tests;
+dependency changes must also leave the Nix dependency hash valid. Do not add
+unrelated version bumps, changelog requirements, or contribution attestations.
 
 ## Verify before landing
 
@@ -109,8 +109,9 @@ The current CI pins pnpm `11.25.0` and Node `24`. Media tests need `ffmpeg` and
 `ffprobe`; the default development shell supplies them alongside Node and pnpm.
 Sources: `package.json`, `.github/workflows/checks.yml`, `flake.nix` under
 `devShells`, and `src/tools/media.test.ts` / `src/tools/media-frames.test.ts`.
-Use that shell or an equivalent verified environment. Do not install system
-packages or change machine configuration without permission.
+Enter the shell explicitly with `nix develop`, or prefix individual checks with
+`nix develop --command`. An equivalent verified environment is also acceptable.
+Do not install system packages or change machine configuration without permission.
 
 Run the following local checks on the final candidate:
 

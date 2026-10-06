@@ -10,7 +10,7 @@ dist/
 # direnv
 .direnv/
 
-# legacy artifacts (distilled into docs/research/legacy.md; keep out of git)
+# local Pi resources
 .pi/
 
 # misc
