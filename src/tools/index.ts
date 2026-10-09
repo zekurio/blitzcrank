@@ -1,5 +1,3 @@
-import path from "node:path"
-
 import type { ToolRegistration } from "@earendil-works/pi-durable"
 
 import type { CaseFile } from "../casefile.ts"
@@ -23,102 +21,6 @@ export interface SessionFileRef {
   current: string | undefined
 }
 
-/**
- * Service tool set shared by issue runs and automations: GET-only reads,
- * typed evidence-gated mutations, media probing, and
- * run-history search.
- */
-export function buildServiceTools(
-  config: Config,
-  ctx: RunContext,
-  sessionFileRef: SessionFileRef,
-  modelInput: readonly ("text" | "image")[] = [],
-): ToolRegistration[] {
-  const tools: ToolRegistration[] = [...buildSeerrTools(config.seerr, ctx)]
-  if (config.sonarr) {
-    tools.push(
-      ...buildSonarrTools(config.sonarr, ctx, config.media !== undefined),
-    )
-  }
-  if (config.radarr) tools.push(...buildRadarrTools(config.radarr, ctx))
-  if (config.jellyfin) tools.push(...buildJellyfinTools(config.jellyfin, ctx))
-  if (config.sabnzbd) tools.push(...buildSabnzbdTools(config.sabnzbd, ctx))
-  if (config.media) tools.push(...buildMediaTools(config.media, ctx))
-  if (config.media?.roots.length && modelInput.includes("image")) {
-    tools.push(buildMediaFramesTool(config.media, ctx))
-  }
-  tools.push(
-    buildHistoryTool(path.join(config.dataDir, "sessions"), sessionFileRef),
-  )
-  return tools
-}
-
-/**
- * Tools that cannot change service state, enumerated deliberately. Automations
- * register these unconditionally, so a naming convention must never decide
- * this allowlist: `seerr_create_request` is a mutation despite its suffix.
- *
- * Enumeration fails safely. A new read is withheld until listed here; a new
- * mutation can never be granted to every automation by accident.
- */
-const READ_TOOLS = new Set([
-  "jellyfin_request",
-  "media_probe",
-  "media_frames",
-  "radarr_request",
-  "sabnzbd_request",
-  "seerr_request",
-  "sonarr_request",
-  "thread_history_search",
-])
-
-export function isReadTool(name: string): boolean {
-  return READ_TOOLS.has(name)
-}
-
-/**
- * Discord conversations get every configured typed service operation plus
- * bounded search over prior Seerr and Discord sessions. Automation transcripts
- * stay hidden. Both Arrs remain available because Discord has no trusted
- * webhook media type for routing.
- */
-export function buildDiscordTools(
-  config: Config,
-  ctx: RunContext,
-  sessionFileRef: SessionFileRef,
-  modelInput: readonly ("text" | "image")[] = [],
-): ToolRegistration[] {
-  const tools = buildServiceTools(
-    config,
-    ctx,
-    sessionFileRef,
-    modelInput,
-  ).filter((tool) => tool.name !== "thread_history_search")
-  tools.push(
-    buildHistoryTool(path.join(config.dataDir, "sessions"), sessionFileRef, [
-      "issues",
-      "discord",
-    ]),
-  )
-  return tools
-}
-
-/** Inline answers cannot mutate services or search private conversations. */
-export function buildDiscordAnswerTools(
-  config: Config,
-  ctx: RunContext,
-): ToolRegistration[] {
-  const names = new Set([
-    "seerr_request",
-    "sonarr_request",
-    "radarr_request",
-    "jellyfin_request",
-  ])
-  return buildServiceTools(config, ctx, { current: undefined }).filter((tool) =>
-    names.has(tool.name),
-  )
-}
-
 export type MediaScope = "movie" | "tv" | undefined
 
 export interface IssueToolDeps {
@@ -139,34 +41,40 @@ export interface IssueToolDeps {
 }
 
 /**
- * Issue runs additionally get the live public status comment tool.
+ * Issue tools: the live public status comment, the case file, GET-only reads,
+ * typed evidence-gated mutations, media probing, and run-history search.
  * The known media type grants only its Arr. An unknown type grants neither.
  * This keeps the model's tool surface small and fails closed when Seerr cannot
  * identify the media.
  */
 export function buildIssueTools(deps: IssueToolDeps): ToolRegistration[] {
-  const tools = buildServiceTools(
-    deps.config,
-    deps.ctx,
-    deps.sessionFileRef,
-    deps.modelInput,
-  ).filter((tool) => {
-    const isSonarr = tool.name.startsWith("sonarr_")
-    const isRadarr = tool.name.startsWith("radarr_")
-    if (!isSonarr && !isRadarr) return true
-    if (deps.mediaScope === "movie") return isRadarr
-    if (deps.mediaScope === "tv") return isSonarr
-    return false
-  })
-  return [
+  const config = deps.config
+  const ctx = deps.ctx
+  const tools: ToolRegistration[] = [
     buildProgressTool(
       deps.seerr,
       deps.issueId,
       deps.anchor,
-      deps.config.language,
+      config.language,
       deps.status,
     ),
     buildCaseFileTool(deps.casefile),
-    ...tools,
+    ...buildSeerrTools(config.seerr, ctx),
   ]
+  if (config.sonarr && deps.mediaScope === "tv") {
+    tools.push(
+      ...buildSonarrTools(config.sonarr, ctx, config.media !== undefined),
+    )
+  }
+  if (config.radarr && deps.mediaScope === "movie") {
+    tools.push(...buildRadarrTools(config.radarr, ctx))
+  }
+  if (config.jellyfin) tools.push(...buildJellyfinTools(config.jellyfin, ctx))
+  if (config.sabnzbd) tools.push(...buildSabnzbdTools(config.sabnzbd, ctx))
+  if (config.media) tools.push(...buildMediaTools(config.media, ctx))
+  if (config.media?.roots.length && deps.modelInput?.includes("image")) {
+    tools.push(buildMediaFramesTool(config.media, ctx))
+  }
+  tools.push(buildHistoryTool(config.dataDir, deps.sessionFileRef))
+  return tools
 }

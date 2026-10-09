@@ -13,7 +13,6 @@ import {
   Harness,
   hook,
   MemoryStorage,
-  ROOT_CONVERSATION_ID,
   ToolTask,
   type EntryId,
   type HookApi,
@@ -72,10 +71,7 @@ export async function openDurableStorage(file: string | undefined) {
 }
 
 export function durablePolicyFingerprint(
-  opts: Pick<
-    AgentTurnOptions,
-    "modelSpec" | "systemPrompt" | "prompt" | "terminalToolNames"
-  >,
+  opts: Pick<AgentTurnOptions, "modelSpec" | "systemPrompt" | "prompt">,
   tools: readonly ToolRegistration[],
 ) {
   return createHash("sha256")
@@ -84,7 +80,6 @@ export function durablePolicyFingerprint(
         model: opts.modelSpec,
         systemPrompt: opts.systemPrompt,
         prompt: opts.prompt,
-        terminal: opts.terminalToolNames ?? [],
         tools: tools.map((tool) => ({
           name: tool.name,
           description: tool.description,
@@ -101,7 +96,6 @@ export async function runDurableTurn(
   opts: AgentTurnOptions & { skillsDir: string },
 ): Promise<AgentTurnResult> {
   const registry = createRegistry()
-  const terminalNames = new Set(opts.terminalToolNames ?? [])
   const nativeRead = createReadTool()
   const read = {
     ...nativeRead,
@@ -156,16 +150,6 @@ export async function runDurableTurn(
       }
       return failure.message
     }
-    if (
-      Object.entries(state.operations).some(
-        ([taskId, operation]) =>
-          taskId !== String(api.taskId) &&
-          operation.result !== null &&
-          terminalNames.has(operation.name) &&
-          !(JSON.parse(operation.result) as ToolExecutionResult).isError,
-      )
-    )
-      return "A terminal result has already been submitted"
     const task = await harness!.getTask(api.taskId, context)
     const assistant =
       task &&
@@ -175,14 +159,8 @@ export async function runDurableTurn(
       typeof task.input.assistant === "number"
         ? await storage.entry(task.input.assistant as EntryId, context)
         : undefined
-    const message = assistant?.entry.model?.[0]
-    if (message?.role !== "assistant") return "Missing tool-round authority"
-    const calls = message.content.filter((block) => block.type === "toolCall")
-    if (
-      calls.length !== 1 &&
-      calls.some((call) => terminalNames.has(call.name))
-    )
-      return "Submit a terminal result as the only tool call in its batch"
+    if (assistant?.entry.model?.[0]?.role !== "assistant")
+      return "Missing tool-round authority"
     return undefined
   }
 
@@ -234,14 +212,7 @@ export async function runDurableTurn(
           throw cause
         },
       )
-      const executed: ToolExecutionResult = execution.result
-      const result =
-        terminalNames.has(tool.name) && !executed.isError
-          ? {
-              ...executed,
-              control: { ...executed.control, terminate: true as const },
-            }
-          : executed
+      const result: ToolExecutionResult = execution.result
       if (tool.replay !== "safe" && result.isError && !execution.refused)
         failure = {
           kind: "unsafe-interrupted",
@@ -260,7 +231,6 @@ export async function runDurableTurn(
         if (failure) run.failure = JSON.stringify(failure)
       }, context)
       checkpointed = true
-      opts.onToolExecutionEnd?.(tool.name, result.isError ?? false)
       return result
     } finally {
       try {
@@ -307,6 +277,7 @@ export async function runDurableTurn(
             }
           if (failure || state?.policy !== policy || stopping)
             throw new Error(failure?.message ?? "Durable run stopped")
+          return undefined
         },
       }),
     ],
@@ -328,8 +299,6 @@ export async function runDurableTurn(
       },
       context,
     )
-    const resumed =
-      (await storage.conversation(ROOT_CONVERSATION_ID, context)) !== undefined
     const conversation = await harness.root(context)
     const existing = await storage.submissionByRequest(
       conversation.id,
@@ -471,21 +440,6 @@ export async function runDurableTurn(
             costUsd: usage.costUsd ?? null,
           })
         }, context)
-      const successfulToolCounts: Record<string, number> = {}
-      const terminalToolResults: AgentTurnResult["terminalToolResults"] = []
-      for (const operation of Object.values(record?.operations ?? {})) {
-        if (operation.result === null) continue
-        const result = JSON.parse(operation.result) as ToolExecutionResult
-        if (result.isError) continue
-        successfulToolCounts[operation.name] =
-          (successfulToolCounts[operation.name] ?? 0) + 1
-        if (terminalNames.has(operation.name))
-          terminalToolResults.push({
-            toolName: operation.name,
-            toolCallId: operation.callId,
-            details: result.details,
-          })
-      }
       if (stopPromise) await stopPromise
       if (stopError !== undefined) throw stopError
       const completed = !stopping && !failure && message?.role === "assistant"
@@ -496,16 +450,8 @@ export async function runDurableTurn(
               .map((block) => block.text)
               .join("")
           : "",
-        finalToolNames: completed
-          ? message.content
-              .filter((block) => block.type === "toolCall")
-              .map((block) => block.name)
-          : [],
         usage,
         sessionFile: opts.storageFile,
-        resumed,
-        terminalToolResults,
-        successfulToolCounts,
         ...(failure
           ? { failure }
           : receipt?.status === "unanswered" && !stopping

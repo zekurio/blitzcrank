@@ -61,15 +61,6 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue | undefined }
 
-/** Promise boundary for callers that have not migrated to Effect yet. */
-export function jsonRequest<T = JsonValue>(
-  baseUrl: string,
-  path: string,
-  opts: JsonRequestOptions = {},
-): Promise<T> {
-  return Effect.runPromise(jsonRequestEffect<T>(baseUrl, path, opts))
-}
-
 /** No retries: even GET can mutate state in SABnzbd. */
 export function jsonRequestEffect<T = JsonValue>(
   baseUrl: string,

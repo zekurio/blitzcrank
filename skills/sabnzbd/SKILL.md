@@ -10,8 +10,7 @@ limited to `GET /api?mode=queue` and `GET /api?mode=history` (optional `limit`).
 Blitzcrank injects credentials and JSON output; never include credentials.
 Mutations use only typed tools, require `reason` and an `nzoId` accepted by the
 run's SABnzbd evidence gate, and return `verification` that must be inspected.
-Issue, Discord, and automation runs are uncapped; automation scope comes from
-its exact mutation-tool allowlist.
+Issue runs are uncapped.
 
 SAB downloads, verifies, repairs, unpacks, and writes output. Completion does
 not prove Arr import or Jellyfin playback. Arr owns release
@@ -73,8 +72,7 @@ While repair, unpack, or post-processing is progressing, wait rather than
 force/manual import, remove, blocklist, retry, search, or refresh. Completion
 still needs Arr/Jellyfin verification.
 
-In a Seerr issue, call `report_progress` first and finish with the required
+Call `report_progress` first and finish with the required
 `RESOLVE_ISSUE` directive block; keep it open while downloading, repairing,
-post-processing, importing, scanning, or awaiting verification. In Discord, answer
-directly without Seerr directives or promises of a later check. Claim mutation
+post-processing, importing, scanning, or awaiting verification. Claim mutation
 only after successful verification. Never call Seerr comment/resolve APIs.

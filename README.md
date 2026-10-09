@@ -3,8 +3,7 @@
 An agentic webhook gateway for a private media homelab. Jellyseerr issues start
 durable investigations across Seerr, Sonarr, Radarr, SABnzbd, and Jellyfin.
 The agent applies fixes through typed tools; the host posts comments, resolves
-issues, and schedules revisits. Automations and a Discord inbox use the same
-service tools.
+issues, and schedules revisits.
 
 Built on [Pi Durable](https://www.npmjs.com/package/@earendil-works/pi-durable)
 as an SDK dependency. Blitzcrank does not package or launch the Pi app.
@@ -74,9 +73,6 @@ across ordinary rebuilds.
 
 **Choose a model explicitly.** `BLITZCRANK_MODEL` is required and has no default.
 Use `provider/model[:thinking]`, for example `openai/gpt-6-astra:medium`.
-Automation and Discord models inherit that choice unless overridden through
-the variables in [`.env.example`](.env.example). A model override never changes
-tool permissions.
 
 Existing deployments that relied on `~/.pi/agent/auth.json` must set an explicit
 path or log in again. To move from legacy Codex auth, log in to `openai` and
@@ -121,40 +117,24 @@ allows new events without replaying stopped work or undoing changes.
 
 ## Optional features
 
-- **Automations:** [`automations/`](automations) contains operator-authored
-  Markdown tasks with cron schedules and explicit mutation-tool allowlists.
-  The bundled task requires Sonarr and Radarr. Set `BLITZCRANK_AUTOMATIONS_DIR`
-  or NixOS `automationsDir` for your own definitions.
-- **Discord:** set the bot token, guild ID, and watch channel. Invite with `bot`
-  and `applications.commands` scopes. Grant View Channel, Send Messages,
-  Send Messages in Threads, Create Private Threads, Manage Threads, and
-  Read Message History. Keep the watch channel admin-only; use a separate bot
-  application because startup replaces the guild's commands.
-  `/automation list` and `/automation run` are available to authorized users.
-  For an inbox, set `DISCORD_INBOX_CHANNEL_ID` and enable Message Content Intent.
-  Restrict access to trusted users: private conversations can change services
-  and search earlier conversations.
 - **Media inspection:** `BLITZCRANK_MEDIA_ROOTS` permits read-only ffprobe
   inspection of service-supplied paths. Frame extraction also needs ffmpeg
   and an image-capable model.
 - **Web:** `BLITZCRANK_WEB_PROVIDER=firecrawl` plus `FIRECRAWL_API_KEY` enables
   read-only search/extraction through hosted Firecrawl. Off by default.
 
-HTTP also exposes `GET /healthz`, `GET /automations`, and
-`POST /automations/:name/run`. Every endpoint except `/healthz` requires the
-configured webhook secret in the `Authorization` header.
+HTTP also exposes an unauthenticated `GET /healthz`.
 
 ## Safety and checks
 
 Raw service requests are GET-only. Typed mutations require previously read
 target IDs, a reason, and meaningful verification. Web pages, frames, and
-conversation history cannot authorize changes. Ambiguous interrupted writes
+issue history cannot authorize changes. Ambiguous interrupted writes
 fail closed for review; inspect the service state and logs rather than reset
 the job journal to force a retry.
 
 ```sh
 devenv shell -- pnpm verify
-devenv shell -- pnpm test
 devenv shell -- pnpm build
 nix flake check
 ```

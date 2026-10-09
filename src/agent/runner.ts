@@ -84,7 +84,7 @@ export class IssueRunner {
     private readonly config: Config,
     private readonly modelRuntime: ModelRuntime,
     private readonly modelSpec: string,
-    private readonly jobs: JobStore = new JobStore(),
+    private readonly jobs: JobStore,
   ) {
     this.cases = new CaseStore(path.join(config.dataDir, "cases"))
   }
@@ -105,10 +105,6 @@ export class IssueRunner {
    * one run would then rewrite or delete the other's notice out from under
    * it.
    */
-  notifyQueued(issueId: string, runsAhead: number): Promise<StatusComment> {
-    return Effect.runPromise(this.notifyQueuedEffect(issueId, runsAhead))
-  }
-
   notifyQueuedEffect(issueId: string, runsAhead: number) {
     return Effect.gen({ self: this }, function* () {
       const seerr = new SeerrClient(
@@ -124,24 +120,14 @@ export class IssueRunner {
     }).pipe(this.noticeLock.withPermits(1), Effect.uninterruptible)
   }
 
-  run(
-    event: IssueEvent,
-    status: StatusComment = { id: undefined },
-    signal?: AbortSignal,
-    requestId?: string,
-  ): Promise<RunOutcome> {
-    return Effect.runPromise(this.runEffect(event, status, signal, requestId))
-  }
-
   runEffect(
     event: IssueEvent,
-    status: StatusComment = { id: undefined },
-    signal?: AbortSignal,
-    requestId?: string,
+    status: StatusComment,
+    signal: AbortSignal,
+    runId: string,
   ): Effect.Effect<RunOutcome, unknown> {
     return Effect.gen({ self: this }, function* () {
       const { issueId } = event
-      const runId = requestId ?? this.jobs.create("issue", { event }).id
       const seerr = new SeerrClient(
         this.config.seerr,
         this.config.seerrBotUserId,
@@ -250,7 +236,6 @@ export class IssueRunner {
           runContext: ctx,
           hostState: issueToolState(casefile, status),
           sessionFileRef,
-          logPrefix: `issue:${issueId}`,
           signal,
         })
 
@@ -264,7 +249,7 @@ export class IssueRunner {
         yield* this.cases.saveEffect(casefile)
         yield* this.cases.saveEvidenceEffect(issueId, ctx.snapshot)
 
-        if (signal?.aborted || turn.failure) {
+        if (signal.aborted || turn.failure) {
           casefile.runs.push({
             at: new Date().toISOString(),
             trigger: event.kind,
@@ -295,7 +280,7 @@ export class IssueRunner {
         }
 
         const comment = directives.malformed ? undefined : directives.comment
-        if (signal?.aborted)
+        if (signal.aborted)
           return yield* Effect.fail(
             new SdkError({ message: "issue run stopped", cause: undefined }),
           )
@@ -325,7 +310,7 @@ export class IssueRunner {
         status.id = undefined
 
         if (!directives.malformed && directives.resolve) {
-          if (signal?.aborted)
+          if (signal.aborted)
             return yield* Effect.fail(
               new SdkError({ message: "issue run stopped", cause: undefined }),
             )
@@ -440,7 +425,6 @@ export class IssueRunner {
           runContext: ctx,
           hostState: issueToolState(casefile, status),
           sessionFileRef: undefined,
-          logPrefix: `issue:${event.issueId}:cancel`,
           signal: AbortSignal.abort(),
         })
         projectSpend(casefile, turn, ctx.counts.deletes)
@@ -484,26 +468,15 @@ export class IssueRunner {
     }).pipe(Effect.uninterruptible)
   }
 
-  retractStatus(
-    issueId: string,
-    status: StatusComment,
-    requestId?: string,
-  ): Promise<void> {
-    return Effect.runPromise(
-      this.retractStatusEffect(issueId, status, requestId),
-    )
-  }
-
   retractStatusEffect(
     issueId: string,
     status: StatusComment,
-    requestId?: string,
+    requestId: string,
   ) {
     return Effect.suspend(() => {
       // Consult durable intent, not a flag in this process: even initialization
       // can fail while recovering a job whose comment was already published.
       if (
-        requestId !== undefined &&
         this.jobs
           .actions(requestId)
           .some((action) => action.key === "publish-comment")

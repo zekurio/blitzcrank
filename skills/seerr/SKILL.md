@@ -25,7 +25,7 @@ An issue session resumes across events and carries its prior conversation,
 case-file summary, and evidence store. The runner still supplies a fresh system
 prompt and current tool set each event. Continue established conclusions
 without searching old transcripts; `thread_history_search` is only for other
-items and returns snippets. Never use it to reconstruct your own conclusions.
+issues and returns snippets. Never use it to reconstruct your own conclusions.
 Service state can change, so re-read any state before acting; prior evidence
 permits evidenced IDs but does not prove current queue, job, or library state.
 
@@ -33,8 +33,7 @@ Before the final response call `update_case_file`. It replaces the agent
 summary: retain still-valid verified facts/evidence and disproved explanations,
 correct errors, and state open work. Run count, token totals, deletion audit,
 and follow-up limits are host-written facts; do not reinterpret them as issue
-mutation/deletion caps. Issue, Discord, and automation runs are uncapped; an
-automation's exact mutation-tool allowlist defines its scope. When follow-ups are exhausted, resolve
+mutation/deletion caps. Issue runs are uncapped. When follow-ups are exhausted, resolve
 or ask one concrete reporter question rather than schedule another check.
 
 Call `report_progress` as the first action with one short public sentence. It is
@@ -60,12 +59,6 @@ verified. Follow-ups are capped and no-news checks back off, so choose a
 realistic Go-style duration rather than polling. Never resolve while awaiting
 queue/import/scan/playback evidence or reporter confirmation. With no
 useful update, return `RESOLVE_ISSUE: no`, a blank line, and no comment.
-
-A Discord conversation also resumes and carries its service evidence. Prior
-evidence proves only that a stable ID was real; re-read mutable state before
-acting, and use only current-reply paths. Answer
-Discord directly. Do not emit Seerr directives, call `report_progress`, or
-promise a scheduled follow-up.
 
 ## Triage and mapping
 

@@ -8,8 +8,7 @@ description: Diagnose Jellyfin library identity, availability, media streams, su
 Use read-only `jellyfin_request` with `purpose` and a relative GET path. The only
 mutation is `jellyfin_refresh_item`; it requires `reason` and an `itemId`
 accepted by the run's Jellyfin evidence gate. Inspect its `verification` and
-re-read affected state. Issue, Discord, and automation runs are uncapped;
-automation scope comes from its exact mutation-tool allowlist. Refresh updates metadata/indexing
+re-read affected state. Issue runs are uncapped. Refresh updates metadata/indexing
 and probing; it cannot repair bytes or add tracks. No broad-library refresh is
 exposed.
 
@@ -70,9 +69,8 @@ client/transcoding, bad source, or a mixture. Multiple versions may mean
 Jellyfin played a different file than Radarr's inspected file. A successful scan
 does not prove playback; verify the original symptom before resolution.
 
-In a Seerr issue, call `report_progress` first and finish with its required
-`RESOLVE_ISSUE` directive block. In Discord, answer directly without Seerr
-directives or promises of a later check. Do not expose tool names, IDs, URLs,
+Call `report_progress` first and finish with its required `RESOLVE_ISSUE`
+directive block. Do not expose tool names, IDs, URLs,
 paths, promises, or user data. Never call Seerr comment/resolve APIs. Keep a
 Seerr issue open through importing, scanning, playback validation, or needed
 reporter confirmation.

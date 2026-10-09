@@ -36,21 +36,12 @@ export class IssueWork {
   private readonly revisions = new Map<string, number>()
 
   constructor(
-    private readonly runner: Pick<
-      IssueRunner,
-      "notifyQueuedEffect" | "retractStatusEffect" | "runEffect"
-    > & {
-      cancelEffect?: (
-        event: IssueEvent,
-        status: StatusComment,
-        runId: string,
-      ) => Effect.Effect<void, unknown>
-    },
+    private readonly runner: IssueRunner,
     private readonly cases: CaseStore,
-    private readonly jobs: JobStore = new JobStore(),
+    private readonly jobs: JobStore,
     private readonly authorizeRecovery: (
       event: IssueEvent,
-    ) => Effect.Effect<boolean, unknown> = () => Effect.succeed(true),
+    ) => Effect.Effect<boolean, unknown>,
   ) {}
 
   /** Restore accepted work before re-arming timers or opening HTTP admission. */
@@ -58,7 +49,7 @@ export class IssueWork {
     return this.transitions.withPermit(
       Effect.gen({ self: this }, function* () {
         const admitted: Job<IssueJob>[] = []
-        for (const stored of this.jobs.pending("issue")) {
+        for (const stored of this.jobs.pending()) {
           const job = issueJob(stored)
           if (job.status === "cancelling") {
             yield* this.recoverCancellation(job)
@@ -107,10 +98,6 @@ export class IssueWork {
     )
   }
 
-  enqueue(event: IssueEvent): Promise<"paused" | "queued"> {
-    return Effect.runPromise(this.enqueueEffect(event))
-  }
-
   enqueueEffect(
     event: IssueEvent,
     requestId?: string,
@@ -118,16 +105,8 @@ export class IssueWork {
     return this.transitions.withPermit(this.enqueueEvent(event, requestId))
   }
 
-  stop(issueId: string): Promise<void> {
-    return Effect.runPromise(this.stopEffect(issueId))
-  }
-
   stopEffect(issueId: string): Effect.Effect<void, unknown> {
     return this.transitions.withPermit(this.stopIssue(issueId))
-  }
-
-  resume(issueId: string): Promise<void> {
-    return Effect.runPromise(this.resumeEffect(issueId))
   }
 
   resumeEffect(issueId: string): Effect.Effect<void, unknown> {
@@ -165,11 +144,7 @@ export class IssueWork {
       if (this.queue.closed)
         return yield* Effect.fail(new Error("queue is closed"))
       const runsAhead = this.queue.size
-      const job = this.jobs.create(
-        "issue",
-        { event, runsAhead },
-        requestId === undefined ? {} : { id: requestId },
-      )
+      const job = this.jobs.create({ event, runsAhead }, requestId)
       this.admit(job)
       return "queued"
     })
@@ -208,7 +183,7 @@ export class IssueWork {
     return Effect.gen({ self: this }, function* () {
       this.bumpRevision(issueId)
       this.revisits.cancel(issueId)
-      for (const job of this.jobs.pending("issue")) {
+      for (const job of this.jobs.pending()) {
         if (issueJob(job).payload.event.issueId === issueId)
           this.jobs.requestCancel(job.id)
       }
@@ -329,11 +304,7 @@ export class IssueWork {
             Effect.fail(new Error("Unrecorded queue notice requires review")),
           )
         : Effect.succeed<StatusComment>({ id: undefined })
-      if (this.runner.cancelEffect) {
-        yield* this.runner.cancelEffect(event, status, job.id)
-      } else {
-        yield* this.runner.retractStatusEffect(event.issueId, status, job.id)
-      }
+      yield* this.runner.cancelEffect(event, status, job.id)
       yield* this.clearRevisit(event.issueId)
       this.jobs.markCancelled(job.id)
     }).pipe(
@@ -376,7 +347,7 @@ export class IssueWork {
 
   private isCancelling(issueId: string): boolean {
     return this.jobs
-      .pending("issue")
+      .pending()
       .some(
         (job) =>
           job.status === "cancelling" &&

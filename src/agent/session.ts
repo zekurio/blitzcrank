@@ -76,10 +76,7 @@ export interface AgentTurnOptions {
       }
     | undefined
   sessionFileRef: { current: string | undefined } | undefined
-  onToolExecutionEnd?: (toolName: string, isError: boolean) => void
-  logPrefix: string
   builtinRead?: boolean
-  terminalToolNames?: readonly string[]
   signal?: AbortSignal | undefined
 }
 export interface DurableTurnFailure {
@@ -89,16 +86,8 @@ export interface DurableTurnFailure {
 }
 export interface AgentTurnResult {
   text: string
-  finalToolNames: string[]
   usage: RunUsage
   sessionFile: string | undefined
-  resumed: boolean
-  terminalToolResults: {
-    toolName: string
-    toolCallId: string
-    details: unknown
-  }[]
-  successfulToolCounts: Record<string, number>
   failure?: DurableTurnFailure
 }
 /** Coding-agent supplies auth and discovery, never execution. */

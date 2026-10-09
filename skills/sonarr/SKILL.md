@@ -5,7 +5,7 @@ description: Answer series, season, and episode availability or air-date questio
 
 # Sonarr
 
-`sonarr_request` is GET-only and accepts `purpose` and a relative `/api/v3/...` `path`. Mutations use the typed tools, require `reason`, and require every target ID to pass the run's Sonarr evidence gate. Issue, Discord, and automation runs are uncapped; automation scope comes from its exact mutation-tool allowlist.
+`sonarr_request` is GET-only and accepts `purpose` and a relative `/api/v3/...` `path`. Mutations use the typed tools, require `reason`, and require every target ID to pass the run's Sonarr evidence gate. Issue runs are uncapped.
 
 ## Availability and dates
 
@@ -83,4 +83,4 @@ For stalls/import failures, allow download/repair/unpack work and diagnose categ
 
 For manual import, read the exact queue folder/download ID and candidate endpoint; inspect every `rejections` array. Import only candidates mapped to that queued episode and download with acceptable quality/language evidence. Reject wrong targets, samples, missing paths, permission or duplicate conflicts, unwanted language, and low score/cutoff. Never import while downloader post-processing is active or the file is locked/changing. Re-read queue and file state; use queue deletion with `blocklist: true` when cleanup, not import, is warranted.
 
-A search is not a grab; a grab is not a download; import is not Jellyfin playback. Verify queue/blocklist/episode/file state, ensure any replacement differs, and after import verify the file record and Jellyfin streams. In a Seerr issue, call `report_progress` first and finish with the required `RESOLVE_ISSUE` directive block. In Discord, answer directly without Seerr directives or promises of a later check. Resolve a Seerr issue only when the reported symptom is objectively verified or required reporter confirmation is obtained.
+A search is not a grab; a grab is not a download; import is not Jellyfin playback. Verify queue/blocklist/episode/file state, ensure any replacement differs, and after import verify the file record and Jellyfin streams. Call `report_progress` first and finish with the required `RESOLVE_ISSUE` directive block. Resolve a Seerr issue only when the reported symptom is objectively verified or required reporter confirmation is obtained.

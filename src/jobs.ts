@@ -5,7 +5,6 @@ import { Cause, Effect } from "effect"
 
 import type { SerialQueue } from "./queue.ts"
 
-export type JobKind = "issue" | "automation" | "discord"
 export type JobStatus =
   | "queued"
   | "running"
@@ -15,15 +14,12 @@ export type JobStatus =
   | "cancelled"
 export interface Job<T = unknown> {
   id: string
-  kind: JobKind
   payload: T
   createdAt: number
   status: JobStatus
-  busyKey?: string
   error?: string
 }
 
-export class BusyJobError extends Error {}
 export class UncertainActionError extends Error {
   constructor(jobId: string, key: string) {
     super(
@@ -43,25 +39,21 @@ function json(value: unknown): string {
  * so its lifetime lock never holds a transaction on the journal itself. */
 export class JobStore {
   private readonly db: DatabaseSync
-  private readonly owner: DatabaseSync | undefined
+  private readonly owner: DatabaseSync
   private readonly scheduled = new Set<string>()
 
-  constructor(path = ":memory:") {
-    this.owner =
-      path === ":memory:" ? undefined : new DatabaseSync(`${path}.owner`)
-    this.owner?.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE")
+  constructor(path: string) {
+    this.owner = new DatabaseSync(`${path}.owner`)
+    this.owner.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE")
     this.db = new DatabaseSync(path)
     this.db.exec(`
       PRAGMA journal_mode = WAL;
       PRAGMA synchronous = FULL;
       CREATE TABLE IF NOT EXISTS jobs (
         sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-        id TEXT NOT NULL UNIQUE, kind TEXT NOT NULL, payload TEXT NOT NULL,
-        createdAt INTEGER NOT NULL, status TEXT NOT NULL, busyKey TEXT,
-        error TEXT
+        id TEXT NOT NULL UNIQUE, payload TEXT NOT NULL,
+        createdAt INTEGER NOT NULL, status TEXT NOT NULL, error TEXT
       );
-      CREATE UNIQUE INDEX IF NOT EXISTS active_busy ON jobs(busyKey)
-        WHERE status IN ('queued', 'running', 'cancelling');
       CREATE TABLE IF NOT EXISTS actions (
         jobId TEXT NOT NULL REFERENCES jobs(id), key TEXT NOT NULL,
         result TEXT, PRIMARY KEY(jobId, key)
@@ -69,32 +61,12 @@ export class JobStore {
     `)
   }
 
-  create<T>(
-    kind: JobKind,
-    payload: T,
-    options: { id?: string; busyKey?: string } = {},
-  ): Job<T> {
-    const id = options.id ?? randomUUID()
+  create<T>(payload: T, id: string = randomUUID()): Job<T> {
     const existing = this.get(id)
     if (existing) return existing as Job<T>
-    if (
-      options.busyKey &&
-      this.pending().some((job) => job.busyKey === options.busyKey)
-    ) {
-      throw new BusyJobError(`Active job for ${options.busyKey}`)
-    }
     this.db
-      .prepare(
-        "INSERT INTO jobs(id,kind,payload,createdAt,status,busyKey) VALUES(?,?,?,?,?,?)",
-      )
-      .run(
-        id,
-        kind,
-        json(payload),
-        Date.now(),
-        "queued",
-        options.busyKey ?? null,
-      )
+      .prepare("INSERT INTO jobs(id,payload,createdAt,status) VALUES(?,?,?,?)")
+      .run(id, json(payload), Date.now(), "queued")
     return this.get(id)! as Job<T>
   }
 
@@ -103,22 +75,14 @@ export class JobStore {
     return row ? this.decode(row) : undefined
   }
 
-  records(): Job[] {
-    return this.db
-      .prepare("SELECT * FROM jobs ORDER BY sequence")
-      .all()
-      .map((row) => this.decode(row))
-  }
-
-  pending(kind?: JobKind): Job[] {
+  pending(): Job[] {
     return this.db
       .prepare(
         `SELECT * FROM jobs
          WHERE status IN ('queued', 'running', 'cancelling')
-           AND (? IS NULL OR kind = ?)
          ORDER BY sequence`,
       )
-      .all(kind ?? null, kind ?? null)
+      .all()
       .map((row) => this.decode(row))
   }
 
@@ -220,7 +184,7 @@ export class JobStore {
 
   close(): void {
     this.db.close()
-    this.owner?.close()
+    this.owner.close()
   }
 
   private mark(id: string, status: JobStatus, error?: string): void {
@@ -234,11 +198,9 @@ export class JobStore {
   private decode(row: Record<string, unknown>): Job {
     return {
       id: String(row.id),
-      kind: String(row.kind) as JobKind,
       payload: JSON.parse(String(row.payload)) as unknown,
       createdAt: Number(row.createdAt),
       status: String(row.status) as JobStatus,
-      ...(row.busyKey === null ? {} : { busyKey: String(row.busyKey) }),
       ...(row.error === null ? {} : { error: String(row.error) }),
     }
   }

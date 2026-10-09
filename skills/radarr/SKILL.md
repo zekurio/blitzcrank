@@ -5,7 +5,7 @@ description: Answer movie availability and release-date questions using Radarr t
 
 # Radarr
 
-`radarr_request` is GET-only and accepts `purpose` and a relative `/api/v3/...` `path`. Mutations use the typed tools, require `reason`, and require every target ID to pass the run's Radarr evidence gate. Issue, Discord, and automation runs are uncapped; automation scope comes from its exact mutation-tool allowlist.
+`radarr_request` is GET-only and accepts `purpose` and a relative `/api/v3/...` `path`. Mutations use the typed tools, require `reason`, and require every target ID to pass the run's Radarr evidence gate. Issue runs are uncapped.
 
 ## Availability and dates
 
@@ -91,4 +91,4 @@ For manual import, read the exact queue folder/download ID and candidate endpoin
 
 ## Verification and directives
 
-A grab is not a download; SAB completion is not import; a Radarr file is not Jellyfin playback proof. Verify queue/blocklist/movie/file and the original Jellyfin symptom. In a Seerr issue, call `report_progress` first and finish with the required `RESOLVE_ISSUE` directive block. In Discord, answer directly without Seerr directives or promises of a later check. Resolve a Seerr issue only after physical/file-state evidence and the reported symptom are verified.
+A grab is not a download; SAB completion is not import; a Radarr file is not Jellyfin playback proof. Verify queue/blocklist/movie/file and the original Jellyfin symptom. Call `report_progress` first and finish with the required `RESOLVE_ISSUE` directive block. Resolve a Seerr issue only after physical/file-state evidence and the reported symptom are verified.

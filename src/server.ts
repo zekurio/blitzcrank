@@ -6,7 +6,6 @@ import type {
 
 import { Cause, Effect } from "effect"
 
-import type { AutomationInfo, TriggerResult } from "./automations/dispatcher.ts"
 import type { Config } from "./config.ts"
 import { isBotComment } from "./gateways/seerr/loop-guard.ts"
 import {
@@ -32,8 +31,6 @@ export interface ServerDeps {
   allowComment: (
     payload: SeerrWebhookPayload,
   ) => Effect.Effect<boolean, unknown>
-  listAutomations: () => AutomationInfo[]
-  triggerAutomation: (name: string) => TriggerResult
   stats: () => { queued: number; pendingRevisits: number }
 }
 
@@ -69,36 +66,6 @@ function handleRequest(
       json(response, 200, { status: "ok", ...deps.stats() })
       return
     }
-    if (request.method === "GET" && url.pathname === "/automations") {
-      if (!authorized(request.headers.authorization)) {
-        json(response, 401, { error: "unauthorized" })
-        return
-      }
-      json(response, 200, { automations: deps.listAutomations() })
-      return
-    }
-
-    const automation = url.pathname.match(/^\/automations\/([^/]+)\/run$/)
-    if (request.method === "POST" && automation) {
-      if (!authorized(request.headers.authorization)) {
-        json(response, 401, { error: "unauthorized" })
-        return
-      }
-      const name = automation[1]!
-      const result = deps.triggerAutomation(name)
-      if (result === "unknown") {
-        json(response, 404, { error: `unknown automation ${name}` })
-        return
-      }
-      if (result === "busy") {
-        json(response, 409, { error: `${name} is already queued or running` })
-        return
-      }
-      console.log(`[automations] manual trigger: ${name}`)
-      json(response, 200, { ok: true, queued: name })
-      return
-    }
-
     if (request.method === "POST" && url.pathname === "/webhook/seerr") {
       yield* handleSeerrWebhook(request, response, deps, authorized)
       return
