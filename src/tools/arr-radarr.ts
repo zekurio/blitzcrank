@@ -4,100 +4,16 @@ import { Type } from "typebox"
 
 import type { ServiceConfig } from "../config.ts"
 import {
-  arrReadTool,
-  manualImportTool,
-  queueAndBlocklistTools,
+  arrRequestTool,
+  deleteQueueItemTool,
   readReleases,
   releaseFilterParams,
-  runArrCommand,
   runArrFileDelete,
-  type JsonObject,
+  runArrMonitoringUpdate,
+  type ArrRecord,
 } from "./arr-common.ts"
-import { reasonParam, textResult, type ServiceName } from "./common.ts"
+import { reasonParam, textResult, type HostTool } from "./common.ts"
 import type { RunContext } from "./context.ts"
-
-interface MovieCommand {
-  toolName: "radarr_search" | "radarr_refresh_movie"
-  label: string
-  description: string
-  commandName: "MoviesSearch" | "RefreshMovie"
-  action: "search" | "refresh_movie"
-  idDescription?: string | undefined
-}
-
-function movieCommandTool(
-  cfg: ServiceConfig,
-  ctx: RunContext,
-  command: MovieCommand,
-): ToolRegistration {
-  const service: ServiceName = "radarr"
-  const movieId = command.idDescription
-    ? Type.Integer({ minimum: 1, description: command.idDescription })
-    : Type.Integer({ minimum: 1 })
-  return defineTool({
-    name: command.toolName,
-    description: command.description,
-    parameters: Type.Object({
-      reason: reasonParam(),
-      movieId,
-    }),
-    execute(params) {
-      return Effect.runPromise(
-        Effect.gen(function* () {
-          const evidence = [
-            { service, value: params.movieId, hint: "movie id" },
-          ]
-          const outcome = yield* runArrCommand(cfg, service, ctx, evidence, {
-            name: command.commandName,
-            movieIds: [params.movieId],
-          })
-          return textResult(outcome, {
-            service,
-            action: command.action,
-            movieId: params.movieId,
-          })
-        }),
-      )
-    },
-  })
-}
-
-function deleteMovieFileTool(
-  cfg: ServiceConfig,
-  ctx: RunContext,
-): ToolRegistration {
-  const service: ServiceName = "radarr"
-  return defineTool({
-    name: "radarr_delete_movie_file",
-    description:
-      "Delete one movie file from disk (e.g. verified corrupt), so a replacement can be searched. This removes the only copy of the movie — evidence must be strong. The moviefile id must pass the Radarr evidence gate.",
-    parameters: Type.Object({
-      reason: reasonParam(),
-      movieFileId: Type.Integer({ minimum: 1 }),
-    }),
-    execute(params) {
-      return Effect.runPromise(
-        Effect.gen(function* () {
-          const path = `/api/v3/moviefile/${params.movieFileId}`
-          const outcome = yield* runArrFileDelete(
-            cfg,
-            service,
-            ctx,
-            path,
-            params.movieFileId,
-            "moviefile id",
-            "movie file",
-          )
-          return textResult(outcome, {
-            service,
-            action: "delete_movie_file",
-            movieFileId: params.movieFileId,
-          })
-        }),
-      )
-    },
-  })
-}
 
 function radarrReleasesTool(
   cfg: ServiceConfig,
@@ -122,17 +38,99 @@ function radarrReleasesTool(
     execute(params) {
       return Effect.runPromise(
         Effect.gen(function* () {
-          const service: ServiceName = "radarr"
           const target = {
             path: `/api/v3/release?movieId=${params.movieId}`,
-            matches: (release: JsonObject) =>
+            matches: (release: ArrRecord) =>
               release.mappedMovieId === params.movieId,
           }
-          const result = yield* readReleases(service, cfg, ctx, target, params)
+          const result = yield* readReleases("radarr", cfg, ctx, target, params)
           return textResult(result, {
-            service,
+            service: "radarr",
             action: "releases",
             path: target.path,
+          })
+        }),
+      )
+    },
+  })
+}
+
+function deleteMovieFileTool(
+  cfg: ServiceConfig,
+  ctx: RunContext,
+): ToolRegistration {
+  return defineTool({
+    name: "radarr_delete_movie_file",
+    description:
+      "Delete one movie file from disk (e.g. verified corrupt), so a replacement can be searched. This removes the only copy of the movie — evidence must be strong. The moviefile id must pass the Radarr evidence gate.",
+    parameters: Type.Object({
+      reason: reasonParam(),
+      movieFileId: Type.Integer({ minimum: 1 }),
+    }),
+    execute(params) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          const path = `/api/v3/moviefile/${params.movieFileId}`
+          const outcome = yield* runArrFileDelete(
+            cfg,
+            "radarr",
+            ctx,
+            path,
+            params.movieFileId,
+            "moviefile id",
+            "movie file",
+          )
+          return textResult(outcome, {
+            service: "radarr",
+            action: "delete_movie_file",
+            movieFileId: params.movieFileId,
+          })
+        }),
+      )
+    },
+  })
+}
+
+function setMovieMonitoringTool(
+  cfg: ServiceConfig,
+  ctx: RunContext,
+): ToolRegistration {
+  return defineTool({
+    name: "radarr_set_movie_monitoring",
+    description:
+      "Change whether Radarr monitors a movie. Reads the current movie and sends it back with only " +
+      "monitored changed, so path, profile, identity, and availability stay as they are. " +
+      "The movie id must pass the Radarr evidence gate.",
+    parameters: Type.Object({
+      reason: reasonParam(),
+      movieId: Type.Integer({
+        minimum: 1,
+        description: "Internal Radarr movie id (not tmdbId)",
+      }),
+      monitored: Type.Boolean(),
+    }),
+    execute(params) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          const outcome = yield* runArrMonitoringUpdate(cfg, "radarr", ctx, {
+            path: `/api/v3/movie/${params.movieId}`,
+            id: params.movieId,
+            hint: "movie id",
+            identity: "tmdbId",
+            preserved: [
+              "tmdbId",
+              "path",
+              "qualityProfileId",
+              "minimumAvailability",
+              "tags",
+            ],
+            patch: (record) => ({ ...record, monitored: params.monitored }),
+            monitoring: (record) => ({ monitored: record.monitored ?? null }),
+          })
+          return textResult(outcome, {
+            service: "radarr",
+            action: "set_movie_monitoring",
+            movieId: params.movieId,
           })
         }),
       )
@@ -143,39 +141,22 @@ function radarrReleasesTool(
 export function buildRadarrTools(
   cfg: ServiceConfig,
   ctx: RunContext,
-): ToolRegistration[] {
-  const service: ServiceName = "radarr"
+): HostTool[] {
   return [
-    arrReadTool(
-      service,
+    arrRequestTool(
+      "radarr",
       cfg,
       ctx,
-      "Radarr read",
-      "Check movie availability and release dates in Radarr via GET /api/v3 paths: " +
-        "movie for tracking/monitoring, moviefile for imported files, queue/history for acquisition, " +
-        "calendar for cinema/digital/physical dates, blocklist. " +
-        "Load the radarr skill for exact availability/date workflows.",
+      "Radarr API under /api/v3. GET reads movies, files, queue, history, calendar, blocklist, " +
+        "and profiles. Writes: POST command (MoviesSearch, RefreshMovie, RescanMovie, " +
+        "ManualImport, DownloadedMoviesScan, RefreshMonitoredDownloads), POST queue/grab/{id}, " +
+        "POST history/failed/{id}, DELETE blocklist/{id}, POST release, and DELETE queue/{id}?removeFromClient=false. " +
+        "Release candidates go through radarr_releases, monitoring through radarr_set_movie_monitoring, deletions through the delete tools; server settings " +
+        "are refused. Load the radarr skill for workflows.",
     ),
     radarrReleasesTool(cfg, ctx),
-    movieCommandTool(cfg, ctx, {
-      toolName: "radarr_search",
-      label: "Radarr: trigger movie search",
-      description:
-        "Trigger a Radarr search for one movie (MoviesSearch). The movie id must come from a Radarr read this run.",
-      commandName: "MoviesSearch",
-      action: "search",
-      idDescription: "Internal Radarr movie id (not tmdbId)",
-    }),
+    setMovieMonitoringTool(cfg, ctx),
     deleteMovieFileTool(cfg, ctx),
-    movieCommandTool(cfg, ctx, {
-      toolName: "radarr_refresh_movie",
-      label: "Radarr: refresh movie",
-      description:
-        "Refresh a movie's metadata and rescan its files (RefreshMovie). The movie id must come from a Radarr read this run.",
-      commandName: "RefreshMovie",
-      action: "refresh_movie",
-    }),
-    manualImportTool(service, cfg, ctx),
-    ...queueAndBlocklistTools(service, cfg, ctx),
+    deleteQueueItemTool("radarr", cfg, ctx),
   ]
 }

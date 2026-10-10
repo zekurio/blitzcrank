@@ -8,7 +8,7 @@
   outputs =
     { self, nixpkgs }:
     let
-      # x86_64-darwin is gone from nixpkgs 26.11; aarch64-darwin is dev-only.
+      # x86_64-darwin is gone from nixpkgs 26.11.
       systems = [
         "aarch64-darwin"
         "x86_64-linux"
@@ -30,7 +30,7 @@
 
       # `nix flake check` builds the package on linux CI.
       checks = forSystems linuxSystems (pkgs: {
-        blitzcrank = pkgs.callPackage ./nix/package.nix { };
+        blitzcrank = self.packages.${pkgs.stdenv.hostPlatform.system}.blitzcrank;
       });
 
       nixosModules = rec {
@@ -44,45 +44,6 @@
           };
         default = blitzcrank;
       };
-
-      devShells = forAllSystems (
-        pkgs:
-        let
-          blitzPi = pkgs.writeShellApplication {
-            name = "blitz-pi";
-            runtimeInputs = [
-              pkgs.git
-              pkgs.nodejs
-            ];
-            text = ''
-              root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
-                echo "blitz-pi must be run inside the blitzcrank checkout" >&2
-                exit 1
-              }
-              cli="$root/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"
-              if [ ! -f "$cli" ]; then
-                echo "blitz-pi requires pnpm install in $root" >&2
-                exit 1
-              fi
-              exec node "$cli" "$@"
-            '';
-          };
-        in
-        {
-          default = pkgs.mkShell {
-            packages = with pkgs; [
-              blitzPi
-              nodejs
-              (pnpm_11.override { nodejs-slim = nodejs; })
-              ffmpeg-headless
-            ];
-
-            shellHook = ''
-              echo "blitzcrank devshell — node $(node --version), pnpm $(pnpm --version), blitz-pi available"
-            '';
-          };
-        }
-      );
 
       formatter = forAllSystems (pkgs: pkgs.nixfmt);
     };

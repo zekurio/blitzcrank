@@ -27,7 +27,7 @@ stdenv.mkDerivation (finalAttrs: {
     inherit (finalAttrs) pname version src;
     inherit pnpm;
     fetcherVersion = 4;
-    hash = "sha256-t6Y+hM7DpU2CEJVZTDsIi85d7ZDfBQ1IQD+jS7DrO+A=";
+    hash = "sha256-SlXuNqHDXg4AUkGVWTQR+Eyz+tOIxNr2hYr572kG5+w=";
   };
 
   buildPhase = ''
@@ -40,11 +40,9 @@ stdenv.mkDerivation (finalAttrs: {
   installPhase = ''
     runHook preInstall
     mkdir -p $out/lib/blitzcrank
-    cp -r dist node_modules skills automations package.json $out/lib/blitzcrank/
+    cp -r dist node_modules skills package.json $out/lib/blitzcrank/
     makeWrapper ${nodejs}/bin/node $out/bin/blitzcrank \
-      --add-flags "$out/lib/blitzcrank/dist/index.js"
-    makeWrapper ${nodejs}/bin/node $out/bin/blitz-pi \
-      --add-flags "$out/lib/blitzcrank/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"
+      --add-flags "$out/lib/blitzcrank/dist/cli.js"
     runHook postInstall
   '';
 

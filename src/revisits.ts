@@ -75,9 +75,9 @@ export interface RevisitPlanInput {
 }
 
 /**
- * Longest follow-up delay, matching the directive clamp. Beyond ~24.8 days a
- * setTimeout overflows and fires immediately, which would turn the anti-poll
- * backoff into a tight poll.
+ * Longest follow-up delay, matching the finish_issue revisit bound. Beyond
+ * ~24.8 days a setTimeout overflows and fires immediately, which would turn
+ * the anti-poll backoff into a tight poll.
  */
 const MAX_DELAY_MS = 48 * 60 * 60 * 1000
 

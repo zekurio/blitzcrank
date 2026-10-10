@@ -290,22 +290,6 @@ export class CaseStore {
     })
   }
 
-  isPaused(issueId: string): Promise<boolean> {
-    return Effect.runPromise(this.isPausedEffect(issueId))
-  }
-
-  pause(issueId: string): Promise<void> {
-    return Effect.runPromise(this.pauseEffect(issueId))
-  }
-
-  resume(issueId: string): Promise<void> {
-    return Effect.runPromise(this.resumeEffect(issueId))
-  }
-
-  load(issueId: string): Promise<CaseFile> {
-    return Effect.runPromise(this.loadEffect(issueId))
-  }
-
   /**
    * Evidence from earlier runs on this issue, in a sidecar file: it is bulky
    * raw service JSON, and the case file is re-read into a prompt where that
@@ -367,26 +351,6 @@ export class CaseStore {
       }
       return files
     })
-  }
-
-  loadEvidence(issueId: string): Promise<EvidenceSnapshot | undefined> {
-    return Effect.runPromise(this.loadEvidenceEffect(issueId))
-  }
-
-  saveEvidence(issueId: string, snapshot: EvidenceSnapshot): Promise<void> {
-    return Effect.runPromise(this.saveEvidenceEffect(issueId, snapshot))
-  }
-
-  forgetEvidence(issueId: string): Promise<void> {
-    return Effect.runPromise(this.forgetEvidenceEffect(issueId))
-  }
-
-  save(file: CaseFile): Promise<void> {
-    return Effect.runPromise(this.saveEffect(file))
-  }
-
-  pendingRevisits(): Promise<CaseFile[]> {
-    return Effect.runPromise(this.pendingRevisitsEffect())
   }
 }
 

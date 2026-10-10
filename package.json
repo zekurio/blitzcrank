@@ -6,10 +6,10 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch src/cli.ts",
+    "auth": "tsx src/cli.ts auth",
     "build": "tsc",
-    "start": "node dist/index.js",
-    "test": "tsx --test \"src/**/*.test.ts\"",
+    "start": "node dist/cli.js",
     "typecheck": "tsc --noEmit",
     "fmt": "oxfmt .",
     "fmt:check": "oxfmt --check .",
@@ -21,11 +21,8 @@
     "@earendil-works/pi-ai": "1.0.3",
     "@earendil-works/pi-coding-agent": "1.0.3",
     "@earendil-works/pi-durable": "1.0.3",
-    "croner": "^10.0.1",
-    "discord.js": "^14.27.0",
     "effect": "4.0.0-rc.112",
-    "typebox": "1.1.38",
-    "yaml": "^2.9.0"
+    "typebox": "1.1.38"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
