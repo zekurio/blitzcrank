@@ -19,10 +19,12 @@ export function buildJellyfinTools(
           "wrong match. Deleting items and server settings are refused.",
         methods: ["GET", "POST", "PUT", "DELETE"],
         route: jellyfinRoute,
+        // Jellyfin 12 rejects the legacy X-Emby-Token header with HTTP 401 and
+        // accepts the key only through the MediaBrowser Authorization scheme.
         request: (method, path, body) =>
           jsonRequestEffect(cfg.url, path, {
             method,
-            headers: { "X-Emby-Token": cfg.apiKey },
+            headers: { Authorization: `MediaBrowser Token="${cfg.apiKey}"` },
             ...(body !== undefined ? { body } : {}),
           }),
       },

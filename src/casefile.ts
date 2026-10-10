@@ -108,8 +108,8 @@ export interface CaseFile {
   revisit: PendingRevisit | undefined
 }
 
-const MAX_ENTRIES = 12
-const MAX_ENTRY_CHARS = 300
+export const MAX_ENTRIES = 12
+export const MAX_ENTRY_CHARS = 300
 const MAX_RUNS = 8
 
 export function emptyCase(issueId: string): CaseFile {

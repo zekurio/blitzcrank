@@ -155,6 +155,12 @@ export function arrRoute(
 
   if (method === "GET") {
     if (ARR_READ_ALLOWED.has(resource.join("/"))) return READ
+    // A raw release search returns every indexer hit in full, and the result
+    // cap leaves only the first few candidates.
+    if (resource.join("/") === "release")
+      return refused(
+        `read release candidates with ${service}_releases, which counts every hit and filters the listing.`,
+      )
     return ARR_READ_DENIED.has(resource[0] ?? "") ? ADMIN : READ
   }
 

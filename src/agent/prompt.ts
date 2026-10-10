@@ -51,6 +51,14 @@ const CAPABILITY_LINES: ReadonlyArray<readonly [string, string]> = [
     "radarr_set_movie_monitoring",
     "- Change movie monitoring only with `radarr_set_movie_monitoring`.",
   ],
+  [
+    "sonarr_releases",
+    "- Read release candidates with `sonarr_releases`; narrow its filters before calling a release absent.",
+  ],
+  [
+    "radarr_releases",
+    "- Read release candidates with `radarr_releases`; narrow its filters before calling a release absent.",
+  ],
 ]
 
 export function buildSystemPrompt(

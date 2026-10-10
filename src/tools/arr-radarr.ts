@@ -6,11 +6,54 @@ import type { ServiceConfig } from "../config.ts"
 import {
   arrRequestTool,
   deleteQueueItemTool,
+  readReleases,
+  releaseFilterParams,
   runArrFileDelete,
   runArrMonitoringUpdate,
+  type ArrRecord,
 } from "./arr-common.ts"
 import { reasonParam, textResult, type HostTool } from "./common.ts"
 import type { RunContext } from "./context.ts"
+
+function radarrReleasesTool(
+  cfg: ServiceConfig,
+  ctx: RunContext,
+): ToolRegistration {
+  return defineTool({
+    name: "radarr_releases",
+    replay: "safe",
+    description:
+      "List indexer release candidates for one movie with Radarr's decision: approved, rejections, custom-format score, " +
+      "publish date, and languages. Runs a live indexer search; grabs nothing. Counts cover every hit. The listing keeps " +
+      "Radarr's preference order and is filtered and capped, so when matchingFilters exceeds listed, narrow with " +
+      "publishedAfter, titleContains, or approvedOnly before concluding a release is absent. Releases Radarr mapped to " +
+      "another movie are only counted.",
+    parameters: Type.Object({
+      ...releaseFilterParams(),
+      movieId: Type.Integer({
+        minimum: 1,
+        description: "Internal Radarr movie id (not tmdbId)",
+      }),
+    }),
+    execute(params) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          const target = {
+            path: `/api/v3/release?movieId=${params.movieId}`,
+            matches: (release: ArrRecord) =>
+              release.mappedMovieId === params.movieId,
+          }
+          const result = yield* readReleases("radarr", cfg, ctx, target, params)
+          return textResult(result, {
+            service: "radarr",
+            action: "releases",
+            path: target.path,
+          })
+        }),
+      )
+    },
+  })
+}
 
 function deleteMovieFileTool(
   cfg: ServiceConfig,
@@ -104,13 +147,14 @@ export function buildRadarrTools(
       "radarr",
       cfg,
       ctx,
-      "Radarr API under /api/v3. GET reads movies, files, queue, history, releases, calendar, blocklist, " +
+      "Radarr API under /api/v3. GET reads movies, files, queue, history, calendar, blocklist, " +
         "and profiles. Writes: POST command (MoviesSearch, RefreshMovie, RescanMovie, " +
         "ManualImport, DownloadedMoviesScan, RefreshMonitoredDownloads), POST queue/grab/{id}, " +
         "POST history/failed/{id}, DELETE blocklist/{id}, POST release, and DELETE queue/{id}?removeFromClient=false. " +
-        "Monitoring goes through radarr_set_movie_monitoring, deletions through the delete tools; server settings " +
+        "Release candidates go through radarr_releases, monitoring through radarr_set_movie_monitoring, deletions through the delete tools; server settings " +
         "are refused. Load the radarr skill for workflows.",
     ),
+    radarrReleasesTool(cfg, ctx),
     setMovieMonitoringTool(cfg, ctx),
     deleteMovieFileTool(cfg, ctx),
     deleteQueueItemTool("radarr", cfg, ctx),

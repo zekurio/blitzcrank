@@ -24,13 +24,16 @@ Use `sonarr_request` with GET for the reads below. Paths start with `/api/v3`.
 - History: `/history/series?seriesId={seriesId}`.
 - Blocklist: `/blocklist?page=1&pageSize=50&seriesIds={seriesId}`.
 - Profiles: `/qualityprofile`; `/languageprofile` when supported.
-- Candidates: `/release?episodeId={episodeId}` or
-  `/release?seriesId={seriesId}&seasonNumber={seasonNumber}`.
-  Inspect approval, rejections, quality, and custom-format scores. Neither grabs.
 - Dates: `/calendar?start={urlEncodedISODate}&end={urlEncodedISODate}&unmonitored=true&includeSeries=true&includeEpisodeFile=true`.
   Bound the window and match IDs. Prefer `airDate`/`airDateUtc`; state timezone
   uncertainty. Airing does not guarantee local availability.
 - Manual import: `/manualimport?folder={urlEncodedFolder}&downloadId={urlEncodedDownloadId}`.
+
+Read candidates with `sonarr_releases`: `episodeId`, or `seriesId` with
+`seasonNumber`. Inspect approval, rejections, quality, and custom-format
+scores; it grabs nothing. Counts cover every indexer hit, but the listing is one
+filtered page: narrow with `publishedAfter`, `titleContains`, or
+`approvedOnly` before concluding a release is absent.
 
 An empty tracking list does not mean unaired. Candidate rejections describe local
 acceptance, not global absence.
@@ -68,8 +71,10 @@ season, establish and announce the full affected set, then replace all of it. Se
 Identify the bad release's finished `grabbed` history record before repair.
 Blocklisting an active grab discards it. Blocklist only with reliable release
 identity, before replacement, via `POST /history/failed/{historyId}`. Default
-`autoRedownloadFailed` also searches; do not add `sonarr_search`. Verify the
-blocklist and a different replacement. Remove blocklist entries
+`autoRedownloadFailed` also searches; do not add `sonarr_search`. Usenet
+blocklisting matches one posting, so a re-post of the same title stays
+grabbable; check `sonarr_releases` with `titleContains` for re-posts first.
+Verify the blocklist and a different replacement. Remove blocklist entries
 (`DELETE /blocklist/{id}`) only with a clear identity match.
 
 For missing tracks, search only if a different release is plausible. If streams

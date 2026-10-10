@@ -21,12 +21,16 @@ Use `radarr_request` with GET for the reads below. Paths start with `/api/v3`.
 - History: `/history?movieIds={movieId}&page=1&pageSize=20&sortKey=date&sortDirection=descending`.
 - Blocklist: `/blocklist?page=1&pageSize=50&movieIds={movieId}`.
 - Profiles: `/qualityprofile`.
-- Candidates: `/release?movieId={movieId}`. Inspect approval, rejections, quality,
-  and custom-format scores. This read does not grab.
 - Dates: `/calendar?start={urlEncodedISODate}&end={urlEncodedISODate}&unmonitored=true`.
   Bound the window and match the movie ID. Distinguish `inCinemas`,
   `digitalRelease`, and `physicalRelease`; state uncertainty.
 - Manual import: `/manualimport?folder={urlEncodedFolder}&downloadId={urlEncodedDownloadId}`.
+
+Read candidates with `radarr_releases` and `movieId`. Inspect approval,
+rejections, quality, and custom-format scores; it grabs nothing. Counts cover
+every indexer hit, but the listing is one filtered page: narrow with
+`publishedAfter`, `titleContains`, or `approvedOnly` before concluding a
+release is absent.
 
 An empty tracking list does not mean unreleased. Dates and candidate rejections
 prove neither watchability nor global source absence.
@@ -72,7 +76,9 @@ selection, and originating release. File deletion removes the only disk copy.
    exists.
 3. Blocklist the history ID with `POST /history/failed/{historyId}`. Default
    `autoRedownloadFailed` also searches; do not add a search or search before
-   blocklisting.
+   blocklisting. Usenet blocklisting matches one posting, so a re-post of the
+   same title stays grabbable; check `radarr_releases` with `titleContains`
+   for re-posts first.
 4. Verify the blocklist and a different queued release. Stop if none appears.
    After import, verify edition, audio, and the original playback symptom.
 
