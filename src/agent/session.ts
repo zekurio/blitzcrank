@@ -7,10 +7,10 @@ import {
   loadSkillsFromDir,
   type ModelRuntime,
 } from "@earendil-works/pi-coding-agent"
-import type { ToolRegistration } from "@earendil-works/pi-durable"
 import { Effect } from "effect"
 
 import { BOT_COMMENT_MARKER } from "../gateways/seerr/loop-guard.ts"
+import type { HostTool } from "../tools/common.ts"
 import type { RunContext } from "../tools/context.ts"
 import { parseModelSpec } from "./durable-model.ts"
 import { runDurableTurn } from "./durable.ts"
@@ -64,7 +64,7 @@ export interface AgentTurnOptions {
   modelRuntime: ModelRuntime
   modelSpec: string
   systemPrompt: string
-  tools: ToolRegistration[]
+  tools: HostTool[]
   prompt: string
   storageFile: string | undefined
   requestId: string
@@ -76,6 +76,8 @@ export interface AgentTurnOptions {
       }
     | undefined
   sessionFileRef: { current: string | undefined } | undefined
+  /** A registered tool that must end the run as the answer's only call. */
+  finishTool?: string | undefined
   builtinRead?: boolean
   signal?: AbortSignal | undefined
 }
@@ -86,6 +88,8 @@ export interface DurableTurnFailure {
 }
 export interface AgentTurnResult {
   text: string
+  /** Validated arguments of the finish call that ended the run, if any. */
+  finish: unknown
   usage: RunUsage
   sessionFile: string | undefined
   failure?: DurableTurnFailure

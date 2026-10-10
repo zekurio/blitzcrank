@@ -4,6 +4,7 @@ import path from "node:path"
 
 import { copyJson, type JsonValue } from "@earendil-works/chord"
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context"
+import { validateToolArguments } from "@earendil-works/pi-ai/utils/validation"
 import {
   AssistantEntry,
   createRegistry,
@@ -25,7 +26,8 @@ import { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite"
 import { openNodeSqliteDatabase } from "@earendil-works/pi-durable/storage/sqlite/node"
 import { createReadTool } from "@earendil-works/pi-durable/tools"
 
-import { ToolError } from "../tools/common.ts"
+import { HttpError } from "../services/http.ts"
+import { ToolError, type HostTool } from "../tools/common.ts"
 import type { DurableRunContext } from "../tools/context.ts"
 import {
   guardModelRequests,
@@ -40,6 +42,9 @@ import type {
 } from "./session.ts"
 
 const context = BACKGROUND_CONTEXT
+
+/** Text answers that get sent back to call the finish tool before giving up. */
+const MAX_FINISH_NUDGES = 2
 
 /** Host documents are not registered as agent-writable tools. */
 export const DurableRunDoc = defineDocFamily({
@@ -115,6 +120,11 @@ export async function runDurableTurn(
   const tools = [...opts.tools, ...(opts.builtinRead === false ? [] : [read])]
   if (new Set(tools.map((tool) => tool.name)).size !== tools.length)
     throw new Error("duplicate trusted tool registration")
+  const finishTool = tools.find((tool) => tool.name === opts.finishTool)
+  if (opts.finishTool !== undefined && !finishTool)
+    throw new Error(`finish tool ${opts.finishTool} is not registered`)
+  // In memory: a restart may allow a few more nudges, never an unbounded loop.
+  let nudges = 0
   const policy = durablePolicyFingerprint(opts, tools)
   const storage = await openDurableStorage(opts.storageFile)
   let harness: Harness | undefined
@@ -134,7 +144,7 @@ export async function runDurableTurn(
       throw new Error(failure?.message ?? "Durable run stopped")
   })
 
-  async function gate(api: HookApi | ToolExecutionApi) {
+  async function gate(api: HookApi | ToolExecutionApi, toolName?: string) {
     const state = await runSnapshot()
     if (stopping) return "Run stopped"
     if (failure || state?.failure) return "Run requires operator review"
@@ -159,13 +169,20 @@ export async function runDurableTurn(
       typeof task.input.assistant === "number"
         ? await storage.entry(task.input.assistant as EntryId, context)
         : undefined
-    if (assistant?.entry.model?.[0]?.role !== "assistant")
-      return "Missing tool-round authority"
+    const message = assistant?.entry.model?.[0]
+    if (message?.role !== "assistant") return "Missing tool-round authority"
+    // Durable terminates only when every call of the round asks to.
+    if (
+      toolName !== undefined &&
+      toolName === finishTool?.name &&
+      message.content.filter((block) => block.type === "toolCall").length > 1
+    )
+      return `${toolName} must be the only tool call in its response`
     return undefined
   }
 
   async function execute(
-    tool: ToolRegistration,
+    tool: HostTool,
     args: Parameters<ToolRegistration["execute"]>[0],
     api: ToolExecutionApi,
     invocation: Parameters<ToolRegistration["execute"]>[2],
@@ -187,14 +204,23 @@ export async function runDurableTurn(
         run.operations[String(api.taskId)] = {
           name: tool.name,
           callId: api.callId,
-          unsafe: tool.replay !== "safe",
+          unsafe: tool.replay !== "safe" || tool.writes?.(args) === true,
           result: null,
         }
       }, context)
       // The host does not cancel the invocation until write and read-back end.
-      const execution = await tool.execute(args, api, invocation).then(
-        (result) => ({ result, refused: false }),
-        (cause: unknown) => {
+      const result: ToolExecutionResult = await tool
+        .execute(args, api, invocation)
+        .then(undefined, (cause: unknown) => {
+          // The service answered, so nothing is uncertain: hand the error to
+          // the model. A gateway 502/504 is the proxy talking, not the service.
+          if (
+            cause instanceof HttpError &&
+            cause.status !== 502 &&
+            cause.status !== 504
+          )
+            return errorResult(cause.message)
+          // A guard refused before anything was written.
           const afterCounts = opts.runContext?.counts
           if (
             cause instanceof ToolError &&
@@ -202,23 +228,9 @@ export async function runDurableTurn(
             afterCounts?.mutations === beforeCounts.mutations &&
             afterCounts.deletes === beforeCounts.deletes
           )
-            return {
-              result: {
-                content: [{ type: "text" as const, text: cause.message }],
-                isError: true,
-              },
-              refused: true,
-            }
+            return errorResult(cause.message)
           throw cause
-        },
-      )
-      const result: ToolExecutionResult = execution.result
-      if (tool.replay !== "safe" && result.isError && !execution.refused)
-        failure = {
-          kind: "unsafe-interrupted",
-          message: "A failed write requires operator review before retry.",
-          toolNames: [tool.name],
-        }
+        })
       await api.commit(async (tx) => {
         const run = await tx.doc(DurableRunDoc, opts.requestId, policy)
         run.operations[String(api.taskId)]!.result = JSON.stringify(
@@ -257,8 +269,8 @@ export async function runDurableTurn(
     })),
     hooks: [
       hook(ToolTask, {
-        beforeTool: async (_call, api) => {
-          const block = await gate(api)
+        beforeTool: async (call, api) => {
+          const block = await gate(api, call.name)
           return block ? { block } : undefined
         },
       }),
@@ -278,6 +290,14 @@ export async function runDurableTurn(
           if (failure || state?.policy !== policy || stopping)
             throw new Error(failure?.message ?? "Durable run stopped")
           return undefined
+        },
+        onYield: () => {
+          if (!finishTool || failure || stopping) return undefined
+          if (nudges >= MAX_FINISH_NUDGES) return undefined
+          nudges += 1
+          return {
+            continue: `Plain text is never posted. End the run by calling \`${finishTool.name}\` as the only tool call.`,
+          }
         },
       }),
     ],
@@ -443,6 +463,9 @@ export async function runDurableTurn(
       if (stopPromise) await stopPromise
       if (stopError !== undefined) throw stopError
       const completed = !stopping && !failure && message?.role === "assistant"
+      const calls = completed
+        ? message.content.filter((block) => block.type === "toolCall")
+        : []
       return {
         text: completed
           ? message.content
@@ -450,6 +473,11 @@ export async function runDurableTurn(
               .map((block) => block.text)
               .join("")
           : "",
+        // Only the exact answer entry decides, and only as its sole call.
+        finish:
+          finishTool && calls.length === 1 && calls[0]!.name === finishTool.name
+            ? validateToolArguments(finishTool, calls[0]!)
+            : undefined,
         usage,
         sessionFile: opts.storageFile,
         ...(failure
@@ -472,6 +500,10 @@ export async function runDurableTurn(
     if (harness) await harness.close(context)
     else await storage.close(context)
   }
+}
+
+function errorResult(text: string): ToolExecutionResult {
+  return { content: [{ type: "text", text }], isError: true }
 }
 
 async function modelUsage(harness: Harness): Promise<RunUsage> {

@@ -6,9 +6,14 @@ export class HttpError extends Data.TaggedError("HttpError")<{
   body: string
 }> {
   constructor(status: number, url: string, body: string) {
-    super({ status, url, body })
-    this.message = `HTTP ${status} for ${url}: ${body.slice(0, 500)}`
+    super({ status, url: redactUrl(url), body })
+    this.message = `HTTP ${status} for ${this.url}: ${body.slice(0, 500)}`
   }
+}
+
+/** SABnzbd authenticates in the query string; never echo the key to the model. */
+function redactUrl(url: string): string {
+  return url.replace(/([?&](?:apikey|api_key|token)=)[^&]*/gi, "$1***")
 }
 
 export class HttpRequestError extends Data.TaggedError("HttpRequestError")<{
@@ -131,7 +136,7 @@ export function jsonRequestEffect<T = JsonValue>(
     return yield* Effect.try({
       // SAFETY: Each typed caller owns the response contract for its endpoint.
       try: () => JSON.parse(response.text) as T,
-      catch: (cause) => new HttpResponseError({ url, cause }),
+      catch: (cause) => new HttpResponseError({ url: redactUrl(url), cause }),
     })
   })
 }

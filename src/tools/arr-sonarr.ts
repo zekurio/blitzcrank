@@ -5,10 +5,9 @@ import { Type } from "typebox"
 import type { ServiceConfig } from "../config.ts"
 import type { JsonRequestError, JsonValue } from "../services/http.ts"
 import {
-  arrReadTool,
   arrRequest,
-  manualImportTool,
-  queueAndBlocklistTools,
+  arrRequestTool,
+  deleteQueueItemTool,
   runArrCommand,
   runArrFileDelete,
 } from "./arr-common.ts"
@@ -16,7 +15,7 @@ import {
   reasonParam,
   textResult,
   toolCheck,
-  type ServiceName,
+  type HostTool,
   type ToolError,
 } from "./common.ts"
 import type { RunContext } from "./context.ts"
@@ -151,6 +150,8 @@ function sonarrSearchTool(
 ): ToolRegistration {
   return defineTool({
     name: "sonarr_search",
+    // A repeated search duplicates no data; Sonarr skips releases it already has.
+    replay: "safe",
     description:
       "Trigger a Sonarr search: whole series, one season, or specific episodes. The series id (and episode ids, if given) must come from Sonarr reads this run. " +
       "Scope is enforced: a search affecting more than one episode must state the true episode count in expectedEpisodeCount, and replacing two or more existing " +
@@ -188,7 +189,7 @@ function executeSonarrSearch(
   params: SonarrSearchParams,
 ) {
   return Effect.gen(function* () {
-    const service: ServiceName = "sonarr"
+    const service = "sonarr" as const
     yield* toolCheck(() =>
       ctx.requireEvidence(service, params.seriesId, "series id"),
     )
@@ -255,40 +256,6 @@ function isString<Value>(value: Value): value is Value & string {
   return typeof value === "string"
 }
 
-function refreshSeriesTool(
-  cfg: ServiceConfig,
-  ctx: RunContext,
-): ToolRegistration {
-  return defineTool({
-    name: "sonarr_refresh_series",
-    description:
-      "Refresh a series' metadata and rescan its files (RefreshSeries). The series id must come from a Sonarr read this run.",
-    parameters: Type.Object({
-      reason: reasonParam(),
-      seriesId: Type.Integer({ minimum: 1 }),
-    }),
-    execute(params) {
-      return Effect.runPromise(
-        Effect.gen(function* () {
-          const service: ServiceName = "sonarr"
-          const evidence = [
-            { service, value: params.seriesId, hint: "series id" },
-          ]
-          const outcome = yield* runArrCommand(cfg, service, ctx, evidence, {
-            name: "RefreshSeries",
-            seriesId: params.seriesId,
-          })
-          return textResult(outcome, {
-            service,
-            action: "refresh_series",
-            seriesId: params.seriesId,
-          })
-        }),
-      )
-    },
-  })
-}
-
 function deleteEpisodeFileTool(
   cfg: ServiceConfig,
   ctx: RunContext,
@@ -304,7 +271,7 @@ function deleteEpisodeFileTool(
     execute(params) {
       return Effect.runPromise(
         Effect.gen(function* () {
-          const service: ServiceName = "sonarr"
+          const service = "sonarr" as const
           const path = `/api/v3/episodefile/${params.episodeFileId}`
           const outcome = yield* runArrFileDelete(
             cfg,
@@ -330,23 +297,21 @@ export function buildSonarrTools(
   cfg: ServiceConfig,
   ctx: RunContext,
   probeAvailable: boolean,
-): ToolRegistration[] {
-  const service: ServiceName = "sonarr"
+): HostTool[] {
   return [
-    arrReadTool(
-      service,
+    arrRequestTool(
+      "sonarr",
       cfg,
       ctx,
-      "Sonarr read",
-      "Check series/episode availability and air dates in Sonarr via GET /api/v3 paths: " +
-        "series/episode for tracking/monitoring, episodefile for imported files, queue/history for acquisition, " +
-        "release for candidates/rejection reasons, calendar for episode air dates, blocklist, wanted/missing. " +
-        "Load the sonarr skill for exact availability/date workflows.",
+      "Sonarr API under /api/v3. GET reads series, episodes, files, queue, history, releases, calendar, " +
+        "blocklist, and profiles. Writes: PUT series/episode monitoring, POST command (RefreshSeries, " +
+        "RescanSeries, ManualImport, DownloadedEpisodesScan, RefreshMonitoredDownloads), POST queue/grab/{id}, " +
+        "POST history/failed/{id}, DELETE blocklist/{id}, POST release, and DELETE queue/{id}?removeFromClient=false. " +
+        "Searches go through sonarr_search, deletions through the delete tools; server settings are refused. " +
+        "Load the sonarr skill for workflows.",
     ),
     sonarrSearchTool(cfg, ctx, probeAvailable),
-    refreshSeriesTool(cfg, ctx),
     deleteEpisodeFileTool(cfg, ctx),
-    manualImportTool(service, cfg, ctx),
-    ...queueAndBlocklistTools(service, cfg, ctx),
+    deleteQueueItemTool("sonarr", cfg, ctx),
   ]
 }

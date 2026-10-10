@@ -25,8 +25,13 @@ import {
   type StatusComment,
 } from "../tools/index.ts"
 import { buildWebProvider } from "../web/index.ts"
-import { parseDirectives, type Directives } from "./directives.ts"
 import { SdkError } from "./effect.ts"
+import {
+  buildFinishTool,
+  FINISH_TOOL,
+  readFinish,
+  type Finish,
+} from "./finish.ts"
 import {
   buildIssuePrompt,
   buildRevisitPrompt,
@@ -70,7 +75,7 @@ export function loadIssueContextEffect(
 
 export interface RunOutcome {
   issueId: string
-  directives: Directives
+  finish: Finish | undefined
   /** The case file as persisted, including the revisit the host armed. */
   casefile: CaseFile
 }
@@ -193,6 +198,7 @@ export class IssueRunner {
             casefile,
           }),
           ...web.tools,
+          buildFinishTool(this.config.language),
         ]
 
         const prompt = yield* this.jobs.actionEffect(
@@ -222,7 +228,6 @@ export class IssueRunner {
           modelRuntime: this.modelRuntime,
           modelSpec: this.modelSpec,
           systemPrompt: buildSystemPrompt(
-            this.config,
             {
               search: web.searchTool,
               extract: web.extractTool,
@@ -230,6 +235,7 @@ export class IssueRunner {
             tools.map((tool) => tool.name),
           ),
           tools,
+          finishTool: FINISH_TOOL,
           prompt,
           storageFile,
           requestId: runId,
@@ -243,7 +249,7 @@ export class IssueRunner {
         // not make a run invisible in the issue's running total.
         const { mutations, deletes } = ctx.counts
         projectSpend(casefile, turn, deletes)
-        // Recorded before the directive block is even parsed: a run that mutated
+        // Recorded before the outcome is even read: a run that mutated
         // and then crashed still has to show what it did.
         casefile.sessionFile = turn.sessionFile
         yield* this.cases.saveEffect(casefile)
@@ -271,15 +277,15 @@ export class IssueRunner {
           )
         }
 
-        const directives = parseDirectives(turn.text)
+        const finish = readFinish(turn.finish)
 
-        if (directives.malformed) {
+        if (!finish) {
           console.warn(
-            `[issue:${issueId}] malformed directive block; no comment posted:\n${turn.text}`,
+            `[issue:${issueId}] run ended without a valid ${FINISH_TOOL} call; no comment posted:\n${turn.text}`,
           )
         }
 
-        const comment = directives.malformed ? undefined : directives.comment
+        const comment = finish?.comment
         if (signal.aborted)
           return yield* Effect.fail(
             new SdkError({ message: "issue run stopped", cause: undefined }),
@@ -309,7 +315,7 @@ export class IssueRunner {
         )
         status.id = undefined
 
-        if (!directives.malformed && directives.resolve) {
+        if (finish?.resolve) {
           if (signal.aborted)
             return yield* Effect.fail(
               new SdkError({ message: "issue run stopped", cause: undefined }),
@@ -341,11 +347,11 @@ export class IssueRunner {
           inputTokens: turn.usage.inputTokens,
           outputTokens: turn.usage.outputTokens,
           commented: comment !== undefined && comment.length > 0,
-          resolved: directives.resolve,
+          resolved: finish?.resolve ?? false,
         })
         const plan = planRevisit({
-          requestedMs: directives.revisitInMs,
-          reason: directives.revisitReason,
+          requestedMs: finish?.revisitInMs,
+          reason: finish?.revisitReason,
           mediaScope,
           previous: casefile.revisit,
           isRevisitRun: event.kind === "revisit",
@@ -356,10 +362,10 @@ export class IssueRunner {
         })
         if (plan.refused) console.warn(`[issue:${issueId}] ${plan.refused}`)
         // A resolved issue is closed: never wake it again on an old schedule.
-        casefile.revisit = directives.resolve ? undefined : plan.revisit
+        casefile.revisit = finish?.resolve ? undefined : plan.revisit
         yield* this.cases.saveEffect(casefile)
 
-        return { issueId, directives, casefile }
+        return { issueId, finish, casefile }
       }).pipe(
         Effect.onExit(() =>
           this.jobs

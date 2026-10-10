@@ -1,11 +1,10 @@
-import type { ToolRegistration } from "@earendil-works/pi-durable"
-
 import type { CaseFile } from "../casefile.ts"
 import type { Config } from "../config.ts"
 import type { SeerrClient } from "../services/seerr.ts"
 import { buildRadarrTools } from "./arr-radarr.ts"
 import { buildSonarrTools } from "./arr-sonarr.ts"
 import { buildCaseFileTool } from "./casefile.ts"
+import type { HostTool } from "./common.ts"
 import type { RunContext } from "./context.ts"
 import { buildHistoryTool } from "./history.ts"
 import { buildJellyfinTools } from "./jellyfin.ts"
@@ -41,16 +40,15 @@ export interface IssueToolDeps {
 }
 
 /**
- * Issue tools: the live public status comment, the case file, GET-only reads,
- * typed evidence-gated mutations, media probing, and run-history search.
+ * Issue tools: the live public status comment, the case file, one request
+ * tool per service (reads and pipeline writes, admin routes refused), gated
+ * deletion tools, media probing, and run-history search.
  * The known media type grants only its Arr. An unknown type grants neither.
- * This keeps the model's tool surface small and fails closed when Seerr cannot
- * identify the media.
  */
-export function buildIssueTools(deps: IssueToolDeps): ToolRegistration[] {
+export function buildIssueTools(deps: IssueToolDeps): HostTool[] {
   const config = deps.config
   const ctx = deps.ctx
-  const tools: ToolRegistration[] = [
+  const tools: HostTool[] = [
     buildProgressTool(
       deps.seerr,
       deps.issueId,

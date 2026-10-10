@@ -1,12 +1,13 @@
 import path from "node:path"
 
+import { StringEnum } from "@earendil-works/pi-ai"
 import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable"
 import { Cause, Data, Effect } from "effect"
 import { Type } from "typebox"
 
 import type { JsonValue } from "../services/http.ts"
 import type { RunContext } from "./context.ts"
-import { assertServicePath } from "./safety.ts"
+import { assertServicePath, type Method, type Route } from "./safety.ts"
 
 export const MAX_RESULT_CHARS = 30_000
 
@@ -87,55 +88,100 @@ export function toolCheck<A>(check: () => A): Effect.Effect<A, ToolError> {
   })
 }
 
-export interface ReadToolSpec<E> {
+export interface RequestToolSpec<E> {
   service: ServiceName
-  label: string
   description: string
-  /** Extra deterministic guards beyond assertServicePath. */
-  guards?: (path: string) => void
-  request: (path: string) => Effect.Effect<JsonValue, E>
+  methods: readonly [Method, ...Method[]]
+  route: (method: Method, path: string, body: JsonValue | undefined) => Route
+  request: (
+    method: Method,
+    path: string,
+    body: JsonValue | undefined,
+  ) => Effect.Effect<JsonValue, E>
 }
 
-/** GET-only raw request tool for investigation. Every read is recorded as evidence. */
-export function makeReadTool<E>(
-  spec: ReadToolSpec<E>,
+/**
+ * A tool whose replay safety depends on its arguments. The SDK's `replay`
+ * flag is per tool, so the Durable wrapper asks `writes` per call.
+ */
+export type HostTool = ToolRegistration & {
+  writes?: ((args: unknown) => boolean) | undefined
+}
+
+interface RequestArgs {
+  method: Method
+  path: string
+  body?: Record<string, unknown> | undefined
+}
+
+/**
+ * Raw service request tool. `spec.route` decides per call whether it reads,
+ * writes, or is refused; every response is recorded as evidence.
+ */
+export function makeRequestTool<E>(
+  spec: RequestToolSpec<E>,
   ctx: RunContext,
-): ToolRegistration {
-  return defineTool({
+): HostTool {
+  // SAFETY: tool bodies are parsed JSON objects validated by the schema.
+  const routeOf = (args: RequestArgs) =>
+    spec.route(args.method, args.path, args.body as JsonValue | undefined)
+  const tool = defineTool({
     name: `${spec.service}_request`,
+    // Per-call safety comes from `writes`; reads may always be repeated.
     replay: "safe",
-    description: `${spec.description} Read-only (GET): all state changes go through dedicated tools.`,
+    description: spec.description,
     parameters: Type.Object({
-      purpose: Type.String({
-        description:
-          "What evidence this read should produce for the current diagnosis",
+      reason: Type.String({
+        description: "What this request should establish or change, and why",
       }),
+      method: StringEnum(spec.methods),
       path: Type.String({
         description:
           "Service-relative path starting with /, including any query string. Never a full URL or credentials.",
       }),
+      body: Type.Optional(
+        Type.Record(Type.String(), Type.Unknown(), {
+          description: "JSON body for POST or PUT",
+        }),
+      ),
     }),
     execute(params) {
       return Effect.runPromise(
         Effect.gen(function* () {
-          yield* toolCheck(() => {
+          const route = yield* toolCheck(() => {
             assertServicePath(params.path)
-            spec.guards?.(params.path)
+            if (params.method === "GET" && params.body !== undefined)
+              throw new Error("GET requests take no body")
+            const route = routeOf(params)
+            if (route.kind === "refused") throw new Error(route.message)
+            return route
           })
-          const data = yield* spec.request(params.path)
+          if (route.kind === "write") ctx.noteMutation("mutate")
+          const data = yield* spec.request(
+            params.method,
+            params.path,
+            params.body as JsonValue | undefined,
+          )
           ctx.recordRead(
             spec.service,
             params.path,
             isString(data) ? data : JSON.stringify(data),
           )
           recordResponsePaths(ctx, spec.service, data)
-          return textResult(data, {
+          return textResult(data ?? { ok: true }, {
             service: spec.service,
-            method: "GET",
+            method: params.method,
             path: params.path,
           })
         }),
       )
+    },
+  })
+  return Object.assign(tool, {
+    // SAFETY: the SDK validates arguments against the schema before execution.
+    writes: (args: unknown) => {
+      const request = args as RequestArgs
+      return request.path.startsWith("/") && routeOf(request).kind === "write"
     },
   })
 }
