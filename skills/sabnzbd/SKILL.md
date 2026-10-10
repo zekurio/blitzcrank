@@ -1,80 +1,50 @@
 ---
 name: sabnzbd
-description: Diagnose and safely remediate SABnzbd queue, history, download, repair, unpack, post-processing, and Arr handoff failures. Load when a Sonarr or Radarr job is stalled, failed, missing after grab, or waiting on downloader state.
+description: Diagnose SABnzbd downloads, post-processing, and Arr handoff. Load for stalled or failed jobs, missing downloads, and import waits.
 ---
 
 # SABnzbd
 
-`sabnzbd_request` is read-only and accepts `purpose` plus relative GET paths
-limited to `GET /api?mode=queue` and `GET /api?mode=history` (optional `limit`).
-Blitzcrank injects credentials and JSON output; never include credentials.
-Mutations use only typed tools, require `reason` and an `nzoId` accepted by the
-run's SABnzbd evidence gate, and return `verification` that must be inspected.
-Issue, Discord, and automation runs are uncapped; automation scope comes from
-its exact mutation-tool allowlist.
+Read `GET /api?mode=queue` or `GET /api?mode=history&limit=20` through
+`sabnzbd_request`. Blitzcrank injects credentials and JSON output; never
+include credentials.
 
-SAB downloads, verifies, repairs, unpacks, and writes output. Completion does
-not prove Arr import or Jellyfin playback. Arr owns release
-suitability, blocklisting, replacement, import, and rename, so prefer Arr-level
-remediation while it tracks the release.
+Arr owns release suitability, blocklisting, replacement, import, and rename.
+Prefer Arr remediation for tracked releases. SAB completion proves neither
+Arr import nor Jellyfin playback.
 
-## Diagnose
+## Diagnosis
 
-1. Read Arr queue/history for exact `downloadId`, title/release, and category.
-2. Read SAB queue/history (`GET /api?mode=history&limit=20` when enough) and
-   match Arr `downloadId` to SAB `nzo_id`; title matching is weaker.
-3. Record status, progress/ETA, age, priority, global/job pause, category,
-   `storage`, and errors. Distinguish queued/downloading/paused from
-   verify/repair/extract/move, complete, and failed. Compare repeated reads
-   before calling CPU/disk-heavy work stalled.
-4. Use API evidence—not claimed filesystem access—for server/articles,
-   schedules, limits, disk thresholds, permissions, and post-processing.
-5. Return to Arr to classify downloader, import, or release failure. Apply the
-   narrowest action and verify it. Never delete a job Arr still awaits unless
-   its Arr state is also handled.
+Match Arr queue/history `downloadId` to SAB `nzo_id`. Compare release and
+category; titles are weaker evidence. Check status, progress/ETA, age,
+priority, global/job pause, `storage`, and errors. Distinguish downloading
+from verification, repair, extraction, moving, completion, and failure.
+Compare reads before calling CPU/disk-heavy work stalled.
 
-For file-language questions, exact completed `storage` can feed `media_probe`.
-If SAB is complete but Arr reports files not ready, correlate exact `storage`
-by download ID with Arr `outputPath`, then inspect import errors, path mapping,
-permissions, and any unfinished post-processing. Never guess a path from a title.
+For language questions, probe the exact completed `storage` path. If Arr says
+files are not ready, correlate `storage` with Arr `outputPath` by download ID.
+Check category, import errors, path mapping, permissions, and unfinished
+post-processing. Never infer paths from titles or redownload valid data that
+is inaccessible or still processing.
 
-## Typed mutations
+## Remediation
 
-- `sabnzbd_retry_job`: retry failed history only after the cause is fixed and
-  the same payload remains appropriate; verify it entered queue.
-- `sabnzbd_delete_job`: specify verified `nzoId`, `from: "queue"|"history"`,
-  and explicit `deleteFiles`. `true` destructively deletes downloaded data and
-  records a deletion. Verify absence from the selected list.
-- `sabnzbd_pause_job` / `sabnzbd_resume_job`: affect one verified queue job;
-  verify queue state. Pause only for a concrete downloader reason and resume
-  only when owning Arr state remains consistent.
+Use job writes only for accidental pauses, failures whose cause is fixed, or
+orphans. Never delete a job Arr awaits without handling Arr state.
 
-No global pause/resume, priority, category, or arbitrary-history mutation is
-exposed. Downloader tools suit an accidentally paused job, a corrected retry,
-or an orphan no Arr tracks. Arr removal with blocklisting/client removal is
-preferred for tracked releases because it preserves release policy and cleans
-SAB consistently.
+- Retry (`mode=retry&value={nzo_id}`) requires a fixed cause and a
+  still-appropriate payload. Identify PAR/CRC, password, archive, permission, or
+  space errors first. Retry cannot repair missing articles or irreparable
+  archives. Preserve failed history until Arr can observe and blocklist it.
+- Use `sabnzbd_delete_job` only for confirmed orphans in the correct list. Compare IDs, category, title, and submitter. Never delete Arr's expected
+  copy. Set `deleteFiles=true` only for intended, justified data destruction.
+- Pause (`mode=queue&name=pause&value={nzo_id}`) needs a concrete downloader
+  reason. Resume (`name=resume`) only when owning Arr state remains consistent.
+  Respect intentional schedules and global pauses; server-wide pause and
+  resume are refused.
 
-## Safety decisions
+After a job write, re-read the queue or history to confirm the job's state.
 
-Respect intentional schedules/global pauses. Retry cannot repair missing
-articles or irreparable archives; identify PAR/CRC/password/archive,
-permission, or space evidence first. Preserve failed history until Arr can
-observe and blocklist it.
-
-For complete-but-missing media, compare category/storage with Arr import/path
-mapping; do not redownload a valid payload that is inaccessible or still
-being processed. For duplicates/orphans, compare IDs, category, title, and submitter;
-never delete the copy Arr expects. Delete only a confirmed orphan from the
-correct list, with `deleteFiles: true` solely when data destruction is intended
-and justified.
-
-While repair, unpack, or post-processing is progressing, wait rather than
-force/manual import, remove, blocklist, retry, search, or refresh. Completion
-still needs Arr/Jellyfin verification.
-
-In a Seerr issue, call `report_progress` first and finish with the required
-`RESOLVE_ISSUE` directive block; keep it open while downloading, repairing,
-post-processing, importing, scanning, or awaiting verification. In Discord, answer
-directly without Seerr directives or promises of a later check. Claim mutation
-only after successful verification. Never call Seerr comment/resolve APIs.
+While repair, unpack, or post-processing progresses, wait. Do not force/manual
+import, remove, blocklist, retry, search, or refresh. After completion, verify
+Arr import and Jellyfin availability.

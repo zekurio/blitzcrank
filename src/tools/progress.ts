@@ -27,7 +27,7 @@ export function buildProgressTool(
       `Publish or rewrite this run's single live status line: one short user-facing ${language} sentence ` +
       "describing what you are doing right now. Call it as your first action, then again only when the work " +
       `moves to a clearly different phase (max ${MAX_PROGRESS_UPDATES} calls). Each call replaces the previous ` +
-      "text instead of adding a comment, and your final response replaces it again. Shown publicly: no internal " +
+      "text instead of adding a comment, and the finish_issue comment replaces it again. Shown publicly: no internal " +
       "tool names, IDs, URLs, or promises of success.",
     parameters: Type.Object({
       message: Type.String({

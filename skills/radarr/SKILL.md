@@ -1,94 +1,105 @@
 ---
 name: radarr
-description: Answer movie availability and release-date questions using Radarr tracking, imports, candidates, and calendar. Also diagnose and safely remediate missing, corrupt, wrong, stalled, or repeatedly replaced movies.
+description: Check movie availability and release dates. Diagnose and safely repair missing, corrupt, wrong, stalled, or repeatedly replaced movies.
 ---
 
 # Radarr
 
-`radarr_request` is GET-only and accepts `purpose` and a relative `/api/v3/...` `path`. Mutations use the typed tools, require `reason`, and require every target ID to pass the run's Radarr evidence gate. Issue, Discord, and automation runs are uncapped; automation scope comes from its exact mutation-tool allowlist.
+## Reads and identity
 
-## Availability and dates
+Resolve title/year and Seerr's `tmdbId` to Radarr's movie ID. Keep TMDB, movie,
+movie-file, queue, history, blocklist, and download IDs distinct. Correlate
+SAB jobs by download ID.
 
-For factual questions, use reads only. Resolve the exact title/year and TMDB ID,
-then `GET /api/v3/movie?tmdbId={tmdbId}` and `GET /api/v3/movie/{movieId}`
-for tracking, monitoring, minimum availability, and file state. If title identity
-is missing, use `GET /api/v3/movie/lookup?term={urlEncodedTitle}`; lookup metadata
-does not establish that the movie is tracked or imported.
+Use `radarr_request` with GET for the reads below. Paths start with `/api/v3`.
 
-- Imported: `GET /api/v3/moviefile?movieId={movieId}`.
-- Acquiring: `GET /api/v3/queue/details?movieId={movieId}&includeMovie=true`.
-- Candidates, when relevant to why it is not acquired:
-  `GET /api/v3/release?movieId={movieId}`. Read `approved`, `rejected`, and
-  `rejections` alongside quality and custom-format scores. This GET lists
-  candidates; it does not grab them. Rejected candidates explain local
-  acceptance decisions, not global source absence.
-- Dates: `GET /api/v3/calendar?start={urlEncodedISODate}&end={urlEncodedISODate}&unmonitored=true`.
-  Match the movie ID within a bounded date window. Distinguish `inCinemas`,
-  `digitalRelease`, and `physicalRelease` when present. These are release
-  metadata, not a guaranteed homelab availability date.
+- Tracking: `/movie?tmdbId={tmdbId}`. Lookup metadata alone proves no import.
+- Lookup: `/movie/lookup?term={urlEncodedTitle}`.
+- Files: `/moviefile?movieId={movieId}`.
+- Queue: `/queue/details?movieId={movieId}&includeMovie=true`.
+  Broaden to `/queue?page=1&pageSize=50&includeUnknownMovieItems=true` for orphans.
+- History: `/history?movieIds={movieId}&page=1&pageSize=20&sortKey=date&sortDirection=descending`.
+- Blocklist: `/blocklist?page=1&pageSize=50&movieIds={movieId}`.
+- Profiles: `/qualityprofile`.
+- Candidates: `/release?movieId={movieId}`. Inspect approval, rejections, quality,
+  and custom-format scores. This read does not grab.
+- Dates: `/calendar?start={urlEncodedISODate}&end={urlEncodedISODate}&unmonitored=true`.
+  Bound the window and match the movie ID. Distinguish `inCinemas`,
+  `digitalRelease`, and `physicalRelease`; state uncertainty.
+- Manual import: `/manualimport?folder={urlEncodedFolder}&downloadId={urlEncodedDownloadId}`.
 
-Radarr describes tracking, acquisition, and imports; Jellyfin describes actual
-serving/playback. Check Jellyfin for "can I watch it?" and use web only for missing
-external context. A service auth/error or no matching result leaves that source's
-answer unknown, not a global "unavailable". A successful empty movie list means
-not tracked in Radarr, not unreleased. Continue useful independent services;
-Jellyfin HTTP 401 does not block Radarr reads. Do not repeat the same failed call.
+An empty tracking list does not mean unreleased. Dates and candidate rejections
+prove neither watchability nor global source absence.
 
-## Identity and evidence
+For stream/playback reports, load `media-probe`. Probe exact current-run paths
+from `movieFile.path`, queue `outputPath`, completed SAB `storage`, or history
+`data.droppedPath`/`data.importedPath`. Inspect Jellyfin streams. Arr `languages`
+parse release names, not actual streams. `MULTi`, `DL`, and `GERMAN` do not
+justify searches or deletions.
 
-History `data.droppedPath` and `data.importedPath` are exact service paths.
-Use them with `media_probe` after reading the history in the current run.
-Media probes still require an allowed media root.
+## Repair decisions
 
-Keep TMDB, Radarr movie, movie-file, queue, history/blocklist, and download IDs distinct. Seerr's `tmdbId` resolves the internal movie ID; a download ID correlates Radarr with SABnzbd. Commands are asynchronous and do not prove import.
+For missing movies, inspect monitoring, minimum availability, files, queue,
+history, and SAB handoff. Respect monitoring and availability. Search once (`POST /command` with
+`name: "MoviesSearch"`, `movieIds: [movieId]`) only when missing, after
+clearing a failed release, or for an explicit replacement/fix request. Never
+duplicate progressing work.
 
-Release/queue/history/file `languages` are release-name parsing (`MULTi`, `DL`, `GERMAN` are claims), not stream evidence. For audio, subtitle, codec, or playback reports, use `media_probe` on `movieFile.path`, queue `outputPath`, or completed SAB `storage`; then inspect imported streams with `jellyfin_request`. Load the `media-probe` skill. Never search or delete based on `languages` alone.
+Change monitoring only when the issue asks for it or a wrong flag blocks the
+requested movie. `radarr_set_movie_monitoring` changes only `monitored` and
+keeps every other movie field. Raw `PUT /movie/{id}` is refused because an
+incomplete body resets the movie.
 
-## Reads
+For stalls, diagnose mapping, permissions, space, locks, category, naming, and
+recognized-video failures. Allow download, verification, repair, and unpack work
+to finish before retrying. If Radarr cannot see an existing file, check runtime
+path visibility and naming. Refresh (`RefreshMovie` command) and inspect
+rejections before duplicating it.
 
-- TMDB/title/movie: `GET /api/v3/movie?tmdbId={tmdbId}`, `GET /api/v3/movie/lookup?term={query}`, `GET /api/v3/movie/{movieId}`
-- Calendar: `GET /api/v3/calendar?start={urlEncodedISODate}&end={urlEncodedISODate}`
-- Files: `GET /api/v3/moviefile/{movieFileId}`, `GET /api/v3/moviefile?movieId={movieId}`
-- History: `GET /api/v3/history?movieIds={movieId}&page=1&pageSize=20&sortKey=date&sortDirection=descending`
-- Queue: `GET /api/v3/queue?page=1&pageSize=50&includeUnknownMovieItems=true`
-- Blocklist: `GET /api/v3/blocklist?page=1&pageSize=50&movieIds={movieId}`
-- Profiles: `GET /api/v3/qualityprofile`
-- Manual import: `GET /api/v3/manualimport?folder={urlEncodedFolder}&downloadId={urlEncodedDownloadId}`
-- Status: `GET /api/v3/system/status`
-- Cross-movie missing-file events: `GET /api/v3/history?page=1&pageSize=100&eventType=6&sortKey=date&sortDirection=descending`
+For upgrade loops, inspect history, quality, custom-format score, cutoff,
+language, edition, and naming. Correct the rule/parser cause before searching.
 
-Resolve `tmdbId`, then record movie ID, year, path, monitoring, minimum availability, profile, file state, release title, quality, size, custom formats, edition, and `mediaInfo`. Inspect queue, newest history, blocklist, and profiles. Prefer Radarr calendar/movie dates, naming cinema (`inCinemas`), digital, or physical and stating uncertainty. Correlate download IDs with read-only `sabnzbd_request`; SAB completion is not import.
+## Replacement
 
-## Typed mutations
+Require reporter details plus item-specific probe, Jellyfin-stream, or Radarr
+`mediaInfo` anomaly evidence. Confirm the exact movie/file, multi-version
+selection, and originating release. File deletion removes the only disk copy.
 
-Inspect each result's `verification` and follow with narrow reads as needed. Size actions to the verified problem, not a quota; non-destructive mutations are uncapped.
+1. Identify the bad release's finished `grabbed` history record. Blocklisting
+   an active grab would discard it.
+2. Delete the verified corrupt/unusable file with `radarr_delete_movie_file`.
+   Verify HTTP 404. An equal-quality release is not an upgrade while that file
+   exists.
+3. Blocklist the history ID with `POST /history/failed/{historyId}`. Default
+   `autoRedownloadFailed` also searches; do not add a search or search before
+   blocklisting.
+4. Verify the blocklist and a different queued release. Stop if none appears.
+   After import, verify edition, audio, and the original playback symptom.
 
-- `radarr_search`: verified `movieId`; do not duplicate a progressing job.
-- `radarr_refresh_movie`: verified `movieId`.
-- `radarr_grab_queue_item`: verified `queueId`.
-- `radarr_delete_queue_item`: verified `queueId` and explicit `blocklist`/`removeFromClient`. `removeFromClient: true` destroys downloaded data and records a deletion; `false` does not.
-- `radarr_blocklist_from_history`: verified `historyId` from the release's `grabbed` history record. Radarr starts its own replacement search, so do not add `radarr_search`. Verify the blocklist and that the queue contains a different replacement.
-- `radarr_remove_from_blocklist`: only a clearly matching verified `blocklistId`.
-- `radarr_delete_movie_file`: verified `movieFileId` from a Radarr read, only for a strongly verified corrupt or unusable exact file. It removes the movie's only copy from disk; verification must report HTTP 404.
-- `radarr_manual_import`: use `importMode: "auto"` and candidates from the manual-import GET, trimmed to `path`, `folderName`, `movieId`, `quality`, `languages`, `releaseGroup`, and `indexerFlags` when present. Every submitted path and ID must have appeared in a Radarr read. Verify command status.
+If files disappeared, inspect
+`/history?page=1&pageSize=100&eventType=6&sortKey=date&sortDirection=descending`.
+Clustered `MissingFromDisk` events indicate infrastructure, not a bad release.
+Remove blocklist entries (`DELETE /blocklist/{id}`) only with a clear identity
+match.
 
-No generic force-import tool exists.
+## Manual import
 
-## Repair safeguards
+Read the exact queue folder/download ID and current-run manual-import candidates.
+Inspect every `rejections` array. Import only candidates mapped to that queued
+movie and download, with acceptable quality/language evidence. Reject wrong
+targets, samples, missing paths, permission or duplicate conflicts, unwanted
+language, and low score/cutoff. Never import during downloader post-processing
+or while files are locked/changing.
 
-For corrupt, unplayable, wrong-cut, or wrong-language media, require item-specific evidence: reporter details plus `media_probe`, Jellyfin streams, or a Radarr `mediaInfo` anomaly. Confirm exact movie/file, multi-version selection, and originating release. Repair in this order:
+Send `POST /command` with `name: "ManualImport"`, `importMode: "auto"`, and
+`files` trimmed to `path`, `folderName`, `movieId`, `quality`, `languages`, and
+`releaseGroup`. Every submitted path and ID must come from a Radarr read. No
+generic force import exists. Verify command status (`GET /command/{id}`), then
+re-read queue and movie-file state. Command completion is not import; import is
+not Jellyfin playback.
 
-1. Read history and identify the bad release's `grabbed` record.
-2. Delete the file and verify HTTP 404; deletion must precede replacement because an equal-quality release is not an upgrade while the file exists.
-3. Blocklist that grab's history ID. This triggers replacement; do not also search.
-4. Confirm the queue has a different release. Stop if it does not, schedule a revisit for download/import/playback, and later verify edition, audio, and playback.
+If cleanup is warranted instead, `radarr_delete_queue_item` removes the download
+and its data. To drop only the queue entry, send
+`DELETE /queue/{id}?removeFromClient=false&blocklist=true`.
 
-Never search before blocklisting: the same highest-scoring release can be re-grabbed and re-imported. If a file merely disappeared, use the cross-movie eventType=6 history read: tightly clustered `MissingFromDisk` events indicate infrastructure, not one release.
-
-For missing movies, inspect monitoring, availability, file, queue, history, and SAB handoff evidence. Respect monitoring and minimum availability. Search once only when missing, after a failed release is cleared, or when explicitly asked for replacement/fix. For stalls/import failures, allow download/verification/repair/unpack work; diagnose path mapping, permissions, space, locks, category, naming, and recognized-video failures before retrying. For upgrade loops, inspect repeated events, quality, custom-format score, cutoff, language, edition, and naming; correct the rule or parser cause before one verified search. If a file exists but Radarr says missing, confirm path/runtime visibility and naming, refresh, and inspect rejection evidence before creating a duplicate.
-
-For manual import, read the exact queue folder/download ID and candidate endpoint; inspect every `rejections` array. Import only candidates mapped to that queued movie and download with acceptable quality/language evidence. Reject wrong targets, samples, missing paths, permission or duplicate conflicts, unwanted language, and low score/cutoff. Never import while downloader post-processing is active or the file is locked/changing. Re-read queue and movie-file state; use queue deletion with `blocklist: true` when cleanup, not import, is warranted.
-
-## Verification and directives
-
-A grab is not a download; SAB completion is not import; a Radarr file is not Jellyfin playback proof. Verify queue/blocklist/movie/file and the original Jellyfin symptom. In a Seerr issue, call `report_progress` first and finish with the required `RESOLVE_ISSUE` directive block. In Discord, answer directly without Seerr directives or promises of a later check. Resolve a Seerr issue only after physical/file-state evidence and the reported symptom are verified.
+After any write, re-read the affected state; writes return the raw response only.

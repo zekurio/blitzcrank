@@ -18,7 +18,7 @@ export function buildCaseFileTool(file: CaseFile): ToolRegistration {
     name: "update_case_file",
     description:
       "Store what this run established about the issue, so the next run starts from it instead of re-deriving " +
-      "everything and re-reading old transcripts. Call it once before your final response whenever you learned " +
+      "everything and re-reading old transcripts. Call it once before finish_issue whenever you learned " +
       "something durable: verified facts with the evidence behind them, hypotheses you disproved, and what is " +
       "still open. It replaces the previous summary, so restate what still holds and drop what no longer does. " +
       "Never store secrets, raw JSON, or user-identifying details.",

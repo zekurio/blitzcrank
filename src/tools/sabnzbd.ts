@@ -9,64 +9,25 @@ import {
   type JsonRequestError,
   type JsonValue,
 } from "../services/http.ts"
-import { makeReadTool, reasonParam, runMutation, textResult } from "./common.ts"
+import {
+  makeRequestTool,
+  reasonParam,
+  runMutation,
+  textResult,
+  type HostTool,
+} from "./common.ts"
 import type { RunContext } from "./context.ts"
-import { assertSabReadAllowed } from "./safety.ts"
+import { sabRoute } from "./safety.ts"
 
-type SabMode = "queue" | "history"
 type SabCall = (
   params: Record<string, string>,
 ) => Effect.Effect<JsonValue, JsonRequestError>
-type VerifyList = (mode: SabMode) => Effect.Effect<JsonValue, JsonRequestError>
-
-interface JobAction {
-  name: "retry" | "pause" | "resume"
-  label: string
-  description: string
-  params: (nzoId: string) => Record<string, string>
-  verifyMode: SabMode
-  idDescription?: string | undefined
-}
 
 export function buildSabnzbdTools(
   cfg: ServiceConfig,
   ctx: RunContext,
-): ToolRegistration[] {
-  const sabCall = createSabCall(cfg)
-  const verifyList = createListVerifier(ctx, sabCall)
-  return [
-    sabReadTool(cfg, ctx),
-    jobActionTool(ctx, sabCall, verifyList, {
-      name: "retry",
-      label: "SABnzbd: retry failed job",
-      description:
-        "Retry one failed SABnzbd history job (moves it back to the queue). Only after the failure cause is understood/fixed. The nzo_id must come from a SABnzbd read this run.",
-      params: (nzoId) => ({ mode: "retry", value: nzoId }),
-      verifyMode: "queue",
-      idDescription: "SABnzbd nzo_id of the failed history job",
-    }),
-    deleteJobTool(ctx, sabCall, verifyList),
-    jobActionTool(ctx, sabCall, verifyList, {
-      name: "pause",
-      label: "SABnzbd: pause job",
-      description:
-        "Pause one SABnzbd queue job. The nzo_id must come from a SABnzbd read this run.",
-      params: (nzoId) => ({ mode: "queue", name: "pause", value: nzoId }),
-      verifyMode: "queue",
-    }),
-    jobActionTool(ctx, sabCall, verifyList, {
-      name: "resume",
-      label: "SABnzbd: resume job",
-      description:
-        "Resume one paused SABnzbd queue job. The nzo_id must come from a SABnzbd read this run.",
-      params: (nzoId) => ({ mode: "queue", name: "resume", value: nzoId }),
-      verifyMode: "queue",
-    }),
-  ]
-}
-
-function createSabCall(cfg: ServiceConfig): SabCall {
-  return (params) => {
+): HostTool[] {
+  const sabCall: SabCall = (params) => {
     const url = new URL(cfg.url + "/api")
     for (const [key, value] of Object.entries(params)) {
       url.searchParams.set(key, value)
@@ -75,91 +36,29 @@ function createSabCall(cfg: ServiceConfig): SabCall {
     url.searchParams.set("output", "json")
     return jsonRequestEffect(url.origin, url.pathname + url.search, {})
   }
-}
-
-function createListVerifier(ctx: RunContext, sabCall: SabCall): VerifyList {
-  return (mode) =>
-    Effect.gen(function* () {
-      const list = yield* sabCall({ mode, limit: "50" })
-      ctx.recordRead(
-        "sabnzbd",
-        `/api?mode=${mode}&limit=50`,
-        JSON.stringify(list),
-      )
-      return list
-    })
-}
-
-function sabReadTool(cfg: ServiceConfig, ctx: RunContext): ToolRegistration {
-  return makeReadTool(
-    {
-      service: "sabnzbd",
-      label: "SABnzbd read",
-      description:
-        "Read SABnzbd state: only /api?mode=queue and /api?mode=history (plus limit=N). Job control goes through the dedicated sabnzbd_* tools.",
-      guards: (path) => {
-        if (!path.startsWith("/api")) {
-          throw new Error("SABnzbd path must start with /api")
-        }
-        assertSabReadAllowed(path)
+  return [
+    makeRequestTool(
+      {
+        service: "sabnzbd",
+        description:
+          "SABnzbd API; every call is GET /api?mode=... and the mode decides what it does. Reads: mode=queue, " +
+          "mode=history (limit, start, search, cat, nzo_ids, failed_only), version, warnings, server_stats, get_cats. " +
+          "Job writes, each with value={nzo_id}: mode=retry, mode=queue&name=pause|resume, " +
+          "mode=queue&name=priority&value2={priority}, mode=change_cat&value2={category}. " +
+          "Deleting jobs goes through sabnzbd_delete_job; server-wide and config modes are refused. " +
+          "Blitzcrank adds credentials and JSON output.",
+        methods: ["GET"],
+        route: (_method, path) => sabRoute(path),
+        request: (_method, path) =>
+          sabCall(Object.fromEntries(new URL(path, cfg.url).searchParams)),
       },
-      request: (path) => sabRead(cfg, path),
-    },
-    ctx,
-  )
+      ctx,
+    ),
+    deleteJobTool(ctx, sabCall),
+  ]
 }
 
-function sabRead(
-  cfg: ServiceConfig,
-  path: string,
-): Effect.Effect<JsonValue, JsonRequestError> {
-  const url = new URL(cfg.url + path)
-  url.searchParams.set("apikey", cfg.apiKey)
-  url.searchParams.set("output", "json")
-  return jsonRequestEffect(url.origin, url.pathname + url.search, {})
-}
-
-function jobActionTool(
-  ctx: RunContext,
-  sabCall: SabCall,
-  verifyList: VerifyList,
-  action: JobAction,
-): ToolRegistration {
-  const nzoId = action.idDescription
-    ? Type.String({ minLength: 1, description: action.idDescription })
-    : Type.String({ minLength: 1 })
-  return defineTool({
-    name: `sabnzbd_${action.name}_job`,
-    description: action.description,
-    parameters: Type.Object({
-      reason: reasonParam(),
-      nzoId,
-    }),
-    execute(params) {
-      return Effect.runPromise(
-        Effect.gen(function* () {
-          const outcome = yield* runMutation(ctx, {
-            kind: "mutate",
-            evidence: nzoEvidence(params.nzoId),
-            perform: () => sabCall(action.params(params.nzoId)),
-            verify: () => verifyList(action.verifyMode),
-          })
-          return textResult(outcome, {
-            service: "sabnzbd",
-            action: `${action.name}_job`,
-            nzoId: params.nzoId,
-          })
-        }),
-      )
-    },
-  })
-}
-
-function deleteJobTool(
-  ctx: RunContext,
-  sabCall: SabCall,
-  verifyList: VerifyList,
-): ToolRegistration {
+function deleteJobTool(ctx: RunContext, sabCall: SabCall): ToolRegistration {
   return defineTool({
     name: "sabnzbd_delete_job",
     description:
@@ -178,7 +77,9 @@ function deleteJobTool(
         Effect.gen(function* () {
           const outcome = yield* runMutation(ctx, {
             kind: params.deleteFiles ? "delete" : "mutate",
-            evidence: nzoEvidence(params.nzoId),
+            evidence: [
+              { service: "sabnzbd", value: params.nzoId, hint: "nzo_id" },
+            ],
             perform: () =>
               sabCall({
                 mode: params.from,
@@ -186,7 +87,16 @@ function deleteJobTool(
                 value: params.nzoId,
                 del_files: params.deleteFiles ? "1" : "0",
               }),
-            verify: () => verifyList(params.from),
+            verify: () =>
+              Effect.gen(function* () {
+                const list = yield* sabCall({ mode: params.from, limit: "50" })
+                ctx.recordRead(
+                  "sabnzbd",
+                  `/api?mode=${params.from}&limit=50`,
+                  JSON.stringify(list),
+                )
+                return list
+              }),
           })
           return textResult(outcome, {
             service: "sabnzbd",
@@ -198,8 +108,4 @@ function deleteJobTool(
       )
     },
   })
-}
-
-function nzoEvidence(nzoId: string) {
-  return [{ service: "sabnzbd" as const, value: nzoId, hint: "nzo_id" }]
 }

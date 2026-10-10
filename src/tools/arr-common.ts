@@ -1,4 +1,3 @@
-import { StringEnum } from "@earendil-works/pi-ai"
 import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable"
 import { Effect } from "effect"
 import { Type } from "typebox"
@@ -10,20 +9,23 @@ import {
   type JsonValue,
 } from "../services/http.ts"
 import {
-  makeReadTool,
+  makeRequestTool,
   reasonParam,
   runMutation,
   textResult,
   toolCheck,
   type EvidenceRequirement,
-  type ServiceName,
+  type HostTool,
 } from "./common.ts"
 import type { RunContext } from "./context.ts"
+import { arrRoute, type Method } from "./safety.ts"
+
+type ArrService = "sonarr" | "radarr"
 
 export function arrRequest(
   cfg: ServiceConfig,
   path: string,
-  method: "GET" | "POST" | "DELETE" = "GET",
+  method: Method = "GET",
   body?: JsonValue,
 ): Effect.Effect<JsonValue, JsonRequestError> {
   const options = {
@@ -34,19 +36,19 @@ export function arrRequest(
   return jsonRequestEffect(cfg.url, path, options)
 }
 
-export function arrReadTool(
-  service: ServiceName,
+export function arrRequestTool(
+  service: ArrService,
   cfg: ServiceConfig,
   ctx: RunContext,
-  label: string,
   description: string,
-): ToolRegistration {
-  return makeReadTool(
+): HostTool {
+  return makeRequestTool(
     {
       service,
-      label,
       description,
-      request: (path) => arrRequest(cfg, path),
+      methods: ["GET", "POST", "PUT", "DELETE"],
+      route: (method, path, body) => arrRoute(service, method, path, body),
+      request: (method, path, body) => arrRequest(cfg, path, method, body),
     },
     ctx,
   )
@@ -55,7 +57,7 @@ export function arrReadTool(
 /** Follow-up read on the queued command so the model can see it was accepted. */
 function verifyCommand(
   cfg: ServiceConfig,
-  service: ServiceName,
+  service: ArrService,
   ctx: RunContext,
   result: JsonValue,
 ): Effect.Effect<JsonValue, JsonRequestError> {
@@ -77,7 +79,7 @@ function verifyCommand(
 
 function verifyQueue(
   cfg: ServiceConfig,
-  service: ServiceName,
+  service: ArrService,
   ctx: RunContext,
 ): Effect.Effect<JsonValue, JsonRequestError> {
   return Effect.gen(function* () {
@@ -88,23 +90,9 @@ function verifyQueue(
   })
 }
 
-function verifyBlocklistAndQueue(
-  cfg: ServiceConfig,
-  service: ServiceName,
-  ctx: RunContext,
-): Effect.Effect<JsonValue, JsonRequestError> {
-  return Effect.gen(function* () {
-    const path =
-      "/api/v3/blocklist?page=1&pageSize=20&sortKey=date&sortDirection=descending"
-    const blocklist = yield* arrRequest(cfg, path)
-    ctx.recordRead(service, path, JSON.stringify(blocklist))
-    return { blocklist, queue: yield* verifyQueue(cfg, service, ctx) }
-  })
-}
-
 export function runArrCommand(
   cfg: ServiceConfig,
-  service: ServiceName,
+  service: ArrService,
   ctx: RunContext,
   evidence: EvidenceRequirement[],
   body: JsonValue,
@@ -119,7 +107,7 @@ export function runArrCommand(
 
 export function runArrFileDelete(
   cfg: ServiceConfig,
-  service: ServiceName,
+  service: ArrService,
   ctx: RunContext,
   filePath: string,
   fileId: number,
@@ -156,284 +144,169 @@ function verifyDeletedFile(
   )
 }
 
-/** ManualImport is shared because both Arrs use the same command shape. */
-export function manualImportTool(
-  service: ServiceName,
+export type ArrRecord = { [key: string]: JsonValue | undefined }
+
+export interface MonitoringUpdate {
+  /** The record's own path, e.g. `/api/v3/series/12`. */
+  path: string
+  id: number
+  hint: string
+  /** External identity that a body without it would reset to 0. */
+  identity: "tvdbId" | "tmdbId"
+  /** Fields that must read back exactly as they were sent. */
+  preserved: readonly string[]
+  /** Applies the requested monitoring to a copy; throws on an invalid request. */
+  patch: (record: ArrRecord) => ArrRecord
+  /** The monitoring fields the read-back must match. */
+  monitoring: (record: ArrRecord) => JsonValue
+}
+
+/**
+ * Arr PUT replaces the whole record: an omitted field deserializes to its
+ * default (identity 0, no seasons, no path). So read the current record,
+ * change only monitoring, and send everything else back as read.
+ */
+export function runArrMonitoringUpdate(
+  cfg: ServiceConfig,
+  service: ArrService,
+  ctx: RunContext,
+  update: MonitoringUpdate,
+) {
+  return Effect.gen(function* () {
+    yield* toolCheck(() => ctx.requireEvidence(service, update.id, update.hint))
+    const current = yield* arrRequest(cfg, update.path)
+    const body = yield* toolCheck(() => {
+      const record = arrRecord(current, update)
+      ctx.recordRead(service, update.path, JSON.stringify(record))
+      return update.patch(record)
+    })
+    return yield* runMutation(ctx, {
+      kind: "mutate",
+      perform: () => arrRequest(cfg, update.path, "PUT", body),
+      verify: () =>
+        Effect.gen(function* () {
+          const after = yield* arrRequest(cfg, update.path)
+          return yield* toolCheck(() => {
+            const record = arrRecord(after, update)
+            ctx.recordRead(service, update.path, JSON.stringify(record))
+            return monitoringReadBack(record, body, update)
+          })
+        }),
+    })
+  })
+}
+
+function arrRecord(
+  value: JsonValue | undefined,
+  update: MonitoringUpdate,
+): ArrRecord {
+  if (!isJsonObject(value) || value.id !== update.id) {
+    throw new Error(
+      `${update.hint} ${update.id} did not read back as that record`,
+    )
+  }
+  const identity = value[update.identity]
+  if (
+    !isNumber(identity) ||
+    identity < 1 ||
+    typeof value.path !== "string" ||
+    value.path === "" ||
+    !isNumber(value.qualityProfileId) ||
+    typeof value.monitored !== "boolean"
+  ) {
+    // Sending such a record back could reset the missing fields.
+    throw new Error(
+      `${update.hint} ${update.id} read back without a valid ${update.identity}, path, ` +
+        "qualityProfileId, or monitored",
+    )
+  }
+  return value
+}
+
+function monitoringReadBack(
+  record: ArrRecord,
+  sent: ArrRecord,
+  update: MonitoringUpdate,
+): JsonValue {
+  const monitoring = update.monitoring(record)
+  const changed = update.preserved.filter(
+    (field) => JSON.stringify(record[field]) !== JSON.stringify(sent[field]),
+  )
+  if (
+    changed.length === 0 &&
+    JSON.stringify(monitoring) === JSON.stringify(update.monitoring(sent))
+  ) {
+    return {
+      confirmed: "monitoring applied; other fields unchanged",
+      monitoring,
+    }
+  }
+  return {
+    warning:
+      changed.length > 0
+        ? `read-back differs in ${changed.join(", ")}`
+        : "read-back monitoring differs from the request",
+    monitoring,
+  }
+}
+
+/** Removing a queue item from the download client destroys its data. */
+export function deleteQueueItemTool(
+  service: ArrService,
   cfg: ServiceConfig,
   ctx: RunContext,
 ): ToolRegistration {
   return defineTool({
-    name: `${service}_manual_import`,
+    name: `${service}_delete_queue_item`,
     description:
-      `Run ${service}'s ManualImport command for verified candidates from a GET /api/v3/manualimport read this run. ` +
-      "Trim each candidate to the fields the command needs " +
-      (service === "sonarr"
-        ? "(path, folderName, seriesId, episodeIds, quality, languages, releaseGroup); use importMode move."
-        : "(path, folderName, movieId, quality, languages, releaseGroup); use importMode auto."),
-    parameters: Type.Object({
-      reason: reasonParam(),
-      files: Type.Array(Type.Record(Type.String(), Type.Any()), {
-        minItems: 1,
-        description:
-          "Candidate objects from the manualimport read, trimmed to required fields",
-      }),
-      importMode: StringEnum(["auto", "move", "copy"] as const),
-    }),
-    execute(params) {
-      return Effect.runPromise(
-        Effect.gen(function* () {
-          const evidence = yield* toolCheck(() =>
-            manualImportEvidence(service, params.files),
-          )
-          const outcome = yield* runArrCommand(cfg, service, ctx, evidence, {
-            name: "ManualImport",
-            files: params.files,
-            importMode: params.importMode,
-          })
-          return textResult(outcome, {
-            service,
-            action: "manual_import",
-            files: params.files.length,
-          })
-        }),
-      )
-    },
-  })
-}
-
-function manualImportEvidence(
-  service: ServiceName,
-  files: Array<Record<string, JsonValue | undefined>>,
-): EvidenceRequirement[] {
-  return files.flatMap((file) => {
-    if (!isString(file.path) || file.path.length === 0) {
-      throw new Error(
-        "every manual import file needs the candidate's path field",
-      )
-    }
-    const ids = [
-      file.seriesId,
-      file.movieId,
-      ...(Array.isArray(file.episodeIds) ? file.episodeIds : []),
-    ].filter((id): id is number => typeof id === "number")
-    return [
-      { service, value: file.path, hint: "candidate path" },
-      ...ids.map((id) => ({
-        service,
-        value: id,
-        hint: "candidate target id",
-      })),
-    ]
-  })
-}
-
-export function queueAndBlocklistTools(
-  service: ServiceName,
-  cfg: ServiceConfig,
-  ctx: RunContext,
-): ToolRegistration[] {
-  const deps = { service, cfg, ctx }
-  return [
-    deleteQueueItemTool(deps),
-    blocklistFromHistoryTool(deps),
-    grabQueueItemTool(deps),
-    removeFromBlocklistTool(deps),
-  ]
-}
-
-interface ArrToolDeps {
-  service: ServiceName
-  cfg: ServiceConfig
-  ctx: RunContext
-}
-
-function deleteQueueItemTool(deps: ArrToolDeps): ToolRegistration {
-  return defineTool({
-    name: `${deps.service}_delete_queue_item`,
-    description: `Remove a stuck/failed download from the ${deps.service} queue, optionally blocklisting the release and removing it from the download client. With removeFromClient=true the downloaded data is destroyed and the call is recorded as a deletion. The queue item id must pass the ${deps.service} evidence gate.`,
+      `Remove a download from the ${service} queue and from the download client, destroying the downloaded ` +
+      `data. To drop only the queue entry and keep the data, use ${service}_request with ` +
+      `DELETE /api/v3/queue/{id}?removeFromClient=false. The queue item id must pass the ${service} evidence gate.`,
     parameters: Type.Object({
       reason: reasonParam(),
       queueId: Type.Integer({ minimum: 1 }),
       blocklist: Type.Boolean({
-        description:
-          "Blocklist the release so it is not grabbed again (default true)",
-      }),
-      removeFromClient: Type.Boolean({
-        description:
-          "Also remove the job from the download client, destroying the downloaded data (default true)",
+        description: "Blocklist the release so it is not grabbed again",
       }),
     }),
     execute(params) {
       return Effect.runPromise(
         Effect.gen(function* () {
-          return yield* executeQueueMutation(
-            deps,
-            params.queueId,
-            "delete_queue_item",
-            params.removeFromClient ? "delete" : "mutate",
-            () =>
-              arrRequest(
-                deps.cfg,
-                `/api/v3/queue/${params.queueId}?removeFromClient=${params.removeFromClient}&blocklist=${params.blocklist}`,
-                "DELETE",
-              ),
-          )
-        }),
-      )
-    },
-  })
-}
-
-function blocklistFromHistoryTool(deps: ArrToolDeps): ToolRegistration {
-  return defineTool({
-    name: `${deps.service}_blocklist_from_history`,
-    description:
-      `Blocklist the release behind one ${deps.service} history record, so it is never grabbed again. Marks that grab as failed ` +
-      `(POST /api/v3/history/failed/{id}), which is the only way to exclude a release that has left the queue. Use this on ` +
-      `the bad release when replacing a wrong or corrupt file: unblocked, it usually still scores highest and a plain ` +
-      `search just grabs it again. Two consequences to plan for: with the Arr's default autoRedownloadFailed it also ` +
-      `starts its own replacement search, so do not follow it with a separate search call — read the queue instead and ` +
-      `check which release it picked; and if that grab is still active in the download client it will be discarded, so ` +
-      `point this at a grab that is finished, not at the download you are waiting on. The history record id must come ` +
-      `from a ${deps.service} history read this run.`,
-    parameters: Type.Object({
-      reason: reasonParam(),
-      historyId: Type.Integer({ minimum: 1 }),
-    }),
-    execute(params) {
-      return Effect.runPromise(
-        Effect.gen(function* () {
-          const outcome = yield* runMutation(deps.ctx, {
-            kind: "mutate",
+          const outcome = yield* runMutation(ctx, {
+            kind: "delete",
             evidence: [
-              {
-                service: deps.service,
-                value: params.historyId,
-                hint: "history record id",
-              },
+              { service, value: params.queueId, hint: "queue item id" },
             ],
             perform: () =>
               arrRequest(
-                deps.cfg,
-                `/api/v3/history/failed/${params.historyId}`,
-                "POST",
-              ),
-            verify: () =>
-              verifyBlocklistAndQueue(deps.cfg, deps.service, deps.ctx),
-          })
-          return textResult(outcome, {
-            service: deps.service,
-            action: "blocklist_from_history",
-            historyId: params.historyId,
-          })
-        }),
-      )
-    },
-  })
-}
-
-function grabQueueItemTool(deps: ArrToolDeps): ToolRegistration {
-  return defineTool({
-    name: `${deps.service}_grab_queue_item`,
-    description: `Force ${deps.service} to grab a pending/delayed queue item now. The queue item id must come from a queue read this run.`,
-    parameters: Type.Object({
-      reason: reasonParam(),
-      queueId: Type.Integer({ minimum: 1 }),
-    }),
-    execute(params) {
-      return Effect.runPromise(
-        Effect.gen(function* () {
-          return yield* executeQueueMutation(
-            deps,
-            params.queueId,
-            "grab_queue_item",
-            "mutate",
-            () =>
-              arrRequest(
-                deps.cfg,
-                `/api/v3/queue/grab/${params.queueId}`,
-                "POST",
-              ),
-          )
-        }),
-      )
-    },
-  })
-}
-
-function removeFromBlocklistTool(deps: ArrToolDeps): ToolRegistration {
-  return defineTool({
-    name: `${deps.service}_remove_from_blocklist`,
-    description: `Remove one entry from the ${deps.service} blocklist so that release can be grabbed again. The blocklist entry id must come from a blocklist read this run.`,
-    parameters: Type.Object({
-      reason: reasonParam(),
-      blocklistId: Type.Integer({ minimum: 1 }),
-    }),
-    execute(params) {
-      return Effect.runPromise(
-        Effect.gen(function* () {
-          const outcome = yield* runMutation(deps.ctx, {
-            kind: "mutate",
-            evidence: [
-              {
-                service: deps.service,
-                value: params.blocklistId,
-                hint: "blocklist entry id",
-              },
-            ],
-            perform: () =>
-              arrRequest(
-                deps.cfg,
-                `/api/v3/blocklist/${params.blocklistId}`,
+                cfg,
+                `/api/v3/queue/${params.queueId}?removeFromClient=true&blocklist=${params.blocklist}`,
                 "DELETE",
               ),
+            verify: () => verifyQueue(cfg, service, ctx),
           })
           return textResult(outcome, {
-            service: deps.service,
-            action: "remove_from_blocklist",
-            blocklistId: params.blocklistId,
+            service,
+            action: "delete_queue_item",
+            queueId: params.queueId,
           })
         }),
       )
     },
   })
-}
-
-function executeQueueMutation(
-  deps: ArrToolDeps,
-  queueId: number,
-  action: string,
-  kind: "mutate" | "delete",
-  perform: () => Effect.Effect<JsonValue, JsonRequestError>,
-) {
-  return Effect.gen(function* () {
-    const outcome = yield* runMutation(deps.ctx, {
-      kind,
-      evidence: queueEvidence(deps.service, queueId),
-      perform,
-      verify: () => verifyQueue(deps.cfg, deps.service, deps.ctx),
-    })
-    return textResult(outcome, { service: deps.service, action, queueId })
-  })
-}
-
-function queueEvidence(
-  service: ServiceName,
-  queueId: number,
-): EvidenceRequirement[] {
-  return [{ service, value: queueId, hint: "queue item id" }]
 }
 
 function isJsonObject(
-  value: JsonValue,
+  value: JsonValue | undefined,
 ): value is { [key: string]: JsonValue | undefined } {
-  return value !== null && Object(value) === value && !Array.isArray(value)
+  return (
+    value !== undefined &&
+    value !== null &&
+    Object(value) === value &&
+    !Array.isArray(value)
+  )
 }
 
 function isNumber<Value>(value: Value): value is Value & number {
   return typeof value === "number"
-}
-
-function isString<Value>(value: Value): value is Value & string {
-  return typeof value === "string"
 }

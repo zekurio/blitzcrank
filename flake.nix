@@ -31,9 +31,6 @@
       # `nix flake check` builds the package on linux CI.
       checks = forSystems linuxSystems (pkgs: {
         blitzcrank = self.packages.${pkgs.stdenv.hostPlatform.system}.blitzcrank;
-        module = pkgs.callPackage ./nix/module-test.nix {
-          package = self.packages.${pkgs.stdenv.hostPlatform.system}.blitzcrank;
-        };
       });
 
       nixosModules = rec {

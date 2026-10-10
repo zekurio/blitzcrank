@@ -14,7 +14,7 @@ interface EvidenceFileData {
   probed: string[]
 }
 
-/** Atomic durable storage for one issue or conversation's evidence snapshot. */
+/** Atomic durable storage for one issue's evidence snapshot. */
 export class EvidenceStore {
   constructor(
     private readonly dir: string,
@@ -69,18 +69,6 @@ export class EvidenceStore {
       const target = yield* storageCheck(() => this.file(scopeId))
       yield* storageIO(() => rm(target, { force: true }))
     })
-  }
-
-  load(scopeId: string): Promise<EvidenceSnapshot | undefined> {
-    return Effect.runPromise(this.loadEffect(scopeId))
-  }
-
-  save(scopeId: string, snapshot: EvidenceSnapshot): Promise<void> {
-    return Effect.runPromise(this.saveEffect(scopeId, snapshot))
-  }
-
-  forget(scopeId: string): Promise<void> {
-    return Effect.runPromise(this.forgetEffect(scopeId))
   }
 
   private file(scopeId: string): string {

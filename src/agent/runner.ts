@@ -25,8 +25,13 @@ import {
   type StatusComment,
 } from "../tools/index.ts"
 import { buildWebProvider } from "../web/index.ts"
-import { parseDirectives, type Directives } from "./directives.ts"
 import { SdkError } from "./effect.ts"
+import {
+  buildFinishTool,
+  FINISH_TOOL,
+  readFinish,
+  type Finish,
+} from "./finish.ts"
 import {
   buildIssuePrompt,
   buildRevisitPrompt,
@@ -70,7 +75,7 @@ export function loadIssueContextEffect(
 
 export interface RunOutcome {
   issueId: string
-  directives: Directives
+  finish: Finish | undefined
   /** The case file as persisted, including the revisit the host armed. */
   casefile: CaseFile
 }
@@ -84,7 +89,7 @@ export class IssueRunner {
     private readonly config: Config,
     private readonly modelRuntime: ModelRuntime,
     private readonly modelSpec: string,
-    private readonly jobs: JobStore = new JobStore(),
+    private readonly jobs: JobStore,
   ) {
     this.cases = new CaseStore(path.join(config.dataDir, "cases"))
   }
@@ -105,10 +110,6 @@ export class IssueRunner {
    * one run would then rewrite or delete the other's notice out from under
    * it.
    */
-  notifyQueued(issueId: string, runsAhead: number): Promise<StatusComment> {
-    return Effect.runPromise(this.notifyQueuedEffect(issueId, runsAhead))
-  }
-
   notifyQueuedEffect(issueId: string, runsAhead: number) {
     return Effect.gen({ self: this }, function* () {
       const seerr = new SeerrClient(
@@ -124,24 +125,14 @@ export class IssueRunner {
     }).pipe(this.noticeLock.withPermits(1), Effect.uninterruptible)
   }
 
-  run(
-    event: IssueEvent,
-    status: StatusComment = { id: undefined },
-    signal?: AbortSignal,
-    requestId?: string,
-  ): Promise<RunOutcome> {
-    return Effect.runPromise(this.runEffect(event, status, signal, requestId))
-  }
-
   runEffect(
     event: IssueEvent,
-    status: StatusComment = { id: undefined },
-    signal?: AbortSignal,
-    requestId?: string,
+    status: StatusComment,
+    signal: AbortSignal,
+    runId: string,
   ): Effect.Effect<RunOutcome, unknown> {
     return Effect.gen({ self: this }, function* () {
       const { issueId } = event
-      const runId = requestId ?? this.jobs.create("issue", { event }).id
       const seerr = new SeerrClient(
         this.config.seerr,
         this.config.seerrBotUserId,
@@ -207,6 +198,7 @@ export class IssueRunner {
             casefile,
           }),
           ...web.tools,
+          buildFinishTool(this.config.language),
         ]
 
         const prompt = yield* this.jobs.actionEffect(
@@ -236,7 +228,6 @@ export class IssueRunner {
           modelRuntime: this.modelRuntime,
           modelSpec: this.modelSpec,
           systemPrompt: buildSystemPrompt(
-            this.config,
             {
               search: web.searchTool,
               extract: web.extractTool,
@@ -244,13 +235,13 @@ export class IssueRunner {
             tools.map((tool) => tool.name),
           ),
           tools,
+          finishTool: FINISH_TOOL,
           prompt,
           storageFile,
           requestId: runId,
           runContext: ctx,
           hostState: issueToolState(casefile, status),
           sessionFileRef,
-          logPrefix: `issue:${issueId}`,
           signal,
         })
 
@@ -258,13 +249,13 @@ export class IssueRunner {
         // not make a run invisible in the issue's running total.
         const { mutations, deletes } = ctx.counts
         projectSpend(casefile, turn, deletes)
-        // Recorded before the directive block is even parsed: a run that mutated
+        // Recorded before the outcome is even read: a run that mutated
         // and then crashed still has to show what it did.
         casefile.sessionFile = turn.sessionFile
         yield* this.cases.saveEffect(casefile)
         yield* this.cases.saveEvidenceEffect(issueId, ctx.snapshot)
 
-        if (signal?.aborted || turn.failure) {
+        if (signal.aborted || turn.failure) {
           casefile.runs.push({
             at: new Date().toISOString(),
             trigger: event.kind,
@@ -286,16 +277,16 @@ export class IssueRunner {
           )
         }
 
-        const directives = parseDirectives(turn.text)
+        const finish = readFinish(turn.finish)
 
-        if (directives.malformed) {
+        if (!finish) {
           console.warn(
-            `[issue:${issueId}] malformed directive block; no comment posted:\n${turn.text}`,
+            `[issue:${issueId}] run ended without a valid ${FINISH_TOOL} call; no comment posted:\n${turn.text}`,
           )
         }
 
-        const comment = directives.malformed ? undefined : directives.comment
-        if (signal?.aborted)
+        const comment = finish?.comment
+        if (signal.aborted)
           return yield* Effect.fail(
             new SdkError({ message: "issue run stopped", cause: undefined }),
           )
@@ -324,8 +315,8 @@ export class IssueRunner {
         )
         status.id = undefined
 
-        if (!directives.malformed && directives.resolve) {
-          if (signal?.aborted)
+        if (finish?.resolve) {
+          if (signal.aborted)
             return yield* Effect.fail(
               new SdkError({ message: "issue run stopped", cause: undefined }),
             )
@@ -356,11 +347,11 @@ export class IssueRunner {
           inputTokens: turn.usage.inputTokens,
           outputTokens: turn.usage.outputTokens,
           commented: comment !== undefined && comment.length > 0,
-          resolved: directives.resolve,
+          resolved: finish?.resolve ?? false,
         })
         const plan = planRevisit({
-          requestedMs: directives.revisitInMs,
-          reason: directives.revisitReason,
+          requestedMs: finish?.revisitInMs,
+          reason: finish?.revisitReason,
           mediaScope,
           previous: casefile.revisit,
           isRevisitRun: event.kind === "revisit",
@@ -371,10 +362,10 @@ export class IssueRunner {
         })
         if (plan.refused) console.warn(`[issue:${issueId}] ${plan.refused}`)
         // A resolved issue is closed: never wake it again on an old schedule.
-        casefile.revisit = directives.resolve ? undefined : plan.revisit
+        casefile.revisit = finish?.resolve ? undefined : plan.revisit
         yield* this.cases.saveEffect(casefile)
 
-        return { issueId, directives, casefile }
+        return { issueId, finish, casefile }
       }).pipe(
         Effect.onExit(() =>
           this.jobs
@@ -440,7 +431,6 @@ export class IssueRunner {
           runContext: ctx,
           hostState: issueToolState(casefile, status),
           sessionFileRef: undefined,
-          logPrefix: `issue:${event.issueId}:cancel`,
           signal: AbortSignal.abort(),
         })
         projectSpend(casefile, turn, ctx.counts.deletes)
@@ -484,26 +474,15 @@ export class IssueRunner {
     }).pipe(Effect.uninterruptible)
   }
 
-  retractStatus(
-    issueId: string,
-    status: StatusComment,
-    requestId?: string,
-  ): Promise<void> {
-    return Effect.runPromise(
-      this.retractStatusEffect(issueId, status, requestId),
-    )
-  }
-
   retractStatusEffect(
     issueId: string,
     status: StatusComment,
-    requestId?: string,
+    requestId: string,
   ) {
     return Effect.suspend(() => {
       // Consult durable intent, not a flag in this process: even initialization
       // can fail while recovering a job whose comment was already published.
       if (
-        requestId !== undefined &&
         this.jobs
           .actions(requestId)
           .some((action) => action.key === "publish-comment")

@@ -6,9 +6,14 @@ export class HttpError extends Data.TaggedError("HttpError")<{
   body: string
 }> {
   constructor(status: number, url: string, body: string) {
-    super({ status, url, body })
-    this.message = `HTTP ${status} for ${url}: ${body.slice(0, 500)}`
+    super({ status, url: redactUrl(url), body })
+    this.message = `HTTP ${status} for ${this.url}: ${body.slice(0, 500)}`
   }
+}
+
+/** SABnzbd authenticates in the query string; never echo the key to the model. */
+function redactUrl(url: string): string {
+  return url.replace(/([?&](?:apikey|api_key|token)=)[^&]*/gi, "$1***")
 }
 
 export class HttpRequestError extends Data.TaggedError("HttpRequestError")<{
@@ -60,15 +65,6 @@ export type JsonValue =
   | null
   | JsonValue[]
   | { [key: string]: JsonValue | undefined }
-
-/** Promise boundary for callers that have not migrated to Effect yet. */
-export function jsonRequest<T = JsonValue>(
-  baseUrl: string,
-  path: string,
-  opts: JsonRequestOptions = {},
-): Promise<T> {
-  return Effect.runPromise(jsonRequestEffect<T>(baseUrl, path, opts))
-}
 
 /** No retries: even GET can mutate state in SABnzbd. */
 export function jsonRequestEffect<T = JsonValue>(
@@ -134,13 +130,14 @@ export function jsonRequestEffect<T = JsonValue>(
       )
     }
     if (!response.text) {
-      // SAFETY: Callers ignore successful empty service responses.
+      // SAFETY: A successful empty body (204, empty 200) resolves to undefined
+      // despite T. Callers that use the result must check for it.
       return undefined as T
     }
     return yield* Effect.try({
       // SAFETY: Each typed caller owns the response contract for its endpoint.
       try: () => JSON.parse(response.text) as T,
-      catch: (cause) => new HttpResponseError({ url, cause }),
+      catch: (cause) => new HttpResponseError({ url: redactUrl(url), cause }),
     })
   })
 }

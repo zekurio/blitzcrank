@@ -1,78 +1,53 @@
 ---
 name: jellyfin
-description: Diagnose Jellyfin library identity, availability, media streams, subtitles, playback, transcoding, user visibility, and stale metadata. Load for media reports involving wrong language, missing subtitles, wrong metadata, unavailable media, or playback failure after Arr import.
+description: Diagnose Jellyfin identity, streams, subtitles, playback, visibility, and metadata. Load for library or playback reports, including missing media after Arr import.
 ---
 
 # Jellyfin
 
-Use read-only `jellyfin_request` with `purpose` and a relative GET path. The only
-mutation is `jellyfin_refresh_item`; it requires `reason` and an `itemId`
-accepted by the run's Jellyfin evidence gate. Inspect its `verification` and
-re-read affected state. Issue, Discord, and automation runs are uncapped;
-automation scope comes from its exact mutation-tool allowlist. Refresh updates metadata/indexing
-and probing; it cannot repair bytes or add tracks. No broad-library refresh is
-exposed.
+`POST /Items/{itemId}/Refresh` through `jellyfin_request` updates metadata,
+indexing, and probing, not bytes or tracks. Re-read identity/media afterward.
+For a wrong match, look up candidates with `POST /Items/RemoteSearch/{Movie|Series}`
+and apply one with `POST /Items/RemoteSearch/Apply/{itemId}`.
 
 ## Mapping and reads
 
-Seerr supplies provider identity; Sonarr/Radarr own files; Jellyfin identifies,
-probes, and serves them. Client codec, bitrate, subtitle, preference, or
-transcode behavior can still prevent playback of a valid file.
-
-Useful reads:
-
 - Search: `GET /Items?searchTerm={query}&recursive=true&limit=10`
-- Libraries/children: `GET /Library/VirtualFolders`; then
-  `GET /Items?parentId={itemId}&recursive=true&limit=50`
+- Libraries: `GET /Library/VirtualFolders`
+- Children: `GET /Items?parentId={itemId}&recursive=true&limit=50`
 - Identity/media: `GET /Items?Ids={itemId}&Fields=MediaSources,Path,ProviderIds`
 - Movie by TMDB: `GET /Items?recursive=true&IncludeItemTypes=Movie&AnyProviderIdEquals=Tmdb.{tmdbId}&Fields=MediaSources,Path,ProviderIds&limit=10`
-- User/session diagnostics when appropriate: `GET /Users`,
-  `GET /Users/{userId}/Views`, `GET /Users/{userId}/Items/{itemId}`,
+- User/session diagnostics: `GET /Users`, `GET /Users/{userId}/Views`,
+  `GET /Users/{userId}/Items/{itemId}`,
   `GET /UserItems/{itemId}/UserData?userId={userId}`, `GET /Sessions`
 
-Do not use bare `GET /Items/{itemId}`; this deployment returns HTTP 400 without
-user context. Use `Ids=`. Map by provider ID and type; title/year is only a
-verified fallback. For TV, descend series → season → exact episode and sample
-multiple episodes only when the claimed scope requires it.
+Bare `GET /Items/{itemId}` returns HTTP 400 here without user context. Use
+`Ids=`. Match provider ID and type; title/year is only a verified fallback.
+For TV, descend series → season → exact episode. Sample only within reported
+scope. Use user endpoints only for visibility, progress, favorites, or
+preference symptoms.
 
-Inspect the selected media source/version: path, container, runtime, size,
-bitrate, video codec/profile/bit depth/HDR, and every audio/subtitle stream with
-language/title/default/forced flags. Jellyfin stream metadata is playback truth
-after import. Inspect sessions, play method (Direct Play/Remux/Direct
-Stream/Transcode), and transcode reason to separate universal from user/client
-symptoms. User endpoints are only for visibility, progress, favorites, and
-preference symptoms; never expose private data.
+Inspect the selected version's path, container, runtime, size, bitrate, codec,
+profile, bit depth, and HDR. Check every audio/subtitle stream's language,
+title, default, and forced flags. Jellyfin may play a different version than
+the file inspected in Arr.
 
 ## Diagnosis
 
-- **Wrong/missing audio:** inspect all file streams and client selection. If a
-  track exists, acquisition is fine. If absent, correlate Arr evidence; refresh
-  cannot add it. Arr `languages` is release-name parsing, not proof—confirm the
-  actual Arr path with `media_probe`, including before import.
-- **Subtitles:** inspect embedded/external tracks, format, sidecar association,
-  flags, user mode, and client support. Subtitle burn-in may force transcode.
-  Refresh after sidecar correction; replace only when required subtitles are
-  truly absent.
-- **Playback/buffering:** check client scope, selected version, codecs, HDR,
-  bitrate, audio layout, subtitle selection, transcode reason, hardware
-  acceleration, and API-visible temporary-storage errors. Universal direct-play
-  failure suggests access/bad media; client-specific failure suggests
-  compatibility/transcode behavior.
-- **Missing after import:** verify the exact Arr path lies under a Jellyfin
-  library as Jellyfin sees it, then search by provider/path and narrowly refresh
-  an existing item. If the Arr file is absent, return to Arr/SAB.
-- **Wrong/stale metadata:** compare IDs, type, title/year, hierarchy, path, size,
-  runtime, and streams. Refresh the affected item and re-fetch identity/media.
-  Do not replace a correct file solely for metadata.
+- For audio, check all streams and client selection. An existing track needs
+  no acquisition. Arr `languages` comes from release-name parsing, not streams.
+  Probe the actual Arr file, including before import.
+- For subtitles, check embedded/external tracks, format, sidecar association,
+  flags, user mode, and client support. Burn-in may force transcoding. Refresh
+  after sidecar correction. Replace only if required subtitles are truly absent.
+- For playback, check sessions, play method, transcode reason, audio layout,
+  subtitle selection, hardware acceleration, and API-visible temporary-storage
+  errors. Universal direct-play failure suggests access or bad media.
+  Client-specific failure suggests compatibility or transcoding.
+- For missing media after import, verify the Arr path is under a library as
+  Jellyfin sees it. Search by provider/path and refresh an existing item
+  narrowly. If the Arr file is absent, return to Arr/SAB.
+- For stale metadata, compare identity, hierarchy, and file evidence before
+  refreshing. Do not replace a correct file solely for metadata.
 
-Classify indexing/identity, mount/access, stream selection,
-client/transcoding, bad source, or a mixture. Multiple versions may mean
-Jellyfin played a different file than Radarr's inspected file. A successful scan
-does not prove playback; verify the original symptom before resolution.
-
-In a Seerr issue, call `report_progress` first and finish with its required
-`RESOLVE_ISSUE` directive block. In Discord, answer directly without Seerr
-directives or promises of a later check. Do not expose tool names, IDs, URLs,
-paths, promises, or user data. Never call Seerr comment/resolve APIs. Keep a
-Seerr issue open through importing, scanning, playback validation, or needed
-reporter confirmation.
+A successful scan does not prove playback. Verify the original symptom.

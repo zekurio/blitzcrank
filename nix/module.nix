@@ -150,33 +150,10 @@ in
       '';
     };
 
-    automationModel = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = null;
-      example = "openai/gpt-5.6-terra:high";
-      description = ''
-        Default model for automation runs as provider/model with an optional
-        thinking suffix. Null inherits {option}`model`.
-      '';
-    };
-
-    automationModels = lib.mkOption {
-      type = lib.types.attrsOf lib.types.str;
-      default = { };
-      example = {
-        stale-import-handler = "openai/gpt-5.6-terra:high";
-      };
-      description = ''
-        Per-automation model overrides keyed by automation name. Entries use
-        provider/model with an optional thinking suffix. Unknown automation
-        names or unavailable models stop the service at startup.
-      '';
-    };
-
     language = lib.mkOption {
       type = lib.types.str;
       default = "German";
-      description = "Language for public comments and operations notes.";
+      description = "Language for public comments.";
     };
 
     webProvider = lib.mkOption {
@@ -186,7 +163,7 @@ in
       ];
       default = "none";
       description = ''
-        External web provider for issue runs and Discord conversations.
+        External web provider for issue runs.
         "firecrawl" grants the read-only web_search and web_extract tools
         through Firecrawl's hosted API and needs FIRECRAWL_API_KEY in
         {option}`environmentFile`. Custom endpoints are not supported. "none"
@@ -250,13 +227,6 @@ in
       '';
     };
 
-    automationsDir = lib.mkOption {
-      type = lib.types.path;
-      default = "${cfg.package}/lib/blitzcrank/automations";
-      defaultText = lib.literalExpression ''"''${package}/lib/blitzcrank/automations"'';
-      description = "Directory with automation definition .md files.";
-    };
-
     environmentFile = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
       default = null;
@@ -264,8 +234,7 @@ in
       description = ''
         Environment file with secrets: SEERR_URL/SEERR_API_KEY (required),
         SONARR_/RADARR_/SABNZBD_/JELLYFIN_ URLs and API keys,
-        BLITZCRANK_WEBHOOK_SECRET,
-        DISCORD_BOT_TOKEN, FIRECRAWL_API_KEY when
+        BLITZCRANK_WEBHOOK_SECRET, FIRECRAWL_API_KEY when
         {option}`webProvider` is "firecrawl", and provider API keys
         such as ANTHROPIC_API_KEY when not using OAuth.
       '';
@@ -276,8 +245,6 @@ in
       default = { };
       example = {
         SEERR_BOT_USERNAME = "blitzcrank";
-        DISCORD_GUILD_ID = "000000000000000000";
-        DISCORD_WATCH_CHANNEL_ID = "000000000000000000";
       };
       description = "Extra non-secret environment variables.";
     };
@@ -308,15 +275,8 @@ in
         BLITZCRANK_MODEL = cfg.model;
         BLITZCRANK_LANGUAGE = cfg.language;
         BLITZCRANK_DATA_DIR = stateDir;
-        BLITZCRANK_AUTOMATIONS_DIR = cfg.automationsDir;
         BLITZCRANK_AUTH_PATH = cfg.authFile;
         BLITZCRANK_WEB_PROVIDER = cfg.webProvider;
-      }
-      // lib.optionalAttrs (cfg.automationModel != null) {
-        BLITZCRANK_AUTOMATION_MODEL = cfg.automationModel;
-      }
-      // lib.optionalAttrs (cfg.automationModels != { }) {
-        BLITZCRANK_AUTOMATION_MODELS = builtins.toJSON cfg.automationModels;
       }
       // lib.optionalAttrs (cfg.mediaRoots != [ ]) {
         BLITZCRANK_MEDIA_ROOTS = lib.concatStringsSep ":" cfg.mediaRoots;

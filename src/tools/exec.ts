@@ -22,15 +22,6 @@ export interface ExecFileTextOptions {
   maxBufferBytes?: number | undefined
 }
 
-/** Promise boundary for the existing tool callbacks. */
-export function execFileText(
-  file: string,
-  args: string[],
-  opts: ExecFileTextOptions = {},
-): Promise<string> {
-  return Effect.runPromise(execFileTextEffect(file, args, opts))
-}
-
 /**
  * Runs a local helper binary (ffprobe) and returns stdout.
  * Never uses a shell: arguments are passed as an array, so nothing in a path
