@@ -65,9 +65,11 @@ const READ_TOOLS = new Set([
   "jellyfin_request",
   "media_probe",
   "media_frames",
+  "radarr_releases",
   "radarr_request",
   "sabnzbd_request",
   "seerr_request",
+  "sonarr_releases",
   "sonarr_request",
   "thread_history_search",
 ])
@@ -111,7 +113,9 @@ export function buildDiscordAnswerTools(
   const names = new Set([
     "seerr_request",
     "sonarr_request",
+    "sonarr_releases",
     "radarr_request",
+    "radarr_releases",
     "jellyfin_request",
   ])
   return buildServiceTools(config, ctx, { current: undefined }).filter((tool) =>

@@ -7,8 +7,11 @@ import {
   arrReadTool,
   manualImportTool,
   queueAndBlocklistTools,
+  readReleases,
+  releaseFilterParams,
   runArrCommand,
   runArrFileDelete,
+  type JsonObject,
 } from "./arr-common.ts"
 import { reasonParam, textResult, type ServiceName } from "./common.ts"
 import type { RunContext } from "./context.ts"
@@ -96,6 +99,47 @@ function deleteMovieFileTool(
   })
 }
 
+function radarrReleasesTool(
+  cfg: ServiceConfig,
+  ctx: RunContext,
+): ToolRegistration {
+  return defineTool({
+    name: "radarr_releases",
+    replay: "safe",
+    description:
+      "List indexer release candidates for one movie with Radarr's decision: approved, rejections, custom-format score, " +
+      "publish date, and languages. Runs a live indexer search; grabs nothing. Counts cover every hit. The listing keeps " +
+      "Radarr's preference order and is filtered and capped, so when matchingFilters exceeds listed, narrow with " +
+      "publishedAfter, titleContains, or approvedOnly before concluding a release is absent. Releases Radarr mapped to " +
+      "another movie are only counted.",
+    parameters: Type.Object({
+      ...releaseFilterParams(),
+      movieId: Type.Integer({
+        minimum: 1,
+        description: "Internal Radarr movie id (not tmdbId)",
+      }),
+    }),
+    execute(params) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          const service: ServiceName = "radarr"
+          const target = {
+            path: `/api/v3/release?movieId=${params.movieId}`,
+            matches: (release: JsonObject) =>
+              release.mappedMovieId === params.movieId,
+          }
+          const result = yield* readReleases(service, cfg, ctx, target, params)
+          return textResult(result, {
+            service,
+            action: "releases",
+            path: target.path,
+          })
+        }),
+      )
+    },
+  })
+}
+
 export function buildRadarrTools(
   cfg: ServiceConfig,
   ctx: RunContext,
@@ -109,9 +153,10 @@ export function buildRadarrTools(
       "Radarr read",
       "Check movie availability and release dates in Radarr via GET /api/v3 paths: " +
         "movie for tracking/monitoring, moviefile for imported files, queue/history for acquisition, " +
-        "release for candidates/rejection reasons, calendar for cinema/digital/physical dates, blocklist. " +
+        "calendar for cinema/digital/physical dates, blocklist. " +
         "Load the radarr skill for exact availability/date workflows.",
     ),
+    radarrReleasesTool(cfg, ctx),
     movieCommandTool(cfg, ctx, {
       toolName: "radarr_search",
       label: "Radarr: trigger movie search",

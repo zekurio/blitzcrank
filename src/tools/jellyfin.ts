@@ -15,10 +15,12 @@ export function buildJellyfinTools(
   cfg: ServiceConfig,
   ctx: RunContext,
 ): ToolRegistration[] {
+  // Jellyfin 12 rejects the legacy X-Emby-Token header with HTTP 401 and
+  // accepts the key only through the MediaBrowser Authorization scheme.
   const request = (path: string, method: "GET" | "POST" = "GET") =>
     jsonRequestEffect(cfg.url, path, {
       method,
-      headers: { "X-Emby-Token": cfg.apiKey },
+      headers: { Authorization: `MediaBrowser Token="${cfg.apiKey}"` },
     })
 
   return [

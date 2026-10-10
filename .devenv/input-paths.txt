@@ -1,0 +1,9 @@
+/home/zekurio/Git/blitzcrank/.devenv/bootstrap/bootstrapLib.nix
+/home/zekurio/Git/blitzcrank/.devenv/bootstrap/default.nix
+/home/zekurio/Git/blitzcrank/.devenv/bootstrap/resolve-lock.nix
+/home/zekurio/Git/blitzcrank/.env
+/home/zekurio/Git/blitzcrank/devenv.local.nix
+/home/zekurio/Git/blitzcrank/devenv.lock
+/home/zekurio/Git/blitzcrank/devenv.nix
+/home/zekurio/Git/blitzcrank/devenv.yaml
+/run/user/1000/devenv-19ade1f/processes/native-manager.pid

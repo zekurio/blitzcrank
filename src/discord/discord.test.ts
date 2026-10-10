@@ -111,7 +111,14 @@ test("Discord conversations receive mutations and conversation history", () => {
 
   assert.deepEqual(
     buildDiscordAnswerTools(config, new RunContext()).map((tool) => tool.name),
-    ["seerr_request", "sonarr_request", "radarr_request", "jellyfin_request"],
+    [
+      "seerr_request",
+      "sonarr_request",
+      "sonarr_releases",
+      "radarr_request",
+      "radarr_releases",
+      "jellyfin_request",
+    ],
   )
 })
 

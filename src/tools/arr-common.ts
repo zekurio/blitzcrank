@@ -11,12 +11,15 @@ import {
 } from "../services/http.ts"
 import {
   makeReadTool,
+  MAX_RESULT_CHARS,
   reasonParam,
   runMutation,
   textResult,
   toolCheck,
+  toText,
   type EvidenceRequirement,
   type ServiceName,
+  type ToolError,
 } from "./common.ts"
 import type { RunContext } from "./context.ts"
 
@@ -46,10 +49,221 @@ export function arrReadTool(
       service,
       label,
       description,
+      guards: (path) => assertNotReleaseSearch(service, path),
       request: (path) => arrRequest(cfg, path),
     },
     ctx,
   )
+}
+
+/**
+ * A raw release search returns every indexer hit in full, so the result cap
+ * leaves only the first few candidates. That partial list once read as "no
+ * replacement exists" while matching releases sat further down.
+ */
+function assertNotReleaseSearch(service: ServiceName, path: string): void {
+  const pathname = new URL(path, "http://127.0.0.1").pathname.toLowerCase()
+  if (pathname === "/api/v3/release" || pathname === "/api/v3/release/") {
+    throw new Error(
+      `read release candidates with ${service}_releases; it counts every hit and filters the listing`,
+    )
+  }
+}
+
+/** Release searches wait on every indexer; the default 30s is too short. */
+const RELEASE_TIMEOUT_MS = 120_000
+const DEFAULT_RELEASE_LIMIT = 20
+const MAX_REJECTION_GROUPS = 8
+
+export type JsonObject = { [key: string]: JsonValue | undefined }
+
+export interface ReleaseFilters {
+  publishedAfter?: string | undefined
+  titleContains?: string | undefined
+  approvedOnly?: boolean | undefined
+  limit?: number | undefined
+}
+
+export interface ReleaseTarget {
+  path: string
+  /** Whether the Arr mapped this release to the requested item. */
+  matches: (release: JsonObject) => boolean
+  /** Service-specific mapping fields for one listed release. */
+  describe?: (release: JsonObject) => JsonObject
+}
+
+export const releaseFilterParams = () => ({
+  purpose: Type.String({
+    description: "What evidence this candidate read should produce",
+  }),
+  publishedAfter: Type.Optional(
+    Type.String({
+      pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+      description: "List only releases published on or after this UTC date",
+    }),
+  ),
+  titleContains: Type.Optional(
+    Type.String({
+      minLength: 1,
+      description: "List only releases whose title contains this text",
+    }),
+  ),
+  approvedOnly: Type.Optional(
+    Type.Boolean({ description: "List only releases the Arr would grab" }),
+  ),
+  limit: Type.Optional(
+    Type.Integer({
+      minimum: 1,
+      maximum: 50,
+      description: `How many releases to list (default ${DEFAULT_RELEASE_LIMIT})`,
+    }),
+  ),
+})
+
+/**
+ * Runs one release search and returns counts over every hit plus a filtered,
+ * capped listing in the Arr's own preference order. Releases the Arr mapped to
+ * another item are only counted: an episode search also returns other
+ * episodes' releases, which buried the requested ones.
+ */
+export function readReleases(
+  service: ServiceName,
+  cfg: ServiceConfig,
+  ctx: RunContext,
+  target: ReleaseTarget,
+  filters: ReleaseFilters,
+): Effect.Effect<JsonObject, JsonRequestError | ToolError> {
+  return Effect.gen(function* () {
+    const raw = yield* jsonRequestEffect(cfg.url, target.path, {
+      headers: { "X-Api-Key": cfg.apiKey },
+      timeoutMs: RELEASE_TIMEOUT_MS,
+    })
+    const releases = yield* toolCheck(() => {
+      if (!Array.isArray(raw)) {
+        throw new Error(`${service} returned no release list`)
+      }
+      return raw.filter(isJsonObject)
+    })
+    const forTarget = releases.filter(target.matches)
+    const elsewhere = releases.filter((release) => !target.matches(release))
+    const matching = forTarget.filter((release) =>
+      matchesFilters(release, filters),
+    )
+    const listed = matching
+      .slice(0, filters.limit ?? DEFAULT_RELEASE_LIMIT)
+      .map((release) => ({
+        ...compactRelease(release),
+        ...target.describe?.(release),
+      }))
+    const result = fitListing(
+      {
+        total: releases.length,
+        forTarget: forTarget.length,
+        approvedForTarget: forTarget.filter(
+          (release) => release.approved === true,
+        ).length,
+        matchingFilters: matching.length,
+        rejectionsInMatching: rejectionGroups(matching),
+        otherTargets: {
+          count: elsewhere.length,
+          examples: elsewhere
+            .slice(0, 5)
+            .map((release) => release.title ?? null),
+        },
+      },
+      listed,
+    )
+    ctx.recordRead(service, target.path, JSON.stringify(result))
+    return result
+  })
+}
+
+/**
+ * Drops trailing entries until the result fits one tool result. A cut listing
+ * would be invalid JSON and lose the entries' closing fields.
+ */
+function fitListing(summary: JsonObject, listed: JsonObject[]): JsonObject {
+  const withCount = (count: number): JsonObject => ({
+    ...summary,
+    listed: count,
+    releases: listed.slice(0, count),
+  })
+  const fits = listed
+    .map((_, index) => listed.length - index)
+    .find((count) => toText(withCount(count)).length <= MAX_RESULT_CHARS)
+  return withCount(fits ?? 0)
+}
+
+function matchesFilters(release: JsonObject, filters: ReleaseFilters): boolean {
+  if (filters.approvedOnly === true && release.approved !== true) return false
+  if (
+    filters.publishedAfter !== undefined &&
+    !(
+      isString(release.publishDate) &&
+      release.publishDate.slice(0, 10) >= filters.publishedAfter
+    )
+  ) {
+    return false
+  }
+  if (filters.titleContains === undefined) return true
+  return (
+    isString(release.title) &&
+    release.title.toLowerCase().includes(filters.titleContains.toLowerCase())
+  )
+}
+
+function compactRelease(release: JsonObject): JsonObject {
+  const quality = objectField(objectField(release, "quality"), "quality")
+  const rejections = stringList(release.rejections)
+  return {
+    title: release.title ?? null,
+    published: isString(release.publishDate)
+      ? release.publishDate.slice(0, 10)
+      : null,
+    indexer: release.indexer ?? null,
+    protocol: release.protocol ?? null,
+    sizeMb: isNumber(release.size)
+      ? Math.round(release.size / 1_000_000)
+      : null,
+    quality: quality?.name ?? null,
+    languages: names(release.languages),
+    customFormatScore: release.customFormatScore ?? null,
+    customFormats: names(release.customFormats),
+    approved: release.approved === true,
+    ...(rejections.length > 0 ? { rejections } : {}),
+  }
+}
+
+function rejectionGroups(releases: JsonObject[]): JsonValue[] {
+  const counts = new Map<string, number>()
+  for (const reason of releases.flatMap((release) =>
+    stringList(release.rejections),
+  )) {
+    counts.set(reason, (counts.get(reason) ?? 0) + 1)
+  }
+  return [...counts]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, MAX_REJECTION_GROUPS)
+    .map(([reason, count]) => ({ reason, count }))
+}
+
+function objectField(
+  value: JsonObject | undefined,
+  key: string,
+): JsonObject | undefined {
+  const field = value?.[key]
+  return field !== undefined && isJsonObject(field) ? field : undefined
+}
+
+function names(value: JsonValue | undefined): string[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((item) =>
+    isJsonObject(item) && isString(item.name) ? [item.name] : [],
+  )
+}
+
+function stringList(value: JsonValue | undefined): string[] {
+  return Array.isArray(value) ? value.filter(isString) : []
 }
 
 /** Follow-up read on the queued command so the model can see it was accepted. */

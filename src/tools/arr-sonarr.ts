@@ -9,8 +9,12 @@ import {
   arrRequest,
   manualImportTool,
   queueAndBlocklistTools,
+  readReleases,
+  releaseFilterParams,
   runArrCommand,
   runArrFileDelete,
+  type JsonObject,
+  type ReleaseTarget,
 } from "./arr-common.ts"
 import {
   reasonParam,
@@ -289,6 +293,109 @@ function refreshSeriesTool(
   })
 }
 
+interface SonarrReleaseParams {
+  episodeId?: number | undefined
+  seriesId?: number | undefined
+  seasonNumber?: number | undefined
+}
+
+function sonarrReleasesTool(
+  cfg: ServiceConfig,
+  ctx: RunContext,
+): ToolRegistration {
+  return defineTool({
+    name: "sonarr_releases",
+    replay: "safe",
+    description:
+      "List indexer release candidates for one episode (episodeId) or one season (seriesId and seasonNumber) with Sonarr's decision: " +
+      "approved, rejections, custom-format score, publish date, languages, and mapped episodes. Runs a live indexer search; grabs nothing. " +
+      "Counts cover every hit. The listing keeps Sonarr's preference order and is filtered and capped, so when matchingFilters exceeds " +
+      "listed, narrow with publishedAfter, titleContains, or approvedOnly before concluding a release is absent. Releases Sonarr mapped " +
+      "to other episodes are only counted.",
+    parameters: Type.Object({
+      ...releaseFilterParams(),
+      episodeId: Type.Optional(
+        Type.Integer({ minimum: 1, description: "Internal Sonarr episode id" }),
+      ),
+      seriesId: Type.Optional(
+        Type.Integer({
+          minimum: 1,
+          description: "Internal Sonarr series id, with seasonNumber",
+        }),
+      ),
+      seasonNumber: Type.Optional(Type.Integer({ minimum: 0 })),
+    }),
+    execute(params) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          const service: ServiceName = "sonarr"
+          const target = yield* toolCheck(() => sonarrReleaseTarget(params))
+          const result = yield* readReleases(service, cfg, ctx, target, params)
+          return textResult(result, {
+            service,
+            action: "releases",
+            path: target.path,
+          })
+        }),
+      )
+    },
+  })
+}
+
+function sonarrReleaseTarget(params: SonarrReleaseParams): ReleaseTarget {
+  if (params.episodeId !== undefined) {
+    if (params.seriesId !== undefined || params.seasonNumber !== undefined) {
+      throw new Error(
+        "pass either episodeId or seriesId with seasonNumber, not both",
+      )
+    }
+    const episodeId = params.episodeId
+    return {
+      path: `/api/v3/release?episodeId=${episodeId}`,
+      matches: (release) => mappedEpisodeIds(release).includes(episodeId),
+      describe: describeMappedEpisodes,
+    }
+  }
+  if (params.seriesId === undefined || params.seasonNumber === undefined) {
+    throw new Error("pass episodeId, or seriesId with seasonNumber")
+  }
+  const seriesId = params.seriesId
+  const seasonNumber = params.seasonNumber
+  return {
+    path: `/api/v3/release?seriesId=${seriesId}&seasonNumber=${seasonNumber}`,
+    matches: (release) =>
+      release.mappedSeriesId === seriesId &&
+      release.mappedSeasonNumber === seasonNumber,
+    describe: describeMappedEpisodes,
+  }
+}
+
+function mappedEpisodeIds(release: JsonObject) {
+  const info = release.mappedEpisodeInfo
+  if (!Array.isArray(info)) return []
+  return info.flatMap((episode) =>
+    isJsonObject(episode) && isNumber(episode.id) ? [episode.id] : [],
+  )
+}
+
+/** Scene and absolute numbering is where wrong-episode grabs show up. */
+function describeMappedEpisodes(release: JsonObject) {
+  const season = release.mappedSeasonNumber
+  const episodes = numberList(release.mappedEpisodeNumbers)
+  const absolute = numberList(release.mappedAbsoluteEpisodeNumbers)
+  return {
+    episodes:
+      release.fullSeason === true
+        ? `S${season} full season`
+        : `S${season}E${episodes.join(",")}`,
+    ...(absolute.length > 0 ? { absolute } : {}),
+  }
+}
+
+function numberList(value: JsonValue | undefined): number[] {
+  return Array.isArray(value) ? value.filter(isNumber) : []
+}
+
 function deleteEpisodeFileTool(
   cfg: ServiceConfig,
   ctx: RunContext,
@@ -340,9 +447,10 @@ export function buildSonarrTools(
       "Sonarr read",
       "Check series/episode availability and air dates in Sonarr via GET /api/v3 paths: " +
         "series/episode for tracking/monitoring, episodefile for imported files, queue/history for acquisition, " +
-        "release for candidates/rejection reasons, calendar for episode air dates, blocklist, wanted/missing. " +
+        "calendar for episode air dates, blocklist, wanted/missing. " +
         "Load the sonarr skill for exact availability/date workflows.",
     ),
+    sonarrReleasesTool(cfg, ctx),
     sonarrSearchTool(cfg, ctx, probeAvailable),
     refreshSeriesTool(cfg, ctx),
     deleteEpisodeFileTool(cfg, ctx),

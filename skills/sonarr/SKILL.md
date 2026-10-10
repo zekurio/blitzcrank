@@ -20,12 +20,13 @@ metadata does not establish that the series is tracked or imported.
   `GET /api/v3/episodefile?seriesId={seriesId}` when file details are needed.
 - Acquiring: `GET /api/v3/queue/details?seriesId={seriesId}&includeSeries=true&includeEpisode=true`.
 - Candidates, when relevant to why an episode is not acquired:
-  `GET /api/v3/release?episodeId={episodeId}`; for a season,
-  `GET /api/v3/release?seriesId={seriesId}&seasonNumber={seasonNumber}`.
-  Read `approved`, `rejected`, and `rejections` alongside quality and
-  custom-format scores. This GET lists candidates; it does not grab them.
-  Rejected candidates explain local acceptance decisions, not global source
-  absence.
+  `sonarr_releases` with `episodeId`, or with `seriesId` and
+  `seasonNumber` for a season. Read `approved` and `rejections` alongside
+  quality and custom-format scores. Counts cover every indexer hit; the listing
+  is one filtered page, so narrow with `publishedAfter`, `titleContains`, or
+  `approvedOnly` before concluding a release is absent. It lists candidates;
+  it does not grab them. Rejected candidates explain local acceptance
+  decisions, not global source absence.
 - Dates: `GET /api/v3/calendar?start={urlEncodedISODate}&end={urlEncodedISODate}&unmonitored=true&includeSeries=true&includeEpisodeFile=true`.
   Match series and episode IDs within a bounded date window. `airDate` and
   `airDateUtc` describe airing, not a guaranteed homelab availability date.
@@ -66,7 +67,7 @@ Inspect each result's `verification` and follow with narrow reads as needed.
 - `sonarr_refresh_series`: verified `seriesId`.
 - `sonarr_grab_queue_item`: verified `queueId`.
 - `sonarr_delete_queue_item`: verified `queueId` and explicit `blocklist`/`removeFromClient`. `removeFromClient: true` destroys downloaded data and records a deletion; `false` does not.
-- `sonarr_blocklist_from_history`: verified `historyId` from the release's `grabbed` history record. Use this before replacement: the formerly highest-scoring release may win again. Sonarr starts a search, so do not add `sonarr_search`. Verify the new blocklist and queue entry.
+- `sonarr_blocklist_from_history`: verified `historyId` from the release's `grabbed` history record. Use this before replacement: the formerly highest-scoring release may win again. Usenet blocklisting matches one posting, so a re-post of the same title stays grabbable; check `sonarr_releases` with `titleContains` for re-posts first. Sonarr starts a search, so do not add `sonarr_search`. Verify the new blocklist and queue entry.
 - `sonarr_remove_from_blocklist`: only a clearly matching verified `blocklistId`.
 - `sonarr_delete_episode_file`: only a verified wrong `episodeFileId`, after reporter confirmation of replacement. Preserve multi-episode relationships, then search only affected episodes. For a verified wrong season, establish and tell the reporter the full extent, then delete every affected file; the count is uncapped, and a partly deleted season is worse than finishing or not starting.
 - `sonarr_manual_import`: use `importMode: "move"` and candidates from the manual-import GET, trimmed to `path`, `folderName`, `seriesId`, `episodeIds`, `quality`, `languages`, `releaseGroup`, and `indexerFlags` when present. Every submitted path and ID must have appeared in a Sonarr read. Verify command status.

@@ -6,8 +6,9 @@ import type { ToolRegistration } from "@earendil-works/pi-durable"
 import type { JsonValue } from "../services/http.js"
 import { buildRadarrTools } from "./arr-radarr.js"
 import { buildSonarrTools } from "./arr-sonarr.js"
-import { ToolError } from "./common.js"
+import { MAX_RESULT_CHARS, ToolError } from "./common.js"
 import { RunContext } from "./context.js"
+import { isReadTool } from "./index.ts"
 import { buildJellyfinTools } from "./jellyfin.js"
 import { buildSabnzbdTools } from "./sabnzbd.js"
 import { buildSeerrTools } from "./seerr.js"
@@ -118,13 +119,13 @@ for (const example of cases) {
       if (example.service === "sabnzbd") {
         assert.equal(url.searchParams.get("apikey"), "test-key")
         url.searchParams.delete("apikey")
-      } else {
+      } else if (example.service === "jellyfin") {
         assert.equal(
-          headers.get(
-            example.service === "jellyfin" ? "X-Emby-Token" : "X-Api-Key",
-          ),
-          "test-key",
+          headers.get("Authorization"),
+          'MediaBrowser Token="test-key"',
         )
+      } else {
+        assert.equal(headers.get("X-Api-Key"), "test-key")
       }
       const body = example.responses[calls.length]
       calls.push(`${init.method} ${url.pathname}${url.search}`)
@@ -142,7 +143,7 @@ for (const example of cases) {
       "safe",
     )
     for (const tool of tools) {
-      if (tool.name !== `${example.service}_request`) {
+      if (!isReadTool(tool.name)) {
         assert.notEqual(tool.replay, "safe", tool.name)
       }
     }
@@ -178,3 +179,277 @@ for (const example of cases) {
     }
   })
 }
+
+function release(
+  title: string,
+  publishDate: string,
+  episodeId: number,
+  extra: Record<string, JsonValue> = {},
+): Record<string, JsonValue> {
+  return {
+    guid: `https://indexer.test/${title}`,
+    title,
+    publishDate,
+    indexer: "Indexer",
+    protocol: "usenet",
+    size: 1_400_000_000,
+    quality: { quality: { id: 3, name: "WEBDL-1080p" } },
+    languages: [{ id: 8, name: "Japanese" }],
+    customFormats: [{ id: 1, name: "1080p" }],
+    customFormatScore: 50,
+    mappedSeriesId: 7,
+    mappedSeasonNumber: 2,
+    mappedEpisodeNumbers: [1],
+    mappedAbsoluteEpisodeNumbers: [171],
+    mappedEpisodeInfo: [{ id: episodeId, seasonNumber: 2, episodeNumber: 1 }],
+    approved: false,
+    rejections: [],
+    ...extra,
+  }
+}
+
+function resultText(result: Awaited<ReturnType<typeof execute>>): string {
+  const content = result.content?.[0]
+  assert.equal(content?.type, "text")
+  return content?.type === "text" ? content.text : ""
+}
+
+const existingFileRejection =
+  "Existing file on disk has a equal or higher Custom Format score: 13800"
+
+test("sonarr_releases counts every hit and lists filtered target releases", async (t) => {
+  const ctx = new RunContext()
+  const tools = buildSonarrTools(
+    { url: "http://service.test", apiKey: "test-key" },
+    ctx,
+    false,
+  )
+  const calls: string[] = []
+  t.mock.method(globalThis, "fetch", (input: URL, init: RequestInit) => {
+    const url = new URL(input)
+    calls.push(`${init.method} ${url.pathname}${url.search}`)
+    return Promise.resolve(
+      Response.json([
+        release("Old.S02E01-WAREZCX", "2024-11-25T10:00:00Z", 11, {
+          approved: true,
+          customFormatScore: 13800,
+        }),
+        release("Old.S02E01-WAREZCX", "2025-01-06T10:00:00Z", 11, {
+          approved: true,
+          customFormatScore: 13800,
+        }),
+        release("New.S02E01-DRiFTKiNG", "2026-10-03T10:00:00Z", 11, {
+          rejections: [existingFileRejection],
+        }),
+        release("Show.S01E01-ABJ", "2022-01-01T00:00:00Z", 99, {
+          mappedSeasonNumber: 1,
+        }),
+        {
+          title: "Unparseable",
+          publishDate: "2026-10-04T00:00:00Z",
+          approved: false,
+          rejections: ["Unable to identify correct episode(s)"],
+        },
+      ]),
+    )
+  })
+  assert.equal(
+    tools.find((tool) => tool.name === "sonarr_releases")?.replay,
+    "safe",
+  )
+
+  const result = await execute(tools, "sonarr_releases", {
+    purpose: "find continuation releases",
+    episodeId: 11,
+    publishedAfter: "2026-10-01",
+  })
+
+  assert.deepEqual(calls, ["GET /api/v3/release?episodeId=11"])
+  assert.deepEqual(JSON.parse(resultText(result)), {
+    total: 5,
+    forTarget: 3,
+    approvedForTarget: 2,
+    matchingFilters: 1,
+    listed: 1,
+    rejectionsInMatching: [{ reason: existingFileRejection, count: 1 }],
+    otherTargets: { count: 2, examples: ["Show.S01E01-ABJ", "Unparseable"] },
+    releases: [
+      {
+        title: "New.S02E01-DRiFTKiNG",
+        published: "2026-10-03",
+        indexer: "Indexer",
+        protocol: "usenet",
+        sizeMb: 1400,
+        quality: "WEBDL-1080p",
+        languages: ["Japanese"],
+        customFormatScore: 50,
+        customFormats: ["1080p"],
+        approved: false,
+        rejections: [existingFileRejection],
+        episodes: "S2E1",
+        absolute: [171],
+      },
+    ],
+  })
+})
+
+test("sonarr_releases caps the listing and maps season searches by series", async (t) => {
+  const tools = buildSonarrTools(
+    { url: "http://service.test", apiKey: "test-key" },
+    new RunContext(),
+    false,
+  )
+  t.mock.method(globalThis, "fetch", () =>
+    Promise.resolve(
+      Response.json([
+        release("A.S02E01-WAREZCX", "2024-11-25T10:00:00Z", 11),
+        release("B.S02E02-WAREZCX", "2024-11-25T10:00:00Z", 12),
+        release("C.S02E03-WAREZCX", "2024-11-25T10:00:00Z", 13),
+        release("D.S02E01-WAREZCX", "2024-11-25T10:00:00Z", 11, {
+          mappedSeriesId: 8,
+        }),
+      ]),
+    ),
+  )
+
+  const result = await execute(tools, "sonarr_releases", {
+    purpose: "inspect season candidates",
+    seriesId: 7,
+    seasonNumber: 2,
+    titleContains: "warezcx",
+    limit: 2,
+  })
+
+  const body = JSON.parse(resultText(result)) as {
+    forTarget: number
+    matchingFilters: number
+    listed: number
+    releases: { title: string }[]
+  }
+  assert.equal(body.forTarget, 3)
+  assert.equal(body.matchingFilters, 3)
+  assert.equal(body.listed, 2)
+  assert.deepEqual(
+    body.releases.map((entry) => entry.title),
+    ["A.S02E01-WAREZCX", "B.S02E02-WAREZCX"],
+  )
+})
+
+test("release candidates are read only through the summarizing tools", async (t) => {
+  const tools = buildSonarrTools(
+    { url: "http://service.test", apiKey: "test-key" },
+    new RunContext(),
+    false,
+  )
+  const calls: string[] = []
+  t.mock.method(globalThis, "fetch", (input: URL) => {
+    const url = new URL(input)
+    calls.push(`${url.pathname}${url.search}`)
+    return Promise.resolve(Response.json([]))
+  })
+
+  for (const path of [
+    "/api/v3/release?episodeId=11",
+    "/api/v3/Release/?seriesId=7&seasonNumber=2",
+  ]) {
+    await assert.rejects(
+      execute(tools, "sonarr_request", { purpose: "raw candidates", path }),
+      /sonarr_releases/,
+    )
+  }
+  await assert.rejects(
+    execute(tools, "sonarr_releases", {
+      purpose: "ambiguous target",
+      episodeId: 11,
+      seriesId: 7,
+    }),
+    ToolError,
+  )
+  await assert.rejects(
+    execute(tools, "sonarr_releases", {
+      purpose: "season without series",
+      seasonNumber: 2,
+    }),
+    ToolError,
+  )
+  assert.deepEqual(calls, [])
+
+  await execute(tools, "sonarr_request", {
+    purpose: "release profiles stay readable",
+    path: "/api/v3/releaseprofile",
+  })
+  assert.deepEqual(calls, ["/api/v3/releaseprofile"])
+})
+
+test("radarr_releases lists only releases mapped to the movie", async (t) => {
+  const tools = buildRadarrTools(
+    { url: "http://service.test", apiKey: "test-key" },
+    new RunContext(),
+  )
+  const calls: string[] = []
+  t.mock.method(globalThis, "fetch", (input: URL) => {
+    const url = new URL(input)
+    calls.push(`${url.pathname}${url.search}`)
+    return Promise.resolve(
+      Response.json([
+        { title: "Movie.2026.1080p", mappedMovieId: 7, approved: true },
+        { title: "Other.Movie.2026.1080p", mappedMovieId: 8, approved: true },
+        { title: "Unmapped.1080p", mappedMovieId: null, approved: false },
+      ]),
+    )
+  })
+
+  const result = await execute(tools, "radarr_releases", {
+    purpose: "movie candidates",
+    movieId: 7,
+  })
+
+  assert.deepEqual(calls, ["/api/v3/release?movieId=7"])
+  const body = JSON.parse(resultText(result)) as {
+    forTarget: number
+    approvedForTarget: number
+    otherTargets: { count: number }
+    releases: { title: string }[]
+  }
+  assert.equal(body.forTarget, 1)
+  assert.equal(body.approvedForTarget, 1)
+  assert.equal(body.otherTargets.count, 2)
+  assert.deepEqual(
+    body.releases.map((entry) => entry.title),
+    ["Movie.2026.1080p"],
+  )
+})
+
+test("sonarr_releases trims the listing to fit one result as valid JSON", async (t) => {
+  const tools = buildSonarrTools(
+    { url: "http://service.test", apiKey: "test-key" },
+    new RunContext(),
+    false,
+  )
+  t.mock.method(globalThis, "fetch", () =>
+    Promise.resolve(
+      Response.json(
+        Array.from({ length: 50 }, (_, index) =>
+          release(
+            `${index}.${"Long.Release.Title.".repeat(40)}`,
+            "2026-10-03T10:00:00Z",
+            11,
+          ),
+        ),
+      ),
+    ),
+  )
+
+  const text = resultText(
+    await execute(tools, "sonarr_releases", {
+      purpose: "many long candidates",
+      episodeId: 11,
+      limit: 50,
+    }),
+  )
+
+  const body = JSON.parse(text) as { listed: number; releases: unknown[] }
+  assert.ok(text.length <= MAX_RESULT_CHARS)
+  assert.ok(body.listed > 0 && body.listed < 50)
+  assert.equal(body.releases.length, body.listed)
+})

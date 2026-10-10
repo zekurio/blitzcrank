@@ -18,9 +18,11 @@ does not establish that the movie is tracked or imported.
 - Imported: `GET /api/v3/moviefile?movieId={movieId}`.
 - Acquiring: `GET /api/v3/queue/details?movieId={movieId}&includeMovie=true`.
 - Candidates, when relevant to why it is not acquired:
-  `GET /api/v3/release?movieId={movieId}`. Read `approved`, `rejected`, and
-  `rejections` alongside quality and custom-format scores. This GET lists
-  candidates; it does not grab them. Rejected candidates explain local
+  `radarr_releases` with `movieId`. Read `approved` and `rejections`
+  alongside quality and custom-format scores. Counts cover every indexer hit;
+  the listing is one filtered page, so narrow with `publishedAfter`,
+  `titleContains`, or `approvedOnly` before concluding a release is absent.
+  It lists candidates; it does not grab them. Rejected candidates explain local
   acceptance decisions, not global source absence.
 - Dates: `GET /api/v3/calendar?start={urlEncodedISODate}&end={urlEncodedISODate}&unmonitored=true`.
   Match the movie ID within a bounded date window. Distinguish `inCinemas`,
@@ -67,7 +69,7 @@ Inspect each result's `verification` and follow with narrow reads as needed. Siz
 - `radarr_refresh_movie`: verified `movieId`.
 - `radarr_grab_queue_item`: verified `queueId`.
 - `radarr_delete_queue_item`: verified `queueId` and explicit `blocklist`/`removeFromClient`. `removeFromClient: true` destroys downloaded data and records a deletion; `false` does not.
-- `radarr_blocklist_from_history`: verified `historyId` from the release's `grabbed` history record. Radarr starts its own replacement search, so do not add `radarr_search`. Verify the blocklist and that the queue contains a different replacement.
+- `radarr_blocklist_from_history`: verified `historyId` from the release's `grabbed` history record. Usenet blocklisting matches one posting, so a re-post of the same title stays grabbable; check `radarr_releases` with `titleContains` for re-posts first. Radarr starts its own replacement search, so do not add `radarr_search`. Verify the blocklist and that the queue contains a different replacement.
 - `radarr_remove_from_blocklist`: only a clearly matching verified `blocklistId`.
 - `radarr_delete_movie_file`: verified `movieFileId` from a Radarr read, only for a strongly verified corrupt or unusable exact file. It removes the movie's only copy from disk; verification must report HTTP 404.
 - `radarr_manual_import`: use `importMode: "auto"` and candidates from the manual-import GET, trimmed to `path`, `folderName`, `movieId`, `quality`, `languages`, `releaseGroup`, and `indexerFlags` when present. Every submitted path and ID must have appeared in a Radarr read. Verify command status.

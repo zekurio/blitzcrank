@@ -1,14 +1,22 @@
 import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable"
 import { Type } from "typebox"
 
-import { clampEntries, clampEntry, type CaseFile } from "../casefile.ts"
+import {
+  clampEntries,
+  clampEntry,
+  MAX_ENTRIES,
+  MAX_ENTRY_CHARS,
+  type CaseFile,
+} from "../casefile.ts"
 import { textResult } from "./common.ts"
 
 /**
  * The agent's own memory between runs. It replaces the stored summary
  * wholesale rather than appending, so the model prunes what stopped being
- * true instead of accumulating a transcript; the host caps entry count and
- * length, because this text is re-read at the start of every later run.
+ * true instead of accumulating a transcript. Entry count and length are capped
+ * because this text is re-read at the start of every later run. The schema
+ * declares the caps so an oversized entry fails visibly instead of being
+ * silently cut by the host clamp.
  *
  * Only the summary is writable: run history, spend, and revisit chain are
  * host-written facts the agent must not be able to edit.
@@ -24,25 +32,20 @@ export function buildCaseFileTool(file: CaseFile): ToolRegistration {
       "Never store secrets, raw JSON, or user-identifying details.",
     parameters: Type.Object({
       hypothesis: Type.Optional(
-        Type.String({
-          description:
-            "Current best explanation in one line, or omit when the cause is established",
-        }),
+        entry(
+          "Current best explanation in one line, or omit when the cause is established",
+        ),
       ),
-      facts: Type.Array(Type.String(), {
-        description:
-          "Verified facts with their evidence, e.g. 'series id 483; all 24 episode files carry a single jpn audio stream (media_probe)'",
-      }),
+      facts: entries(
+        "Verified facts with their evidence, e.g. 'series id 483; all 24 episode files carry a single jpn audio stream (media_probe)'",
+      ),
       ruledOut: Type.Optional(
-        Type.Array(Type.String(), {
-          description:
-            "Explanations already disproved, so the next run does not retry them",
-        }),
+        entries(
+          "Explanations already disproved, so the next run does not retry them",
+        ),
       ),
       openQuestions: Type.Optional(
-        Type.Array(Type.String(), {
-          description: "What still needs an answer, and from which source",
-        }),
+        entries("What still needs an answer, and from which source"),
       ),
     }),
     async execute(params) {
@@ -62,5 +65,16 @@ export function buildCaseFileTool(file: CaseFile): ToolRegistration {
         { action: "update_case_file" },
       )
     },
+  })
+}
+
+function entry(description: string) {
+  return Type.String({ maxLength: MAX_ENTRY_CHARS, description })
+}
+
+function entries(description: string) {
+  return Type.Array(Type.String({ maxLength: MAX_ENTRY_CHARS }), {
+    maxItems: MAX_ENTRIES,
+    description: `${description}. At most ${MAX_ENTRIES} entries of ${MAX_ENTRY_CHARS} characters each.`,
   })
 }
