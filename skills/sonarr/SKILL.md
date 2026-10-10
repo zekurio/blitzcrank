@@ -46,6 +46,14 @@ For missing episodes, inspect monitoring, air dates, files, queue, history, and
 paths. Never search unaired/unmonitored episodes or duplicate progressing work.
 If nothing is grabbed, report concrete candidate rejections.
 
+Change monitoring only when the issue asks for it or a wrong flag blocks the
+requested media. `sonarr_set_series_monitoring` sets the series flag, named
+seasons, and `monitorNewItems`, and keeps every other series field. Setting a
+season's flag sets all of its episodes to match, overriding deliberate
+per-episode choices; check them first. For single episodes, send
+`PUT /episode/monitor` with `episodeIds` and `monitored`. Raw `PUT /series/{id}`
+is refused because an incomplete body resets the series.
+
 Scope `sonarr_search` to exact episodes or a season. Whole-series searches need
 a whole-series issue. Set `expectedEpisodeCount` to the actual scoped count for
 multi-episode searches and announce it first. Test hypotheses on one episode,

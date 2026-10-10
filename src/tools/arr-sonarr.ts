@@ -1,3 +1,4 @@
+import { StringEnum } from "@earendil-works/pi-ai"
 import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable"
 import { Effect } from "effect"
 import { Type } from "typebox"
@@ -10,6 +11,8 @@ import {
   deleteQueueItemTool,
   runArrCommand,
   runArrFileDelete,
+  runArrMonitoringUpdate,
+  type ArrRecord,
 } from "./arr-common.ts"
 import {
   reasonParam,
@@ -293,6 +296,150 @@ function deleteEpisodeFileTool(
   })
 }
 
+interface SeriesMonitoringParams {
+  seriesId: number
+  monitored?: boolean | undefined
+  seasons?: Array<{ seasonNumber: number; monitored: boolean }> | undefined
+  monitorNewItems?: "all" | "none" | undefined
+}
+
+type SeasonRecord = ArrRecord & { seasonNumber: number; monitored: boolean }
+
+function setSeriesMonitoringTool(
+  cfg: ServiceConfig,
+  ctx: RunContext,
+): ToolRegistration {
+  return defineTool({
+    name: "sonarr_set_series_monitoring",
+    description:
+      "Change a Sonarr series' monitoring: the series flag, named seasons, and monitorNewItems (Sonarr v4). " +
+      "Reads the current series and sends it back with only those fields changed, so path, profiles, " +
+      "identity, and unnamed seasons stay as they are. Changing a season's flag also sets every episode " +
+      "in that season to match. For single episodes use PUT /api/v3/episode/monitor via sonarr_request. " +
+      "The series id must pass the Sonarr evidence gate.",
+    parameters: Type.Object({
+      reason: reasonParam(),
+      seriesId: Type.Integer({
+        minimum: 1,
+        description: "Internal Sonarr series id (not tvdbId)",
+      }),
+      monitored: Type.Optional(
+        Type.Boolean({ description: "Series-level monitoring" }),
+      ),
+      seasons: Type.Optional(
+        Type.Array(
+          Type.Object({
+            seasonNumber: Type.Integer({ minimum: 0 }),
+            monitored: Type.Boolean(),
+          }),
+          { minItems: 1, description: "Seasons to change; others are kept" },
+        ),
+      ),
+      monitorNewItems: Type.Optional(
+        StringEnum(["all", "none"] as const, {
+          description: "Whether seasons Sonarr adds later are monitored",
+        }),
+      ),
+    }),
+    execute(params) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          const service = "sonarr" as const
+          const outcome = yield* runArrMonitoringUpdate(cfg, service, ctx, {
+            path: `/api/v3/series/${params.seriesId}`,
+            id: params.seriesId,
+            hint: "series id",
+            identity: "tvdbId",
+            preserved: [
+              "tvdbId",
+              "path",
+              "qualityProfileId",
+              "languageProfileId",
+              "seriesType",
+              "seasonFolder",
+              "tags",
+            ],
+            patch: (record) => patchSeriesMonitoring(record, params),
+            monitoring: (record) => ({
+              monitored: record.monitored ?? null,
+              monitorNewItems: record.monitorNewItems ?? null,
+              seasons: seasonRecords(record).map((season) => ({
+                seasonNumber: season.seasonNumber,
+                monitored: season.monitored,
+              })),
+            }),
+          })
+          return textResult(outcome, {
+            service,
+            action: "set_series_monitoring",
+            seriesId: params.seriesId,
+          })
+        }),
+      )
+    },
+  })
+}
+
+function patchSeriesMonitoring(
+  record: ArrRecord,
+  params: SeriesMonitoringParams,
+): ArrRecord {
+  if (
+    params.monitored === undefined &&
+    params.seasons === undefined &&
+    params.monitorNewItems === undefined
+  ) {
+    throw new Error("name monitored, seasons, or monitorNewItems to change")
+  }
+  const seasons = seasonRecords(record)
+  const requested = new Map<number, boolean>()
+  for (const season of params.seasons ?? []) {
+    if (requested.has(season.seasonNumber)) {
+      throw new Error(`season ${season.seasonNumber} is named twice`)
+    }
+    if (!seasons.some((s) => s.seasonNumber === season.seasonNumber)) {
+      throw new Error(
+        `series ${params.seriesId} has no season ${season.seasonNumber}; nothing was written`,
+      )
+    }
+    requested.set(season.seasonNumber, season.monitored)
+  }
+  if (params.monitorNewItems !== undefined && !isString(record.monitorNewItems))
+    throw new Error(
+      "this Sonarr has no monitorNewItems setting; nothing was written",
+    )
+  return {
+    ...record,
+    ...(params.monitored !== undefined ? { monitored: params.monitored } : {}),
+    ...(params.monitorNewItems !== undefined
+      ? { monitorNewItems: params.monitorNewItems }
+      : {}),
+    seasons: seasons.map((season) => {
+      const monitored = requested.get(season.seasonNumber)
+      return monitored === undefined ? season : { ...season, monitored }
+    }),
+  }
+}
+
+/** The PUT sends every season back, so a malformed list must never be sent. */
+function seasonRecords(record: ArrRecord): SeasonRecord[] {
+  const seasons = record.seasons
+  if (!Array.isArray(seasons) || !seasons.every(isSeasonRecord)) {
+    throw new Error(
+      `series ${String(record.id)} read back without a valid seasons list`,
+    )
+  }
+  return seasons
+}
+
+function isSeasonRecord(value: JsonValue): value is SeasonRecord {
+  return (
+    isJsonObject(value) &&
+    Number.isInteger(value.seasonNumber) &&
+    typeof value.monitored === "boolean"
+  )
+}
+
 export function buildSonarrTools(
   cfg: ServiceConfig,
   ctx: RunContext,
@@ -304,13 +451,15 @@ export function buildSonarrTools(
       cfg,
       ctx,
       "Sonarr API under /api/v3. GET reads series, episodes, files, queue, history, releases, calendar, " +
-        "blocklist, and profiles. Writes: PUT series/episode monitoring, POST command (RefreshSeries, " +
+        "blocklist, and profiles. Writes: PUT episode/{id} and PUT episode/monitor (episode monitoring), POST command (RefreshSeries, " +
         "RescanSeries, ManualImport, DownloadedEpisodesScan, RefreshMonitoredDownloads), POST queue/grab/{id}, " +
         "POST history/failed/{id}, DELETE blocklist/{id}, POST release, and DELETE queue/{id}?removeFromClient=false. " +
-        "Searches go through sonarr_search, deletions through the delete tools; server settings are refused. " +
+        "Searches go through sonarr_search, series and season monitoring through sonarr_set_series_monitoring, " +
+        "deletions through the delete tools; server settings are refused. " +
         "Load the sonarr skill for workflows.",
     ),
     sonarrSearchTool(cfg, ctx, probeAvailable),
+    setSeriesMonitoringTool(cfg, ctx),
     deleteEpisodeFileTool(cfg, ctx),
     deleteQueueItemTool("sonarr", cfg, ctx),
   ]

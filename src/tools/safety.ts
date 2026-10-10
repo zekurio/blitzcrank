@@ -163,8 +163,12 @@ export function arrRoute(
     method === m && matches(resource, pattern)
 
   if (write("POST", "command")) return arrCommand(service, body)
+  // A PUT replaces the whole record, and omitted fields reset to defaults.
   if (write("PUT", `${media}/:id`))
-    return flag(query, "movefiles", false) ? ADMIN : WRITE
+    return refused(
+      `use ${service === "sonarr" ? "sonarr_set_series_monitoring" : "radarr_set_movie_monitoring"}, ` +
+        `which changes monitoring and preserves the rest of the ${media}.`,
+    )
   if (service === "sonarr" && write("PUT", "episode/:id")) return WRITE
   if (service === "sonarr" && write("PUT", "episode/monitor")) return WRITE
   if (write("POST", "queue/grab/:id")) return WRITE
@@ -185,6 +189,38 @@ export function arrRoute(
         : "radarr_delete_movie_file",
     )
   return ADMIN
+}
+
+/**
+ * Arr and Jellyfin bind JSON property names case-insensitively and let the
+ * last duplicate win, so `{"name": "RefreshSeries", "Name": "SeriesSearch"}`
+ * would pass a check on `name` and run `SeriesSearch`. Refuse keys that
+ * collide under ASCII case folding at any depth, and non-ASCII keys, whose
+ * folding the services need not share with JavaScript.
+ */
+export function bodyRefusal(body: unknown): Route | undefined {
+  const pending = [body]
+  while (pending.length > 0) {
+    const value = pending.pop()
+    if (Array.isArray(value)) {
+      pending.push(...value)
+      continue
+    }
+    if (typeof value !== "object" || value === null) continue
+    const keys = new Set<string>()
+    for (const [key, child] of Object.entries(value)) {
+      if (/[^\x20-\x7e]/.test(key))
+        return refused(`body key ${JSON.stringify(key)} is not plain ASCII`)
+      const folded = key.toLowerCase()
+      if (keys.has(folded))
+        return refused(
+          `body repeats key ${JSON.stringify(key)} in another case; the service would apply only the last`,
+        )
+      keys.add(folded)
+      pending.push(child)
+    }
+  }
+  return undefined
 }
 
 function arrCommand(service: "sonarr" | "radarr", body: unknown): Route {

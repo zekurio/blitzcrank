@@ -7,7 +7,12 @@ import { Type } from "typebox"
 
 import type { JsonValue } from "../services/http.ts"
 import type { RunContext } from "./context.ts"
-import { assertServicePath, type Method, type Route } from "./safety.ts"
+import {
+  assertServicePath,
+  bodyRefusal,
+  type Method,
+  type Route,
+} from "./safety.ts"
 
 export const MAX_RESULT_CHARS = 30_000
 
@@ -124,6 +129,7 @@ export function makeRequestTool<E>(
 ): HostTool {
   // SAFETY: tool bodies are parsed JSON objects validated by the schema.
   const routeOf = (args: RequestArgs) =>
+    bodyRefusal(args.body) ??
     spec.route(args.method, args.path, args.body as JsonValue | undefined)
   const tool = defineTool({
     name: `${spec.service}_request`,
@@ -157,17 +163,21 @@ export function makeRequestTool<E>(
             return route
           })
           if (route.kind === "write") ctx.noteMutation("mutate")
-          const data = yield* spec.request(
+          // A successful empty body (204, or 200 on many Arr writes) arrives
+          // as undefined despite the declared type. It carries no IDs or paths.
+          const data: JsonValue | undefined = yield* spec.request(
             params.method,
             params.path,
             params.body as JsonValue | undefined,
           )
-          ctx.recordRead(
-            spec.service,
-            params.path,
-            isString(data) ? data : JSON.stringify(data),
-          )
-          recordResponsePaths(ctx, spec.service, data)
+          if (data !== undefined) {
+            ctx.recordRead(
+              spec.service,
+              params.path,
+              isString(data) ? data : JSON.stringify(data),
+            )
+            recordResponsePaths(ctx, spec.service, data)
+          }
           return textResult(data ?? { ok: true }, {
             service: spec.service,
             method: params.method,

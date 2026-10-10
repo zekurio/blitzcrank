@@ -130,7 +130,8 @@ export function jsonRequestEffect<T = JsonValue>(
       )
     }
     if (!response.text) {
-      // SAFETY: Callers ignore successful empty service responses.
+      // SAFETY: A successful empty body (204, empty 200) resolves to undefined
+      // despite T. Callers that use the result must check for it.
       return undefined as T
     }
     return yield* Effect.try({

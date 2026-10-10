@@ -13,6 +13,7 @@ import {
   reasonParam,
   runMutation,
   textResult,
+  toolCheck,
   type EvidenceRequirement,
   type HostTool,
 } from "./common.ts"
@@ -143,6 +144,112 @@ function verifyDeletedFile(
   )
 }
 
+export type ArrRecord = { [key: string]: JsonValue | undefined }
+
+export interface MonitoringUpdate {
+  /** The record's own path, e.g. `/api/v3/series/12`. */
+  path: string
+  id: number
+  hint: string
+  /** External identity that a body without it would reset to 0. */
+  identity: "tvdbId" | "tmdbId"
+  /** Fields that must read back exactly as they were sent. */
+  preserved: readonly string[]
+  /** Applies the requested monitoring to a copy; throws on an invalid request. */
+  patch: (record: ArrRecord) => ArrRecord
+  /** The monitoring fields the read-back must match. */
+  monitoring: (record: ArrRecord) => JsonValue
+}
+
+/**
+ * Arr PUT replaces the whole record: an omitted field deserializes to its
+ * default (identity 0, no seasons, no path). So read the current record,
+ * change only monitoring, and send everything else back as read.
+ */
+export function runArrMonitoringUpdate(
+  cfg: ServiceConfig,
+  service: ArrService,
+  ctx: RunContext,
+  update: MonitoringUpdate,
+) {
+  return Effect.gen(function* () {
+    yield* toolCheck(() => ctx.requireEvidence(service, update.id, update.hint))
+    const current = yield* arrRequest(cfg, update.path)
+    const body = yield* toolCheck(() => {
+      const record = arrRecord(current, update)
+      ctx.recordRead(service, update.path, JSON.stringify(record))
+      return update.patch(record)
+    })
+    return yield* runMutation(ctx, {
+      kind: "mutate",
+      perform: () => arrRequest(cfg, update.path, "PUT", body),
+      verify: () =>
+        Effect.gen(function* () {
+          const after = yield* arrRequest(cfg, update.path)
+          return yield* toolCheck(() => {
+            const record = arrRecord(after, update)
+            ctx.recordRead(service, update.path, JSON.stringify(record))
+            return monitoringReadBack(record, body, update)
+          })
+        }),
+    })
+  })
+}
+
+function arrRecord(
+  value: JsonValue | undefined,
+  update: MonitoringUpdate,
+): ArrRecord {
+  if (!isJsonObject(value) || value.id !== update.id) {
+    throw new Error(
+      `${update.hint} ${update.id} did not read back as that record`,
+    )
+  }
+  const identity = value[update.identity]
+  if (
+    !isNumber(identity) ||
+    identity < 1 ||
+    typeof value.path !== "string" ||
+    value.path === "" ||
+    !isNumber(value.qualityProfileId) ||
+    typeof value.monitored !== "boolean"
+  ) {
+    // Sending such a record back could reset the missing fields.
+    throw new Error(
+      `${update.hint} ${update.id} read back without a valid ${update.identity}, path, ` +
+        "qualityProfileId, or monitored",
+    )
+  }
+  return value
+}
+
+function monitoringReadBack(
+  record: ArrRecord,
+  sent: ArrRecord,
+  update: MonitoringUpdate,
+): JsonValue {
+  const monitoring = update.monitoring(record)
+  const changed = update.preserved.filter(
+    (field) => JSON.stringify(record[field]) !== JSON.stringify(sent[field]),
+  )
+  if (
+    changed.length === 0 &&
+    JSON.stringify(monitoring) === JSON.stringify(update.monitoring(sent))
+  ) {
+    return {
+      confirmed: "monitoring applied; other fields unchanged",
+      monitoring,
+    }
+  }
+  return {
+    warning:
+      changed.length > 0
+        ? `read-back differs in ${changed.join(", ")}`
+        : "read-back monitoring differs from the request",
+    monitoring,
+  }
+}
+
 /** Removing a queue item from the download client destroys its data. */
 export function deleteQueueItemTool(
   service: ArrService,
@@ -190,9 +297,14 @@ export function deleteQueueItemTool(
 }
 
 function isJsonObject(
-  value: JsonValue,
+  value: JsonValue | undefined,
 ): value is { [key: string]: JsonValue | undefined } {
-  return value !== null && Object(value) === value && !Array.isArray(value)
+  return (
+    value !== undefined &&
+    value !== null &&
+    Object(value) === value &&
+    !Array.isArray(value)
+  )
 }
 
 function isNumber<Value>(value: Value): value is Value & number {

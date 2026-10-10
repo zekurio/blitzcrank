@@ -43,6 +43,14 @@ const CAPABILITY_LINES: ReadonlyArray<readonly [string, string]> = [
     "thread_history_search",
     "- `thread_history_search` supplies leads from other issues, never this conversation or mutation authorization.",
   ],
+  [
+    "sonarr_set_series_monitoring",
+    "- Change series or season monitoring only with `sonarr_set_series_monitoring`. A season change sets all its episodes to match.",
+  ],
+  [
+    "radarr_set_movie_monitoring",
+    "- Change movie monitoring only with `radarr_set_movie_monitoring`.",
+  ],
 ]
 
 export function buildSystemPrompt(

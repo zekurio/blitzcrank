@@ -45,6 +45,11 @@ history, and SAB handoff. Respect monitoring and availability. Search once (`POS
 clearing a failed release, or for an explicit replacement/fix request. Never
 duplicate progressing work.
 
+Change monitoring only when the issue asks for it or a wrong flag blocks the
+requested movie. `radarr_set_movie_monitoring` changes only `monitored` and
+keeps every other movie field. Raw `PUT /movie/{id}` is refused because an
+incomplete body resets the movie.
+
 For stalls, diagnose mapping, permissions, space, locks, category, naming, and
 recognized-video failures. Allow download, verification, repair, and unpack work
 to finish before retrying. If Radarr cannot see an existing file, check runtime

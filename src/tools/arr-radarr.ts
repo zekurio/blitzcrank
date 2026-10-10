@@ -7,6 +7,7 @@ import {
   arrRequestTool,
   deleteQueueItemTool,
   runArrFileDelete,
+  runArrMonitoringUpdate,
 } from "./arr-common.ts"
 import { reasonParam, textResult, type HostTool } from "./common.ts"
 import type { RunContext } from "./context.ts"
@@ -47,6 +48,53 @@ function deleteMovieFileTool(
   })
 }
 
+function setMovieMonitoringTool(
+  cfg: ServiceConfig,
+  ctx: RunContext,
+): ToolRegistration {
+  return defineTool({
+    name: "radarr_set_movie_monitoring",
+    description:
+      "Change whether Radarr monitors a movie. Reads the current movie and sends it back with only " +
+      "monitored changed, so path, profile, identity, and availability stay as they are. " +
+      "The movie id must pass the Radarr evidence gate.",
+    parameters: Type.Object({
+      reason: reasonParam(),
+      movieId: Type.Integer({
+        minimum: 1,
+        description: "Internal Radarr movie id (not tmdbId)",
+      }),
+      monitored: Type.Boolean(),
+    }),
+    execute(params) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          const outcome = yield* runArrMonitoringUpdate(cfg, "radarr", ctx, {
+            path: `/api/v3/movie/${params.movieId}`,
+            id: params.movieId,
+            hint: "movie id",
+            identity: "tmdbId",
+            preserved: [
+              "tmdbId",
+              "path",
+              "qualityProfileId",
+              "minimumAvailability",
+              "tags",
+            ],
+            patch: (record) => ({ ...record, monitored: params.monitored }),
+            monitoring: (record) => ({ monitored: record.monitored ?? null }),
+          })
+          return textResult(outcome, {
+            service: "radarr",
+            action: "set_movie_monitoring",
+            movieId: params.movieId,
+          })
+        }),
+      )
+    },
+  })
+}
+
 export function buildRadarrTools(
   cfg: ServiceConfig,
   ctx: RunContext,
@@ -57,11 +105,13 @@ export function buildRadarrTools(
       cfg,
       ctx,
       "Radarr API under /api/v3. GET reads movies, files, queue, history, releases, calendar, blocklist, " +
-        "and profiles. Writes: PUT movie/{id} monitoring, POST command (MoviesSearch, RefreshMovie, RescanMovie, " +
+        "and profiles. Writes: POST command (MoviesSearch, RefreshMovie, RescanMovie, " +
         "ManualImport, DownloadedMoviesScan, RefreshMonitoredDownloads), POST queue/grab/{id}, " +
         "POST history/failed/{id}, DELETE blocklist/{id}, POST release, and DELETE queue/{id}?removeFromClient=false. " +
-        "Deletions go through the delete tools; server settings are refused. Load the radarr skill for workflows.",
+        "Monitoring goes through radarr_set_movie_monitoring, deletions through the delete tools; server settings " +
+        "are refused. Load the radarr skill for workflows.",
     ),
+    setMovieMonitoringTool(cfg, ctx),
     deleteMovieFileTool(cfg, ctx),
     deleteQueueItemTool("radarr", cfg, ctx),
   ]
