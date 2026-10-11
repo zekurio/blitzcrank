@@ -6,12 +6,20 @@
   pnpmConfigHook,
   fetchPnpmDeps,
   makeWrapper,
+  component ? "host",
 }:
 let
   pnpm = pnpm_11.override { nodejs-slim = nodejs; };
+  isHost = component == "host";
+  pname = if isHost then "blitzcrank" else "blitzcrank-mcp";
+  workspace = if isHost then "blitzcrank" else "@blitzcrank/mcp";
 in
+assert builtins.elem component [
+  "host"
+  "mcp"
+];
 stdenv.mkDerivation (finalAttrs: {
-  pname = "blitzcrank";
+  inherit pname;
   version = "0.1.0";
 
   src = lib.cleanSource ../.;
@@ -24,7 +32,9 @@ stdenv.mkDerivation (finalAttrs: {
   ];
 
   pnpmDeps = fetchPnpmDeps {
-    inherit (finalAttrs) pname version src;
+    # Both builds use the same locked workspace dependency store.
+    pname = "blitzcrank";
+    inherit (finalAttrs) version src;
     inherit pnpm;
     fetcherVersion = 4;
     hash = "sha256-LxUIpq1T8jigu3ilEAIzRXClPf8i4UAcvJemofYVFNs=";
@@ -32,38 +42,38 @@ stdenv.mkDerivation (finalAttrs: {
 
   buildPhase = ''
     runHook preBuild
-    pnpm build
-    # `pnpm prune --prod` cannot prune a workspace in place: it asks to purge
-    # node_modules and aborts without a TTY. Reinstall the production
-    # dependencies from the offline store instead.
-    rm -rf node_modules packages/*/node_modules
-    pnpm install --offline --prod --frozen-lockfile --ignore-scripts
+    pnpm --filter ${lib.escapeShellArg workspace} build
+    # Each output needs its own dependency tree, with no links back into the
+    # workspace. Enable pnpm 11's locked deployment path for this command;
+    # neither package has workspace dependencies that would need injection.
+    pnpm --filter ${lib.escapeShellArg workspace} \
+      --config.inject-workspace-packages=true deploy \
+      --prod --offline --ignore-scripts "$TMPDIR/deploy"
     runHook postBuild
   '';
 
   installPhase = ''
     runHook preInstall
-    root=$out/lib/blitzcrank
-    mkdir -p $root/packages/host $root/packages/mcp
-    # The workspace layout is kept as-is: packages/*/node_modules hold
-    # relative symlinks into the root node_modules/.pnpm, and the host reads
-    # skills from its own package root.
-    cp -r node_modules package.json pnpm-workspace.yaml $root/
-    cp -r packages/host/{dist,node_modules,skills,package.json} $root/packages/host/
-    cp -r packages/mcp/{dist,node_modules,package.json} $root/packages/mcp/
+    root=$out/lib/${pname}
+    mkdir -p "$root"
+    cp -r "$TMPDIR/deploy/node_modules" "$root/"
+    cp -r packages/${component}/{dist,package.json} "$root/"
+    ${lib.optionalString isHost ''cp -r packages/host/skills "$root/"''}
     # pnpm's install state records the build directory and a timestamp.
     rm -f $root/node_modules/{.modules.yaml,.pnpm-workspace-state-v1.json}
-    makeWrapper ${nodejs}/bin/node $out/bin/blitzcrank \
-      --add-flags "$root/packages/host/dist/cli.js"
-    makeWrapper ${nodejs}/bin/node $out/bin/blitzcrank-mcp \
-      --add-flags "$root/packages/mcp/dist/cli.js"
+    makeWrapper ${nodejs}/bin/node $out/bin/${pname} \
+      --add-flags "$root/dist/cli.js"
     runHook postInstall
   '';
 
   meta = {
-    description = "Agentic webhook gateway for the Seerr/Arr/Jellyfin homelab stack";
+    description =
+      if isHost then
+        "Agentic webhook gateway for the Seerr/Arr/Jellyfin homelab stack"
+      else
+        "MCP server for the Seerr/Arr/Jellyfin homelab stack";
     license = lib.licenses.mit;
-    mainProgram = "blitzcrank";
+    mainProgram = pname;
     platforms = lib.platforms.linux;
   };
 })

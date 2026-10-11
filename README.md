@@ -32,34 +32,48 @@ Add `github:zekurio/blitzcrank` as a flake input, then:
   services.blitzcrank = {
     enable = true;
     model = "openai/gpt-6-astra:medium"; # choose a model your account can use
+    mcpUrl = "http://127.0.0.1:8485/mcp";
     environmentFile = "/run/secrets/blitzcrank.env";
-    mcp = {
-      environmentFile = "/run/secrets/blitzcrank-mcp.env";
-      mediaRoots = [ "/mnt/media" "/mnt/downloads/complete" ]; # optional
-    };
+  };
+  services.blitzcrank-mcp = {
+    enable = true;
+    environmentFile = "/run/secrets/blitzcrank-mcp.env";
+    mediaRoots = [ "/mnt/media" "/mnt/downloads/complete" ]; # optional
   };
 }
 ```
 
-The module runs two systemd units. `blitzcrank` is the host. `blitzcrank-mcp`
-is the server, hardened, with the media roots and ffmpeg. Each unit has its own
-environment:
+The two services are enabled independently and use separate packages:
+`packages.<system>.blitzcrank` and `packages.<system>.blitzcrank-mcp`. Each
+package contains its own command and runtime dependencies. The default package
+is the host. Each service has its own `package` option and environment:
 
 - The host's environment file holds `SEERR_URL`, `SEERR_API_KEY`,
   `BLITZCRANK_WEBHOOK_SECRET`, and `BLITZCRANK_MCP_TOKEN`.
   [`packages/host/.env.example`](packages/host/.env.example) documents all host
   settings.
-- The server's environment file (`mcp.environmentFile`) holds the service URLs
-  and API keys and the same `BLITZCRANK_MCP_TOKEN`. `mcp.mediaRoots` sets the
-  media roots. The [server README](packages/mcp/README.md#environment)
-  documents its settings.
+- The server's environment file holds the service URLs and API keys and the
+  same `BLITZCRANK_MCP_TOKEN`. `services.blitzcrank-mcp.mediaRoots` sets the
+  media roots and adds ffmpeg to the server's path. The
+  [server README](packages/mcp/README.md#environment) documents its settings.
 
-The server binds to localhost on `mcp.port`, and the module points the host at
-it through `BLITZCRANK_MCP_URL`. To run the server on another machine, set
-`mcp.enable = false` and `mcp.url`. [`nix/module.nix`](nix/module.nix)
-describes every option.
+The server binds to `127.0.0.1` on `services.blitzcrank-mcp.port` (8485 by
+default). The host requires `services.blitzcrank.mcpUrl`, including when both
+run on the same machine. Set it to the server's endpoint if you change the
+port.
 
-The package's dependency hash in [`nix/package.nix`](nix/package.nix) must
+For separate machines, import `nixosModules.blitzcrank` on the agent host and
+`nixosModules.blitzcrank-mcp` on the media server, enabling only the respective
+service. Set the host's `mcpUrl` to the remote endpoint. On the media server,
+set `services.blitzcrank-mcp.host` to a private interface address, or keep
+loopback and put a TLS reverse proxy in front. Configure network access
+separately; the module does not open firewall ports. The server needs no model
+or agent authentication settings.
+
+[`nix/module.nix`](nix/module.nix) and
+[`nix/mcp-module.nix`](nix/mcp-module.nix) describe the service options.
+
+The shared dependency hash in [`nix/package.nix`](nix/package.nix) must
 match `pnpm-lock.yaml`. After a lockfile change, build once on Linux and copy
 the hash Nix reports.
 

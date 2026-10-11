@@ -25,6 +25,10 @@ const RESOLVE_TIMEOUT_MS = 45_000
 const WRITE_TIMEOUT_MS = 90_000
 const VERIFY_TIMEOUT_MS = 30_000
 
+// One configured instance per service. Only held keys are retained, and the
+// lock covers this process's calls, not external or still-pending writes.
+const activeWriteKeys = new Set<string>()
+
 export class ToolError extends Data.TaggedError("ToolError")<{
   message: string
 }> {}
@@ -206,6 +210,8 @@ export interface Resolved<S> {
 export interface ActionSpec<P extends TObject, S> {
   description: string
   params: P
+  /** Per-service record key, derived from validated params without I/O. */
+  lock?: (params: Static<P>) => string
   /** Reads the target. A target that does not exist fails here, unwritten. */
   resolve: (
     params: Static<P>,
@@ -226,6 +232,7 @@ export interface ActionSpec<P extends TObject, S> {
 export interface Action {
   description: string
   params: TObject
+  lock: (params: JsonObject) => string | undefined
   resolve: (
     params: JsonObject,
     signal: AbortSignal | undefined,
@@ -247,6 +254,7 @@ export function action<P extends TObject, S>(spec: ActionSpec<P, S>): Action {
   return {
     description: spec.description,
     params: spec.params,
+    lock: (params) => spec.lock?.(params as Static<P>),
     resolve: (params, signal) => spec.resolve(params as Static<P>, signal),
     write: (params, state) => spec.write(params as Static<P>, state as S),
     verify: (params, result, state) =>
@@ -275,13 +283,40 @@ export function defineWrites(
       execute: (args, signal) =>
         Effect.gen(function* () {
           const params = yield* checkParams(name, schema, args)
-          const resolved = yield* spec
-            .resolve(params, signal)
-            .pipe(withDeadline(name, RESOLVE_TIMEOUT_MS))
-          return yield* writeAndVerify(name, spec, params, resolved)
+          const write = Effect.gen(function* () {
+            const resolved = yield* spec
+              .resolve(params, signal)
+              .pipe(withDeadline(name, RESOLVE_TIMEOUT_MS))
+            return yield* writeAndVerify(name, spec, params, resolved)
+          })
+          const key = spec.lock(params)
+          return yield* key === undefined
+            ? write
+            : withWriteLock(name, `${service.name}:${key}`, write)
         }),
     }
   })
+}
+
+function withWriteLock<A, E, R>(
+  name: string,
+  key: string,
+  effect: Effect.Effect<A, E, R>,
+) {
+  return Effect.acquireUseRelease(
+    toolCheck(() => {
+      // No yield between checking and taking the key. Busy callers never
+      // queue or spend any of the tool's deadline waiting for another write.
+      if (activeWriteKeys.has(key)) {
+        throw new Error(
+          `${name}: resource ${key} is busy; nothing was written. Read the current state before another attempt.`,
+        )
+      }
+      activeWriteKeys.add(key)
+    }),
+    () => effect,
+    () => Effect.sync(() => activeWriteKeys.delete(key)),
+  )
 }
 
 function writeAndVerify(

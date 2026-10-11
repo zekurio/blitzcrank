@@ -341,6 +341,7 @@ function radarrActions(arr: Arr) {
       description:
         "Change whether Radarr monitors a movie. Every other movie field is kept",
       params: Type.Object({ movieId: movieIdParam, monitored: Type.Boolean() }),
+      lock: (params) => `movie:${params.movieId}`,
       resolve: (params, signal) =>
         Effect.gen(function* () {
           const record = yield* arrRecord(

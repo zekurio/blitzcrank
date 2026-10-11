@@ -731,6 +731,7 @@ function sonarrActions(arr: Arr) {
       description:
         "Change a series' monitored flag, named seasons, or monitorNewItems. Every other series field is kept",
       params: seriesMonitoringParams,
+      lock: (params) => `series:${params.seriesId}`,
       resolve: (params, signal) =>
         Effect.gen(function* () {
           const update = seriesMonitoringUpdate(params.seriesId)

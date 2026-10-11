@@ -43,7 +43,8 @@
   `packages/host/skills/` (agent domain knowledge),
   `packages/mcp/src/services/` (one read table and one write table per
   service), `packages/mcp/src/media/` (ffprobe, ffmpeg, path containment),
-  `nix/` (packages and NixOS service module).
+  `nix/` (separate `blitzcrank` and `blitzcrank-mcp` packages and NixOS
+  service modules; each service is enabled independently).
 - Pi Durable is the only agent execution backend and Seerr is the only
   gateway. Another source of requests is another `Gateway` listed in
   `packages/host/src/index.ts`; nothing else in the host may learn about it.
@@ -180,6 +181,12 @@ behavioural difference described.
 - A write resolves its target against live state before it writes, so a
   hallucinated ID fails with nothing written. A failed verification never
   hides a completed write.
+- A write that reads and PUTs back a whole record declares a resource lock
+  key. The MCP server holds it across resolve, write, and verification. A
+  competing call fails immediately with a busy tool result before any service
+  request. Different records remain concurrent. These locks cover one MCP
+  process; they do not coordinate external writers or a write still pending
+  upstream after an unknown outcome.
 - `media_probe` (ffprobe) and `media_frames` (ffmpeg) run on the server, are
   read-only, and require `BLITZCRANK_MEDIA_ROOTS` in the server's environment;
   both resolve targets with `realpath` _before_ the containment check, so no

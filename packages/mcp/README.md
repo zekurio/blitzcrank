@@ -16,6 +16,17 @@ registers every tool it lists.
   out and got no answer; the host stops that run for review.
 - Stop with `SIGINT` or `SIGTERM` and let active calls finish before restarting.
 
+Whole-record monitoring updates hold a resource lock through their read-back.
+A competing update to the same record returns a busy error before contacting
+the service; read the current state before retrying. Different records run
+concurrently. Locks apply within one MCP process. They do not cover other
+writers or writes still pending upstream after an unknown outcome.
+
+On NixOS, import `nixosModules.blitzcrank-mcp` and enable
+`services.blitzcrank-mcp`. It uses the separate `blitzcrank-mcp` flake package
+and requires no agent host on that machine. See the
+[deployment guide](../../README.md#deploy-on-nixos) for local and remote setups.
+
 ## Environment
 
 | Variable                           | Required | Meaning                                                                |
