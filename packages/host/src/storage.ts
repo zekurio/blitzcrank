@@ -1,6 +1,3 @@
-import { mkdir, rename, writeFile } from "node:fs/promises"
-import path from "node:path"
-
 import { Data, Effect } from "effect"
 
 export class StorageError extends Data.TaggedError("StorageError")<{
@@ -27,26 +24,4 @@ export function storageIO<A>(
     try: operation,
     catch: (cause) => new StorageError({ cause }),
   })
-}
-
-export function storageCheck<A>(
-  operation: () => A,
-): Effect.Effect<A, StorageError> {
-  return Effect.try({
-    try: operation,
-    catch: (cause) => new StorageError({ cause }),
-  })
-}
-
-/** Finish write-then-rename before releasing a writer on interruption. */
-export function writeAtomic(
-  target: string,
-  body: string,
-): Effect.Effect<void, StorageError> {
-  return Effect.gen(function* () {
-    yield* storageIO(() => mkdir(path.dirname(target), { recursive: true }))
-    const tmp = `${target}.tmp`
-    yield* storageIO(() => writeFile(tmp, body, "utf8"))
-    yield* storageIO(() => rename(tmp, target))
-  }).pipe(Effect.uninterruptible)
 }

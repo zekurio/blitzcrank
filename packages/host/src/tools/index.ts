@@ -1,10 +1,8 @@
 import type { ToolRegistration } from "@earendil-works/pi-durable"
 
-import type { CaseFile } from "../casefile.ts"
-import type { Channel, ThreadDirs } from "../gateway.ts"
+import type { Channel } from "../gateway.ts"
 import type { McpConnection } from "../mcp/client.ts"
 import { buildMcpTools } from "../mcp/tools.ts"
-import { buildCaseFileTool } from "./casefile.ts"
 import { buildHistoryTool } from "./history.ts"
 import { buildCloseTool, type RunIntents } from "./outcome.ts"
 import { buildToolSearchTool } from "./search.ts"
@@ -17,11 +15,9 @@ export interface RunToolDeps {
   modelInput?: readonly ("text" | "image")[]
   /** This run's MCP connection; every service read and write goes through it. */
   mcp: McpConnection
-  /** Where the gateway's other threads keep their sessions and case files. */
-  history: ThreadDirs
+  /** Where the gateway's threads keep their conversations. */
+  history: string
   sessionFileRef: SessionFileRef
-  /** This thread's memory; the agent rewrites its summary, the host persists it. */
-  casefile: CaseFile
   /** What the run asks of the host once its reply is out. */
   intents: RunIntents
   /** Set when the thread's gateway lets the agent close it. */
@@ -36,12 +32,11 @@ export interface RunTools {
 }
 
 /**
- * A run's tools: the case file, history search, the gateway's close request,
- * and every tool the MCP server lists. None of them
- * knows which gateway the thread came from, and the host does not know which
- * services exist; the server's tool list decides. Server tools start out
- * unloaded so their schemas stay out of the prompt until `tool_search` loads
- * the ones a run needs.
+ * A run's tools: history search, the gateway's close request, and every tool
+ * the MCP server lists. None of them knows which gateway the thread came
+ * from, and the host does not know which services exist; the server's tool
+ * list decides. Server tools start out unloaded so their schemas stay out of
+ * the prompt until `tool_search` loads the ones a run needs.
  */
 export function buildRunTools(deps: RunToolDeps): RunTools {
   const viewsImages = deps.modelInput?.includes("image") === true
@@ -51,9 +46,7 @@ export function buildRunTools(deps: RunToolDeps): RunTools {
   )
   return {
     tools: [
-      buildCaseFileTool(deps.casefile),
       buildHistoryTool(deps.history, deps.sessionFileRef),
-
       ...(deps.close ? [buildCloseTool(deps.close, deps.intents)] : []),
       ...mcp,
       // Without a server tool there is nothing to load.

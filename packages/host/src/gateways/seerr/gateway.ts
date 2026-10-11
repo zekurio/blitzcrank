@@ -75,7 +75,7 @@ export function createSeerrGateway(config: Config): Gateway {
       "Each conversation is one Seerr issue and its comments. Your final message is posted on the issue as a comment.",
     // Seerr was the only source of threads before gateways existed. Its files
     // stay where they were written.
-    storage: { cases: "cases", sessions: path.join("sessions", "issues") },
+    sessions: path.join("sessions", "issues"),
     authorized: (authorization) =>
       !config.webhookSecret ||
       authorization === config.webhookSecret ||

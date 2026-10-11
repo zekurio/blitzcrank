@@ -37,7 +37,7 @@ import type {
   AgentTurnOptions,
   AgentTurnResult,
   DurableTurnFailure,
-  RunUsage,
+  ThreadUsage,
 } from "./session.ts"
 
 const context = BACKGROUND_CONTEXT
@@ -51,9 +51,6 @@ export const DurableRunDoc = defineDocFamily({
   initial: (policy: string) => ({
     policy,
     hostState: "",
-    apiPricing: null as boolean | null,
-    usage: "",
-    usageBaseline: "",
     operations: {} as Record<
       string,
       { name: string; callId: string; unsafe: boolean; result: string | null }
@@ -297,12 +294,9 @@ export async function runDurableTurn(
       context,
     )
     const prior = await runSnapshot()
-    const auth =
-      prior?.apiPricing === null || !prior
-        ? await opts.modelRuntime.checkAuth(
-            parseModelSpec(opts.modelSpec).provider,
-          )
-        : undefined
+    const auth = await opts.modelRuntime.checkAuth(
+      parseModelSpec(opts.modelSpec).provider,
+    )
     if (prior?.hostState && opts.hostState)
       opts.hostState.restore(JSON.parse(prior.hostState) as JsonValue)
     const inspected = await harness.inspect(context)
@@ -335,11 +329,8 @@ export async function runDurableTurn(
     }
     if (prior?.failure)
       failure = JSON.parse(prior.failure) as DurableTurnFailure
-    const baseline = await modelUsage(harness)
     await harness.commit(async (tx) => {
       const run = await tx.doc(DurableRunDoc, opts.requestId, policy)
-      run.apiPricing ??= auth?.type === "api_key"
-      run.usageBaseline ||= JSON.stringify(baseline)
       if (failure) run.failure = JSON.stringify(failure)
       if (!run.hostState && opts.hostState)
         run.hostState = JSON.stringify(opts.hostState.capture())
@@ -408,7 +399,6 @@ export async function runDurableTurn(
           : undefined
       const receipt = submission ? await submission.wait(context) : undefined
       if (stopPromise) await stopPromise
-      const record = await runSnapshot()
       if (failure)
         await harness.commit(async (tx) => {
           const run = await tx.doc(DurableRunDoc, opts.requestId, policy)
@@ -420,26 +410,7 @@ export async function runDurableTurn(
           : undefined
       const message =
         answer && AssistantEntry.is(answer) ? answer.model?.[0] : undefined
-      const savedUsage = record?.usage
-        ? (JSON.parse(record.usage) as RunUsage)
-        : undefined
-      const usage = savedUsage
-        ? { ...savedUsage, costUsd: savedUsage.costUsd ?? undefined }
-        : requestUsage(
-            await modelUsage(harness),
-            JSON.parse(
-              record?.usageBaseline ?? JSON.stringify(baseline),
-            ) as RunUsage,
-            record?.apiPricing === true,
-          )
-      if (!savedUsage)
-        await harness.commit(async (tx) => {
-          const run = await tx.doc(DurableRunDoc, opts.requestId, policy)
-          run.usage = JSON.stringify({
-            ...usage,
-            costUsd: usage.costUsd ?? null,
-          })
-        }, context)
+      const usage = await threadUsage(harness, auth?.type === "api_key")
       if (stopPromise) await stopPromise
       if (stopError !== undefined) throw stopError
       const completed = !stopping && !failure && message?.role === "assistant"
@@ -453,7 +424,6 @@ export async function runDurableTurn(
               .join("")
           : "",
         usage,
-        sessionFile: opts.storageFile,
         ...(failure
           ? { failure }
           : receipt?.status === "unanswered" && !stopping
@@ -480,35 +450,25 @@ function errorResult(text: string): ToolExecutionResult {
   return { content: [{ type: "text", text }], isError: true }
 }
 
-async function modelUsage(harness: Harness): Promise<RunUsage> {
-  const usage: RunUsage = {
-    inputTokens: 0,
-    outputTokens: 0,
-    newTokens: 0,
-    billedTokens: 0,
-    costUsd: 0,
-  }
-  // Native totals include compaction and failed attempts without transcript entries.
-  for (const turn of Object.values((await harness.usage(context)).models)) {
-    usage.inputTokens += turn.input + turn.cacheWrite
-    usage.outputTokens += turn.output
-    usage.newTokens += turn.input + turn.cacheWrite + turn.output
-    usage.billedTokens += turn.totalTokens
-    usage.costUsd! += turn.cost.total
-  }
-  return usage
-}
-
-function requestUsage(
-  total: RunUsage,
-  baseline: RunUsage,
+/**
+ * Durable keeps the conversation's usage itself and adds to it in the commit
+ * that records each response, so a replayed run cannot be counted twice. The
+ * ledger also covers compaction and failed attempts, which leave no
+ * transcript entry.
+ */
+async function threadUsage(
+  harness: Harness,
   apiPricing: boolean,
-): RunUsage {
+): Promise<ThreadUsage> {
+  const models = Object.values((await harness.usage(context)).models)
   return {
-    inputTokens: total.inputTokens - baseline.inputTokens,
-    outputTokens: total.outputTokens - baseline.outputTokens,
-    newTokens: total.newTokens - baseline.newTokens,
-    billedTokens: total.billedTokens - baseline.billedTokens,
-    costUsd: apiPricing ? total.costUsd! - baseline.costUsd! : undefined,
+    inputTokens: models.reduce(
+      (sum, model) => sum + model.input + model.cacheWrite,
+      0,
+    ),
+    outputTokens: models.reduce((sum, model) => sum + model.output, 0),
+    costUsd: apiPricing
+      ? models.reduce((sum, model) => sum + model.cost.total, 0)
+      : undefined,
   }
 }

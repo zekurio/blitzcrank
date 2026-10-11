@@ -3,7 +3,6 @@ import { stat } from "node:fs/promises"
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent"
 import { Effect } from "effect"
 
-import { clampEntries, clampEntry, type CaseFile } from "../casefile.ts"
 import type { Config } from "../config.ts"
 import {
   threadKey,
@@ -28,7 +27,6 @@ import {
   runAgentTurnEffect,
   usageAnchor,
   type AgentTurnOptions,
-  type AgentTurnResult,
 } from "./session.ts"
 
 /**
@@ -71,16 +69,7 @@ export class ThreadRunner {
       const key = threadKey(thread)
       const gateway = this.gateways.of(thread)
       const channel = gateway.channel(thread.id)
-      const cases = this.gateways.cases(thread)
       return yield* Effect.gen({ self: this }, function* () {
-        // Every recovery projects this same baseline plus this submission's
-        // totals. A crash after saving cannot count the run twice.
-        const casefile = yield* this.jobs.actionEffect(
-          runId,
-          "case-baseline",
-          cases.loadEffect(thread.id),
-          { replaySafe: true },
-        )
         // The reporter sees that work started. The reply rewrites this same
         // message, and a run that dies first removes it, so a run leaves one
         // message at most.
@@ -95,8 +84,6 @@ export class ThreadRunner {
         status.id = shown.id
         const context = yield* channel.contextEffect()
         const sessionFileRef: SessionFileRef = { current: undefined }
-        // The clean cut never opens old coding-agent JSONL. Existing case
-        // summaries remain useful when the first Durable conversation starts.
         const storageFile = this.gateways.sessionFile(thread)
         const resuming = yield* storageIO(() => stat(storageFile)).pipe(
           Effect.map((s) => s.isFile()),
@@ -111,9 +98,8 @@ export class ThreadRunner {
         const runTools = buildRunTools({
           modelInput: resolveModel(this.modelRuntime, this.modelSpec).input,
           mcp,
-          history: this.gateways.dirs(thread),
+          history: this.gateways.sessionsDir(thread),
           sessionFileRef,
-          casefile,
           intents,
           close: channel.close,
         })
@@ -122,9 +108,7 @@ export class ThreadRunner {
         const prompt = yield* this.jobs.actionEffect(
           runId,
           "prompt",
-          Effect.sync(() =>
-            buildMessagePrompt(event, context, casefile, resuming),
-          ),
+          Effect.sync(() => buildMessagePrompt(event, context, resuming)),
           { replaySafe: true },
         )
         const turn = yield* runAgentTurnEffect({
@@ -141,33 +125,16 @@ export class ThreadRunner {
           prompt,
           storageFile,
           requestId: runId,
-          hostState: runState(casefile, intents),
+          hostState: runState(intents),
           sessionFileRef,
         })
-
-        // Usage is recorded before any reply: a failure while publishing must
-        // not make a run invisible in the thread's running total.
-        projectSpend(casefile, turn)
-        casefile.sessionFile = turn.sessionFile
-        yield* cases.saveEffect(casefile)
-
-        if (turn.failure) {
-          casefile.runs.push({
-            at: new Date().toISOString(),
-            tokens: turn.usage.newTokens,
-            inputTokens: turn.usage.inputTokens,
-            outputTokens: turn.usage.outputTokens,
-            commented: false,
-            resolved: false,
-          })
-          yield* cases.saveEffect(casefile)
+        if (turn.failure)
           return yield* Effect.fail(
             new SdkError({
               message: turn.failure.message,
               cause: turn.failure,
             }),
           )
-        }
 
         const reply = turn.text.trim()
         if (!reply) {
@@ -186,16 +153,7 @@ export class ThreadRunner {
             reply
               ? {
                   text: reply,
-                  signature: usageAnchor(
-                    this.modelSpec,
-                    casefile.spend.tokens,
-                    casefile.spend.inputTokens,
-                    casefile.spend.outputTokens,
-                    turn.usage.costUsd === undefined
-                      ? undefined
-                      : casefile.spend.costUsd,
-                    turn.usage.costUsd,
-                  ),
+                  signature: usageAnchor(this.modelSpec, turn.usage),
                 }
               : undefined,
           ).pipe(Effect.as({ reply: reply || null })),
@@ -205,24 +163,6 @@ export class ThreadRunner {
         const close = intents.close ? channel.close : undefined
         if (close)
           yield* this.jobs.actionEffect(runId, "close-thread", close.effect())
-
-        // Host-written, so continuity survives a run that never called the tool.
-        if (reply) casefile.lastAnswer = clampEntry(reply)
-        const completedAt = yield* this.jobs.actionEffect(
-          runId,
-          "completed-at",
-          Effect.sync(() => Date.now()),
-          { replaySafe: true },
-        )
-        casefile.runs.push({
-          at: new Date(completedAt).toISOString(),
-          tokens: turn.usage.newTokens,
-          inputTokens: turn.usage.inputTokens,
-          outputTokens: turn.usage.outputTokens,
-          commented: reply !== "",
-          resolved: close !== undefined,
-        })
-        yield* cases.saveEffect(casefile)
       }).pipe(
         // Releases the MCP connection when the run exits.
         Effect.scoped,
@@ -245,7 +185,7 @@ export class ThreadRunner {
     }).pipe(Effect.uninterruptible)
   }
 
-  /** Recovery of a cancelled job restores audit/state but cannot call the model. */
+  /** Recovery of a cancelled job stops its Durable work and never calls the model. */
   cancelEffect(
     event: Inbound,
     status: Marker,
@@ -253,7 +193,6 @@ export class ThreadRunner {
   ): Effect.Effect<void, unknown> {
     return Effect.gen({ self: this }, function* () {
       const thread = event.thread
-      const cases = this.gateways.cases(thread)
       const storageFile = this.gateways.sessionFile(thread)
       const actions = this.jobs.actions(requestId)
       // The run may have replaced the queue notice's marker with its own. An
@@ -266,21 +205,19 @@ export class ThreadRunner {
         )
         status.id = shown.id
       }
+      // Only a job that reached the model can have left work in the
+      // conversation. An earlier job of this thread may still own the rest.
       const began = actions.some(
-        (action) => action.key === "case-baseline" && action.completed,
+        (action) => action.key === "prompt" && action.completed,
       )
       const exists = yield* storageIO(() => stat(storageFile)).pipe(
         Effect.map((file) => file.isFile()),
         Effect.catch(() => Effect.succeed(false)),
       )
-      if (began && exists) {
-        const casefile = yield* this.jobs.actionEffect(
-          requestId,
-          "case-baseline",
-          cases.loadEffect(thread.id),
-          { replaySafe: true },
-        )
-        const turn = yield* runAgentTurnEffect({
+      // An aborted turn opens the conversation only to abort what this job
+      // left pending, so the thread's next run does not find it.
+      if (began && exists)
+        yield* runAgentTurnEffect({
           modelRuntime: this.modelRuntime,
           modelSpec: this.modelSpec,
           storageFile,
@@ -289,34 +226,9 @@ export class ThreadRunner {
           prompt: "",
           tools: [],
           builtinRead: false,
-          hostState: runState(casefile, { close: false }),
           sessionFileRef: undefined,
           signal: AbortSignal.abort(),
         })
-        projectSpend(casefile, turn)
-        casefile.sessionFile = turn.sessionFile
-        const published = actions.some(
-          (action) => action.key === "publish-reply" && action.completed,
-        )
-          ? yield* this.jobs.actionEffect<{ reply: string | null }, Error>(
-              requestId,
-              "publish-reply",
-              Effect.fail(new Error("Missing recorded reply outcome")),
-            )
-          : undefined
-        if (published?.reply) casefile.lastAnswer = clampEntry(published.reply)
-        casefile.runs.push({
-          at: new Date().toISOString(),
-          tokens: turn.usage.newTokens,
-          inputTokens: turn.usage.inputTokens,
-          outputTokens: turn.usage.outputTokens,
-          commented: Boolean(published?.reply),
-          resolved: actions.some(
-            (action) => action.key === "close-thread" && action.completed,
-          ),
-        })
-        yield* cases.saveEffect(casefile)
-      }
       yield* this.jobs.actionEffect(
         requestId,
         "retract-status",
@@ -346,54 +258,15 @@ export class ThreadRunner {
 
 /** What the run's tools change in the host, checkpointed with their results. */
 function runState(
-  casefile: CaseFile,
   intents: RunIntents,
 ): NonNullable<AgentTurnOptions["hostState"]> {
   return {
-    capture: () => ({
-      summary: {
-        ...casefile.summary,
-        hypothesis: casefile.summary.hypothesis ?? null,
-      },
-      close: intents.close,
-    }),
+    capture: () => ({ close: intents.close }),
     restore: (value) => {
       if (value === null || typeof value !== "object" || Array.isArray(value))
         throw new Error("Invalid persisted run state")
-      const summary = value.summary
-      if (
-        summary === null ||
-        typeof summary !== "object" ||
-        Array.isArray(summary)
-      )
-        throw new Error("Invalid persisted case summary")
-      casefile.summary = {
-        hypothesis: clampEntry(summary.hypothesis),
-        facts: clampEntries(summary.facts),
-        ruledOut: clampEntries(summary.ruledOut),
-        openQuestions: clampEntries(summary.openQuestions),
-      }
       intents.close = value.close === true
     },
-  }
-}
-
-function projectSpend(casefile: CaseFile, turn: AgentTurnResult): void {
-  casefile.spend = {
-    runs: casefile.spend.runs + 1,
-    tokens: casefile.spend.tokens + turn.usage.newTokens,
-    inputTokens:
-      casefile.spend.inputTokens === undefined
-        ? undefined
-        : casefile.spend.inputTokens + turn.usage.inputTokens,
-    outputTokens:
-      casefile.spend.outputTokens === undefined
-        ? undefined
-        : casefile.spend.outputTokens + turn.usage.outputTokens,
-    costUsd:
-      casefile.spend.costUsd === undefined
-        ? undefined
-        : casefile.spend.costUsd + (turn.usage.costUsd ?? 0),
   }
 }
 

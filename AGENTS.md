@@ -12,9 +12,9 @@
   `packages/host` (npm name `blitzcrank`) holds the gateways and the agent
   loop: `src/server.ts` → `src/gateways/` → `src/thread-work.ts` →
   `src/jobs.ts` → `src/queue.ts` → `src/agent/`. It defines the host tools
-  `update_case_file`, `thread_history_search`, `tool_search`, and optional
-  `web_search`/`web_extract`, builds the gateway's close tool (`resolve_issue`
-  for Seerr), and grants builtin `read` for skills.
+  `thread_history_search`, `tool_search`, and optional
+  `web_search`/`web_extract`, builds the gateway's close tool
+  (`resolve_issue` for Seerr), and grants builtin `read` for skills.
   `packages/mcp` (npm name `@blitzcrank/mcp`, binary `blitzcrank-mcp`) is an
   MCP server. It holds the service credentials and media mounts and exposes
   one tool per read and per write, named `<service>_<what>` (`sonarr_queue`,
@@ -37,8 +37,8 @@
   `packages/host/src/gateways/seerr/` (webhook handling, channel, payload
   types, comment gate, loop guard), `packages/host/src/thread-work.ts`
   (admission, ordering, recovery), `packages/host/src/agent/` (runner,
-  session, prompts), `packages/host/src/tools/` (host tools: case file,
-  history, tool search, close request),
+  session, prompts), `packages/host/src/tools/` (host tools: history, tool
+  search, close request),
   `packages/host/src/mcp/` (server connection, tool adapter),
   `packages/host/src/services/` (HTTP helper, host-side Seerr client),
   `packages/host/src/web/` (web provider: search and extract),
@@ -124,7 +124,7 @@ behavioural difference described.
   is registered, loaded or not. A server whose tools changed between admission
   and recovery is a changed policy and fails closed for review.
 - A thread never has two runs at once (`packages/host/src/queue.ts`): its
-  conversation, case file, and visible message each assume one writer. Runs
+  conversation and visible message each assume one writer. Runs
   of different threads overlap, and share only the journal, the model
   runtime, and the MCP server. Nothing a run writes may be keyed by anything
   wider than its thread.
@@ -194,10 +194,12 @@ behavioural difference described.
   resources are loaded. Firecrawl uses only the hosted API; custom endpoints are
   rejected because Blitzcrank cannot enforce a remote fetcher's DNS and
   redirect policy. Web content is untrusted.
-- Run history and token totals live in the host-written half of the case
-  file; `update_case_file` can write only the agent's summary. There is
-  deliberately no spend ceiling. The deployment runs on subscription auth,
-  where a dollar figure derived from list prices would be fiction.
+- A thread's memory is its Durable conversation and nothing else: the host
+  keeps no notes beside it, and no tool writes any. The token totals in a
+  reply's signature are read from Durable's usage ledger for that
+  conversation, which no tool can write. There is deliberately no spend
+  ceiling. The deployment runs on subscription auth, where a dollar figure
+  derived from list prices would be fiction.
 
 ## Branch Names
 

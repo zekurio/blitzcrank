@@ -8,9 +8,9 @@ export interface Lane {
 
 /**
  * Runs a thread's tasks one at a time and up to `limit` threads at once. A
- * thread's conversation, case file, and visible message each assume one
- * writer, so a thread never has two runs. Different threads share nothing a
- * run writes and do not wait for each other.
+ * thread's conversation and visible message each assume one writer, so a
+ * thread never has two runs. Different threads share nothing a run writes and
+ * do not wait for each other.
  *
  * A task starts as soon as its thread is idle and a slot is free, oldest
  * first. A task waiting for its own thread holds no slot.

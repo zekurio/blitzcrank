@@ -2,7 +2,6 @@ import path from "node:path"
 
 import type { Effect } from "effect"
 
-import { CaseStore } from "./casefile.ts"
 import type { JsonValue } from "./services/http.ts"
 
 /**
@@ -83,8 +82,8 @@ export interface Gateway {
   readonly name: string
   /** For the system prompt: where messages come from and where a reply goes. */
   readonly brief: string
-  /** Where its threads keep case files and sessions, below the data dir. */
-  readonly storage: { cases: string; sessions: string }
+  /** Where its threads keep their conversations, below the data dir. */
+  readonly sessions: string
   /** Checked before a webhook body is read. */
   authorized(authorization: string | undefined): boolean
   /** Handles one webhook body and returns the JSON to answer with. */
@@ -97,31 +96,16 @@ export interface Gateway {
   channel(threadId: string): Channel
 }
 
-/** Where one gateway's threads keep their case files and sessions. */
-export interface ThreadDirs {
-  cases: string
-  sessions: string
-}
-
 /** The host's gateways by name, each with its own storage. */
 export class Gateways {
-  private readonly entries: Map<
-    string,
-    { gateway: Gateway; cases: CaseStore; dirs: ThreadDirs }
-  >
+  private readonly entries: Map<string, { gateway: Gateway; sessions: string }>
 
   constructor(dataDir: string, gateways: readonly Gateway[]) {
     this.entries = new Map(
-      gateways.map((gateway) => {
-        const dirs = {
-          cases: path.join(dataDir, gateway.storage.cases),
-          sessions: path.join(dataDir, gateway.storage.sessions),
-        }
-        return [
-          gateway.name,
-          { gateway, cases: new CaseStore(dirs.cases), dirs },
-        ]
-      }),
+      gateways.map((gateway) => [
+        gateway.name,
+        { gateway, sessions: path.join(dataDir, gateway.sessions) },
+      ]),
     )
   }
 
@@ -133,17 +117,14 @@ export class Gateways {
     return this.entry(thread).gateway
   }
 
-  cases(thread: ThreadRef): CaseStore {
-    return this.entry(thread).cases
-  }
-
-  dirs(thread: ThreadRef): ThreadDirs {
-    return this.entry(thread).dirs
+  /** The directory holding every conversation of this thread's gateway. */
+  sessionsDir(thread: ThreadRef): string {
+    return this.entry(thread).sessions
   }
 
   sessionFile(thread: ThreadRef): string {
     return path.join(
-      this.entry(thread).dirs.sessions,
+      this.sessionsDir(thread),
       `${encodeURIComponent(thread.id)}.sqlite`,
     )
   }

@@ -25,11 +25,12 @@ export function modelAnchor(spec: string): string {
   const parsed = parseModelSpec(spec)
   return `${SIGNATURE_PREFIX} ${parsed.modelId}:${parsed.thinkingLevel}]`
 }
-export interface RunUsage {
+/** A thread's totals over every run, from Durable's ledger of its conversation. */
+export interface ThreadUsage {
+  /** Fresh input and cache writes. Cache reads are left out. */
   inputTokens: number
   outputTokens: number
-  newTokens: number
-  billedTokens: number
+  /** At list prices. Undefined unless the provider bills per token. */
   costUsd: number | undefined
 }
 function formatTokens(count: number): string {
@@ -40,24 +41,11 @@ function formatTokens(count: number): string {
 function formatCost(costUsd: number): string {
   return `$${costUsd.toFixed(costUsd < 0.01 ? 4 : 2)}`
 }
-export function usageAnchor(
-  spec: string,
-  threadTokens: number,
-  inputTokens: number | undefined,
-  outputTokens: number | undefined,
-  costUsd: number | undefined,
-  runCostUsd: number | undefined,
-): string {
+export function usageAnchor(spec: string, usage: ThreadUsage): string {
   const prefix = modelAnchor(spec).slice(0, -1)
   const cost =
-    costUsd !== undefined
-      ? ` · ${formatCost(costUsd)}`
-      : runCostUsd !== undefined
-        ? ` · ${formatCost(runCostUsd)} this run`
-        : ""
-  if (inputTokens === undefined || outputTokens === undefined)
-    return `${prefix} · ${formatTokens(threadTokens)} tokens${cost}]`
-  return `${prefix} · ${formatTokens(inputTokens)} in · ${formatTokens(outputTokens)} out${cost}]`
+    usage.costUsd === undefined ? "" : ` · ${formatCost(usage.costUsd)}`
+  return `${prefix} · ${formatTokens(usage.inputTokens)} in · ${formatTokens(usage.outputTokens)} out${cost}]`
 }
 export interface AgentTurnOptions {
   modelRuntime: ModelRuntime
@@ -90,8 +78,7 @@ export interface DurableTurnFailure {
 export interface AgentTurnResult {
   /** The message that ended the run, from the submission's answer entry. */
   text: string
-  usage: RunUsage
-  sessionFile: string | undefined
+  usage: ThreadUsage
   failure?: DurableTurnFailure
 }
 /** Coding-agent supplies auth and discovery, never execution. */
