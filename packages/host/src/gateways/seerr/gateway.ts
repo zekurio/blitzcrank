@@ -62,8 +62,8 @@ export function createSeerrGateway(config: Config): Gateway {
     name: NAME,
     brief:
       "Each conversation is one Seerr issue and its comments. Your final message is posted on the issue as a comment. " +
-      "You cannot resolve an issue; its reporter can. When you ask whether a fix resolved it, ask them to mark the " +
-      "issue resolved if it did.",
+      "The issue's status is the reporter's to change. Do not mention it, and do not ask anyone to resolve or close " +
+      "the issue.",
     authorized: (authorization) =>
       !config.webhookSecret ||
       authorization === config.webhookSecret ||
