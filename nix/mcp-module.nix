@@ -52,10 +52,20 @@ in
         pulled in as mount dependencies, so the unit waits for a ZFS pool
         or network share instead of starting on an empty mountpoint.
 
-        The server runs as a DynamicUser with no supplementary groups:
-        the roots must be readable by others, or configure
-        systemd.services.blitzcrank-mcp.serviceConfig.SupplementaryGroups
-        and DynamicUser = false with a dedicated user.
+        The server runs as a DynamicUser: the roots must be readable by
+        others, or by a group listed in {option}`supplementaryGroups`.
+      '';
+    };
+
+    supplementaryGroups = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      example = [ "media" ];
+      description = ''
+        Existing groups the server's dynamic user joins, for media roots
+        that are group-readable but closed to others. The unit fails to
+        start when a group does not exist. The roots stay read-only for
+        the server whatever the group may write.
       '';
     };
 
@@ -116,6 +126,7 @@ in
       serviceConfig = {
         ExecStart = lib.getExe cfg.package;
         DynamicUser = true;
+        SupplementaryGroups = cfg.supplementaryGroups;
         Restart = "on-failure";
         RestartSec = 10;
         # Resolve, write, and verification can take 165 seconds in total.

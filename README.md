@@ -54,13 +54,16 @@ is the host. Each service has its own `package` option and environment:
   settings.
 - The server's environment file holds the service URLs and API keys and the
   same `BLITZCRANK_MCP_TOKEN`. `services.blitzcrank-mcp.mediaRoots` sets the
-  media roots and adds ffmpeg to the server's path. The
+  media roots and adds ffmpeg to the server's path. The server runs as a
+  dynamic user: `services.blitzcrank-mcp.supplementaryGroups` gives it group
+  access to roots that are closed to others. The
   [server README](packages/mcp/README.md#environment) documents its settings.
 
 The server binds to `127.0.0.1` on `services.blitzcrank-mcp.port` (8485 by
 default). The host requires `services.blitzcrank.mcpUrl`, including when both
 run on the same machine. Set it to the server's endpoint if you change the
-port.
+port. With both enabled on one machine, the host starts after the server and
+stops before it.
 
 For separate machines, import `nixosModules.blitzcrank` on the agent host and
 `nixosModules.blitzcrank-mcp` on the media server, enabling only the respective

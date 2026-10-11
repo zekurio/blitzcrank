@@ -9,6 +9,10 @@ let
   cfg = config.services.blitzcrank;
   stateDir = "/var/lib/blitzcrank";
 
+  # The server module is optional here: it may not be imported at all when the
+  # server runs on another machine.
+  localMcp = lib.optional (config.services.blitzcrank-mcp.enable or false) "blitzcrank-mcp.service";
+
   authEnvironment =
     lib.mapAttrsToList (
       name: value: "--setenv=${name}=${toString value}"
@@ -252,8 +256,13 @@ in
     systemd.services.blitzcrank = {
       description = "blitzcrank agentic Seerr issue gateway";
       wantedBy = [ "multi-user.target" ];
-      after = [ "network-online.target" ];
-      wants = [ "network-online.target" ];
+      # The host checks the server at startup and gives up after about 20
+      # seconds, less than the server's unit may wait for its media mounts.
+      # Ordering also stops the host first, so its runs drain while the server
+      # still answers. Wants, not Requires: a server restart must not stop the
+      # host.
+      after = [ "network-online.target" ] ++ localMcp;
+      wants = [ "network-online.target" ] ++ localMcp;
 
       environment = {
         BLITZCRANK_PORT = toString cfg.port;
