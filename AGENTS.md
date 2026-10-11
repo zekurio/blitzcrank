@@ -133,8 +133,9 @@ behavioural difference described.
 - The reply is the text of the run's own answer entry, and every run posts
   it. The host, never the agent, posts it.
 - Neither the agent nor the host closes a thread. Not every gateway has a
-  closed state, so a `Channel` offers none: the agent gives its evidence in
-  the reply, and the reporter resolves the Seerr issue.
+  closed state, so a `Channel` offers none. The agent gives its evidence in
+  the reply and asks the reporter whether the fix resolved the matter, and
+  the reporter resolves the Seerr issue.
 - Every run answers an event from its gateway. Nothing runs on a timer, and
   the agent cannot schedule a run.
 - One run shows at most one message. The host posts a working line when the

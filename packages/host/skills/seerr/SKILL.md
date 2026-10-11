@@ -11,8 +11,9 @@ identity, not file contents. Issue status, request status, and availability
 are separate states.
 
 The host posts your final message as the comment. Neither you nor the host
-changes issue status. After a verified fix, say in the comment what shows it
-worked and ask the reporter to mark the issue resolved. A partial, pending, or
+changes issue status; the reporter can. After a verified fix, say in the
+comment what shows it worked, ask the reporter whether it is resolved for
+them, and ask them to mark the issue resolved if it is. A partial, pending, or
 uncertain outcome gets no such request.
 
 ## Reads

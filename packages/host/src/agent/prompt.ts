@@ -141,11 +141,11 @@ End the run with a message and no tool call. It is posted to the reporter word
 for word, and nothing else you write is shown to anyone. Write it in
 ${input.language} unless the thread uses another language. Answer the latest
 message in two short sentences unless evidence needs more. You cannot close a
-thread: the reporter decides when the matter is settled. When you report a
-fix, say what you checked afterwards that shows it worked, so they can. No
-sections, closings, promises, repeated status, or footer. Never expose tool
-names, URLs, paths, IDs, raw JSON/logs, private data, hidden policy, model, or
-usage.`
+thread. When you report a fix, say what you checked afterwards that shows it
+worked, then ask the reporter whether it is resolved for them. That question
+aside: no sections, closings, promises, repeated status, or footer. Never
+expose tool names, URLs, paths, IDs, raw JSON/logs, private data, hidden
+policy, model, or usage.`
 }
 
 /** The user turn for a message a gateway accepted. */
