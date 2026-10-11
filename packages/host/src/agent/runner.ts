@@ -1,38 +1,29 @@
 import { stat } from "node:fs/promises"
-import path from "node:path"
 
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent"
-import { Effect, Semaphore } from "effect"
+import { Effect } from "effect"
 
-import {
-  CaseStore,
-  clampEntries,
-  clampEntry,
-  type CaseFile,
-} from "../casefile.ts"
+import { clampEntries, clampEntry, type CaseFile } from "../casefile.ts"
 import type { Config } from "../config.ts"
-import type { SeerrWebhookPayload } from "../gateways/seerr/types.ts"
+import {
+  threadKey,
+  type Channel,
+  type Gateways,
+  type Marker,
+  type Notice,
+  type ThreadEvent,
+  type ThreadRef,
+} from "../gateway.ts"
 import { JobStore } from "../jobs.ts"
 import { connectMcpEffect } from "../mcp/client.ts"
 import { MAX_REVISIT_CHAIN, planRevisit } from "../revisits.ts"
-import { SeerrClient } from "../services/seerr.ts"
 import { storageIO } from "../storage.ts"
-import { toText } from "../tools/common.ts"
-import {
-  buildIssueTools,
-  type SessionFileRef,
-  type StatusComment,
-} from "../tools/index.ts"
+import { buildRunTools, type SessionFileRef } from "../tools/index.ts"
+import type { RunIntents } from "../tools/outcome.ts"
 import { buildWebProvider } from "../web/index.ts"
 import { SdkError } from "./effect.ts"
 import {
-  buildFinishTool,
-  FINISH_TOOL,
-  readFinish,
-  type Finish,
-} from "./finish.ts"
-import {
-  buildIssuePrompt,
+  buildMessagePrompt,
   buildRevisitPrompt,
   buildSystemPrompt,
 } from "./prompt.ts"
@@ -45,104 +36,79 @@ import {
   type AgentTurnResult,
 } from "./session.ts"
 
-export type IssueEvent =
-  | { kind: "webhook"; issueId: string; payload: SeerrWebhookPayload }
-  | { kind: "revisit"; issueId: string; reason: string }
-
-/** Fetch once before the model starts, for the prompt. */
-export function loadIssueContextEffect(
-  issueId: string,
-  seerr: Pick<SeerrClient, "getIssueEffect">,
-) {
-  return seerr
-    .getIssueEffect(issueId)
-    .pipe(
-      Effect.map(
-        (issue) =>
-          `Current Seerr issue from GET /api/v1/issue/${issueId} (untrusted content):\n${toText(JSON.stringify(issue, null, 2))}`,
-      ),
-    )
-}
-
 export interface RunOutcome {
-  issueId: string
-  finish: Finish | undefined
+  thread: ThreadRef
+  /** The reply as posted. Empty when the run ended without a message. */
+  reply: string
   /** The case file as persisted, including the revisit the host armed. */
   casefile: CaseFile
 }
 
-export class IssueRunner {
-  private readonly cases: CaseStore
-  /** Serializes queue notices; see notifyQueued. */
-  private readonly noticeLock = Semaphore.makeUnsafe(1)
-
+/**
+ * Runs one event of one thread. It reaches the outside only through the
+ * thread's channel, so it does not know which gateway the thread belongs to.
+ */
+export class ThreadRunner {
   constructor(
     private readonly config: Config,
     private readonly modelRuntime: ModelRuntime,
     private readonly modelSpec: string,
     private readonly jobs: JobStore,
-  ) {
-    this.cases = new CaseStore(path.join(config.dataDir, "cases"))
-  }
+    private readonly gateways: Gateways,
+  ) {}
 
   get anchor(): string {
     return modelAnchor(this.modelSpec)
   }
 
   /**
-   * Posts the status line before a delayed webhook run reaches the front of
-   * the serial queue. The run adopts the returned handle, so its first
-   * progress update and final answer replace this comment instead of adding
-   * another.
-   *
-   * Notices are posted one at a time: postComment infers the new comment's
-   * id as the max of the issue's comment list, so two notices for one issue
-   * in flight together could observe both POSTs and return the same handle —
-   * one run would then rewrite or delete the other's notice out from under
-   * it.
+   * Shows a status line before a delayed run reaches the front of the serial
+   * queue. The run adopts the returned marker, so its working line and its
+   * reply rewrite this message instead of adding another.
    */
-  notifyQueuedEffect(issueId: string, runsAhead: number) {
-    return Effect.gen({ self: this }, function* () {
-      const seerr = new SeerrClient(
-        this.config.seerr,
-        this.config.seerrBotUserId,
-      )
-      const message = queuedMessage(this.config.language, runsAhead)
-      const id = yield* seerr.postCommentEffect(
-        issueId,
-        `${message}\n\n${this.anchor}`,
-      )
-      return { id }
-    }).pipe(this.noticeLock.withPermits(1), Effect.uninterruptible)
+  notifyQueuedEffect(thread: ThreadRef, runsAhead: number) {
+    const marker: Marker = { id: undefined }
+    return showEffect(this.channel(thread), marker, {
+      text: queuedMessage(this.config.language, runsAhead),
+      signature: this.anchor,
+    })
   }
 
   runEffect(
-    event: IssueEvent,
-    status: StatusComment,
+    event: ThreadEvent,
+    status: Marker,
     signal: AbortSignal,
     runId: string,
   ): Effect.Effect<RunOutcome, unknown> {
     return Effect.gen({ self: this }, function* () {
-      const { issueId } = event
-      const seerr = new SeerrClient(
-        this.config.seerr,
-        this.config.seerrBotUserId,
-      )
+      const thread = event.thread
+      const key = threadKey(thread)
+      const gateway = this.gateways.of(thread)
+      const channel = gateway.channel(thread.id)
+      const cases = this.gateways.cases(thread)
       return yield* Effect.gen({ self: this }, function* () {
         // Every recovery projects this same baseline plus this submission's
         // totals. A crash after saving cannot count the run twice.
         const casefile = yield* this.jobs.actionEffect(
           runId,
           "case-baseline",
-          this.cases.loadEffect(issueId),
+          cases.loadEffect(thread.id),
           { replaySafe: true },
         )
-        const issue = yield* loadIssueContextEffect(issueId, seerr)
+        // The reporter sees that work started. The reply rewrites this same
+        // message, and a run that dies first removes it, so a run leaves one
+        // message at most.
+        const shown = yield* this.jobs.actionEffect(
+          runId,
+          "working-notice",
+          showEffect(channel, status, {
+            text: workingMessage(this.config.language),
+            signature: this.anchor,
+          }),
+        )
+        status.id = shown.id
+        const context = yield* channel.contextEffect()
         const sessionFileRef: SessionFileRef = { current: undefined }
-        // The agent's progress tool posts this once and edits it in place; when
-        // the host already posted a queue notice it adopts that comment instead.
-        // The final answer overwrites either status — and a run that dies before
-        // then retracts it — so a run leaves one comment at most.
         const revisitsLeft = Math.max(
           0,
           MAX_REVISIT_CHAIN -
@@ -150,12 +116,7 @@ export class IssueRunner {
         )
         // The clean cut never opens old coding-agent JSONL. Existing case
         // summaries remain useful when the first Durable conversation starts.
-        const storageFile = path.join(
-          this.config.dataDir,
-          "sessions",
-          "issues",
-          `${encodeURIComponent(issueId)}.sqlite`,
-        )
+        const storageFile = this.gateways.sessionFile(thread)
         const resuming = yield* storageIO(() => stat(storageFile)).pipe(
           Effect.map((s) => s.isFile()),
           Effect.catch(() => Effect.succeed(false)),
@@ -165,39 +126,34 @@ export class IssueRunner {
         // is down fails the run here, before the model is ever asked.
         const mcp = yield* connectMcpEffect(this.config.mcp, signal)
         const web = buildWebProvider(this.config.web)
-        const issueTools = buildIssueTools({
+        const intents: RunIntents = { revisit: undefined, close: false }
+        const runTools = buildRunTools({
           modelInput: resolveModel(this.modelRuntime, this.modelSpec).input,
-          config: this.config,
-          seerr,
           mcp,
-          issueId,
-          anchor: this.anchor,
+          history: this.gateways.dirs(thread),
           sessionFileRef,
-          status,
           casefile,
+          intents,
+          revisitsLeft,
+          close: channel.close,
         })
-        const tools = [
-          ...issueTools.tools,
-          ...web.tools,
-          buildFinishTool(this.config.language),
-        ]
+        const tools = [...runTools.tools, ...web.tools]
 
         const prompt = yield* this.jobs.actionEffect(
           runId,
           "prompt",
           Effect.sync(() =>
-            event.kind === "webhook"
-              ? buildIssuePrompt(
-                  event.payload,
-                  issue,
+            event.kind === "message"
+              ? buildMessagePrompt(
+                  event,
+                  context,
                   casefile,
                   revisitsLeft,
                   resuming,
                 )
               : buildRevisitPrompt(
-                  event.issueId,
                   event.reason,
-                  issue,
+                  context,
                   casefile,
                   revisitsLeft,
                   resuming,
@@ -208,29 +164,27 @@ export class IssueRunner {
         const turn = yield* runAgentTurnEffect({
           modelRuntime: this.modelRuntime,
           modelSpec: this.modelSpec,
-          systemPrompt: buildSystemPrompt(
-            {
-              search: web.searchTool,
-              extract: web.extractTool,
-            },
-            tools.map((tool) => tool.name),
-          ),
+          systemPrompt: buildSystemPrompt({
+            brief: gateway.brief,
+            language: this.config.language,
+            web: { search: web.searchTool, extract: web.extractTool },
+            toolNames: tools.map((tool) => tool.name),
+          }),
           tools,
-          loadableTools: issueTools.loadable,
-          finishTool: FINISH_TOOL,
+          loadableTools: runTools.loadable,
           prompt,
           storageFile,
           requestId: runId,
-          hostState: issueToolState(casefile, status),
+          hostState: runState(casefile, intents),
           sessionFileRef,
           signal,
         })
 
-        // Usage is recorded before any Seerr call: a failure while commenting must
-        // not make a run invisible in the issue's running total.
+        // Usage is recorded before any reply: a failure while publishing must
+        // not make a run invisible in the thread's running total.
         projectSpend(casefile, turn)
         casefile.sessionFile = turn.sessionFile
-        yield* this.cases.saveEffect(casefile)
+        yield* cases.saveEffect(casefile)
 
         if (signal.aborted || turn.failure) {
           casefile.runs.push({
@@ -243,67 +197,59 @@ export class IssueRunner {
             resolved: false,
           })
           casefile.revisit = undefined
-          yield* this.cases.saveEffect(casefile)
+          yield* cases.saveEffect(casefile)
           return yield* Effect.fail(
             new SdkError({
-              message: turn.failure?.message ?? "issue run stopped",
+              message: turn.failure?.message ?? "run stopped",
               cause: turn.failure,
             }),
           )
         }
 
-        const finish = readFinish(turn.finish)
-
-        if (!finish) {
+        const reply = turn.text.trim()
+        if (!reply) {
           console.warn(
-            `[issue:${issueId}] run ended without a valid ${FINISH_TOOL} call; no comment posted:\n${turn.text}`,
+            `[${key}] run ended without a final message; nothing posted`,
           )
         }
-
-        const comment = finish?.comment
-        if (signal.aborted)
-          return yield* Effect.fail(
-            new SdkError({ message: "issue run stopped", cause: undefined }),
-          )
         // Once publication begins its outcome can be uncertain. Never retract
-        // a handle that might now contain the final answer after a crash.
+        // a marker that might now carry the reply after a crash.
         yield* this.jobs.actionEffect(
           runId,
-          "publish-comment",
-          publishCommentEffect(
-            seerr,
-            issueId,
+          "publish-reply",
+          publishEffect(
+            channel,
             status,
-            comment
-              ? `${comment}\n\n${usageAnchor(
-                  this.modelSpec,
-                  casefile.spend.tokens,
-                  casefile.spend.inputTokens,
-                  casefile.spend.outputTokens,
-                  turn.usage.costUsd === undefined
-                    ? undefined
-                    : casefile.spend.costUsd,
-                  turn.usage.costUsd,
-                )}`
+            reply
+              ? {
+                  text: reply,
+                  signature: usageAnchor(
+                    this.modelSpec,
+                    casefile.spend.tokens,
+                    casefile.spend.inputTokens,
+                    casefile.spend.outputTokens,
+                    turn.usage.costUsd === undefined
+                      ? undefined
+                      : casefile.spend.costUsd,
+                    turn.usage.costUsd,
+                  ),
+                }
               : undefined,
-          ).pipe(Effect.as({ comment: comment ?? null })),
+          ).pipe(Effect.as({ reply: reply || null })),
         )
-        status.id = undefined
 
-        if (finish?.resolve) {
+        // After the reply, so a thread is never closed without its answer.
+        const close = intents.close ? channel.close : undefined
+        if (close) {
           if (signal.aborted)
             return yield* Effect.fail(
-              new SdkError({ message: "issue run stopped", cause: undefined }),
+              new SdkError({ message: "run stopped", cause: undefined }),
             )
-          yield* this.jobs.actionEffect(
-            runId,
-            "resolve-issue",
-            seerr.setStatusEffect(issueId, "resolved"),
-          )
+          yield* this.jobs.actionEffect(runId, "close-thread", close.effect())
         }
 
         // Host-written, so continuity survives a run that never called the tool.
-        if (comment) casefile.lastAnswer = clampEntry(comment)
+        if (reply) casefile.lastAnswer = clampEntry(reply)
         const completedAt = yield* this.jobs.actionEffect(
           runId,
           "completed-at",
@@ -312,28 +258,31 @@ export class IssueRunner {
         )
         casefile.runs.push({
           at: new Date(completedAt).toISOString(),
-          trigger: event.kind === "revisit" ? "revisit" : "webhook",
+          trigger: event.kind,
           tokens: turn.usage.newTokens,
           inputTokens: turn.usage.inputTokens,
           outputTokens: turn.usage.outputTokens,
-          commented: comment !== undefined && comment.length > 0,
-          resolved: finish?.resolve ?? false,
+          commented: reply !== "",
+          resolved: close !== undefined,
         })
         const plan = planRevisit({
-          requestedMs: finish?.revisitInMs,
-          reason: finish?.revisitReason,
+          requestedMs:
+            intents.revisit === undefined
+              ? undefined
+              : intents.revisit.minutes * 60_000,
+          reason: intents.revisit?.reason,
           previous: casefile.revisit,
           isRevisitRun: event.kind === "revisit",
-          producedNews: comment !== undefined && comment !== "",
+          producedNews: reply !== "",
           maxChain: MAX_REVISIT_CHAIN,
           now: completedAt,
         })
-        if (plan.refused) console.warn(`[issue:${issueId}] ${plan.refused}`)
-        // A resolved issue is closed: never wake it again on an old schedule.
-        casefile.revisit = finish?.resolve ? undefined : plan.revisit
-        yield* this.cases.saveEffect(casefile)
+        if (plan.refused) console.warn(`[${key}] ${plan.refused}`)
+        // A closed thread is done: never wake it again on an old schedule.
+        casefile.revisit = close ? undefined : plan.revisit
+        yield* cases.saveEffect(casefile)
 
-        return { issueId, finish, casefile }
+        return { thread, reply, casefile }
       }).pipe(
         // Releases the MCP connection on success, failure, and stop alike.
         Effect.scoped,
@@ -342,15 +291,12 @@ export class IssueRunner {
             .actionEffect(
               runId,
               "retract-status",
-              this.retractStatusEffect(issueId, status, runId),
+              this.retractStatusEffect(thread, status, runId),
             )
             .pipe(
               Effect.catchCause((cause) =>
                 Effect.sync(() => {
-                  console.error(
-                    `[issue:${issueId}] failed to retract status comment:`,
-                    cause,
-                  )
+                  console.error(`[${key}] failed to retract status:`, cause)
                 }),
               ),
             ),
@@ -361,20 +307,28 @@ export class IssueRunner {
 
   /** Recovery of a stopped job restores audit/state but cannot call the model. */
   cancelEffect(
-    event: IssueEvent,
-    status: StatusComment,
+    event: ThreadEvent,
+    status: Marker,
     requestId: string,
   ): Effect.Effect<void, unknown> {
     return Effect.gen({ self: this }, function* () {
-      const storageFile = path.join(
-        this.config.dataDir,
-        "sessions",
-        "issues",
-        `${encodeURIComponent(event.issueId)}.sqlite`,
+      const thread = event.thread
+      const cases = this.gateways.cases(thread)
+      const storageFile = this.gateways.sessionFile(thread)
+      const actions = this.jobs.actions(requestId)
+      // The run may have replaced the queue notice's marker with its own. An
+      // unrecorded working line fails here for review.
+      if (actions.some((action) => action.key === "working-notice")) {
+        const shown = yield* this.jobs.actionEffect<Marker, Error>(
+          requestId,
+          "working-notice",
+          Effect.fail(new Error("Missing recorded working notice")),
+        )
+        status.id = shown.id
+      }
+      const began = actions.some(
+        (action) => action.key === "case-baseline" && action.completed,
       )
-      const began = this.jobs
-        .actions(requestId)
-        .some((action) => action.key === "case-baseline" && action.completed)
       const exists = yield* storageIO(() => stat(storageFile)).pipe(
         Effect.map((file) => file.isFile()),
         Effect.catch(() => Effect.succeed(false)),
@@ -383,7 +337,7 @@ export class IssueRunner {
         const casefile = yield* this.jobs.actionEffect(
           requestId,
           "case-baseline",
-          this.cases.loadEffect(event.issueId),
+          cases.loadEffect(thread.id),
           { replaySafe: true },
         )
         const turn = yield* runAgentTurnEffect({
@@ -395,104 +349,103 @@ export class IssueRunner {
           prompt: "",
           tools: [],
           builtinRead: false,
-          hostState: issueToolState(casefile, status),
+          hostState: runState(casefile, { revisit: undefined, close: false }),
           sessionFileRef: undefined,
           signal: AbortSignal.abort(),
         })
         projectSpend(casefile, turn)
         casefile.sessionFile = turn.sessionFile
         casefile.revisit = undefined
-        const publication = this.jobs
-          .actions(requestId)
-          .find((action) => action.key === "publish-comment")
-        const published = publication?.completed
-          ? yield* this.jobs.actionEffect<{ comment: string | null }, Error>(
+        const published = actions.some(
+          (action) => action.key === "publish-reply" && action.completed,
+        )
+          ? yield* this.jobs.actionEffect<{ reply: string | null }, Error>(
               requestId,
-              "publish-comment",
-              Effect.fail(new Error("Missing recorded comment outcome")),
+              "publish-reply",
+              Effect.fail(new Error("Missing recorded reply outcome")),
             )
           : undefined
-        if (published?.comment)
-          casefile.lastAnswer = clampEntry(published.comment)
+        if (published?.reply) casefile.lastAnswer = clampEntry(published.reply)
         casefile.runs.push({
           at: new Date().toISOString(),
           trigger: event.kind,
           tokens: turn.usage.newTokens,
           inputTokens: turn.usage.inputTokens,
           outputTokens: turn.usage.outputTokens,
-          commented: Boolean(published?.comment),
-          resolved: this.jobs
-            .actions(requestId)
-            .some(
-              (action) => action.key === "resolve-issue" && action.completed,
-            ),
+          commented: Boolean(published?.reply),
+          resolved: actions.some(
+            (action) => action.key === "close-thread" && action.completed,
+          ),
         })
-        yield* this.cases.saveEffect(casefile)
+        yield* cases.saveEffect(casefile)
       }
       yield* this.jobs.actionEffect(
         requestId,
         "retract-status",
-        this.retractStatusEffect(event.issueId, status, requestId),
+        this.retractStatusEffect(thread, status, requestId),
       )
     }).pipe(Effect.uninterruptible)
   }
 
-  retractStatusEffect(
-    issueId: string,
-    status: StatusComment,
-    requestId: string,
-  ) {
+  retractStatusEffect(thread: ThreadRef, status: Marker, requestId: string) {
     return Effect.suspend(() => {
       // Consult durable intent, not a flag in this process: even initialization
-      // can fail while recovering a job whose comment was already published.
+      // can fail while recovering a job whose reply was already published.
       if (
         this.jobs
           .actions(requestId)
-          .some((action) => action.key === "publish-comment")
+          .some((action) => action.key === "publish-reply")
       )
         return Effect.void
-      const seerr = new SeerrClient(
-        this.config.seerr,
-        this.config.seerrBotUserId,
-      )
-      return publishCommentEffect(seerr, issueId, status, undefined)
+      return publishEffect(this.channel(thread), status, undefined)
     })
+  }
+
+  private channel(thread: ThreadRef): Channel {
+    return this.gateways.of(thread).channel(thread.id)
   }
 }
 
-function issueToolState(
+/** What the run's tools change in the host, checkpointed with their results. */
+function runState(
   casefile: CaseFile,
-  status: StatusComment,
+  intents: RunIntents,
 ): NonNullable<AgentTurnOptions["hostState"]> {
   return {
     capture: () => ({
-      statusId: status.id ?? null,
-      progressCalls: status.calls ?? 0,
       summary: {
         ...casefile.summary,
         hypothesis: casefile.summary.hypothesis ?? null,
       },
+      revisit: intents.revisit ?? null,
+      close: intents.close,
     }),
     restore: (value) => {
       if (value === null || typeof value !== "object" || Array.isArray(value))
-        throw new Error("Invalid persisted issue tool state")
+        throw new Error("Invalid persisted run state")
       const summary = value.summary
       if (
         summary === null ||
         typeof summary !== "object" ||
         Array.isArray(summary)
       )
-        throw new Error("Invalid persisted issue summary")
-      status.id =
-        typeof value.statusId === "number" ? value.statusId : undefined
-      status.calls =
-        typeof value.progressCalls === "number" ? value.progressCalls : 0
+        throw new Error("Invalid persisted case summary")
       casefile.summary = {
         hypothesis: clampEntry(summary.hypothesis),
         facts: clampEntries(summary.facts),
         ruledOut: clampEntries(summary.ruledOut),
         openQuestions: clampEntries(summary.openQuestions),
       }
+      const revisit = value.revisit
+      intents.revisit =
+        revisit !== null &&
+        typeof revisit === "object" &&
+        !Array.isArray(revisit) &&
+        typeof revisit.minutes === "number" &&
+        typeof revisit.reason === "string"
+          ? { minutes: revisit.minutes, reason: revisit.reason }
+          : undefined
+      intents.close = value.close === true
     },
   }
 }
@@ -516,9 +469,12 @@ function projectSpend(casefile: CaseFile, turn: AgentTurnResult): void {
   }
 }
 
+function isGerman(language: string): boolean {
+  return /^(de|deutsch|german)(-|_|\b)/i.test(language.trim())
+}
+
 function queuedMessage(language: string, runsAhead: number): string {
-  const german = /^(de|deutsch|german)(-|_|\b)/i.test(language.trim())
-  if (german) {
+  if (isGerman(language)) {
     const ahead =
       runsAhead === 1
         ? "Eine Aufgabe ist noch vor ihr."
@@ -529,34 +485,44 @@ function queuedMessage(language: string, runsAhead: number): string {
     runsAhead === 1
       ? "One task is ahead of it."
       : `${runsAhead} tasks are ahead of it.`
-  return `⏳ Blitzcrank is currently busy. Your issue is queued. ${ahead}`
+  return `⏳ Blitzcrank is currently busy. Your report is queued. ${ahead}`
+}
+
+function workingMessage(language: string): string {
+  return isGerman(language)
+    ? "🔎 Blitzcrank sieht sich deine Meldung an."
+    : "🔎 Blitzcrank is looking into your report."
+}
+
+/** Shows a notice and returns the marker it now lives under, for the journal. */
+function showEffect(channel: Channel, marker: Marker, notice: Notice) {
+  return channel.showEffect(marker, notice).pipe(
+    Effect.map((): Marker => ({ id: marker.id })),
+    Effect.uninterruptible,
+  )
 }
 
 /**
- * Publishes the run's one public comment: it overwrites the live status line
- * the agent posted via `report_progress` when there is one. Without a final
- * comment the status line is removed, so no stale "looking into it" survives.
- * The handle is cleared on success: the status is resolved — deleted, or now
- * carrying the final answer — so a run failing after this point must not
- * retract it.
+ * Publishes the run's one visible message over its status line, or removes
+ * the line when there is nothing to say. The marker is cleared on success: it
+ * is gone, or now carries the reply, so a run failing after this point must
+ * not retract it.
  */
-export function publishCommentEffect(
-  seerr: Pick<
-    SeerrClient,
-    "postCommentEffect" | "updateCommentEffect" | "deleteCommentEffect"
-  >,
-  issueId: string,
-  status: StatusComment,
-  body: string | undefined,
+export function publishEffect(
+  channel: Pick<Channel, "showEffect" | "retractEffect">,
+  marker: Marker,
+  notice: Notice | undefined,
 ) {
-  return Effect.gen(function* () {
-    if (body === undefined) {
-      if (status.id !== undefined) yield* seerr.deleteCommentEffect(status.id!)
-    } else if (status.id === undefined) {
-      yield* seerr.postCommentEffect(issueId, body)
-    } else {
-      yield* seerr.updateCommentEffect(status.id!, body)
-    }
-    status.id = undefined
-  }).pipe(Effect.uninterruptible)
+  return (
+    notice === undefined
+      ? channel.retractEffect(marker)
+      : channel.showEffect(marker, notice)
+  ).pipe(
+    Effect.tap(() =>
+      Effect.sync(() => {
+        marker.id = undefined
+      }),
+    ),
+    Effect.uninterruptible,
+  )
 }

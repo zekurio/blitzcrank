@@ -1,16 +1,19 @@
 # Repository Guidelines
 
-- blitzcrank is an agentic webhook gateway for a private media homelab. A
-  Jellyseerr issue webhook wakes a serial run queue, which opens one Pi Durable
+- blitzcrank is an agent for a private media homelab. A gateway turns inbound
+  traffic into events on a thread; Seerr is the only gateway, and its threads
+  are issues. An event wakes a serial run queue, which opens one Pi Durable
   conversation that investigates across Seerr/Sonarr/Radarr/SABnzbd/Jellyfin
-  and applies narrow verified fixes. The host, never the agent, comments,
-  resolves issues, and schedules revisits.
+  and applies narrow verified fixes. The agent's final message is the reply.
+  The host, never the agent, posts it, closes threads, and arms revisits.
 - It is a pnpm workspace with two packages that run as two processes.
-  `packages/host` (npm name `blitzcrank`) is the Seerr webhook gateway and the
-  agent loop: `src/server.ts` → `src/jobs.ts` → `src/queue.ts` → `src/agent/`.
-  It defines the host tools `report_progress`, `update_case_file`,
-  `thread_history_search`, `tool_search`, `finish_issue`, and optional
-  `web_search`/`web_extract`, and grants builtin `read` for skills.
+  `packages/host` (npm name `blitzcrank`) holds the gateways and the agent
+  loop: `src/server.ts` → `src/gateways/` → `src/thread-work.ts` →
+  `src/jobs.ts` → `src/queue.ts` → `src/agent/`. It defines the host tools
+  `update_case_file`, `thread_history_search`, `tool_search`,
+  `schedule_revisit`, and optional `web_search`/`web_extract`, builds the
+  gateway's close tool (`resolve_issue` for Seerr), and grants builtin `read`
+  for skills.
   `packages/mcp` (npm name `@blitzcrank/mcp`, binary `blitzcrank-mcp`) is an
   MCP server. It holds the service credentials and media mounts and exposes
   one tool per read and per write, named `<service>_<what>` (`sonarr_queue`,
@@ -28,21 +31,27 @@
   `verification`. Nothing asks the model to confirm.
 - Define service behavior in `packages/mcp/src/services/`. A tool's name,
   schema, and description are its contract; keep them out of READMEs.
-- Layout: `packages/host/src/agent/` (session, issue prompt, finish parsing),
-  `packages/host/src/tools/` (host tools: progress, case file, history, tool
-  search), `packages/host/src/mcp/` (server connection, tool adapter),
-  `packages/host/src/gateways/seerr/` (payload types, comment gate, loop
-  guard), `packages/host/src/services/` (HTTP helper, host-side Seerr client),
+- Layout: `packages/host/src/gateway.ts` (the `Gateway`, `Channel`, and
+  `Intake` interfaces and the gateway registry),
+  `packages/host/src/gateways/seerr/` (webhook handling, channel, payload
+  types, comment gate, loop guard), `packages/host/src/thread-work.ts`
+  (admission, ordering, stopping), `packages/host/src/agent/` (runner,
+  session, prompts), `packages/host/src/tools/` (host tools: case file,
+  history, tool search, revisit and close requests),
+  `packages/host/src/mcp/` (server connection, tool adapter),
+  `packages/host/src/services/` (HTTP helper, host-side Seerr client),
   `packages/host/src/web/` (web provider: search and extract),
   `packages/host/skills/` (agent domain knowledge),
   `packages/mcp/src/services/` (one read table and one write table per
   service), `packages/mcp/src/media/` (ffprobe, ffmpeg, path containment),
   `nix/` (packages and NixOS service module).
-- Pi Durable is the only agent execution backend and Seerr issues are the only
-  trigger. Work from the current source and domain skills. Do not reintroduce
-  removed runtimes, automations, Discord, in-process service tools, the
-  `codemode` sandbox, plan/apply writes, per-run tool subsets, or
-  compatibility paths unless the operator requests them.
+- Pi Durable is the only agent execution backend and Seerr is the only
+  gateway. Another source of requests is another `Gateway` listed in
+  `packages/host/src/index.ts`; nothing else in the host may learn about it.
+  Work from the current source and domain skills. Do not reintroduce removed
+  runtimes, automations, in-process service tools, the `codemode` sandbox,
+  plan/apply writes, per-run tool subsets, tools that carry the reply or
+  progress text, or compatibility paths unless the operator requests them.
 - pnpm workspace (`packages/*`), strict ESM TypeScript (`module: NodeNext`,
   `exactOptionalPropertyTypes`, shared `tsconfig.base.json`), no build step in
   dev. Node >= 24.0.0 (the dev shell uses the default Node.js from the pinned
@@ -97,7 +106,7 @@
 ## Host Invariants
 
 Do not weaken these without explicit operator sign-off. Call out any change to
-`packages/host/src/agent/session.ts`, the directive/finish protocol, the
+`packages/host/src/agent/session.ts`, how the reply is taken from a run, the
 runner's tool allowlist, or the MCP exposure rule in your summary, with the
 behavioural difference described.
 
@@ -113,20 +122,22 @@ behavioural difference described.
 - The Durable policy fingerprint includes the MCP tool list: every server tool
   is registered, loaded or not. A server whose tools changed between admission
   and recovery is a changed policy and fails closed for review.
-- The host, never the agent, comments, resolves issues, and schedules revisits,
-  driven by the parsed `finish_issue` call
-  (`packages/host/src/agent/finish.ts`). A call that did not end the run, or an
-  answer without one, posts nothing.
-- One run leaves at most one comment: `report_progress` rewrites a single live
-  status comment in place (`PUT /issueComment/{id}`, max 4 calls), the host's
-  final comment overwrites it, and a run with no final comment deletes it,
-  including a run that fails before its final comment, whose adopted queue
-  notice or progress line is retracted on the way out
-  (`packages/host/src/agent/runner.ts`). Comment edits and deletes emit no
-  Seerr webhook, so this cannot loop. Queue notices are posted strictly
-  serialized (`IssueRunner.notifyQueuedEffect`): `postComment` infers the new
-  comment's id from the issue's comment list, and two racing posts could return
-  the same handle.
+- The runner reaches a thread only through its `Channel`
+  (`packages/host/src/gateway.ts`). Code outside
+  `packages/host/src/gateways/<name>/` imports from a gateway only in
+  `packages/host/src/index.ts`, which lists them.
+- The reply is the text of the run's own answer entry, and every run posts
+  it, revisits included. The host, never the agent, posts it, closes threads,
+  and arms revisits. `schedule_revisit` and the gateway's close tool only
+  record a request in run state. The host acts on it after the reply is out,
+  so a run that fails or is stopped arms nothing and closes nothing.
+- One run shows at most one message. The host posts a working line when the
+  run starts, or adopts its queue notice. The reply rewrites that message in
+  place, and a run that fails or ends without a message removes it
+  (`packages/host/src/agent/runner.ts`). Seerr comment edits and deletes emit
+  no webhook, so this cannot loop. The Seerr gateway serializes its comment
+  posts: `postComment` infers the new comment's id from the issue's comment
+  list, and two racing posts could return the same handle.
 - Comment-triggered runs are authorized host-side by
   `packages/host/src/gateways/seerr/comment-gate.ts`: only the issue reporter
   or a Seerr `ADMIN`/`MANAGE_ISSUES` user may drive the agent. It runs before
@@ -176,9 +187,11 @@ behavioural difference described.
   rejected because Blitzcrank cannot enforce a remote fetcher's DNS and
   redirect policy. Web content is untrusted.
 - A revisit is the only run nobody asked for: chains are capped
-  (`MAX_REVISIT_CHAIN`) and backed off in `packages/host/src/revisits.ts`. The
-  counter, run history, and token totals live in the host-written half of the
-  case file; `update_case_file` can write only the agent's summary. There is
+  (`MAX_REVISIT_CHAIN`) and backed off in `packages/host/src/revisits.ts`, and
+  `schedule_revisit` fails once the allowance is used up. A timer firing is an
+  ordinary event on its thread. The counter, run history, and token totals
+  live in the host-written half of the case file; `update_case_file` can
+  write only the agent's summary. There is
   deliberately no spend ceiling. The deployment runs on subscription auth,
   where a dollar figure derived from list prices would be fiction.
 
@@ -307,8 +320,8 @@ small named helpers below it. Extract only when it names a real concept.
 - Service HTTP goes through `jsonRequestEffect`. Each package has its own
   copy: `packages/mcp/src/http.ts` on the server and
   `packages/host/src/services/http.ts` on the host. Paths are service-relative
-  (`/api/v3/...`). Host-side Seerr actions go through `SeerrClient`, never
-  through agent tools.
+  (`/api/v3/...`). Host-side Seerr actions go through the Seerr gateway's
+  `SeerrClient`, never through agent tools.
 - Fire-and-forget async is not allowed; the queue owns run lifecycles. The HTTP
   listener contains its own failures because event emitters cannot await them.
 - Adding or renaming a host tool means updating

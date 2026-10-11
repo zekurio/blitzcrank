@@ -10,8 +10,9 @@ truncated or newer state is needed. Seerr establishes reporter and media
 identity, not file contents. Issue status, request status, and availability
 are separate states.
 
-The host owns comments and issue status. No tool posts a comment or resolves
-an issue; `finish_issue` tells the host what to publish.
+The host owns comments and issue status. Your final message becomes the
+comment. `resolve_issue` asks the host to resolve the issue once that comment
+is posted; call it only for a verified fix.
 
 ## Reads
 

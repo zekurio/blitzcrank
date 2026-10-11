@@ -10,7 +10,7 @@ import {
 import type { ToolRegistration } from "@earendil-works/pi-durable"
 import { Effect } from "effect"
 
-import { BOT_COMMENT_MARKER } from "../gateways/seerr/loop-guard.ts"
+import { SIGNATURE_PREFIX } from "../gateway.ts"
 import { parseModelSpec } from "./durable-model.ts"
 import { runDurableTurn } from "./durable.ts"
 import { SdkError } from "./effect.ts"
@@ -23,7 +23,7 @@ export {
 
 export function modelAnchor(spec: string): string {
   const parsed = parseModelSpec(spec)
-  return `${BOT_COMMENT_MARKER} ${parsed.modelId}:${parsed.thinkingLevel}]`
+  return `${SIGNATURE_PREFIX} ${parsed.modelId}:${parsed.thinkingLevel}]`
 }
 export interface RunUsage {
   inputTokens: number
@@ -42,7 +42,7 @@ function formatCost(costUsd: number): string {
 }
 export function usageAnchor(
   spec: string,
-  issueTokens: number,
+  threadTokens: number,
   inputTokens: number | undefined,
   outputTokens: number | undefined,
   costUsd: number | undefined,
@@ -56,7 +56,7 @@ export function usageAnchor(
         ? ` · ${formatCost(runCostUsd)} this run`
         : ""
   if (inputTokens === undefined || outputTokens === undefined)
-    return `${prefix} · ${formatTokens(issueTokens)} tokens${cost}]`
+    return `${prefix} · ${formatTokens(threadTokens)} tokens${cost}]`
   return `${prefix} · ${formatTokens(inputTokens)} in · ${formatTokens(outputTokens)} out${cost}]`
 }
 export interface AgentTurnOptions {
@@ -79,8 +79,6 @@ export interface AgentTurnOptions {
       }
     | undefined
   sessionFileRef: { current: string | undefined } | undefined
-  /** A registered tool that must end the run as the answer's only call. */
-  finishTool?: string | undefined
   builtinRead?: boolean
   signal?: AbortSignal | undefined
 }
@@ -90,9 +88,8 @@ export interface DurableTurnFailure {
   toolNames: string[]
 }
 export interface AgentTurnResult {
+  /** The message that ended the run, from the submission's answer entry. */
   text: string
-  /** Validated arguments of the finish call that ended the run, if any. */
-  finish: unknown
   usage: RunUsage
   sessionFile: string | undefined
   failure?: DurableTurnFailure

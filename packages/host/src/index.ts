@@ -6,19 +6,18 @@ import { ModelRuntime } from "@earendil-works/pi-coding-agent"
 import { McpAuthRequiredError } from "@earendil-works/pi-mcp"
 import { Cause, Clock, Effect, Option, Schedule } from "effect"
 
-import { IssueRunner } from "./agent/runner.ts"
+import { ThreadRunner } from "./agent/runner.ts"
 import { resolveModel } from "./agent/session.ts"
 import { modelRuntimeOptions } from "./auth.ts"
-import { CaseStore } from "./casefile.ts"
 import { loadConfig, type Config } from "./config.ts"
-import { createCommentGateEffect } from "./gateways/seerr/comment-gate.ts"
-import { IssueWork } from "./issue-work.ts"
+import { Gateways } from "./gateway.ts"
+import { createSeerrGateway } from "./gateways/seerr/gateway.ts"
 import { JobStore } from "./jobs.ts"
 import { connectMcpEffect } from "./mcp/client.ts"
 import { revisitDelay } from "./revisits.ts"
 import { createApp } from "./server.ts"
-import { SeerrClient } from "./services/seerr.ts"
 import { storageIO } from "./storage.ts"
+import { ThreadWork } from "./thread-work.ts"
 
 /**
  * Total shutdown budget. An active mutation gets time to finish and report,
@@ -36,26 +35,34 @@ export function startServerEffect(): Effect.Effect<void, unknown> {
     yield* checkMcpEffect(config)
     yield* storageIO(() => mkdir(config.dataDir, { recursive: true }))
     const jobs = new JobStore(path.join(config.dataDir, "jobs.sqlite"))
-    const cases = new CaseStore(path.join(config.dataDir, "cases"))
-    const allowComment = createCommentGateEffect(
-      new SeerrClient(config.seerr, config.seerrBotUserId),
-    )
-    const issueWork = new IssueWork(
-      new IssueRunner(config, runtime, config.model, jobs),
-      cases,
+    // A new gateway is one more entry here.
+    const gateways = new Gateways(config.dataDir, [createSeerrGateway(config)])
+    const work = new ThreadWork(
+      new ThreadRunner(config, runtime, config.model, jobs, gateways),
+      gateways,
       jobs,
-      (event) =>
-        event.kind === "webhook" &&
-        event.payload.notification_type === "ISSUE_COMMENT"
-          ? allowComment(event.payload)
-          : Effect.succeed(true),
     )
-    yield* issueWork.restoreEffect()
-    yield* restoreRevisits(cases, issueWork)
+    yield* work.restoreEffect()
+    yield* restoreRevisits(gateways, work)
 
-    const server = createServer(createGatewayApp(config, cases, issueWork))
+    const server = createServer(
+      createApp({
+        gateways,
+        intake: {
+          submit: (message) =>
+            work.submitEffect({ kind: "message", ...message }),
+          stop: (thread) => work.stopEffect(thread),
+          resume: (thread) => work.resumeEffect(thread),
+          closed: (thread) => work.closedEffect(thread),
+        },
+        stats: () => ({
+          queued: work.queue.size,
+          pendingRevisits: work.revisits.pending,
+        }),
+      }),
+    )
     server.listen(config.port)
-    installShutdown(server, issueWork, jobs)
+    installShutdown(server, work, jobs)
   })
 }
 
@@ -65,7 +72,7 @@ const MCP_STARTUP_RETRY_SPACING = "2 seconds"
 
 /**
  * Every run depends on the MCP server. A wrong URL or token should stop the
- * service at boot, not fail each issue one by one. The server is a separate
+ * service at boot, not fail each run one by one. The server is a separate
  * unit that may still be binding its port, so an unreachable server is retried
  * briefly. A rejected token is not: waiting cannot fix it.
  */
@@ -94,66 +101,28 @@ function checkMcpEffect(config: Config) {
 }
 
 function restoreRevisits(
-  cases: CaseStore,
-  issueWork: IssueWork,
+  gateways: Gateways,
+  work: ThreadWork,
 ): Effect.Effect<void, unknown> {
   return Effect.gen(function* () {
     // Re-arm saved follow-ups. Spread overdue runs through revisitDelay.
-    for (const file of yield* cases.pendingRevisitsEffect()) {
-      if (yield* cases.isPausedEffect(file.issueId)) continue
-      if (issueWork.hasPending(file.issueId)) continue
-      const delayMs = revisitDelay(file, Date.now())
-      const revisit = file.revisit
-      if (delayMs === undefined || !revisit) continue
-      issueWork.armRevisit(file.issueId, delayMs, revisit.reason, revisit.dueAt)
+    for (const store of gateways.stores()) {
+      for (const file of yield* store.cases.pendingRevisitsEffect()) {
+        const thread = { gateway: store.gateway, id: file.id }
+        if (yield* store.cases.isPausedEffect(file.id)) continue
+        if (work.hasPending(thread)) continue
+        const delayMs = revisitDelay(file, Date.now())
+        const revisit = file.revisit
+        if (delayMs === undefined || !revisit) continue
+        work.armRevisit(thread, delayMs, revisit.reason, revisit.dueAt)
+      }
     }
-  })
-}
-
-function createGatewayApp(
-  config: Config,
-  cases: CaseStore,
-  issueWork: IssueWork,
-) {
-  return createApp({
-    config,
-    allowComment: createCommentGateEffect(
-      new SeerrClient(config.seerr, config.seerrBotUserId),
-    ),
-    onIssueEvent: (issueId, payload) =>
-      Effect.suspend(() => {
-        // New user activity replaces any pending follow-up for this issue.
-        issueWork.revisits.cancel(issueId)
-        return issueWork.enqueueEffect({ kind: "webhook", issueId, payload })
-      }),
-    onIssueStop: (issueId) => issueWork.stopEffect(issueId),
-    onIssueResume: (issueId) => issueWork.resumeEffect(issueId),
-    onIssueClosed: (issueId) => closeIssue(cases, issueWork, issueId),
-    stats: () => ({
-      queued: issueWork.queue.size,
-      pendingRevisits: issueWork.revisits.pending,
-    }),
-  })
-}
-
-function closeIssue(
-  cases: CaseStore,
-  issueWork: IssueWork,
-  issueId: string,
-): Effect.Effect<void, unknown> {
-  return Effect.gen(function* () {
-    issueWork.revisits.cancel(issueId)
-    const file = yield* cases.loadEffect(issueId)
-    if (!file.revisit) return
-    file.revisit = undefined
-    yield* cases.saveEffect(file)
-    console.log(`[revisit] issue=${issueId} resolved; follow-up dropped`)
   })
 }
 
 function installShutdown(
   server: Server,
-  issueWork: IssueWork,
+  work: ThreadWork,
   jobs: JobStore,
 ): void {
   let shuttingDown = false
@@ -165,9 +134,9 @@ function installShutdown(
       }
       shuttingDown = true
       console.log(`[shutdown] ${signal} received; stopping`)
-      issueWork.revisits.stop()
+      work.revisits.stop()
       // Persisted revisit plans return at boot. Stop all new queue admission now.
-      issueWork.queue.close()
+      work.queue.close()
       const deadline = (yield* Clock.currentTimeMillis) + SHUTDOWN_GRACE_MS
       yield* withDeadline(
         Effect.callback<void>((resume) => {
@@ -177,13 +146,13 @@ function installShutdown(
         "[shutdown] http server did not close in time",
       )
       yield* withDeadline(
-        issueWork.queue.drainEffect(),
+        work.queue.drainEffect(),
         deadline,
         "[shutdown] grace period expired with runs still in flight; exiting anyway",
       )
       // A deadline does not interrupt writes. Keep their journal open until the
       // process exits; closing it under an active tool would lose its outcome.
-      if (issueWork.queue.size === 0) jobs.close()
+      if (work.queue.size === 0) jobs.close()
       console.log("[shutdown] bye")
       process.exit(0)
     })

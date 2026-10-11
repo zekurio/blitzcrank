@@ -1,7 +1,5 @@
+import { SIGNATURE_PREFIX } from "../../gateway.ts"
 import { webhookText, type SeerrWebhookPayload } from "./types.ts"
-
-/** Marker every blitzcrank comment carries; see `modelAnchor` in agent/session. */
-export const BOT_COMMENT_MARKER = "[blitzcrank w/"
 
 /**
  * True when a comment event was caused by blitzcrank's own comment.
@@ -19,7 +17,7 @@ export function isBotComment(
   botUsername: string | undefined,
 ): boolean {
   const message = webhookText(payload.comment?.comment_message)
-  if (message?.includes(BOT_COMMENT_MARKER)) return true
+  if (message?.includes(SIGNATURE_PREFIX)) return true
   const author = webhookText(payload.comment?.commentedBy_username)
   const bot = webhookText(botUsername)
   if (author === undefined || bot === undefined) return false

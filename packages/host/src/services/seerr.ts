@@ -56,7 +56,7 @@ export class SeerrClient {
   /**
    * Posts a comment; returns its id (newest of the returned issue comments).
    * The inference is ambiguous when two posts to one issue race, so posting
-   * must be serialized by the caller (see IssueRunner.notifyQueued).
+   * must be serialized by the caller (see the Seerr gateway's channel).
    */
   postCommentEffect(
     issueId: string | number,

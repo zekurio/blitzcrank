@@ -3,52 +3,49 @@ import { Cause, Effect, Fiber } from "effect"
 import type { CaseFile, PendingRevisit } from "./casefile.ts"
 
 /**
- * In-process revisit scheduler. One pending revisit per issue; a new webhook
- * event for the same issue cancels the pending revisit (the reporter's
- * activity wakes the issue anyway).
+ * In-process revisit scheduler. One pending revisit per thread; a new message
+ * in the same thread cancels the pending revisit (the reporter's activity
+ * wakes the thread anyway).
  *
- * Timers are in-process, but the plan behind them is persisted in the issue's
+ * Timers are in-process, but the plan behind them is persisted in the thread's
  * case file, so a restart re-arms them instead of silently dropping follow-ups.
  */
 export class RevisitScheduler {
   private readonly timers = new Map<string, Fiber.Fiber<void>>()
 
-  schedule(issueId: string, delayMs: number, run: () => void): void {
-    this.scheduleEffect(issueId, delayMs, () => Effect.sync(run))
+  schedule(key: string, delayMs: number, run: () => void): void {
+    this.scheduleEffect(key, delayMs, () => Effect.sync(run))
   }
 
   scheduleEffect(
-    issueId: string,
+    key: string,
     delayMs: number,
     run: () => Effect.Effect<void, unknown>,
   ): void {
-    this.cancel(issueId)
+    this.cancel(key)
     const timer = Effect.runFork(
       Effect.sleep(delayMs).pipe(
         Effect.flatMap(() => {
-          this.timers.delete(issueId)
+          this.timers.delete(key)
           return run()
         }),
         Effect.catchCause((cause) =>
           Cause.hasInterrupts(cause)
             ? Effect.void
             : Effect.sync(() =>
-                console.error(
-                  `[issue:${issueId}] revisit failed:`,
-                  Cause.squash(cause),
-                ),
+                console.error(`[${key}] revisit failed:`, Cause.squash(cause)),
               ),
         ),
       ),
     )
-    this.timers.set(issueId, timer)
+    this.timers.set(key, timer)
   }
 
-  cancel(issueId: string): void {
-    const timer = this.timers.get(issueId)
+  cancel(key: string): void {
+    const timer = this.timers.get(key)
     if (timer) {
       timer.interruptUnsafe()
-      this.timers.delete(issueId)
+      this.timers.delete(key)
     }
   }
 
@@ -57,7 +54,7 @@ export class RevisitScheduler {
   }
 
   stop(): void {
-    for (const issueId of this.timers.keys()) this.cancel(issueId)
+    for (const key of this.timers.keys()) this.cancel(key)
   }
 }
 
@@ -74,7 +71,7 @@ export interface RevisitPlanInput {
 }
 
 /**
- * Longest follow-up delay, matching the finish_issue revisit bound. Beyond
+ * Longest follow-up delay, matching the schedule_revisit bound. Beyond
  * ~24.8 days a setTimeout overflows and fires immediately, which would turn
  * the anti-poll backoff into a tight poll.
  */

@@ -8,7 +8,7 @@ import { storageCheck, storageIO, writeAtomic } from "./storage.ts"
 import type { StorageError } from "./storage.ts"
 
 /**
- * Per-issue case file: the durable, host-owned record of one issue.
+ * Per-thread case file: the durable, host-owned record of one thread.
  *
  * The agent's *conversation* now survives between runs (the pi session is
  * resumed, see `sessionFile`), so this file is no longer the only thing
@@ -35,7 +35,7 @@ export interface CaseSummary {
 
 export interface CaseRun {
   at: string
-  trigger: "webhook" | "revisit"
+  trigger: "message" | "revisit"
   /** `RunUsage.newTokens`: input + cache writes + output, no cache reads. */
   tokens: number
   /** Undefined on runs recorded before split usage was introduced. */
@@ -56,11 +56,12 @@ export interface PendingRevisit {
 }
 
 export interface CaseFile {
-  issueId: string
+  /** The thread's id within its gateway, which is also the file's name. */
+  id: string
   updatedAt: string
   summary: CaseSummary
   /**
-   * The last comment actually published, host-written. Continuity must not
+   * The last reply actually published, host-written. Continuity must not
    * depend on the agent volunteering to call `update_case_file`, and repeating
    * an earlier answer is the most common way a follow-up wastes a run.
    */
@@ -68,17 +69,17 @@ export interface CaseFile {
   /**
    * The Durable conversation database used by the latest run. Old JSONL paths
    * are retained until the first Durable turn but never opened or imported.
-   * The host derives new storage paths from the issue identity, not this field.
+   * The host derives new storage paths from the thread identity, not this field.
    */
   sessionFile: string | undefined
   runs: CaseRun[]
   /**
-   * Running totals for the whole issue; shown in the comment footer.
+   * Running totals for the whole thread; shown in the reply's signature.
    *
    * `tokens` accumulates `RunUsage.newTokens`, so it stays proportional to the
    * work done. Case files written before that fix carry an inflated total that
    * also counted cache reads; it stops growing wrongly rather than being
-   * rewritten, because losing an issue's memory to a migration is worse than
+   * rewritten, because losing a thread's memory to a migration is worse than
    * one stale number.
    */
   spend: {
@@ -98,9 +99,9 @@ export const MAX_ENTRIES = 12
 export const MAX_ENTRY_CHARS = 300
 const MAX_RUNS = 8
 
-export function emptyCase(issueId: string): CaseFile {
+export function emptyCase(id: string): CaseFile {
   return {
-    issueId,
+    id,
     updatedAt: new Date().toISOString(),
     summary: {
       hypothesis: undefined,
@@ -184,20 +185,20 @@ export function renderCase(file: CaseFile): string | undefined {
 export class CaseStore {
   constructor(private readonly dir: string) {}
 
-  private file(issueId: string): string {
-    if (!/^[\w-]{1,64}$/.test(issueId)) {
-      throw new Error(`refusing to use "${issueId}" as a case file name`)
+  private file(id: string): string {
+    if (!/^[\w-]{1,64}$/.test(id)) {
+      throw new Error(`refusing to use "${id}" as a case file name`)
     }
-    return path.join(this.dir, `${issueId}.json`)
+    return path.join(this.dir, `${id}.json`)
   }
 
-  private pauseFile(issueId: string): string {
-    return `${this.file(issueId).slice(0, -".json".length)}.paused`
+  private pauseFile(id: string): string {
+    return `${this.file(id).slice(0, -".json".length)}.paused`
   }
 
-  isPausedEffect(issueId: string): Effect.Effect<boolean, StorageError> {
+  isPausedEffect(id: string): Effect.Effect<boolean, StorageError> {
     return Effect.gen({ self: this }, function* () {
-      const target = yield* storageCheck(() => this.pauseFile(issueId))
+      const target = yield* storageCheck(() => this.pauseFile(id))
       return yield* storageIO(() => readFile(target)).pipe(
         Effect.as(true),
         Effect.catch((error) =>
@@ -207,37 +208,39 @@ export class CaseStore {
     })
   }
 
-  pauseEffect(issueId: string): Effect.Effect<void, StorageError> {
+  pauseEffect(id: string): Effect.Effect<void, StorageError> {
     return Effect.gen({ self: this }, function* () {
-      const target = yield* storageCheck(() => this.pauseFile(issueId))
+      const target = yield* storageCheck(() => this.pauseFile(id))
       yield* storageIO(() => mkdir(this.dir, { recursive: true }))
       yield* storageIO(() => writeFile(target, "", "utf8"))
     })
   }
 
-  resumeEffect(issueId: string): Effect.Effect<void, StorageError> {
+  resumeEffect(id: string): Effect.Effect<void, StorageError> {
     return Effect.gen({ self: this }, function* () {
-      const target = yield* storageCheck(() => this.pauseFile(issueId))
+      const target = yield* storageCheck(() => this.pauseFile(id))
       yield* storageIO(() => rm(target, { force: true }))
     })
   }
 
-  /** Damaged or unreadable case memory does not permanently block an issue. */
-  loadEffect(issueId: string): Effect.Effect<CaseFile, StorageError> {
+  /** Damaged or unreadable case memory does not permanently block a thread. */
+  loadEffect(id: string): Effect.Effect<CaseFile, StorageError> {
     return Effect.gen({ self: this }, function* () {
-      const target = yield* storageCheck(() => this.file(issueId))
+      const target = yield* storageCheck(() => this.file(id))
       const raw = yield* storageIO(() => readFile(target, "utf8")).pipe(
         Effect.catch(() => Effect.succeed(undefined)),
       )
-      if (raw === undefined) return emptyCase(issueId)
-      const empty = emptyCase(issueId)
+      if (raw === undefined) return emptyCase(id)
+      const empty = emptyCase(id)
       return yield* storageCheck(() => {
         // SAFETY: Every field used from this durable file is clamped below.
         const parsed = JSON.parse(raw) as Partial<CaseFile>
         return {
           ...empty,
-          ...parsed,
-          issueId,
+          updatedAt: isString(parsed.updatedAt)
+            ? parsed.updatedAt
+            : empty.updatedAt,
+          revisit: parsed.revisit,
           // Re-clamped on the way in as well: the cap has to be a property of the
           // prompt, not only of the write path.
           summary: clampSummary(parsed.summary),
@@ -263,7 +266,7 @@ export class CaseStore {
         }
       }).pipe(
         Effect.catch(() => {
-          console.warn(`[case:${issueId}] unreadable case file; starting fresh`)
+          console.warn(`[case:${id}] unreadable case file; starting fresh`)
           return Effect.succeed(empty)
         }),
       )
@@ -272,7 +275,7 @@ export class CaseStore {
 
   saveEffect(file: CaseFile): Effect.Effect<void, StorageError> {
     return Effect.gen({ self: this }, function* () {
-      const target = yield* storageCheck(() => this.file(file.issueId))
+      const target = yield* storageCheck(() => this.file(file.id))
       const body = yield* storageCheck(() =>
         JSON.stringify(
           {
@@ -288,7 +291,7 @@ export class CaseStore {
     })
   }
 
-  /** Pending revisits across all issues, for re-arming after a restart. */
+  /** Pending revisits across this store, for re-arming after a restart. */
   pendingRevisitsEffect(): Effect.Effect<CaseFile[]> {
     return Effect.gen({ self: this }, function* () {
       const entries = yield* storageIO(() => readdir(this.dir)).pipe(

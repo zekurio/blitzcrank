@@ -4,7 +4,6 @@ import path from "node:path"
 
 import { copyJson, type JsonValue } from "@earendil-works/chord"
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context"
-import { validateToolArguments } from "@earendil-works/pi-ai/utils/validation"
 import {
   AgentDoc,
   AssistantEntry,
@@ -42,9 +41,6 @@ import type {
 } from "./session.ts"
 
 const context = BACKGROUND_CONTEXT
-
-/** Text answers that get sent back to call the finish tool before giving up. */
-const MAX_FINISH_NUDGES = 2
 
 /** Host documents are not registered as agent-writable tools. */
 export const DurableRunDoc = defineDocFamily({
@@ -124,11 +120,6 @@ export async function runDurableTurn(
   const tools = [...opts.tools, ...(opts.builtinRead === false ? [] : [read])]
   if (new Set(tools.map((tool) => tool.name)).size !== tools.length)
     throw new Error("duplicate trusted tool registration")
-  const finishTool = tools.find((tool) => tool.name === opts.finishTool)
-  if (opts.finishTool !== undefined && !finishTool)
-    throw new Error(`finish tool ${opts.finishTool} is not registered`)
-  // In memory: a restart may allow a few more nudges, never an unbounded loop.
-  let nudges = 0
   const policy = durablePolicyFingerprint(opts, tools)
   const storage = await openDurableStorage(opts.storageFile)
   let harness: Harness | undefined
@@ -148,7 +139,7 @@ export async function runDurableTurn(
       throw new Error(failure?.message ?? "Durable run stopped")
   })
 
-  async function gate(api: HookApi | ToolExecutionApi, toolName?: string) {
+  async function gate(api: HookApi | ToolExecutionApi) {
     const state = await runSnapshot()
     if (stopping) return "Run stopped"
     if (failure || state?.failure) return "Run requires operator review"
@@ -175,13 +166,6 @@ export async function runDurableTurn(
         : undefined
     const message = assistant?.entry.model?.[0]
     if (message?.role !== "assistant") return "Missing tool-round authority"
-    // Durable terminates only when every call of the round asks to.
-    if (
-      toolName !== undefined &&
-      toolName === finishTool?.name &&
-      message.content.filter((block) => block.type === "toolCall").length > 1
-    )
-      return `${toolName} must be the only tool call in its response`
     return undefined
   }
 
@@ -264,8 +248,8 @@ export async function runDurableTurn(
     })),
     hooks: [
       hook(ToolTask, {
-        beforeTool: async (call, api) => {
-          const block = await gate(api, call.name)
+        beforeTool: async (_call, api) => {
+          const block = await gate(api)
           return block ? { block } : undefined
         },
       }),
@@ -285,14 +269,6 @@ export async function runDurableTurn(
           if (failure || state?.policy !== policy || stopping)
             throw new Error(failure?.message ?? "Durable run stopped")
           return undefined
-        },
-        onYield: () => {
-          if (!finishTool || failure || stopping) return undefined
-          if (nudges >= MAX_FINISH_NUDGES) return undefined
-          nudges += 1
-          return {
-            continue: `Plain text is never posted. End the run by calling \`${finishTool.name}\` as the only tool call.`,
-          }
         },
       }),
     ],
@@ -467,21 +443,15 @@ export async function runDurableTurn(
       if (stopPromise) await stopPromise
       if (stopError !== undefined) throw stopError
       const completed = !stopping && !failure && message?.role === "assistant"
-      const calls = completed
-        ? message.content.filter((block) => block.type === "toolCall")
-        : []
       return {
+        // Only the exact answer entry is the reply, never a later assistant
+        // entry in the conversation.
         text: completed
           ? message.content
               .filter((block) => block.type === "text")
               .map((block) => block.text)
               .join("")
           : "",
-        // Only the exact answer entry decides, and only as its sole call.
-        finish:
-          finishTool && calls.length === 1 && calls[0]!.name === finishTool.name
-            ? validateToolArguments(finishTool, calls[0]!)
-            : undefined,
         usage,
         sessionFile: opts.storageFile,
         ...(failure
