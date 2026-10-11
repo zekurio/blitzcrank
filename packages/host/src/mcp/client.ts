@@ -42,16 +42,12 @@ export interface McpConnection {
 
 /**
  * One connection for one run. It closes with the enclosing scope, so a caller
- * cannot leak it past a failed or stopped run.
+ * cannot leak it past the end of the run.
  */
-export function connectMcpEffect(config: McpConfig, signal?: AbortSignal) {
+export function connectMcpEffect(config: McpConfig) {
   return Effect.acquireRelease(
     Effect.tryPromise({
-      try: (interruption) =>
-        connect(
-          config,
-          signal ? AbortSignal.any([signal, interruption]) : interruption,
-        ),
+      try: (interruption) => connect(config, interruption),
       catch: (cause) =>
         new McpConnectError({ message: connectFailure(config, cause), cause }),
     }),

@@ -132,20 +132,9 @@ function webhookEffect(
         return { ok: true, ignored: "own comment" }
       }
       // Before anything acts on the comment: a rejected one must not cancel
-      // a revisit, stop a run, or resume one.
+      // a revisit.
       if (!(yield* deps.allowComment(payload))) {
         return { ok: true, ignored: "comment author not authorized" }
-      }
-      const command = webhookText(
-        payload.comment?.comment_message,
-      )?.toLowerCase()
-      if (command === "/blitzcrank stop") {
-        yield* intake.stop(thread)
-        return { ok: true, command: "stopped" }
-      }
-      if (command === "/blitzcrank resume") {
-        yield* intake.resume(thread)
-        return { ok: true, command: "resumed" }
       }
     }
 
@@ -163,7 +152,9 @@ function webhookEffect(
     })
     return {
       ok: true,
-      ...(result === "paused" ? { ignored: "issue paused" } : {}),
+      ...(result === "cancelling"
+        ? { ignored: "cancellation cleanup pending" }
+        : {}),
     }
   })
 }

@@ -51,8 +51,6 @@ export function startServerEffect(): Effect.Effect<void, unknown> {
         intake: {
           submit: (message) =>
             work.submitEffect({ kind: "message", ...message }),
-          stop: (thread) => work.stopEffect(thread),
-          resume: (thread) => work.resumeEffect(thread),
           closed: (thread) => work.closedEffect(thread),
         },
         stats: () => ({
@@ -109,7 +107,6 @@ function restoreRevisits(
     for (const store of gateways.stores()) {
       for (const file of yield* store.cases.pendingRevisitsEffect()) {
         const thread = { gateway: store.gateway, id: file.id }
-        if (yield* store.cases.isPausedEffect(file.id)) continue
         if (work.hasPending(thread)) continue
         const delayMs = revisitDelay(file, Date.now())
         const revisit = file.revisit

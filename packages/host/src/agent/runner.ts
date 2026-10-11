@@ -77,7 +77,6 @@ export class ThreadRunner {
   runEffect(
     event: ThreadEvent,
     status: Marker,
-    signal: AbortSignal,
     runId: string,
   ): Effect.Effect<RunOutcome, unknown> {
     return Effect.gen({ self: this }, function* () {
@@ -124,7 +123,7 @@ export class ThreadRunner {
 
         // One connection per run, closed with the scope below. A server that
         // is down fails the run here, before the model is ever asked.
-        const mcp = yield* connectMcpEffect(this.config.mcp, signal)
+        const mcp = yield* connectMcpEffect(this.config.mcp)
         const web = buildWebProvider(this.config.web)
         const intents: RunIntents = { revisit: undefined, close: false }
         const runTools = buildRunTools({
@@ -177,7 +176,6 @@ export class ThreadRunner {
           requestId: runId,
           hostState: runState(casefile, intents),
           sessionFileRef,
-          signal,
         })
 
         // Usage is recorded before any reply: a failure while publishing must
@@ -186,7 +184,7 @@ export class ThreadRunner {
         casefile.sessionFile = turn.sessionFile
         yield* cases.saveEffect(casefile)
 
-        if (signal.aborted || turn.failure) {
+        if (turn.failure) {
           casefile.runs.push({
             at: new Date().toISOString(),
             trigger: event.kind,
@@ -200,7 +198,7 @@ export class ThreadRunner {
           yield* cases.saveEffect(casefile)
           return yield* Effect.fail(
             new SdkError({
-              message: turn.failure?.message ?? "run stopped",
+              message: turn.failure.message,
               cause: turn.failure,
             }),
           )
@@ -240,13 +238,8 @@ export class ThreadRunner {
 
         // After the reply, so a thread is never closed without its answer.
         const close = intents.close ? channel.close : undefined
-        if (close) {
-          if (signal.aborted)
-            return yield* Effect.fail(
-              new SdkError({ message: "run stopped", cause: undefined }),
-            )
+        if (close)
           yield* this.jobs.actionEffect(runId, "close-thread", close.effect())
-        }
 
         // Host-written, so continuity survives a run that never called the tool.
         if (reply) casefile.lastAnswer = clampEntry(reply)
@@ -284,7 +277,7 @@ export class ThreadRunner {
 
         return { thread, reply, casefile }
       }).pipe(
-        // Releases the MCP connection on success, failure, and stop alike.
+        // Releases the MCP connection when the run exits.
         Effect.scoped,
         Effect.onExit(() =>
           this.jobs
@@ -305,7 +298,7 @@ export class ThreadRunner {
     }).pipe(Effect.uninterruptible)
   }
 
-  /** Recovery of a stopped job restores audit/state but cannot call the model. */
+  /** Recovery of a cancelled job restores audit/state but cannot call the model. */
   cancelEffect(
     event: ThreadEvent,
     status: Marker,

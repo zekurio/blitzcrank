@@ -164,8 +164,7 @@ Under **Settings → Notifications → Webhook**, set:
 
 Set `SEERR_BOT_USER_ID` and `SEERR_BOT_USERNAME` for the bot's Seerr identity.
 Only the reporter or a Seerr user with `ADMIN`/`MANAGE_ISSUES` may drive an issue
-through comments. `/blitzcrank stop` pauses its work; `/blitzcrank resume`
-allows new events without replaying stopped work or undoing changes.
+through comments.
 
 ## Optional features
 

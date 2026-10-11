@@ -12,8 +12,8 @@ export const MAX_REVISIT_MINUTES = 48 * 60
 
 /**
  * What a run asked the host to do once its reply is out. The tools below only
- * record here. The host acts after the run, so a run that fails or is stopped
- * leaves no timer armed and no thread closed.
+ * record here. The host acts after the run, so a run that fails leaves no
+ * timer armed and no thread closed.
  */
 export interface RunIntents {
   revisit: { minutes: number; reason: string } | undefined

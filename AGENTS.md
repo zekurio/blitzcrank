@@ -35,7 +35,7 @@
   `Intake` interfaces and the gateway registry),
   `packages/host/src/gateways/seerr/` (webhook handling, channel, payload
   types, comment gate, loop guard), `packages/host/src/thread-work.ts`
-  (admission, ordering, stopping), `packages/host/src/agent/` (runner,
+  (admission, ordering, recovery), `packages/host/src/agent/` (runner,
   session, prompts), `packages/host/src/tools/` (host tools: case file,
   history, tool search, revisit and close requests),
   `packages/host/src/mcp/` (server connection, tool adapter),
@@ -130,7 +130,7 @@ behavioural difference described.
   it, revisits included. The host, never the agent, posts it, closes threads,
   and arms revisits. `schedule_revisit` and the gateway's close tool only
   record a request in run state. The host acts on it after the reply is out,
-  so a run that fails or is stopped arms nothing and closes nothing.
+  so a run that fails or is cancelled arms nothing and closes nothing.
 - One run shows at most one message. The host posts a working line when the
   run starts, or adopts its queue notice. The reply rewrites that message in
   place, and a run that fails or ends without a message removes it
@@ -291,8 +291,8 @@ small named helpers below it. Extract only when it names a real concept.
 
 - I/O and host orchestration compose native Effect v4 APIs. Convert to
   Promises at SDK callbacks; event emitters contain their own fiber failures.
-  Live agent runs use host stop signals and finish active tool verification
-  before disposal. Queue drain deadlines must never interrupt active writes.
+  Agent runs finish active tool verification before disposal. Queue drain
+  deadlines must never interrupt active writes.
 - Host tools use `defineTool` and `ToolRegistration` from
   `@earendil-works/pi-durable`, with TypeBox schemas (`typebox`, not zod;
   `StringEnum` from `@earendil-works/pi-ai`). Execution receives

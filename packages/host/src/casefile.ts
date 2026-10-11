@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises"
+import { readdir, readFile } from "node:fs/promises"
 import path from "node:path"
 
 import { Effect } from "effect"
@@ -190,37 +190,6 @@ export class CaseStore {
       throw new Error(`refusing to use "${id}" as a case file name`)
     }
     return path.join(this.dir, `${id}.json`)
-  }
-
-  private pauseFile(id: string): string {
-    return `${this.file(id).slice(0, -".json".length)}.paused`
-  }
-
-  isPausedEffect(id: string): Effect.Effect<boolean, StorageError> {
-    return Effect.gen({ self: this }, function* () {
-      const target = yield* storageCheck(() => this.pauseFile(id))
-      return yield* storageIO(() => readFile(target)).pipe(
-        Effect.as(true),
-        Effect.catch((error) =>
-          error.code === "ENOENT" ? Effect.succeed(false) : Effect.fail(error),
-        ),
-      )
-    })
-  }
-
-  pauseEffect(id: string): Effect.Effect<void, StorageError> {
-    return Effect.gen({ self: this }, function* () {
-      const target = yield* storageCheck(() => this.pauseFile(id))
-      yield* storageIO(() => mkdir(this.dir, { recursive: true }))
-      yield* storageIO(() => writeFile(target, "", "utf8"))
-    })
-  }
-
-  resumeEffect(id: string): Effect.Effect<void, StorageError> {
-    return Effect.gen({ self: this }, function* () {
-      const target = yield* storageCheck(() => this.pauseFile(id))
-      yield* storageIO(() => rm(target, { force: true }))
-    })
   }
 
   /** Damaged or unreadable case memory does not permanently block a thread. */

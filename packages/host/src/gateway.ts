@@ -79,9 +79,7 @@ export interface Channel {
 
 /** What a gateway may ask of the host. */
 export interface Intake {
-  submit(message: Inbound): Effect.Effect<"paused" | "queued", unknown>
-  stop(thread: ThreadRef): Effect.Effect<void, unknown>
-  resume(thread: ThreadRef): Effect.Effect<void, unknown>
+  submit(message: Inbound): Effect.Effect<"cancelling" | "queued", unknown>
   /** The thread was closed from outside, so its pending revisit is dropped. */
   closed(thread: ThreadRef): Effect.Effect<void, unknown>
 }
