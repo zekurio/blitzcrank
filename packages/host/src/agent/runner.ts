@@ -19,6 +19,7 @@ import { storageIO } from "../storage.ts"
 import { buildRunTools, type SessionFileRef } from "../tools/index.ts"
 import { buildWebProvider } from "../web/index.ts"
 import { SdkError } from "./effect.ts"
+import { queuedMessage, workingMessage } from "./notices.ts"
 import { buildMessagePrompt, buildSystemPrompt } from "./prompt.ts"
 import {
   modelAnchor,
@@ -238,31 +239,6 @@ export class ThreadRunner {
       return publishEffect(this.threads.channel(thread), status, undefined)
     })
   }
-}
-
-function isGerman(language: string): boolean {
-  return /^(de|deutsch|german)(-|_|\b)/i.test(language.trim())
-}
-
-function queuedMessage(language: string, runsAhead: number): string {
-  if (isGerman(language)) {
-    const ahead =
-      runsAhead === 1
-        ? "Eine Aufgabe ist noch vor ihr."
-        : `${runsAhead} Aufgaben sind noch vor ihr.`
-    return `⏳ Blitzcrank ist gerade beschäftigt. Deine Meldung ist eingereiht. ${ahead}`
-  }
-  const ahead =
-    runsAhead === 1
-      ? "One task is ahead of it."
-      : `${runsAhead} tasks are ahead of it.`
-  return `⏳ Blitzcrank is currently busy. Your report is queued. ${ahead}`
-}
-
-function workingMessage(language: string): string {
-  return isGerman(language)
-    ? "🔎 Blitzcrank sieht sich deine Meldung an."
-    : "🔎 Blitzcrank is looking into your report."
 }
 
 /** Shows a notice and returns the marker it now lives under, for the journal. */

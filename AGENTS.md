@@ -36,7 +36,7 @@ Host, under `packages/host/`:
 - `src/gateways/seerr/`: webhook handling, channel, payload types, comment
   gate, loop guard, Seerr client, settings
 - `src/thread-work.ts`: admission, ordering, recovery
-- `src/agent/`: runner, session, prompts
+- `src/agent/`: runner, session, prompts, notices
 - `src/tools/`: history and tool search
 - `src/mcp/`: server connection, tool adapter
 - `src/services/`: HTTP helper
