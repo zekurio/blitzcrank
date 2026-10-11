@@ -47,7 +47,7 @@ export interface Config {
   seerrBotUserId: string | undefined
   /** Display name of the bot's Seerr user; its own comment webhooks are ignored. */
   seerrBotUsername: string | undefined
-  /** Host-side Seerr access only: comments, issue status, the comment gate. */
+  /** Host-side Seerr access only: comments, the issue read, the comment gate. */
   seerr: ServiceConfig
   /** The MCP server every agent-facing service read and write goes through. */
   mcp: McpConfig

@@ -104,18 +104,4 @@ export class SeerrClient {
       },
     )
   }
-
-  setStatusEffect(
-    issueId: string | number,
-    status: "open" | "resolved",
-  ): Effect.Effect<JsonValue, JsonRequestError> {
-    return jsonRequestEffect(
-      this.cfg.url,
-      `/api/v1/issue/${issueId}/${status}`,
-      {
-        method: "POST",
-        headers: this.headers(),
-      },
-    )
-  }
 }

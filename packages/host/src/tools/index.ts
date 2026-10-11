@@ -1,10 +1,8 @@
 import type { ToolRegistration } from "@earendil-works/pi-durable"
 
-import type { Channel } from "../gateway.ts"
 import type { McpConnection } from "../mcp/client.ts"
 import { buildMcpTools } from "../mcp/tools.ts"
 import { buildHistoryTool } from "./history.ts"
-import { buildCloseTool, type RunIntents } from "./outcome.ts"
 import { buildToolSearchTool } from "./search.ts"
 
 export interface SessionFileRef {
@@ -18,10 +16,6 @@ export interface RunToolDeps {
   /** Where the gateway's threads keep their conversations. */
   history: string
   sessionFileRef: SessionFileRef
-  /** What the run asks of the host once its reply is out. */
-  intents: RunIntents
-  /** Set when the thread's gateway lets the agent close it. */
-  close: Channel["close"]
 }
 
 export interface RunTools {
@@ -32,11 +26,11 @@ export interface RunTools {
 }
 
 /**
- * A run's tools: history search, the gateway's close request, and every tool
- * the MCP server lists. None of them knows which gateway the thread came
- * from, and the host does not know which services exist; the server's tool
- * list decides. Server tools start out unloaded so their schemas stay out of
- * the prompt until `tool_search` loads the ones a run needs.
+ * A run's tools: history search and every tool the MCP server lists. None of
+ * them knows which gateway the thread came from, and the host does not know
+ * which services exist; the server's tool list decides. Server tools start
+ * out unloaded so their schemas stay out of the prompt until `tool_search`
+ * loads the ones a run needs.
  */
 export function buildRunTools(deps: RunToolDeps): RunTools {
   const viewsImages = deps.modelInput?.includes("image") === true
@@ -47,7 +41,6 @@ export function buildRunTools(deps: RunToolDeps): RunTools {
   return {
     tools: [
       buildHistoryTool(deps.history, deps.sessionFileRef),
-      ...(deps.close ? [buildCloseTool(deps.close, deps.intents)] : []),
       ...mcp,
       // Without a server tool there is nothing to load.
       ...(mcp.length > 0 ? [buildToolSearchTool(mcp)] : []),

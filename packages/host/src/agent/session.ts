@@ -1,7 +1,6 @@
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
-import type { JsonValue } from "@earendil-works/chord"
 import {
   formatSkillsForPrompt,
   loadSkillsFromDir,
@@ -60,12 +59,6 @@ export interface AgentTurnOptions {
   prompt: string
   storageFile: string | undefined
   requestId: string
-  hostState?:
-    | {
-        capture: () => JsonValue
-        restore: (value: JsonValue) => void
-      }
-    | undefined
   sessionFileRef: { current: string | undefined } | undefined
   builtinRead?: boolean
   signal?: AbortSignal | undefined

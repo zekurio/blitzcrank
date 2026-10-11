@@ -208,7 +208,7 @@ in
       example = "/run/secrets/blitzcrank.env";
       description = ''
         Environment file with the host's secrets: SEERR_URL/SEERR_API_KEY
-        (required; the host comments on and resolves issues itself),
+        (required; the host comments on issues itself),
         BLITZCRANK_MCP_TOKEN (required; must be the same token as in
         {option}`mcp.environmentFile`), BLITZCRANK_WEBHOOK_SECRET,
         FIRECRAWL_API_KEY when {option}`webProvider` is "firecrawl", and

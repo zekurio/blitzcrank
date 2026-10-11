@@ -53,7 +53,10 @@ export interface Notice {
   signature: string
 }
 
-/** Everything a run may do to the outside of one thread. */
+/**
+ * Everything a run may do to the outside of one thread. It cannot close one:
+ * not every gateway has a closed state, so that stays with the people in it.
+ */
 export interface Channel {
   /** The thread as it is now, for the prompt. Untrusted content. */
   contextEffect(): Effect.Effect<string, unknown>
@@ -61,15 +64,6 @@ export interface Channel {
   showEffect(marker: Marker, notice: Notice): Effect.Effect<void, unknown>
   /** Removes that message, if there is one. */
   retractEffect(marker: Marker): Effect.Effect<void, unknown>
-  /**
-   * Present when the agent may close the thread. The host builds the tool,
-   * which only records the request, and runs `effect` after the reply is out.
-   */
-  close?: {
-    tool: string
-    description: string
-    effect(): Effect.Effect<void, unknown>
-  }
 }
 
 /** What a gateway may ask of the host. */
@@ -80,7 +74,10 @@ export interface Intake {
 export interface Gateway {
   /** Routes `POST /webhook/<name>` and tags this gateway's threads. */
   readonly name: string
-  /** For the system prompt: where messages come from and where a reply goes. */
+  /**
+   * For the system prompt: where messages come from, where a reply goes, and
+   * what the thread leaves to the reporter.
+   */
   readonly brief: string
   /** Where its threads keep their conversations, below the data dir. */
   readonly sessions: string

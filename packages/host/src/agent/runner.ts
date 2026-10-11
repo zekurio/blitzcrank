@@ -17,7 +17,6 @@ import { JobStore } from "../jobs.ts"
 import { connectMcpEffect } from "../mcp/client.ts"
 import { storageIO } from "../storage.ts"
 import { buildRunTools, type SessionFileRef } from "../tools/index.ts"
-import type { RunIntents } from "../tools/outcome.ts"
 import { buildWebProvider } from "../web/index.ts"
 import { SdkError } from "./effect.ts"
 import { buildMessagePrompt, buildSystemPrompt } from "./prompt.ts"
@@ -26,7 +25,6 @@ import {
   resolveModel,
   runAgentTurnEffect,
   usageAnchor,
-  type AgentTurnOptions,
 } from "./session.ts"
 
 /**
@@ -94,14 +92,11 @@ export class ThreadRunner {
         // is down fails the run here, before the model is ever asked.
         const mcp = yield* connectMcpEffect(this.config.mcp)
         const web = buildWebProvider(this.config.web)
-        const intents: RunIntents = { close: false }
         const runTools = buildRunTools({
           modelInput: resolveModel(this.modelRuntime, this.modelSpec).input,
           mcp,
           history: this.gateways.sessionsDir(thread),
           sessionFileRef,
-          intents,
-          close: channel.close,
         })
         const tools = [...runTools.tools, ...web.tools]
 
@@ -125,7 +120,6 @@ export class ThreadRunner {
           prompt,
           storageFile,
           requestId: runId,
-          hostState: runState(intents),
           sessionFileRef,
         })
         if (turn.failure)
@@ -158,11 +152,6 @@ export class ThreadRunner {
               : undefined,
           ).pipe(Effect.as({ reply: reply || null })),
         )
-
-        // After the reply, so a thread is never closed without its answer.
-        const close = intents.close ? channel.close : undefined
-        if (close)
-          yield* this.jobs.actionEffect(runId, "close-thread", close.effect())
       }).pipe(
         // Releases the MCP connection when the run exits.
         Effect.scoped,
@@ -253,20 +242,6 @@ export class ThreadRunner {
 
   private channel(thread: ThreadRef): Channel {
     return this.gateways.of(thread).channel(thread.id)
-  }
-}
-
-/** What the run's tools change in the host, checkpointed with their results. */
-function runState(
-  intents: RunIntents,
-): NonNullable<AgentTurnOptions["hostState"]> {
-  return {
-    capture: () => ({ close: intents.close }),
-    restore: (value) => {
-      if (value === null || typeof value !== "object" || Array.isArray(value))
-        throw new Error("Invalid persisted run state")
-      intents.close = value.close === true
-    },
   }
 }
 

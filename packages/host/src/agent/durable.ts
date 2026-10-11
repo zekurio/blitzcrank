@@ -50,7 +50,6 @@ export const DurableRunDoc = defineDocFamily({
   family: true,
   initial: (policy: string) => ({
     policy,
-    hostState: "",
     operations: {} as Record<
       string,
       { name: string; callId: string; unsafe: boolean; result: string | null }
@@ -181,7 +180,6 @@ export async function runDurableTurn(
       throw new Error("Uncertain prior write requires operator review")
     if (stopping) throw new Error("Run stopped")
     active += 1
-    let checkpointed = false
     try {
       await api.commit(async (tx) => {
         const run = await tx.doc(DurableRunDoc, opts.requestId, policy)
@@ -216,24 +214,12 @@ export async function runDurableTurn(
         run.operations[String(api.taskId)]!.result = JSON.stringify(
           copyJson(result as JsonValue, { omitUndefinedProperties: true }),
         )
-        if (opts.hostState)
-          run.hostState = JSON.stringify(opts.hostState.capture())
         if (failure) run.failure = JSON.stringify(failure)
       }, context)
-      checkpointed = true
       return result
     } finally {
-      try {
-        if (!checkpointed)
-          await api.commit(async (tx) => {
-            const run = await tx.doc(DurableRunDoc, opts.requestId, policy)
-            if (opts.hostState)
-              run.hostState = JSON.stringify(opts.hostState.capture())
-          }, context)
-      } finally {
-        active -= 1
-        if (active === 0) releaseActive?.()
-      }
+      active -= 1
+      if (active === 0) releaseActive?.()
     }
   }
 
@@ -297,8 +283,6 @@ export async function runDurableTurn(
     const auth = await opts.modelRuntime.checkAuth(
       parseModelSpec(opts.modelSpec).provider,
     )
-    if (prior?.hostState && opts.hostState)
-      opts.hostState.restore(JSON.parse(prior.hostState) as JsonValue)
     const inspected = await harness.inspect(context)
     if (inspected.tasks.length > 0) {
       if (!prior || prior.policy !== policy)
@@ -332,8 +316,6 @@ export async function runDurableTurn(
     await harness.commit(async (tx) => {
       const run = await tx.doc(DurableRunDoc, opts.requestId, policy)
       if (failure) run.failure = JSON.stringify(failure)
-      if (!run.hostState && opts.hostState)
-        run.hostState = JSON.stringify(opts.hostState.capture())
     }, context)
     if (opts.sessionFileRef) opts.sessionFileRef.current = opts.storageFile
     const stop = () => {

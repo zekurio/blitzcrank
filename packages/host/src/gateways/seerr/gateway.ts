@@ -58,21 +58,13 @@ export function createSeerrGateway(config: Config): Gateway {
       typeof marker.id === "number"
         ? seerr.deleteCommentEffect(marker.id).pipe(Effect.asVoid)
         : Effect.void,
-    close: {
-      tool: "resolve_issue",
-      description:
-        "Mark this Seerr issue resolved. Only for a verified fix: partial, pending, uncertain, or " +
-        "confirmation-dependent outcomes stay open. The host resolves the issue after it posts your final " +
-        "message.",
-      effect: () =>
-        seerr.setStatusEffect(issueId, "resolved").pipe(Effect.asVoid),
-    },
   })
 
   return {
     name: NAME,
     brief:
-      "Each conversation is one Seerr issue and its comments. Your final message is posted on the issue as a comment.",
+      "Each conversation is one Seerr issue and its comments. Your final message is posted on the issue as a comment. " +
+      "You cannot resolve an issue. After a verified fix, ask the reporter to mark it resolved.",
     // Seerr was the only source of threads before gateways existed. Its files
     // stay where they were written.
     sessions: path.join("sessions", "issues"),

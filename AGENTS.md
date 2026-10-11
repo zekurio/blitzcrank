@@ -6,15 +6,14 @@
   time, and up to `BLITZCRANK_MAX_PARALLEL_RUNS` threads run at once. Each run
   opens the thread's Pi Durable conversation, investigates across
   Seerr/Sonarr/Radarr/SABnzbd/Jellyfin, and applies narrow verified fixes. The
-  agent's final message is the reply.
-  The host, never the agent, posts it and closes threads.
+  agent's final message is the reply, and the host posts it. Closing a thread
+  is left to the people in it.
 - It is a pnpm workspace with two packages that run as two processes.
   `packages/host` (npm name `blitzcrank`) holds the gateways and the agent
   loop: `src/server.ts` → `src/gateways/` → `src/thread-work.ts` →
   `src/jobs.ts` → `src/queue.ts` → `src/agent/`. It defines the host tools
   `thread_history_search`, `tool_search`, and optional
-  `web_search`/`web_extract`, builds the gateway's close tool
-  (`resolve_issue` for Seerr), and grants builtin `read` for skills.
+  `web_search`/`web_extract`, and grants builtin `read` for skills.
   `packages/mcp` (npm name `@blitzcrank/mcp`, binary `blitzcrank-mcp`) is an
   MCP server. It holds the service credentials and media mounts and exposes
   one tool per read and per write, named `<service>_<what>` (`sonarr_queue`,
@@ -38,8 +37,7 @@
   types, comment gate, loop guard), `packages/host/src/thread-work.ts`
   (admission, ordering, recovery), `packages/host/src/agent/` (runner,
   session, prompts), `packages/host/src/tools/` (host tools: history, tool
-  search, close request),
-  `packages/host/src/mcp/` (server connection, tool adapter),
+  search), `packages/host/src/mcp/` (server connection, tool adapter),
   `packages/host/src/services/` (HTTP helper, host-side Seerr client),
   `packages/host/src/web/` (web provider: search and extract),
   `packages/host/skills/` (agent domain knowledge),
@@ -133,9 +131,10 @@ behavioural difference described.
   `packages/host/src/gateways/<name>/` imports from a gateway only in
   `packages/host/src/index.ts`, which lists them.
 - The reply is the text of the run's own answer entry, and every run posts
-  it. The host, never the agent, posts it and closes threads. The gateway's
-  close tool only records a request in run state. The host acts on it after
-  the reply is out, so a run that fails or is cancelled closes nothing.
+  it. The host, never the agent, posts it.
+- Neither the agent nor the host closes a thread. Not every gateway has a
+  closed state, so a `Channel` offers none: the agent gives its evidence in
+  the reply, and the reporter resolves the Seerr issue.
 - Every run answers an event from its gateway. Nothing runs on a timer, and
   the agent cannot schedule a run.
 - One run shows at most one message. The host posts a working line when the
@@ -158,7 +157,7 @@ behavioural difference described.
   `[blitzcrank w/` comment marker first, then the bot display name.
 - The host holds no Sonarr, Radarr, SABnzbd, or Jellyfin credentials and no
   media mounts. Its only service credential is the Seerr key for host-side
-  comments, issue status, and the comment gate. The server holds every
+  comments, the issue read, and the comment gate. The server holds every
   credential the agent's reads and writes use, plus the media roots, and
   checks `BLITZCRANK_MCP_TOKEN` on every request.
 - Issue agent sessions get the host tools, every server tool, and builtin
@@ -307,7 +306,7 @@ small named helpers below it. Extract only when it names a real concept.
   return unbounded JSON to the model.
 - Replay policy defaults to unsafe. Declare `replay: "safe"` only when repeating
   a tool after interruption cannot duplicate a mutation or host publication.
-  Tool results and host state are checkpointed together by the Durable runner.
+  The Durable runner checkpoints each tool result before the model sees it.
 - Server tools are tables. Each file in `packages/mcp/src/services/` declares
   its reads with `defineReads` and its writes with `defineWrites`. A table key
   is the tool's name after the service prefix, so keys are snake_case. A write

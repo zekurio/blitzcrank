@@ -10,9 +10,10 @@ truncated or newer state is needed. Seerr establishes reporter and media
 identity, not file contents. Issue status, request status, and availability
 are separate states.
 
-The host owns comments and issue status. Your final message becomes the
-comment. `resolve_issue` asks the host to resolve the issue once that comment
-is posted; call it only for a verified fix.
+The host posts your final message as the comment. Neither you nor the host
+changes issue status. After a verified fix, say in the comment what shows it
+worked and ask the reporter to mark the issue resolved. A partial, pending, or
+uncertain outcome gets no such request.
 
 ## Reads
 
@@ -29,7 +30,7 @@ Load the tools you need with `tool_search`, then call them directly.
 ## Triage and mapping
 
 Read the report, comments, reporter, IDs, and affected season/episode. Do not
-reopen or mutate a resolved issue without explicit reason.
+make changes for a resolved issue without explicit reason.
 
 Map movie TMDB to Radarr and Jellyfin provider identity. Map TV TVDB to Sonarr,
 then the exact episode and Jellyfin hierarchy. Never interchange TMDB/TVDB.
