@@ -9,7 +9,7 @@ import {
   type ThreadRef,
 } from "./gateway.ts"
 import { JobStore, type Job } from "./jobs.ts"
-import { SerialQueue } from "./queue.ts"
+import { ThreadQueue } from "./queue.ts"
 import { RevisitScheduler } from "./revisits.ts"
 
 interface ThreadJob {
@@ -25,10 +25,11 @@ interface PendingRun {
 
 /** Admission, ordering, and recovery of runs, for every gateway's threads. */
 export class ThreadWork {
-  readonly queue = new SerialQueue()
+  readonly queue: ThreadQueue
   readonly revisits = new RevisitScheduler()
 
-  private active: { key: string; jobId: string } | undefined
+  /** The job each busy thread is running. A thread has one at most. */
+  private readonly active = new Map<string, string>()
   private readonly pending = new Set<PendingRun>()
   private readonly transitions = Semaphore.makeUnsafe(1)
 
@@ -36,7 +37,11 @@ export class ThreadWork {
     private readonly runner: ThreadRunner,
     private readonly gateways: Gateways,
     private readonly jobs: JobStore,
-  ) {}
+    /** How many threads may run at once. */
+    maxParallelRuns: number,
+  ) {
+    this.queue = new ThreadQueue(maxParallelRuns)
+  }
 
   /** Restore accepted work before re-arming timers or opening HTTP admission. */
   restoreEffect(): Effect.Effect<void, unknown> {
@@ -79,7 +84,7 @@ export class ThreadWork {
   hasPending(thread: ThreadRef): boolean {
     const key = threadKey(thread)
     return (
-      this.active?.key === key ||
+      this.active.has(key) ||
       this.isCancelling(key) ||
       [...this.pending].some((pending) => pending.key === key)
     )
@@ -145,7 +150,7 @@ export class ThreadWork {
         console.log(`[${key}] cancellation cleanup pending; event ignored`)
         return "cancelling"
       }
-      const runsAhead = this.queue.size
+      const runsAhead = this.queue.ahead(key)
       const job = this.jobs.create({ event, runsAhead }, requestId)
       this.admit(job)
       return "queued"
@@ -155,7 +160,7 @@ export class ThreadWork {
   private admit(job: Job<ThreadJob>): void {
     if (job.status !== "queued" && job.status !== "running") return
     if ([...this.pending].some((pending) => pending.job.id === job.id)) return
-    if (this.active?.jobId === job.id) return
+    if ([...this.active.values()].includes(job.id)) return
     const { event, runsAhead } = job.payload
     const status = Effect.runFork(
       this.jobs.actionEffect(
@@ -173,7 +178,7 @@ export class ThreadWork {
       status,
     }
     this.pending.add(pending)
-    this.jobs.enqueue(this.queue, job, () =>
+    this.jobs.enqueue(this.queue.lane(key), job, () =>
       this.run(event, pending).pipe(
         Effect.ensuring(Effect.sync(() => this.pending.delete(pending))),
       ),
@@ -189,7 +194,7 @@ export class ThreadWork {
       const key = pending.key
       const status = yield* Fiber.join(pending.status)
       this.pending.delete(pending)
-      this.active = { key, jobId: pending.job.id }
+      this.active.set(key, pending.job.id)
       yield* Effect.gen({ self: this }, function* () {
         const result = yield* this.runner.runEffect(
           event,
@@ -202,7 +207,7 @@ export class ThreadWork {
       }).pipe(
         Effect.ensuring(
           Effect.sync(() => {
-            if (this.active?.jobId === pending.job.id) this.active = undefined
+            if (this.active.get(key) === pending.job.id) this.active.delete(key)
           }),
         ),
       )

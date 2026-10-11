@@ -16,6 +16,8 @@ export type WebConfig =
 
 export interface Config {
   port: number
+  /** How many threads may run at once. A thread never runs twice at once. */
+  maxParallelRuns: number
   /** Persistent state (session transcripts) lives here. */
   dataDir: string
   /** Shared secret checked against the Authorization header of incoming webhooks. */
@@ -70,6 +72,21 @@ function number(
     throw new Error(`${name} must be a non-negative number, got "${value}"`)
   }
   return parsed
+}
+
+/** Zero would accept every event and run none of them. */
+function maxParallelRuns(): number {
+  const value = number(
+    "BLITZCRANK_MAX_PARALLEL_RUNS",
+    process.env.BLITZCRANK_MAX_PARALLEL_RUNS,
+    4,
+  )
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error(
+      `BLITZCRANK_MAX_PARALLEL_RUNS must be a whole number of at least 1, got "${value}"`,
+    )
+  }
+  return value
 }
 
 /**
@@ -137,6 +154,7 @@ export function loadConfig(): Config {
   }
   return {
     port: number("BLITZCRANK_PORT", process.env.BLITZCRANK_PORT, 8484),
+    maxParallelRuns: maxParallelRuns(),
     dataDir: process.env.BLITZCRANK_DATA_DIR ?? "data",
     webhookSecret: process.env.BLITZCRANK_WEBHOOK_SECRET,
     model: requiredModel(),

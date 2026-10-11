@@ -3,7 +3,7 @@ import { DatabaseSync } from "node:sqlite"
 
 import { Cause, Effect } from "effect"
 
-import type { SerialQueue } from "./queue.ts"
+import type { Lane } from "./queue.ts"
 
 export type JobStatus =
   | "queued"
@@ -110,7 +110,7 @@ export class JobStore {
   }
 
   enqueue(
-    queue: SerialQueue,
+    queue: Lane,
     job: Job,
     task: () => Effect.Effect<void, unknown>,
   ): void {

@@ -41,6 +41,7 @@ export function startServerEffect(): Effect.Effect<void, unknown> {
       new ThreadRunner(config, runtime, config.model, jobs, gateways),
       gateways,
       jobs,
+      config.maxParallelRuns,
     )
     yield* work.restoreEffect()
     yield* restoreRevisits(gateways, work)

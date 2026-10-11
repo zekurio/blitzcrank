@@ -2,9 +2,11 @@
 
 - blitzcrank is an agent for a private media homelab. A gateway turns inbound
   traffic into events on a thread; Seerr is the only gateway, and its threads
-  are issues. An event wakes a serial run queue, which opens one Pi Durable
-  conversation that investigates across Seerr/Sonarr/Radarr/SABnzbd/Jellyfin
-  and applies narrow verified fixes. The agent's final message is the reply.
+  are issues. An event joins its thread's queue. A thread runs one event at a
+  time, and up to `BLITZCRANK_MAX_PARALLEL_RUNS` threads run at once. Each run
+  opens the thread's Pi Durable conversation, investigates across
+  Seerr/Sonarr/Radarr/SABnzbd/Jellyfin, and applies narrow verified fixes. The
+  agent's final message is the reply.
   The host, never the agent, posts it, closes threads, and arms revisits.
 - It is a pnpm workspace with two packages that run as two processes.
   `packages/host` (npm name `blitzcrank`) holds the gateways and the agent
@@ -122,6 +124,11 @@ behavioural difference described.
 - The Durable policy fingerprint includes the MCP tool list: every server tool
   is registered, loaded or not. A server whose tools changed between admission
   and recovery is a changed policy and fails closed for review.
+- A thread never has two runs at once (`packages/host/src/queue.ts`): its
+  conversation, case file, and visible message each assume one writer. Runs
+  of different threads overlap, and share only the journal, the model
+  runtime, and the MCP server. Nothing a run writes may be keyed by anything
+  wider than its thread.
 - The runner reaches a thread only through its `Channel`
   (`packages/host/src/gateway.ts`). Code outside
   `packages/host/src/gateways/<name>/` imports from a gateway only in
@@ -157,8 +164,9 @@ behavioural difference described.
 - Issue agent sessions get the host tools, every server tool, and builtin
   `read` (for skills). The runner resolves both the skills root and target
   with `realpath` and rejects reads outside that root. Never enable `bash`,
-  `edit`, or `write` in the runner. Tool execution is sequential; background
-  compaction is disabled so no task outlives its submission's Harness.
+  `edit`, or `write` in the runner. Tool execution within a run is
+  sequential; background compaction is disabled so no task outlives its
+  submission's Harness.
 - Server tools are offered only after `tool_search` loads them. Loading
   changes what the conversation offers and nothing outside it, so
   `tool_search` is `replay: "safe"`. A resumed conversation keeps the tools
