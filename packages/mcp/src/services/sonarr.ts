@@ -14,18 +14,17 @@ import {
   pick,
   type JsonObject,
 } from "../json.ts"
-import type { PlanStore } from "../plans.ts"
 import {
   action,
-  defineRead,
-  definePlanApply,
+  defineReads,
+  defineWrites,
   listResult,
   resource,
   toolCheck,
   toolFail,
-  type PlanEffect,
   type ServerTool,
   type ToolFailure,
+  type WriteEffect,
 } from "../tools.ts"
 import {
   arrList,
@@ -34,12 +33,10 @@ import {
   arrRequest,
   arrSharedActions,
   arrSharedReads,
-  candidateFingerprint,
+  candidateFile,
   candidateWarnings,
-  importTargetFingerprint,
   manualImportScope,
   matchCandidates,
-  monitoringFingerprint,
   monitoringReadBack,
   postCommand,
   qualityName,
@@ -67,10 +64,7 @@ const offsetParam = Type.Optional(
   }),
 )
 
-export function buildSonarrTools(
-  cfg: ServiceConfig,
-  plans: PlanStore,
-): ServerTool[] {
+export function buildSonarrTools(cfg: ServiceConfig): ServerTool[] {
   const arr: Arr = {
     service: "sonarr",
     cfg,
@@ -88,13 +82,10 @@ export function buildSonarrTools(
       downloadIgnored: 7,
     },
   }
+  const service = { name: "sonarr", label: "Sonarr (TV)" }
   return [
-    defineRead(
-      "sonarr",
-      "Read Sonarr state for TV: tracking, episodes, files, queue, history, and release candidates.",
-      sonarrReads(arr),
-    ),
-    ...definePlanApply("sonarr", sonarrActions(arr), plans),
+    ...defineReads(service, sonarrReads(arr)),
+    ...defineWrites(service, sonarrActions(arr)),
   ]
 }
 
@@ -199,7 +190,7 @@ function sonarrReads(arr: Arr) {
           }
         }),
     }),
-    episodeFiles: resource({
+    episode_files: resource({
       description: "Episode files of a series with quality and media info",
       params: Type.Object({ seriesId: seriesIdParam, offset: offsetParam }),
       run: (params, signal) =>
@@ -218,7 +209,7 @@ function sonarrReads(arr: Arr) {
     queue: shared.queue,
     history: shared.history,
     blocklist: shared.blocklist,
-    qualityProfiles: shared.qualityProfiles,
+    quality_profiles: shared.quality_profiles,
     calendar: resource({
       description: "Episodes airing in a date window, unmonitored included",
       params: Type.Object({
@@ -268,8 +259,8 @@ function sonarrReads(arr: Arr) {
           return yield* readReleases(arr, target, params, signal)
         }),
     }),
-    manualImportCandidates: shared.manualImportCandidates,
-    command: shared.command,
+    manual_import_candidates: shared.manual_import_candidates,
+    command_status: shared.command_status,
     raw: shared.raw,
   }
 }
@@ -461,19 +452,11 @@ const manualImportFile = Type.Object(
   {
     path: Type.String({
       minLength: 1,
-      description: "Candidate path, exactly as manualImportCandidates has it",
+      description:
+        "Candidate path, exactly as sonarr_manual_import_candidates has it",
     }),
-    folderName: Type.Optional(Type.String()),
     seriesId: seriesIdParam,
     episodeIds: Type.Array(Type.Integer({ minimum: 1 }), { minItems: 1 }),
-    quality: Type.Record(Type.String(), Type.Unknown(), {
-      description: "The candidate's quality object, unchanged",
-    }),
-    languages: Type.Array(Type.Record(Type.String(), Type.Unknown()), {
-      description: "The candidate's languages, unchanged",
-    }),
-    releaseGroup: Type.Optional(Type.String()),
-    downloadId: Type.Optional(Type.String()),
   },
   { additionalProperties: false },
 )
@@ -578,8 +561,8 @@ function seriesMonitoringEffects(
   seriesId: number,
   before: JsonObject,
   after: JsonObject,
-): PlanEffect[] {
-  const effects: PlanEffect[] = []
+): WriteEffect[] {
+  const effects: WriteEffect[] = []
   for (const field of ["monitored", "monitorNewItems"]) {
     if (before[field] !== after[field]) {
       effects.push({
@@ -681,11 +664,11 @@ function unaired(episode: JsonObject, now: number): boolean {
 function sonarrActions(arr: Arr) {
   const shared = arrSharedActions(arr)
   return {
-    search: action({
+    auto_search: action({
       description:
         "Search indexers for the whole series, one season, or specific episodes. Sonarr picks and grabs the release",
       params: searchParams,
-      plan: (params, signal) =>
+      resolve: (params, signal) =>
         Effect.gen(function* () {
           const scope = yield* searchScope(arr, params, signal)
           const command = searchCommand(params)
@@ -713,13 +696,13 @@ function sonarrActions(arr: Arr) {
                 ? `${title} season ${params.seasonNumber}`
                 : `${title}, every season`
           const counts = `${scope.episodes.length} episode(s), ${withFiles.length} with files`
-          const effect: PlanEffect = {
+          const effect: WriteEffect = {
             kind: "search",
             target,
             detail: counts,
           }
           return {
-            state: scope,
+            state: null,
             summary: `${command.name} for ${target}: ${counts}${withFiles.length > 0 ? " that a grab may replace" : ""}`,
             effects: [effect],
             warnings: [
@@ -741,24 +724,14 @@ function sonarrActions(arr: Arr) {
             ],
           }
         }),
-      fingerprint: (state, params) => ({
-        command: searchCommand(params).name,
-        episodes: state.episodes
-          .map((episode) => ({
-            id: isNumber(episode.id) ? episode.id : 0,
-            hasFile: episode.hasFile === true,
-            monitored: episode.monitored === true,
-          }))
-          .sort((a, b) => a.id - b.id),
-      }),
-      apply: (params) => postCommand(arr, searchCommand(params)),
+      write: (params) => postCommand(arr, searchCommand(params)),
       verify: (_params, result) => verifyCommand(arr, result),
     }),
-    setSeriesMonitoring: action({
+    set_series_monitoring: action({
       description:
         "Change a series' monitored flag, named seasons, or monitorNewItems. Every other series field is kept",
       params: seriesMonitoringParams,
-      plan: (params, signal) =>
+      resolve: (params, signal) =>
         Effect.gen(function* () {
           const update = seriesMonitoringUpdate(params.seriesId)
           const record = yield* arrRecord(
@@ -788,12 +761,7 @@ function sonarrActions(arr: Arr) {
               : [],
           }
         }),
-      fingerprint: (state, params) =>
-        monitoringFingerprint(
-          state.record,
-          seriesMonitoringUpdate(params.seriesId),
-        ),
-      apply: (params, state) =>
+      write: (params, state) =>
         Effect.gen(function* () {
           const body = yield* toolCheck(() =>
             patchSeriesMonitoring(state.record, params),
@@ -821,7 +789,7 @@ function sonarrActions(arr: Arr) {
           )
         }),
     }),
-    setEpisodeMonitoring: action({
+    set_episode_monitoring: action({
       description: "Set the monitored flag of specific episodes",
       params: Type.Object({
         episodeIds: Type.Array(Type.Integer({ minimum: 1 }), {
@@ -831,7 +799,7 @@ function sonarrActions(arr: Arr) {
         }),
         monitored: Type.Boolean(),
       }),
-      plan: (params, signal) =>
+      resolve: (params, signal) =>
         Effect.gen(function* () {
           const episodes = yield* readEpisodesById(
             arr,
@@ -847,10 +815,10 @@ function sonarrActions(arr: Arr) {
             )
           }
           return {
-            state: { episodes },
+            state: null,
             summary: `Set monitored=${params.monitored} on ${changing.length} episode(s)`,
             effects: changing.map(
-              (episode): PlanEffect => ({
+              (episode): WriteEffect => ({
                 kind: "update",
                 target: `episode ${String(episode.id)} (${episodeLabel(episode)}) monitored`,
                 detail: `${String(episode.monitored)} -> ${params.monitored}`,
@@ -864,12 +832,7 @@ function sonarrActions(arr: Arr) {
                 : [],
           }
         }),
-      fingerprint: (state) =>
-        state.episodes.map((episode) => ({
-          id: episode.id ?? null,
-          monitored: episode.monitored ?? null,
-        })),
-      apply: (params) =>
+      write: (params) =>
         arrRequest(arr, "/api/v3/episode/monitor", {
           method: "PUT",
           body: { episodeIds: params.episodeIds, monitored: params.monitored },
@@ -894,11 +857,11 @@ function sonarrActions(arr: Arr) {
           }),
         ),
     }),
-    deleteEpisodeFile: action({
+    delete_episode_file: action({
       description:
         "Delete one episode file from disk so a replacement can be searched",
       params: Type.Object({ episodeFileId: Type.Integer({ minimum: 1 }) }),
-      plan: (params, signal) =>
+      resolve: (params, signal) =>
         Effect.gen(function* () {
           const file = yield* arrObject(
             arr,
@@ -917,13 +880,13 @@ function sonarrActions(arr: Arr) {
           const path = String(
             file.path ?? `episode file ${params.episodeFileId}`,
           )
-          const effect: PlanEffect = {
+          const effect: WriteEffect = {
             kind: "delete",
             target: path,
             detail: `${sizeText(file.size)}; covers ${covered}`,
           }
           return {
-            state: { file, episodes },
+            state: null,
             summary: `Delete episode file ${params.episodeFileId} (${path}, ${sizeText(file.size)}), covering ${covered}`,
             effects: [effect],
             warnings: [
@@ -934,15 +897,7 @@ function sonarrActions(arr: Arr) {
             ],
           }
         }),
-      fingerprint: (state) => ({
-        episodeFileId: state.file.id ?? null,
-        path: state.file.path ?? null,
-        size: state.file.size ?? null,
-        episodeIds: state.episodes
-          .flatMap((episode) => (isNumber(episode.id) ? [episode.id] : []))
-          .sort((a, b) => a - b),
-      }),
-      apply: (params) =>
+      write: (params) =>
         arrRequest(arr, `/api/v3/episodefile/${params.episodeFileId}`, {
           method: "DELETE",
         }).pipe(
@@ -959,13 +914,14 @@ function sonarrActions(arr: Arr) {
           "episode file",
         ),
     }),
-    removeQueueItem: shared.removeQueueItem,
-    markHistoryFailed: shared.markHistoryFailed,
-    deleteBlocklistEntry: shared.deleteBlocklistEntry,
-    grabRelease: shared.grabRelease,
-    manualImport: action({
+    remove_queue_item: shared.remove_queue_item,
+    mark_history_failed: shared.mark_history_failed,
+    delete_blocklist_entry: shared.delete_blocklist_entry,
+    grab_release: shared.grab_release,
+    manual_import: action({
       description:
-        "Import files Sonarr offers as manual-import candidates into named episodes",
+        "Import files Sonarr offers as manual-import candidates into named episodes. " +
+        "Quality, languages, and release group come from the live candidate",
       params: Type.Object({
         files: Type.Array(manualImportFile, { minItems: 1, maxItems: 50 }),
         importMode: Type.Enum(["auto", "move", "copy"], {
@@ -973,7 +929,7 @@ function sonarrActions(arr: Arr) {
         }),
         ...manualImportScope(),
       }),
-      plan: (params, signal) =>
+      resolve: (params, signal) =>
         Effect.gen(function* () {
           const matches = yield* matchCandidates(
             arr,
@@ -993,9 +949,10 @@ function sonarrActions(arr: Arr) {
               }),
             ),
           )
-          const effects: PlanEffect[] = []
+          const effects: WriteEffect[] = []
           for (const file of params.files) {
             const target = targets.get(file.seriesId)
+            const match = matches.find((entry) => entry.path === file.path)
             const episodes = (target?.episodes ?? []).filter(
               (episode) =>
                 isNumber(episode.id) && file.episodeIds.includes(episode.id),
@@ -1008,52 +965,35 @@ function sonarrActions(arr: Arr) {
             effects.push({
               kind: "import",
               target: file.path,
-              detail: `${params.importMode} into ${String(target?.series.title ?? `series ${file.seriesId}`)} ${episodes.map(episodeLabel).join(", ")} as ${String(qualityName(file.quality as JsonValue) ?? "unknown quality")}`,
+              detail: `${params.importMode} into ${String(target?.series.title ?? `series ${file.seriesId}`)} ${episodes.map(episodeLabel).join(", ")} as ${String(qualityName(match?.candidate.quality) ?? "unknown quality")}`,
             })
           }
           return {
-            state: {
-              matches,
-              targets: params.files.map((file) => {
-                const target = targets.get(file.seriesId)
-                return {
-                  series: target?.series ?? null,
-                  episodes: (target?.episodes ?? []).filter(
-                    (episode) =>
-                      isNumber(episode.id) &&
-                      file.episodeIds.includes(episode.id),
-                  ),
-                }
-              }),
-            },
+            state: { matches },
             summary: `Manual import of ${params.files.length} file(s), mode ${params.importMode}`,
             effects,
             warnings: candidateWarnings(matches),
           }
         }),
-      fingerprint: (state) => ({
-        candidates: candidateFingerprint(state.matches),
-        targets: state.targets.map(importTargetFingerprint),
-      }),
-      apply: (params) =>
+      write: (params, state) =>
         postCommand(arr, {
           name: "ManualImport",
           importMode: params.importMode,
-          files: params.files.map((file) => ({
-            path: file.path,
-            folderName: file.folderName,
-            seriesId: file.seriesId,
-            episodeIds: file.episodeIds,
-            // SAFETY: both arrived as JSON and passed the file schema.
-            quality: file.quality as JsonValue,
-            languages: file.languages as JsonValue,
-            releaseGroup: file.releaseGroup,
-            downloadId: file.downloadId ?? params.downloadId,
-          })),
+          files: state.matches.flatMap((match) => {
+            const file = params.files.find((entry) => entry.path === match.path)
+            if (!file) return []
+            return [
+              {
+                ...candidateFile(match, params.downloadId),
+                seriesId: file.seriesId,
+                episodeIds: file.episodeIds,
+              },
+            ]
+          }),
         }),
       verify: (_params, result) => verifyCommand(arr, result),
     }),
-    command: action({
+    run_command: action({
       description:
         "Make Sonarr re-read disk or downloader state: RefreshSeries and RescanSeries need seriesId, " +
         "DownloadedEpisodesScan needs path",
@@ -1067,11 +1007,11 @@ function sonarrActions(arr: Arr) {
           }),
         ),
       }),
-      plan: (params, signal) =>
+      resolve: (params, signal) =>
         Effect.gen(function* () {
           if (params.name === "RefreshMonitoredDownloads") {
             return {
-              state: { target: null },
+              state: null,
               summary:
                 "Re-check every monitored download in the download clients",
               effects: [
@@ -1090,10 +1030,10 @@ function sonarrActions(arr: Arr) {
             }
             const matches = yield* scanCandidates(arr, params.path, signal)
             return {
-              state: { target: candidateFingerprint(matches) },
+              state: null,
               summary: `Scan ${params.path} and import what Sonarr accepts: ${matches.length} candidate file(s)`,
               effects: matches.map(
-                (match): PlanEffect => ({
+                (match): WriteEffect => ({
                   kind: "import",
                   target: match.path,
                   detail: `mapped to ${String(objectField(match.candidate, "series")?.title ?? "no series")} ${objectList(match.candidate.episodes).map(episodeLabel).join(", ") || "no episode"}`,
@@ -1107,12 +1047,7 @@ function sonarrActions(arr: Arr) {
           }
           const series = yield* readSeries(arr, params.seriesId, signal)
           return {
-            state: {
-              target: {
-                seriesId: series.id ?? null,
-                path: series.path ?? null,
-              },
-            },
+            state: null,
             summary: `${params.name} for ${String(series.title ?? `series ${params.seriesId}`)}`,
             effects: [
               {
@@ -1124,8 +1059,7 @@ function sonarrActions(arr: Arr) {
             warnings: [],
           }
         }),
-      fingerprint: (state) => state.target,
-      apply: (params) =>
+      write: (params) =>
         postCommand(arr, {
           name: params.name,
           ...(params.name === "DownloadedEpisodesScan"

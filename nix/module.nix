@@ -236,7 +236,7 @@ in
           Whether to run the MCP server on this host as
           `blitzcrank-mcp.service`. It holds the Sonarr, Radarr, SABnzbd, and
           Jellyfin credentials and the media mounts, and serves the typed
-          reads and plan/apply writes the agent uses. Disable it only when the
+          reads and writes the agent uses. Disable it only when the
           server runs elsewhere, and point {option}`mcp.url` at it.
         '';
       };
@@ -306,9 +306,6 @@ in
       settings = lib.mkOption {
         type = lib.types.attrsOf lib.types.str;
         default = { };
-        example = {
-          BLITZCRANK_MCP_PLAN_TTL_MS = "900000";
-        };
         description = "Extra non-secret environment variables for the MCP server.";
       };
     };

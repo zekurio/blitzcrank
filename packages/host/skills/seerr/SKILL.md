@@ -15,24 +15,15 @@ an issue; `finish_issue` tells the host what to publish.
 
 ## Reads
 
-Read with `seerr_read` inside a `codemode` script.
+Load the tools you need with `tool_search`, then call them directly.
 
-```js
-const issue = await tools.seerr_read({ resource: "issue", issueId: 214 })
-const matches = await tools.seerr_read({
-  resource: "search",
-  query: "The Matrix",
-})
-return { issue, matches }
-```
-
-- Issue: `issue` with `issueId`. Comments, media identity, and reporter.
-- Request: `request` with `requestId`. Status, seasons, and requester.
-- Search: `search` with `query`. Each match has `mediaType`, `tmdbId` or
+- Issue: `seerr_issue` with `issueId`. Comments, media identity, and reporter.
+- Request: `seerr_request` with `requestId`. Status, seasons, and requester.
+- Search: `seerr_search` with `query`. Each match has `mediaType`, `tmdbId` or
   `tvdbId`, title, and year.
-- User: `user` with `userId`. Includes a permissions summary.
-- Quota: `quota` with `userId`.
-- Anything without a resource: `raw` with a GET `path` under `/api/v1`.
+- User: `seerr_user` with `userId`. Includes a permissions summary.
+- Quota: `seerr_quota` with `userId`.
+- Anything without a tool: `seerr_raw` with a GET `path` under `/api/v1`.
 
 ## Triage and mapping
 
@@ -60,35 +51,19 @@ Subjective or client-specific symptoms need reporter confirmation.
 ## Request mutation
 
 Create a request only when the user explicitly asks to request media. No Arr
-action adds a series or movie, so a Seerr request is how media gets added.
+tool adds a series or movie, so a Seerr request is how media gets added.
 Search first and verify TMDB identity, media type, existing requests, and TV
 seasons. If a Seerr reporter identity exists, check that user's permissions and
 quota, and pass their `userId` so the request is theirs.
 
-A write with an unknown outcome stops the run for operator review. A
-completed write whose verification failed is still reported as completed.
+A write acts on its first call and returns `summary`, `effects`, `warnings`,
+and a `verification` re-read of the request.
 
-Every write is two calls. In a script, call `seerr_plan` and return the plan.
-Planning changes nothing. Read its `summary`, `effects`, and `warnings`, then
-call the `seerr_apply` tool directly with the `planId`. Scripts cannot call it.
+- `seerr_create_request` takes `mediaType`, `mediaId` (the TMDB ID, for TV
+  too), optional `seasons`, and optional `userId`. Check the media's status in
+  `seerr_search` first: nothing asks you to confirm, and existing requests for
+  the same media come back only as `warnings` once the request is made.
+- `seerr_retry_request` takes `requestId`. Use it for a request that failed to
+  reach its Arr, after the cause is fixed.
 
-```js
-return await tools.seerr_plan({
-  action: "createRequest",
-  mediaType: "tv",
-  mediaId: 1399,
-  seasons: [3],
-})
-```
-
-- `createRequest` takes `mediaType`, `mediaId` (the TMDB ID, for TV too),
-  optional `seasons`, and optional `userId`. The plan names the title, type,
-  and seasons, and lists existing requests for the same media as warnings.
-  Read an existing request before deciding; do not add a duplicate.
-- `retryRequest` takes `requestId`. Use it for a request that failed to reach
-  its Arr, after the cause is fixed.
-
-Apply fails with `plan is stale: ...` when the request set changed since the
-plan; read and plan again. It reads the request back as `verification`. A
-second apply of one `planId` returns the first outcome with `replayed: true`.
 Approving, declining, or deleting requests is admin work.

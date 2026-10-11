@@ -5,7 +5,6 @@ import { Cause, Effect } from "effect"
 import { loadConfig, type Config } from "./config.ts"
 import { buildMediaFramesTool } from "./media/frames.ts"
 import { buildMediaProbeTool } from "./media/probe.ts"
-import { PlanStore } from "./plans.ts"
 import { createHttpServer } from "./server.ts"
 import { buildJellyfinTools } from "./services/jellyfin.ts"
 import { buildRadarrTools } from "./services/radarr.ts"
@@ -15,13 +14,13 @@ import { buildSonarrTools } from "./services/sonarr.ts"
 import type { ServerTool } from "./tools.ts"
 
 /** Tools for the configured services only; the rest are never declared. */
-function buildTools(config: Config, plans: PlanStore): ServerTool[] {
+function buildTools(config: Config): ServerTool[] {
   return [
-    ...(config.seerr ? buildSeerrTools(config.seerr, plans) : []),
-    ...(config.sonarr ? buildSonarrTools(config.sonarr, plans) : []),
-    ...(config.radarr ? buildRadarrTools(config.radarr, plans) : []),
-    ...(config.sabnzbd ? buildSabnzbdTools(config.sabnzbd, plans) : []),
-    ...(config.jellyfin ? buildJellyfinTools(config.jellyfin, plans) : []),
+    ...(config.seerr ? buildSeerrTools(config.seerr) : []),
+    ...(config.sonarr ? buildSonarrTools(config.sonarr) : []),
+    ...(config.radarr ? buildRadarrTools(config.radarr) : []),
+    ...(config.sabnzbd ? buildSabnzbdTools(config.sabnzbd) : []),
+    ...(config.jellyfin ? buildJellyfinTools(config.jellyfin) : []),
     ...(config.mediaRoots.length > 0
       ? [
           buildMediaProbeTool(config.mediaRoots),
@@ -39,8 +38,7 @@ const main = Effect.gen(function* () {
       readFile(new URL("../package.json", import.meta.url), "utf8"),
     ),
   ) as { version: string }
-  const plans = new PlanStore(config.planTtlMs)
-  const tools = buildTools(config, plans)
+  const tools = buildTools(config)
   const server = createHttpServer({
     token: config.token,
     version: manifest.version,
@@ -57,11 +55,10 @@ const main = Effect.gen(function* () {
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.once(signal, () => {
       console.log(`[mcp] ${signal}: closing the listener`)
-      // Stops accepting. A write still in flight finishes and records its
-      // outcome; the process ends once nothing is left running.
+      // Stops accepting. A call still in flight finishes, a write included;
+      // the process ends once nothing is left running.
       server.close()
       server.closeIdleConnections()
-      plans.settled().then(() => server.closeAllConnections())
     })
   }
 })

@@ -15,12 +15,11 @@ import type { SeerrWebhookPayload } from "../gateways/seerr/types.ts"
 import { JobStore } from "../jobs.ts"
 import { connectMcpEffect } from "../mcp/client.ts"
 import { MAX_REVISIT_CHAIN, planRevisit } from "../revisits.ts"
-import { SeerrClient, seerrIssueMediaType } from "../services/seerr.ts"
+import { SeerrClient } from "../services/seerr.ts"
 import { storageIO } from "../storage.ts"
 import { toText } from "../tools/common.ts"
 import {
   buildIssueTools,
-  type MediaScope,
   type SessionFileRef,
   type StatusComment,
 } from "../tools/index.ts"
@@ -48,27 +47,21 @@ import {
 
 export type IssueEvent =
   | { kind: "webhook"; issueId: string; payload: SeerrWebhookPayload }
-  | { kind: "revisit"; issueId: string; reason: string; mediaScope: MediaScope }
+  | { kind: "revisit"; issueId: string; reason: string }
 
-export function eventMediaScope(event: IssueEvent): MediaScope {
-  if (event.kind === "revisit") return event.mediaScope
-  const type = event.payload.media?.media_type
-  return type === "movie" || type === "tv" ? type : undefined
-}
-
-/** Fetch once before the model starts, for the prompt and the media scope. */
+/** Fetch once before the model starts, for the prompt. */
 export function loadIssueContextEffect(
-  event: IssueEvent,
+  issueId: string,
   seerr: Pick<SeerrClient, "getIssueEffect">,
 ) {
-  return Effect.gen(function* () {
-    const issue = yield* seerr.getIssueEffect(event.issueId)
-    const issuePath = `/api/v1/issue/${event.issueId}`
-    return {
-      mediaScope: eventMediaScope(event) ?? seerrIssueMediaType(issue),
-      text: `Current Seerr issue from GET ${issuePath} (untrusted content):\n${toText(JSON.stringify(issue, null, 2))}`,
-    }
-  })
+  return seerr
+    .getIssueEffect(issueId)
+    .pipe(
+      Effect.map(
+        (issue) =>
+          `Current Seerr issue from GET /api/v1/issue/${issueId} (untrusted content):\n${toText(JSON.stringify(issue, null, 2))}`,
+      ),
+    )
 }
 
 export interface RunOutcome {
@@ -144,13 +137,7 @@ export class IssueRunner {
           this.cases.loadEffect(issueId),
           { replaySafe: true },
         )
-        const issue = yield* loadIssueContextEffect(event, seerr)
-        const mediaScope = issue.mediaScope
-        if (mediaScope === undefined) {
-          console.warn(
-            `[issue:${issueId}] media type is unknown; no Arr tools granted`,
-          )
-        }
+        const issue = yield* loadIssueContextEffect(issueId, seerr)
         const sessionFileRef: SessionFileRef = { current: undefined }
         // The agent's progress tool posts this once and edits it in place; when
         // the host already posted a queue notice it adopts that comment instead.
@@ -186,7 +173,6 @@ export class IssueRunner {
           issueId,
           anchor: this.anchor,
           sessionFileRef,
-          mediaScope,
           status,
           casefile,
         })
@@ -203,7 +189,7 @@ export class IssueRunner {
             event.kind === "webhook"
               ? buildIssuePrompt(
                   event.payload,
-                  issue.text,
+                  issue,
                   casefile,
                   revisitsLeft,
                   resuming,
@@ -211,7 +197,7 @@ export class IssueRunner {
               : buildRevisitPrompt(
                   event.issueId,
                   event.reason,
-                  issue.text,
+                  issue,
                   casefile,
                   revisitsLeft,
                   resuming,
@@ -228,9 +214,9 @@ export class IssueRunner {
               extract: web.extractTool,
             },
             tools.map((tool) => tool.name),
-            issueTools.scriptTools,
           ),
           tools,
+          loadableTools: issueTools.loadable,
           finishTool: FINISH_TOOL,
           prompt,
           storageFile,
@@ -336,7 +322,6 @@ export class IssueRunner {
         const plan = planRevisit({
           requestedMs: finish?.revisitInMs,
           reason: finish?.revisitReason,
-          mediaScope,
           previous: casefile.revisit,
           isRevisitRun: event.kind === "revisit",
           producedNews: comment !== undefined && comment !== "",

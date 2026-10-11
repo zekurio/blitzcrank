@@ -115,7 +115,6 @@ function mcpServer(registry: Map<string, ServerTool>, version: string): Server {
       name: tool.name,
       description: tool.description,
       inputSchema: tool.inputSchema,
-      ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : {}),
       annotations: tool.annotations,
     })),
   }))
@@ -127,16 +126,22 @@ function mcpServer(registry: Map<string, ServerTool>, version: string): Server {
         `Unknown tool: ${request.params.name}`,
       )
     }
-    const args = request.params.arguments ?? {}
-    // Resolved first: a stale apply discards the plan that names its action.
-    const label = tool.label(args) ?? "-"
     const started = performance.now()
-    const result = await runTool(tool, args, extra.signal)
+    const outcome = await runTool(
+      tool,
+      request.params.arguments ?? {},
+      extra.signal,
+    )
     // One line per call. Arguments may carry paths and titles; never log them.
     console.log(
-      `[mcp] ${tool.name} ${label} ${result.isError ? "error" : "ok"} ${Math.round(performance.now() - started)}ms`,
+      `[mcp] ${tool.name} ${outcome.status} ${Math.round(performance.now() - started)}ms`,
     )
-    return { ...result }
+    // A protocol error, not a result: the host must not hand an unknown write
+    // outcome to the model as an ordinary failure.
+    if (outcome.status === "unknown") {
+      throw new McpError(ErrorCode.InternalError, outcome.message)
+    }
+    return { ...outcome.result }
   })
   return server
 }

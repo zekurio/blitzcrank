@@ -9,10 +9,13 @@ It runs as two processes:
   runs the agent, posts comments, resolves issues, and schedules revisits. It
   holds the model credentials and the Seerr key it comments with.
 - The MCP server (`packages/mcp`, command `blitzcrank-mcp`) holds the service
-  API keys and the media mounts. The agent reads through it and changes
-  anything only as a plan followed by an apply.
-  [`packages/mcp/README.md`](packages/mcp/README.md) is the tool contract and
-  lists every read and write.
+  API keys and the media mounts. Every read and write the agent makes goes
+  through it, one tool per operation.
+
+The server's [service tables](packages/mcp/src/services) define the available
+reads and writes. The agent starts each run with a handful of host tools and
+loads the service tools it needs with `tool_search`. The
+[server README](packages/mcp/README.md) covers operation.
 
 Built on [Pi Durable](https://www.npmjs.com/package/@earendil-works/pi-durable)
 as an SDK dependency. Blitzcrank does not package or launch the Pi app.
@@ -176,14 +179,6 @@ Both processes answer an unauthenticated `GET /healthz`.
 
 ## Checks
 
-The host owns public output: the agent cannot comment on or resolve a Seerr
-issue, and only the reporter or a Seerr user with `ADMIN`/`MANAGE_ISSUES` can
-drive a run through comments. Every write is a plan followed by an apply: the
-plan names what will change, and the apply refuses with `plan is stale` if the
-state it read has moved since. Interrupted writes that cannot be proven
-replay-safe fail closed for operator review; inspect the service state and logs
-rather than reset the job journal to force a retry.
-
 ```sh
 devenv shell -- pnpm verify
 devenv shell -- pnpm build
@@ -192,7 +187,6 @@ nix flake check
 
 [AGENTS.md](AGENTS.md) records the host invariants and contribution rules.
 [`packages/host/skills/`](packages/host/skills) contains service-specific
-knowledge. [`packages/mcp/README.md`](packages/mcp/README.md) is the tool
-contract.
+knowledge. The [service tables](packages/mcp/src/services) define the tools.
 
 [MIT](LICENSE)

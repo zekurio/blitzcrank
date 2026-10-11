@@ -13,19 +13,18 @@ import {
   stringList,
   type JsonObject,
 } from "../json.ts"
-import type { PlanStore } from "../plans.ts"
 import {
   action,
-  defineRead,
-  definePlanApply,
+  defineReads,
+  defineWrites,
   listResult,
   MAX_LIST_ITEMS,
   resource,
   toolFail,
-  type Planned,
-  type PlanEffect,
+  type Resolved,
   type ServerTool,
   type ToolFailure,
+  type WriteEffect,
 } from "../tools.ts"
 
 type Signal = AbortSignal | undefined
@@ -38,17 +37,11 @@ const MAX_STAGE_CHARS = 300
 /** SABnzbd's numeric job priorities, by the name its queue reports. */
 const PRIORITIES = { low: -1, normal: 0, high: 1, force: 2 } as const
 
-export function buildSabnzbdTools(
-  cfg: ServiceConfig,
-  plans: PlanStore,
-): ServerTool[] {
+export function buildSabnzbdTools(cfg: ServiceConfig): ServerTool[] {
+  const service = { name: "sabnzbd", label: "SABnzbd (downloads)" }
   return [
-    defineRead(
-      "sabnzbd",
-      "Read SABnzbd downloads: the queue, history with failure reasons and storage paths, and server health.",
-      sabnzbdReads(cfg),
-    ),
-    ...definePlanApply("sabnzbd", sabnzbdActions(cfg), plans),
+    ...defineReads(service, sabnzbdReads(cfg)),
+    ...defineWrites(service, sabnzbdActions(cfg)),
   ]
 }
 
@@ -204,7 +197,7 @@ function sabnzbdReads(cfg: ServiceConfig) {
           ),
         ),
     }),
-    serverStats: resource({
+    server_stats: resource({
       description: "Download volume per news server and in total",
       params: Type.Object({}),
       run: (_params, signal) =>
@@ -345,14 +338,14 @@ function jobDetail(state: JobState): string {
   ].join("; ")
 }
 
-function jobPlan(
+function jobTarget(
   state: JobState,
   nzoId: string,
   kind: string,
   summary: string,
   warnings: string[] = [],
-): Planned<JobState> {
-  const effect: PlanEffect = {
+): Resolved<JobState> {
+  const effect: WriteEffect = {
     kind,
     target: `${jobName(state)} (${nzoId})`,
     detail: jobDetail(state),
@@ -362,24 +355,6 @@ function jobPlan(
     summary: `${summary}: ${jobName(state)}`,
     effects: [effect],
     warnings,
-  }
-}
-
-/** Identity and editable state, excluding continuously changing progress. */
-function jobFingerprint(state: JobState): JsonValue {
-  return {
-    list: state.list,
-    nzoId: state.job.nzo_id ?? null,
-    status: state.job.status ?? null,
-    ...pick(state.job, [
-      "filename",
-      "name",
-      "cat",
-      "category",
-      "priority",
-      "storage",
-      "fail_message",
-    ]),
   }
 }
 
@@ -406,15 +381,15 @@ function verifyJob(
 
 const nzoIdParam = Type.String({
   minLength: 1,
-  description: "The job's nzo_id, from a queue or history read",
+  description: "The job's nzo_id, from sabnzbd_queue or sabnzbd_history",
 })
 
 function sabnzbdActions(cfg: ServiceConfig) {
   return {
-    retry: action({
+    retry_job: action({
       description: "Retry one failed job from history",
       params: Type.Object({ nzoId: nzoIdParam }),
-      plan: (params, signal) =>
+      resolve: (params, signal) =>
         Effect.gen(function* () {
           const state = yield* requireJob(cfg, "history", params.nzoId, signal)
           if (state.job.status !== "Failed") {
@@ -422,12 +397,11 @@ function sabnzbdActions(cfg: ServiceConfig) {
               `only a failed job can be retried; ${params.nzoId} is ${String(state.job.status)}`,
             )
           }
-          return jobPlan(state, params.nzoId, "retry", "Retry failed job", [
+          return jobTarget(state, params.nzoId, "retry", "Retry failed job", [
             "a retry cannot repair missing articles or a broken archive",
           ])
         }),
-      fingerprint: jobFingerprint,
-      apply: (params) =>
+      write: (params) =>
         sabCall(cfg, { mode: "retry", value: params.nzoId }, undefined),
       verify: (params) =>
         verifyJob(
@@ -438,19 +412,18 @@ function sabnzbdActions(cfg: ServiceConfig) {
           "the job left the failed history; it is back in the queue",
         ),
     }),
-    pause: action({
+    pause_job: action({
       description: "Pause one queued job",
       params: Type.Object({ nzoId: nzoIdParam }),
-      plan: (params, signal) =>
+      resolve: (params, signal) =>
         Effect.gen(function* () {
           const state = yield* requireJob(cfg, "queue", params.nzoId, signal)
           if (state.job.status === "Paused") {
             return yield* toolFail(`job ${params.nzoId} is already paused`)
           }
-          return jobPlan(state, params.nzoId, "pause", "Pause job")
+          return jobTarget(state, params.nzoId, "pause", "Pause job")
         }),
-      fingerprint: jobFingerprint,
-      apply: (params) =>
+      write: (params) =>
         sabCall(
           cfg,
           { mode: "queue", name: "pause", value: params.nzoId },
@@ -465,10 +438,10 @@ function sabnzbdActions(cfg: ServiceConfig) {
           "the job is paused",
         ),
     }),
-    resume: action({
+    resume_job: action({
       description: "Resume one paused job",
       params: Type.Object({ nzoId: nzoIdParam }),
-      plan: (params, signal) =>
+      resolve: (params, signal) =>
         Effect.gen(function* () {
           const state = yield* requireJob(cfg, "queue", params.nzoId, signal)
           if (state.job.status !== "Paused") {
@@ -476,10 +449,9 @@ function sabnzbdActions(cfg: ServiceConfig) {
               `job ${params.nzoId} is not paused (status ${String(state.job.status)}); a global pause is not a job pause`,
             )
           }
-          return jobPlan(state, params.nzoId, "resume", "Resume job")
+          return jobTarget(state, params.nzoId, "resume", "Resume job")
         }),
-      fingerprint: jobFingerprint,
-      apply: (params) =>
+      write: (params) =>
         sabCall(
           cfg,
           { mode: "queue", name: "resume", value: params.nzoId },
@@ -494,7 +466,7 @@ function sabnzbdActions(cfg: ServiceConfig) {
           "the job is no longer paused",
         ),
     }),
-    setPriority: action({
+    set_priority: action({
       description: "Change one queued job's priority",
       params: Type.Object({
         nzoId: nzoIdParam,
@@ -502,10 +474,10 @@ function sabnzbdActions(cfg: ServiceConfig) {
           description: "force downloads even while the queue is paused",
         }),
       }),
-      plan: (params, signal) =>
+      resolve: (params, signal) =>
         requireJob(cfg, "queue", params.nzoId, signal).pipe(
           Effect.map((state) =>
-            jobPlan(
+            jobTarget(
               state,
               params.nzoId,
               "priority",
@@ -516,8 +488,7 @@ function sabnzbdActions(cfg: ServiceConfig) {
             ),
           ),
         ),
-      fingerprint: jobFingerprint,
-      apply: (params) =>
+      write: (params) =>
         sabCall(
           cfg,
           {
@@ -539,16 +510,16 @@ function sabnzbdActions(cfg: ServiceConfig) {
           `the job has priority ${params.priority}`,
         ),
     }),
-    changeCategory: action({
+    change_category: action({
       description: "Move one queued job to another category",
       params: Type.Object({
         nzoId: nzoIdParam,
         category: Type.String({
           minLength: 1,
-          description: "A category from the categories read",
+          description: "A category from sabnzbd_categories",
         }),
       }),
-      plan: (params, signal) =>
+      resolve: (params, signal) =>
         Effect.gen(function* () {
           const state = yield* requireJob(cfg, "queue", params.nzoId, signal)
           const categories = yield* readCategories(cfg, signal)
@@ -562,7 +533,7 @@ function sabnzbdActions(cfg: ServiceConfig) {
               `job ${params.nzoId} is already in category ${params.category}`,
             )
           }
-          return jobPlan(
+          return jobTarget(
             state,
             params.nzoId,
             "category",
@@ -572,8 +543,7 @@ function sabnzbdActions(cfg: ServiceConfig) {
             ],
           )
         }),
-      fingerprint: jobFingerprint,
-      apply: (params) =>
+      write: (params) =>
         sabCall(
           cfg,
           { mode: "change_cat", value: params.nzoId, value2: params.category },
@@ -588,7 +558,7 @@ function sabnzbdActions(cfg: ServiceConfig) {
           `the job is in category ${params.category}`,
         ),
     }),
-    deleteJob: action({
+    delete_job: action({
       description: "Remove one job from the queue or from history",
       params: Type.Object({
         nzoId: nzoIdParam,
@@ -597,10 +567,10 @@ function sabnzbdActions(cfg: ServiceConfig) {
           description: "Also delete the downloaded data from disk",
         }),
       }),
-      plan: (params, signal) =>
+      resolve: (params, signal) =>
         requireJob(cfg, params.from, params.nzoId, signal).pipe(
           Effect.map((state) =>
-            jobPlan(
+            jobTarget(
               state,
               params.nzoId,
               "delete",
@@ -614,8 +584,7 @@ function sabnzbdActions(cfg: ServiceConfig) {
             ),
           ),
         ),
-      fingerprint: jobFingerprint,
-      apply: (params) =>
+      write: (params) =>
         sabCall(
           cfg,
           {

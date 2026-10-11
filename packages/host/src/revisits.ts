@@ -1,6 +1,6 @@
 import { Cause, Effect, Fiber } from "effect"
 
-import type { CaseFile, CaseMediaScope, PendingRevisit } from "./casefile.ts"
+import type { CaseFile, PendingRevisit } from "./casefile.ts"
 
 /**
  * In-process revisit scheduler. One pending revisit per issue; a new webhook
@@ -64,7 +64,6 @@ export class RevisitScheduler {
 export interface RevisitPlanInput {
   requestedMs: number | undefined
   reason: string | undefined
-  mediaScope: CaseMediaScope
   /** The chain this run belongs to: a revisit run continues its chain. */
   previous: PendingRevisit | undefined
   isRevisitRun: boolean
@@ -125,7 +124,6 @@ export function planRevisit(input: RevisitPlanInput): RevisitPlan {
     revisit: {
       dueAt: new Date(input.now + delayMs).toISOString(),
       reason: input.reason,
-      mediaScope: input.mediaScope,
       chain,
       delayMs,
     },

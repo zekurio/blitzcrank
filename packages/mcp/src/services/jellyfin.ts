@@ -16,20 +16,19 @@ import {
   pick,
   type JsonObject,
 } from "../json.ts"
-import type { PlanStore } from "../plans.ts"
 import {
   action,
-  defineRead,
-  definePlanApply,
+  defineReads,
+  defineWrites,
   listResult,
   MAX_LIST_ITEMS,
   rawPath,
   rawResult,
   resource,
   toolFail,
-  type PlanEffect,
   type ServerTool,
   type ToolFailure,
+  type WriteEffect,
 } from "../tools.ts"
 
 type Signal = AbortSignal | undefined
@@ -46,17 +45,11 @@ const REFRESH_MODES = [
   "FullRefresh",
 ] as const
 
-export function buildJellyfinTools(
-  cfg: ServiceConfig,
-  plans: PlanStore,
-): ServerTool[] {
+export function buildJellyfinTools(cfg: ServiceConfig): ServerTool[] {
+  const service = { name: "jellyfin", label: "Jellyfin (library)" }
   return [
-    defineRead(
-      "jellyfin",
-      "Read Jellyfin library state: items with media sources and streams, libraries, users, and sessions.",
-      jellyfinReads(cfg),
-    ),
-    ...definePlanApply("jellyfin", jellyfinActions(cfg), plans),
+    ...defineReads(service, jellyfinReads(cfg)),
+    ...defineWrites(service, jellyfinActions(cfg)),
   ]
 }
 
@@ -270,7 +263,7 @@ function jellyfinReads(cfg: ServiceConfig) {
           }),
         ),
     }),
-    byProviderId: resource({
+    by_provider_id: resource({
       description:
         "Items of one type whose provider id matches, e.g. Tmdb 603 for a Movie",
       params: Type.Object({
@@ -411,7 +404,7 @@ function jellyfinReads(cfg: ServiceConfig) {
           ),
         ),
     }),
-    userItem: resource({
+    user_item: resource({
       description:
         "One item as one user sees it: visibility, played state, and progress",
       params: Type.Object({
@@ -441,7 +434,7 @@ function jellyfinReads(cfg: ServiceConfig) {
           ),
         ),
     }),
-    remoteSearch: resource({
+    remote_search: resource({
       description:
         "Metadata-provider match candidates for an item. Queries providers and changes nothing",
       params: Type.Object({
@@ -492,7 +485,7 @@ function jellyfinReads(cfg: ServiceConfig) {
     }),
     raw: resource({
       description:
-        "Any other GET that answers JSON. Uncompacted; prefer a named resource",
+        "Any other GET that answers JSON. Uncompacted; prefer a named tool",
       params: Type.Object({
         path: Type.String({
           description:
@@ -512,7 +505,7 @@ function jellyfinReads(cfg: ServiceConfig) {
   }
 }
 
-/** Everything `applyRemoteSearch` sends back, with the overview shortened. */
+/** Everything a rematch sends back, with the overview shortened. */
 function compactSearchResult(result: JsonObject): JsonObject {
   return {
     ...result,
@@ -522,21 +515,9 @@ function compactSearchResult(result: JsonObject): JsonObject {
   }
 }
 
-/** Preserve the item's identity, including an operator's intervening rematch. */
-function itemFingerprint(state: { item: JsonObject }): JsonValue {
-  return {
-    itemId: state.item.Id ?? null,
-    type: state.item.Type ?? null,
-    path: state.item.Path ?? null,
-    name: state.item.Name ?? null,
-    productionYear: state.item.ProductionYear ?? null,
-    providerIds: state.item.ProviderIds ?? null,
-  }
-}
-
 function jellyfinActions(cfg: ServiceConfig) {
   return {
-    refreshItem: action({
+    refresh_item: action({
       description:
         "Refresh one item's metadata, images, and file probe. Runs in the background",
       params: Type.Object({
@@ -554,10 +535,10 @@ function jellyfinActions(cfg: ServiceConfig) {
           Type.Boolean({ description: "Discard the stored artwork first" }),
         ),
       }),
-      plan: (params, signal) =>
+      resolve: (params, signal) =>
         Effect.gen(function* () {
           const item = yield* readItem(cfg, params.itemId, signal)
-          const effect: PlanEffect = {
+          const effect: WriteEffect = {
             kind: "refresh",
             target: itemLabel(item),
             detail: [
@@ -567,7 +548,7 @@ function jellyfinActions(cfg: ServiceConfig) {
             ].join("; "),
           }
           return {
-            state: { item },
+            state: null,
             summary: `Refresh ${itemLabel(item)}`,
             effects: [effect],
             warnings: [
@@ -580,8 +561,7 @@ function jellyfinActions(cfg: ServiceConfig) {
             ],
           }
         }),
-      fingerprint: itemFingerprint,
-      apply: (params) =>
+      write: (params) =>
         jellyfinRequest(
           cfg,
           `/Items/${encodeURIComponent(params.itemId)}/Refresh`,
@@ -607,19 +587,19 @@ function jellyfinActions(cfg: ServiceConfig) {
           Effect.map((item) => compactItem(item)),
         ),
     }),
-    applyRemoteSearch: action({
+    apply_remote_search: action({
       description:
-        "Rematch one item to a remoteSearch candidate, replacing its provider ids and metadata",
+        "Rematch one item to a jellyfin_remote_search candidate, replacing its provider ids and metadata",
       params: Type.Object({
         itemId: itemIdParam,
         searchResult: Type.Record(Type.String(), Type.Unknown(), {
-          description: "One candidate from the remoteSearch read, unchanged",
+          description: "One candidate from jellyfin_remote_search, unchanged",
         }),
         replaceAllImages: Type.Optional(
           Type.Boolean({ description: "Default true" }),
         ),
       }),
-      plan: (params, signal) =>
+      resolve: (params, signal) =>
         Effect.gen(function* () {
           const item = yield* readItem(cfg, params.itemId, signal)
           // SAFETY: the record arrived as JSON.
@@ -627,10 +607,10 @@ function jellyfinActions(cfg: ServiceConfig) {
           const providerIds = objectField(candidate, "ProviderIds")
           if (!providerIds || Object.keys(providerIds).length === 0) {
             return yield* toolFail(
-              "searchResult carries no ProviderIds; pass a candidate from the remoteSearch read unchanged",
+              "searchResult carries no ProviderIds; pass a candidate from jellyfin_remote_search unchanged",
             )
           }
-          const effect: PlanEffect = {
+          const effect: WriteEffect = {
             kind: "rematch",
             target: itemLabel(item),
             detail: [
@@ -640,7 +620,7 @@ function jellyfinActions(cfg: ServiceConfig) {
             ].join("; "),
           }
           return {
-            state: { item },
+            state: null,
             summary: `Rematch ${itemLabel(item)} to ${String(candidate.Name ?? "unnamed")} (${String(candidate.ProductionYear ?? "unknown year")})`,
             effects: [effect],
             warnings: [
@@ -651,8 +631,7 @@ function jellyfinActions(cfg: ServiceConfig) {
             ],
           }
         }),
-      fingerprint: itemFingerprint,
-      apply: (params) =>
+      write: (params) =>
         jellyfinRequest(
           cfg,
           `/Items/RemoteSearch/Apply/${encodeURIComponent(params.itemId)}`,

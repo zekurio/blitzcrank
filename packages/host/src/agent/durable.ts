@@ -6,6 +6,7 @@ import { copyJson, type JsonValue } from "@earendil-works/chord"
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context"
 import { validateToolArguments } from "@earendil-works/pi-ai/utils/validation"
 import {
+  AgentDoc,
   AssistantEntry,
   createRegistry,
   defineDocFamily,
@@ -74,7 +75,10 @@ export async function openDurableStorage(file: string | undefined) {
 }
 
 export function durablePolicyFingerprint(
-  opts: Pick<AgentTurnOptions, "modelSpec" | "systemPrompt" | "prompt">,
+  opts: Pick<
+    AgentTurnOptions,
+    "modelSpec" | "systemPrompt" | "prompt" | "loadableTools"
+  >,
   tools: readonly ToolRegistration[],
 ) {
   return createHash("sha256")
@@ -83,11 +87,13 @@ export function durablePolicyFingerprint(
         model: opts.modelSpec,
         systemPrompt: opts.systemPrompt,
         prompt: opts.prompt,
+        // Loadable tools are registered tools, so each is listed here too.
         tools: tools.map((tool) => ({
           name: tool.name,
           description: tool.description,
           parameters: tool.parameters,
           replay: tool.replay ?? "unsafe",
+          loadable: opts.loadableTools?.includes(tool.name) === true,
         })),
       }),
     )
@@ -386,13 +392,28 @@ export async function runDurableTurn(
       if (!existing && !failure && !stopping) {
         const parsed = parseModelSpec(opts.modelSpec)
         resolveModel(opts.modelRuntime, opts.modelSpec)
+        // A resumed conversation keeps what its earlier runs loaded, in the
+        // order they loaded it: its transcript already shows those tools in
+        // use, and an unchanged tool list keeps the provider's cache warm.
+        const loadable = new Set(opts.loadableTools)
+        const stored = (
+          await harness.snapshot(AgentDoc, conversation.id, context)
+        )?.tools
+        const loaded = Array.isArray(stored) ? stored : []
         await conversation.configure(
           {
             model: { provider: parsed.provider, modelId: parsed.modelId },
             thinkingLevel: parsed.thinkingLevel,
             instructions: opts.systemPrompt,
             extensions: [extension],
-            tools,
+            tools: [
+              ...tools.filter((tool) => !loadable.has(tool.name)),
+              ...loaded.flatMap((name) =>
+                tools.filter(
+                  (tool) => tool.name === name && loadable.has(name),
+                ),
+              ),
+            ],
           },
           context,
         )

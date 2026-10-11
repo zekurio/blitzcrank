@@ -5,43 +5,43 @@
   conversation that investigates across Seerr/Sonarr/Radarr/SABnzbd/Jellyfin
   and applies narrow verified fixes. The host, never the agent, comments,
   resolves issues, and schedules revisits.
-- It is a pnpm workspace of two packages that run as two processes.
+- It is a pnpm workspace with two packages that run as two processes.
   `packages/host` (npm name `blitzcrank`) is the Seerr webhook gateway and the
   agent loop: `src/server.ts` → `src/jobs.ts` → `src/queue.ts` → `src/agent/`.
   It defines the host tools `report_progress`, `update_case_file`,
-  `thread_history_search`, `finish_issue`, and optional
-  `web_search`/`web_extract`, grants builtin `read` for skills, and runs
-  `codemode`. `packages/mcp` (npm name `@blitzcrank/mcp`, binary
-  `blitzcrank-mcp`) is an MCP server. It holds the service credentials and
-  media mounts and exposes `<service>_read`, `<service>_plan`,
-  `<service>_apply`, `media_probe`, and `media_frames`. The host connects to
-  it once per run with `@earendil-works/pi-mcp`.
-- The host decides exposure from `readOnlyHint` alone. Read-only MCP tools
-  (`_read`, `_plan`, `media_*`) are callable only from `codemode` scripts as
-  `await tools.<name>(args)`. `_apply` tools are declared to the model
-  directly. `sonarr_*` tools reach TV issues only and `radarr_*` tools reach
-  movie issues only.
-- Every write is a plan, then an apply. `_plan` resolves its target against
-  live state and returns a `planId`, a summary, the effect set, and warnings.
-  `_apply` re-checks the plan's state fingerprint and fails with
-  `plan is stale` when state moved. A second apply of the same `planId`
-  replays the recorded outcome and runs nothing.
-- `packages/mcp/README.md` is the contract between the two packages. It lists
-  every resource and action with its params, fingerprint, and verification.
-  Change it together with both sides.
+  `thread_history_search`, `tool_search`, `finish_issue`, and optional
+  `web_search`/`web_extract`, and grants builtin `read` for skills.
+  `packages/mcp` (npm name `@blitzcrank/mcp`, binary `blitzcrank-mcp`) is an
+  MCP server. It holds the service credentials and media mounts and exposes
+  one tool per read and per write, named `<service>_<what>` (`sonarr_queue`,
+  `radarr_delete_movie_file`), plus `media_probe` and `media_frames`. The host
+  connects to it once per run with `@earendil-works/pi-mcp`. The packages
+  share no code: the MCP tool list is the whole interface between them.
+- Every server tool is a Durable tool of the run, and every run can reach
+  every one. They start unloaded so their schemas stay out of the prompt: the
+  model loads them by name or keyword with `tool_search`, which adds them to
+  the conversation through Durable's `control.addTools`. The host decides
+  replay from `readOnlyHint` alone: a read is `replay: "safe"`, anything else
+  keeps the unsafe default.
+- A write is one call. It resolves its target against live state, writes, and
+  reads the result back, returning `summary`, `effects`, `warnings`, and
+  `verification`. Nothing asks the model to confirm.
+- Define service behavior in `packages/mcp/src/services/`. A tool's name,
+  schema, and description are its contract; keep them out of READMEs.
 - Layout: `packages/host/src/agent/` (session, issue prompt, finish parsing),
-  `packages/host/src/tools/` (host tools: progress, case file, history),
-  `packages/host/src/mcp/` (server connection, tool exposure, `codemode`),
+  `packages/host/src/tools/` (host tools: progress, case file, history, tool
+  search), `packages/host/src/mcp/` (server connection, tool adapter),
   `packages/host/src/gateways/seerr/` (payload types, comment gate, loop
   guard), `packages/host/src/services/` (HTTP helper, host-side Seerr client),
   `packages/host/src/web/` (web provider: search and extract),
   `packages/host/skills/` (agent domain knowledge),
-  `packages/mcp/src/services/` (one read table and one plan/apply table per
+  `packages/mcp/src/services/` (one read table and one write table per
   service), `packages/mcp/src/media/` (ffprobe, ffmpeg, path containment),
   `nix/` (packages and NixOS service module).
 - Pi Durable is the only agent execution backend and Seerr issues are the only
   trigger. Work from the current source and domain skills. Do not reintroduce
-  removed runtimes, automations, Discord, in-process service tools, or
+  removed runtimes, automations, Discord, in-process service tools, the
+  `codemode` sandbox, plan/apply writes, per-run tool subsets, or
   compatibility paths unless the operator requests them.
 - pnpm workspace (`packages/*`), strict ESM TypeScript (`module: NodeNext`,
   `exactOptionalPropertyTypes`, shared `tsconfig.base.json`), no build step in
@@ -72,10 +72,9 @@
 - `pnpm verify` (format check, lint, and typecheck) must pass before a coding
   task is complete. There is no test suite.
 - Pi packages are pinned exact (`@earendil-works/*@1.1.0`, including
-  `pi-mcp` and `pi-codemode`); bump them deliberately. Check the installed SDK
-  API, recovery, and compaction behavior before accepting an upgrade. Service
-  API changes must match the server's resource and action tables, the
-  contract, and the domain skills.
+  `pi-mcp`); bump them deliberately. Check the installed SDK API, recovery,
+  and compaction behavior before accepting an upgrade. Service API changes
+  must match the server's read and write tables and the domain skills.
 - The MCP server uses the official `@modelcontextprotocol/sdk` with TypeBox
   JSON Schema tool inputs. `zod` is installed only as the SDK's peer; do not
   write schemas with it.
@@ -99,8 +98,8 @@
 
 Do not weaken these without explicit operator sign-off. Call out any change to
 `packages/host/src/agent/session.ts`, the directive/finish protocol, the
-runner's tool allowlist, the MCP exposure rule, or a plan's fingerprint in your
-summary, with the behavioural difference described.
+runner's tool allowlist, or the MCP exposure rule in your summary, with the
+behavioural difference described.
 
 - Host jobs are durably admitted in `packages/host/src/jobs.ts` before
   acceptance returns. The journal enforces one process owner. Replay defaults
@@ -111,9 +110,9 @@ summary, with the behavioural difference described.
   durable submission's answer ID, never the last assistant entry in
   conversation history. Replaying a completed submission must not execute its
   tools again or double-count its usage.
-- The Durable policy fingerprint includes the MCP tool list. A server whose
-  tools changed between admission and recovery is a changed policy and fails
-  closed for review.
+- The Durable policy fingerprint includes the MCP tool list: every server tool
+  is registered, loaded or not. A server whose tools changed between admission
+  and recovery is a changed policy and fails closed for review.
 - The host, never the agent, comments, resolves issues, and schedules revisits,
   driven by the parsed `finish_issue` call
   (`packages/host/src/agent/finish.ts`). A call that did not end the run, or an
@@ -144,28 +143,24 @@ summary, with the behavioural difference described.
   comments, issue status, and the comment gate. The server holds every
   credential the agent's reads and writes use, plus the media roots, and
   checks `BLITZCRANK_MCP_TOKEN` on every request.
-- Issue agent sessions get the host tools, `codemode`, the server's `_apply`
-  tools, and builtin `read` (for skills). The runner resolves both the skills
-  root and target with `realpath` and rejects reads outside that root. Never
-  enable `bash`, `edit`, or `write` in the runner. Tool execution is
-  sequential; background compaction is disabled so no task outlives its
-  submission's Harness.
-- Read-only MCP tools (`readOnlyHint: true`) reach the model only through
-  `codemode`. Its sandbox has no network, filesystem, or timers and sees only
-  read-only tools, so a script cannot write and `codemode` is
-  `replay: "safe"`. Never give the sandbox a tool that mutates.
-- `_apply` tools are direct Durable tools and replay-unsafe. The server makes
-  them idempotent by `planId`: a second apply returns the recorded outcome and
-  runs nothing.
-- Every write is a plan, then an apply; no tool writes in one call. A plan
-  fails for a target that does not exist, so a hallucinated ID never produces
-  a plan. Apply re-reads the fingerprinted state and fails with
-  `plan is stale` when it changed. A failed verification never hides a
-  completed write.
-- Issue runs grant Radarr tools for movies and Sonarr tools for TV shows. The
-  host filters the server's tool list by name prefix (`radarr_`, `sonarr_`).
-  It uses the webhook media type, then falls back to the live Seerr issue. An
-  unknown type grants neither Arr, and revisits keep the resolved type.
+- Issue agent sessions get the host tools, every server tool, and builtin
+  `read` (for skills). The runner resolves both the skills root and target
+  with `realpath` and rejects reads outside that root. Never enable `bash`,
+  `edit`, or `write` in the runner. Tool execution is sequential; background
+  compaction is disabled so no task outlives its submission's Harness.
+- Server tools are offered only after `tool_search` loads them. Loading
+  changes what the conversation offers and nothing outside it, so
+  `tool_search` is `replay: "safe"`. A resumed conversation keeps the tools
+  its earlier runs loaded. No run is limited to a subset of the server's
+  tools.
+- A read-only server tool (`readOnlyHint: true`) is `replay: "safe"`. Every
+  other server tool keeps the unsafe default: a write interrupted mid-call,
+  or one whose call is rejected, stops the run for review. The server rejects
+  a call, rather than answering it, only when a write went out and its result
+  never came back.
+- A write resolves its target against live state before it writes, so a
+  hallucinated ID fails with nothing written. A failed verification never
+  hides a completed write.
 - `media_probe` (ffprobe) and `media_frames` (ffmpeg) run on the server, are
   read-only, and require `BLITZCRANK_MEDIA_ROOTS` in the server's environment;
   both resolve targets with `realpath` _before_ the containment check, so no
@@ -295,23 +290,17 @@ small named helpers below it. Extract only when it names a real concept.
   a tool after interruption cannot duplicate a mutation or host publication.
   Tool results and host state are checkpointed together by the Durable runner.
 - Server tools are tables. Each file in `packages/mcp/src/services/` declares
-  its reads with `defineRead`, one entry per `resource`, and its writes with
-  `definePlanApply`, one entry per `action` with `plan`, `fingerprint`,
-  `apply`, and `verify`. Wrap each entry in `resource({...})` or
-  `action({...})` so it gets its own type inference. The helpers live in
-  `packages/mcp/src/tools.ts`. `plan` resolves the target against live state
-  and returns that `state` with the effect set. `fingerprint` is a pure
-  function of that `state` covering every field that decides the effect set,
-  so the two cannot disagree. Apply runs `plan` again, compares fingerprints,
-  and hands the fresh `state` to `apply` and `verify`. `verify` is the
-  read-back and must not hide a completed write. An action without a
-  fingerprint needs its reason stated in the contract, as `grabRelease` has.
-- A failed write is recorded as its plan's outcome and replayed, never re-run:
-  an unknown result carries `writeOutcome: "unknown"` across MCP, and the host
-  stops the Durable run for review without checkpointing a known outcome.
-  A re-read that fails because the service is down
-  writes nothing and keeps the plan. An apply keeps running when its client
-  disconnects, so a write is never left half-recorded.
+  its reads with `defineReads` and its writes with `defineWrites`. A table key
+  is the tool's name after the service prefix, so keys are snake_case. A write
+  entry has `resolve`, `write`, and `verify`. Wrap each entry in
+  `resource({...})` or `action({...})` so it gets its own type inference. The
+  helpers live in `packages/mcp/src/tools.ts`.
+- A write the service rejects comes back as an error result and the run goes
+  on. A write that went out and got no answer (a timeout, a dropped
+  connection, a gateway 502 or 504) is answered with a JSON-RPC error, so the
+  host's call rejects and the Durable run stops for review. A write keeps
+  running when its client disconnects, so it is never cut before its
+  read-back.
 - The server compacts service responses to the fields the agent needs, pages
   or caps lists and says so, caps text at 30 000 characters, and bounds image
   output. API keys never appear in tool output.
@@ -324,9 +313,9 @@ small named helpers below it. Extract only when it names a real concept.
   listener contains its own failures because event emitters cannot await them.
 - Adding or renaming a host tool means updating
   `packages/host/src/agent/prompt.ts` and the relevant
-  `packages/host/skills/*/SKILL.md`. Adding or renaming a server tool,
-  resource, or action means updating `packages/mcp/README.md` and those skills
-  in the same change. A tool description describes _that_ tool; claims about
-  which other tools exist belong in `CAPABILITY_LINES`
-  (`packages/host/src/agent/prompt.ts`), which is filtered by the run's
-  registered tool names so such a claim cannot outlive its tool.
+  `packages/host/skills/*/SKILL.md`. Adding or renaming a server tool means
+  updating its table entry and those skills in the same change. A tool
+  description describes _that_ tool; claims about which other tools exist
+  belong in `CAPABILITY_LINES` (`packages/host/src/agent/prompt.ts`), which is
+  filtered by the run's registered tool names so such a claim cannot outlive
+  its tool.

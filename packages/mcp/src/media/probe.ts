@@ -57,7 +57,6 @@ export function buildMediaProbeTool(roots: readonly string[]): ServerTool {
       "server's media roots are rejected.",
     inputSchema: { ...PROBE_INPUT, type: "object" },
     annotations: { readOnlyHint: true },
-    label: () => undefined,
     execute: (args, signal) =>
       Effect.gen(function* () {
         const params = yield* checkArgs("media_probe", PROBE_INPUT, args)

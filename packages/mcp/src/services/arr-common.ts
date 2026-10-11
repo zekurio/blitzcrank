@@ -29,8 +29,8 @@ import {
   toolCheck,
   toolFail,
   toText,
-  type PlanEffect,
   type ToolFailure,
+  type WriteEffect,
 } from "../tools.ts"
 
 /** What differs between the two Arrs for the tools they share. */
@@ -55,7 +55,8 @@ type Signal = AbortSignal | undefined
 const RELEASE_TIMEOUT_MS = 120_000
 /**
  * A manual-import scan probes every file below the folder. Kept under the
- * time an apply has for its re-read, so the scan's own timeout reports first.
+ * time a write has to resolve its target, so the scan's own timeout reports
+ * first.
  */
 const MANUAL_IMPORT_TIMEOUT_MS = 40_000
 /** Grabbing fetches the release from its indexer and hands it to a client. */
@@ -463,7 +464,7 @@ export function arrSharedReads(arr: Arr) {
           }
         }),
     }),
-    qualityProfiles: resource({
+    quality_profiles: resource({
       description: "Quality profiles with cutoff and custom-format scores",
       params: Type.Object({}),
       run: (_params, signal) =>
@@ -473,7 +474,7 @@ export function arrSharedReads(arr: Arr) {
           ),
         ),
     }),
-    manualImportCandidates: resource({
+    manual_import_candidates: resource({
       description:
         "Files the Arr could import from a folder or download, with its mapping and rejections",
       params: Type.Object(manualImportScope()),
@@ -484,7 +485,7 @@ export function arrSharedReads(arr: Arr) {
           ),
         ),
     }),
-    command: resource({
+    command_status: resource({
       description: "Status of one command, such as a search or manual import",
       params: Type.Object({ commandId: Type.Integer({ minimum: 1 }) }),
       run: (params, signal) =>
@@ -497,7 +498,7 @@ export function arrSharedReads(arr: Arr) {
     }),
     raw: resource({
       description:
-        "Any other GET below /api/v3. Uncompacted; prefer a named resource",
+        "Any other GET below /api/v3. Uncompacted; prefer a named tool",
       params: Type.Object({
         path: Type.String({
           description:
@@ -642,7 +643,7 @@ function matchesFilters(release: JsonObject, filters: ReleaseFilters): boolean {
   )
 }
 
-/** `guid` and `indexerId` are what `POST /api/v3/release` grabs by. */
+/** `guid` and `indexerId` are what a release is grabbed by. */
 function compactRelease(release: JsonObject): JsonObject {
   const rejections = stringList(release.rejections)
   return {
@@ -711,10 +712,6 @@ export function readCandidates(
   })
 }
 
-/**
- * `quality` and `languages` stay whole: a manual import sends them back
- * exactly as read.
- */
 export function compactCandidate(candidate: JsonObject): JsonObject {
   const series = objectField(candidate, "series")
   const movie = objectField(candidate, "movie")
@@ -762,9 +759,9 @@ function parentFolder(path: string): string {
 }
 
 /**
- * Re-reads the candidates a manual import names and matches each submitted
- * file by path. A path the Arr does not offer fails the plan: importing it
- * would hand the Arr a file it never inspected.
+ * Reads the candidates a manual import names and matches each submitted file
+ * by path. A path the Arr does not offer fails the import: it would hand the
+ * Arr a file it never inspected.
  */
 export function matchCandidates(
   arr: Arr,
@@ -784,7 +781,7 @@ export function matchCandidates(
         : [...new Set(paths.map(parentFolder))].map((folder) => ({ folder }))
     if (scopes.length > MAX_IMPORT_FOLDERS) {
       return yield* toolFail(
-        `the files lie in ${scopes.length} folders; pass folder or downloadId, or import them in smaller plans`,
+        `the files lie in ${scopes.length} folders; pass folder or downloadId, or import them in smaller calls`,
       )
     }
     const scans = yield* Effect.forEach(
@@ -806,6 +803,26 @@ export function matchCandidates(
       return candidate ? [{ path, candidate }] : []
     })
   })
+}
+
+/**
+ * What a manual import sends for one file besides its target. Taken from the
+ * live candidate, so the Arr gets back exactly what it reported.
+ */
+export function candidateFile(
+  match: CandidateMatch,
+  downloadId: string | undefined,
+): JsonObject {
+  return {
+    ...pick(match.candidate, [
+      "folderName",
+      "quality",
+      "languages",
+      "releaseGroup",
+    ]),
+    path: match.path,
+    downloadId: match.candidate.downloadId ?? downloadId,
+  }
 }
 
 /**
@@ -833,48 +850,6 @@ export function scanCandidates(
   )
 }
 
-/** The candidate set a manual import was planned over. */
-export function candidateFingerprint(matches: CandidateMatch[]): JsonValue {
-  return matches
-    .map((match) => ({
-      path: match.path,
-      size: match.candidate.size ?? null,
-      rejections: rejectionReasons(match.candidate),
-      target: importTargetFingerprint(match.candidate),
-      quality: match.candidate.quality ?? null,
-      languages: match.candidate.languages ?? null,
-      releaseGroup: match.candidate.releaseGroup ?? null,
-      downloadId: match.candidate.downloadId ?? null,
-    }))
-    .sort((a, b) => a.path.localeCompare(b.path))
-}
-
-/** Both an automatic mapping and an explicit import depend on its destination. */
-export function importTargetFingerprint(target: JsonObject): JsonValue {
-  return {
-    series: pick(objectField(target, "series"), ["id", "title", "path"]),
-    movie: pick(objectField(target, "movie"), [
-      "id",
-      "title",
-      "path",
-      "hasFile",
-      "movieFileId",
-    ]),
-    episodes: objectList(target.episodes)
-      .map((episode) => ({
-        id: isNumber(episode.id) ? episode.id : 0,
-        ...pick(episode, [
-          "seriesId",
-          "seasonNumber",
-          "episodeNumber",
-          "hasFile",
-          "episodeFileId",
-        ]),
-      }))
-      .sort((a, b) => a.id - b.id),
-  }
-}
-
 export function candidateWarnings(matches: CandidateMatch[]): string[] {
   return matches.flatMap((match) =>
     rejectionReasons(match.candidate).map(
@@ -899,7 +874,7 @@ export function verifyCommand(
   const id = isJsonObject(result) && isNumber(result.id) ? result.id : undefined
   if (id === undefined) {
     return Effect.succeed({
-      warning: "the command response had no id; read the command list via raw",
+      warning: `the command response had no id; read /api/v3/command with ${arr.service}_raw`,
     })
   }
   return arrObject(
@@ -969,19 +944,6 @@ export function arrRecord(
     }
     return value
   })
-}
-
-/** The state a monitoring plan depends on: what it changes and what it keeps. */
-export function monitoringFingerprint(
-  record: JsonObject,
-  update: MonitoringUpdate,
-): JsonValue {
-  return {
-    ...update.monitoring(record),
-    ...Object.fromEntries(
-      update.preserved.map((field) => [field, record[field] ?? null]),
-    ),
-  }
 }
 
 export function monitoringReadBack(
@@ -1059,7 +1021,7 @@ function findHistoryRecord(
 /** The writes both Arrs serve from the same endpoints. */
 export function arrSharedActions(arr: Arr) {
   return {
-    removeQueueItem: action({
+    remove_queue_item: action({
       description: "Remove one item from the download queue",
       params: Type.Object({
         queueId: Type.Integer({ minimum: 1 }),
@@ -1071,7 +1033,7 @@ export function arrSharedActions(arr: Arr) {
           description: "Blocklist the release so it is not grabbed again",
         }),
       }),
-      plan: (params, signal) =>
+      resolve: (params, signal) =>
         Effect.gen(function* () {
           const queue = yield* readQueue(arr, signal)
           if (params.removeFromClient && queue.records.length < queue.total) {
@@ -1094,7 +1056,7 @@ export function arrSharedActions(arr: Arr) {
               entry.downloadId === item.downloadId,
           )
           const title = String(item.title ?? "untitled")
-          const effect: PlanEffect = {
+          const effect: WriteEffect = {
             kind: "remove",
             target: `queue item ${params.queueId}: ${title}`,
             detail: [
@@ -1122,27 +1084,7 @@ export function arrSharedActions(arr: Arr) {
             ],
           }
         }),
-      fingerprint: (state) => ({
-        item: pick(state.item, [
-          "id",
-          "downloadId",
-          "title",
-          "status",
-          "trackedDownloadStatus",
-          "trackedDownloadState",
-          "outputPath",
-          "seriesId",
-          "episodeId",
-          "movieId",
-        ]),
-        siblings: state.siblings
-          .map((item) => ({
-            id: isNumber(item.id) ? item.id : 0,
-            ...pick(item, ["seriesId", "episodeId", "movieId"]),
-          }))
-          .sort((a, b) => a.id - b.id),
-      }),
-      apply: (params) =>
+      write: (params) =>
         arrRequest(arr, `/api/v3/queue/${params.queueId}`, {
           method: "DELETE",
           query: {
@@ -1166,7 +1108,7 @@ export function arrSharedActions(arr: Arr) {
           }),
         ),
     }),
-    markHistoryFailed: action({
+    mark_history_failed: action({
       description:
         "Mark a grabbed release failed, which blocklists it and lets the Arr search a replacement",
       params: withItemId(
@@ -1174,12 +1116,12 @@ export function arrSharedActions(arr: Arr) {
         Type.Object({
           historyId: Type.Integer({
             minimum: 1,
-            description: "The release's history record, from a history read",
+            description: `The release's history record, from ${arr.service}_history`,
           }),
         }),
         `The ${arr.itemNoun} the record belongs to. Needed when the record is old`,
       ),
-      plan: (params, signal) =>
+      resolve: (params, signal) =>
         Effect.gen(function* () {
           const record = yield* findHistoryRecord(
             arr,
@@ -1194,13 +1136,13 @@ export function arrSharedActions(arr: Arr) {
               entry.downloadId === record.downloadId,
           )
           const title = String(record.sourceTitle ?? "untitled")
-          const effect: PlanEffect = {
+          const effect: WriteEffect = {
             kind: "blocklist",
             target: `history record ${params.historyId}: ${title}`,
             detail: `event ${String(record.eventType ?? "unknown")}; downloadId ${String(record.downloadId ?? "none")}`,
           }
           return {
-            state: { record, active: active.length > 0 },
+            state: { record },
             summary: `Mark ${title} failed and blocklist it`,
             effects: [effect],
             warnings: [
@@ -1218,14 +1160,7 @@ export function arrSharedActions(arr: Arr) {
             ],
           }
         }),
-      fingerprint: (state) => ({
-        historyId: state.record.id ?? null,
-        eventType: state.record.eventType ?? null,
-        sourceTitle: state.record.sourceTitle ?? null,
-        downloadId: state.record.downloadId ?? null,
-        inQueue: state.active,
-      }),
-      apply: (params) =>
+      write: (params) =>
         arrRequest(arr, `/api/v3/history/failed/${params.historyId}`, {
           method: "POST",
         }),
@@ -1258,11 +1193,11 @@ export function arrSharedActions(arr: Arr) {
           }),
         ),
     }),
-    deleteBlocklistEntry: action({
+    delete_blocklist_entry: action({
       description:
         "Remove one blocklist entry so the release can be grabbed again",
       params: Type.Object({ blocklistId: Type.Integer({ minimum: 1 }) }),
-      plan: (params, signal) =>
+      resolve: (params, signal) =>
         Effect.gen(function* () {
           const blocklist = yield* readBlocklist(arr, signal)
           const entry = blocklist.records.find(
@@ -1274,7 +1209,7 @@ export function arrSharedActions(arr: Arr) {
             )
           }
           const title = String(entry.sourceTitle ?? "untitled")
-          const effect: PlanEffect = {
+          const effect: WriteEffect = {
             kind: "delete",
             target: `blocklist entry ${params.blocklistId}: ${title}`,
             detail: `blocklisted ${String(entry.date ?? "at an unknown time")}; ${String(entry.message ?? "no message")}`,
@@ -1286,11 +1221,7 @@ export function arrSharedActions(arr: Arr) {
             warnings: ["the Arr may grab this release again"],
           }
         }),
-      fingerprint: (state) => ({
-        blocklistId: state.entry.id ?? null,
-        sourceTitle: state.entry.sourceTitle ?? null,
-      }),
-      apply: (params) =>
+      write: (params) =>
         arrRequest(arr, `/api/v3/blocklist/${params.blocklistId}`, {
           method: "DELETE",
         }),
@@ -1308,20 +1239,22 @@ export function arrSharedActions(arr: Arr) {
           ),
         ),
     }),
-    grabRelease: action({
-      description:
-        "Grab one specific release from a fresh releases read, bypassing the Arr's own choice",
+    grab_release: action({
+      description: `Grab one specific release from a fresh ${arr.service}_releases read, bypassing the Arr's own choice`,
       params: Type.Object({
         guid: Type.String({
           minLength: 1,
-          description: "guid of a release from a releases read",
+          description: `guid of a release from ${arr.service}_releases`,
         }),
         indexerId: Type.Integer({
           minimum: 1,
           description: "indexerId of that same release",
         }),
       }),
-      plan: (params, signal) =>
+      // Only the indexer is resolved. The Arr checks the guid against its own
+      // release cache, about 30 minutes after the search, and rejects one it
+      // no longer has.
+      resolve: (params, signal) =>
         Effect.gen(function* () {
           const indexer = yield* arrObject(
             arr,
@@ -1329,24 +1262,19 @@ export function arrSharedActions(arr: Arr) {
             `indexer ${params.indexerId}`,
             signal,
           )
-          const effect: PlanEffect = {
+          const effect: WriteEffect = {
             kind: "grab",
             target: `release ${params.guid}`,
             detail: `from indexer ${String(indexer.name ?? params.indexerId)}; sent to the download client`,
           }
           return {
-            state: { indexer: indexer.name ?? null },
+            state: null,
             summary: `Grab release ${params.guid} from indexer ${String(indexer.name ?? params.indexerId)}`,
             effects: [effect],
-            warnings: [
-              `${arr.service} only grabs a release still in its search cache, about 30 minutes after the releases read; an unknown guid fails at apply`,
-              "the release is grabbed even if the Arr rejected it",
-            ],
+            warnings: ["the release is grabbed even if the Arr rejected it"],
           }
         }),
-      // The Arr resolves the guid against its own release cache at apply.
-      fingerprint: undefined,
-      apply: (params) =>
+      write: (params) =>
         arrRequest(arr, "/api/v3/release", {
           method: "POST",
           body: { guid: params.guid, indexerId: params.indexerId },

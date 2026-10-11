@@ -1,10 +1,6 @@
 import { Cause, Effect, Fiber, Semaphore } from "effect"
 
-import {
-  eventMediaScope,
-  type IssueEvent,
-  type IssueRunner,
-} from "./agent/runner.ts"
+import type { IssueEvent, IssueRunner } from "./agent/runner.ts"
 import type { CaseStore } from "./casefile.ts"
 import { JobStore, type Job } from "./jobs.ts"
 import { SerialQueue } from "./queue.ts"
@@ -86,13 +82,12 @@ export class IssueWork {
     issueId: string,
     delayMs: number,
     reason: string,
-    mediaScope: ReturnType<typeof eventMediaScope>,
     dueAt?: string,
   ): void {
     if (this.isCancelling(issueId)) return
     this.revisits.scheduleEffect(issueId, delayMs, () =>
       this.enqueueEffect(
-        { kind: "revisit", issueId, reason, mediaScope },
+        { kind: "revisit", issueId, reason },
         dueAt === undefined ? undefined : `revisit:${issueId}:${dueAt}`,
       ).pipe(Effect.asVoid),
     )
@@ -269,7 +264,6 @@ export class IssueWork {
           result.issueId,
           revisit.delayMs,
           revisit.reason,
-          revisit.mediaScope,
           revisit.dueAt,
         )
       }).pipe(

@@ -24,8 +24,6 @@ import type { StorageError } from "./storage.ts"
  *    pending revisit and its chain length.
  */
 
-export type CaseMediaScope = "movie" | "tv" | undefined
-
 export interface CaseSummary {
   hypothesis: string | undefined
   /** Established facts, each with the evidence it rests on. */
@@ -51,7 +49,6 @@ export interface CaseRun {
 export interface PendingRevisit {
   dueAt: string
   reason: string
-  mediaScope: CaseMediaScope
   /** How many revisits have chained since the last user message. */
   chain: number
   /** The delay used, so a fruitless follow-up can back off. */

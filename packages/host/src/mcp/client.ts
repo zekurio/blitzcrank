@@ -27,9 +27,9 @@ export interface McpConnection {
   /** The server's tool list as of this connection. */
   tools: readonly Tool[]
   /**
-   * Domain failures come back as `isError` results. An apply result with
-   * `structuredContent.writeOutcome: "unknown"` also requires review, as does
-   * a rejection from transport failure, timeout, or abort.
+   * Domain failures come back as `isError` results. A rejection means the
+   * call has no result: a transport failure, timeout, or abort, or the server
+   * reporting a write whose outcome it does not know.
    */
   callTool: (
     name: string,

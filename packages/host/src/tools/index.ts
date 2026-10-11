@@ -6,17 +6,15 @@ import type { McpConnection } from "../mcp/client.ts"
 import { buildMcpTools } from "../mcp/tools.ts"
 import type { SeerrClient } from "../services/seerr.ts"
 import { buildCaseFileTool } from "./casefile.ts"
-import { buildCodemodeTool } from "./codemode.ts"
 import { buildHistoryTool } from "./history.ts"
 import { buildProgressTool, type StatusComment } from "./progress.ts"
+import { buildToolSearchTool } from "./search.ts"
 
 export type { StatusComment } from "./progress.ts"
 
 export interface SessionFileRef {
   current: string | undefined
 }
-
-export type MediaScope = "movie" | "tv" | undefined
 
 export interface IssueToolDeps {
   modelInput?: readonly ("text" | "image")[]
@@ -28,8 +26,6 @@ export interface IssueToolDeps {
   /** Model identity footer appended to public comments, e.g. "[blitzcrank w/ ...]". */
   anchor: string
   sessionFileRef: SessionFileRef
-  /** Known media type; grants one Arr, or neither when unknown. */
-  mediaScope: MediaScope
   /** Shared handle to the run's live status comment (posted, then edited). */
   status: StatusComment
   /** This issue's memory; the agent rewrites its summary, the host persists it. */
@@ -37,25 +33,25 @@ export interface IssueToolDeps {
 }
 
 export interface IssueTools {
-  /** Durable tools the model calls directly. */
+  /** Every Durable tool of the run, the loadable ones included. */
   tools: ToolRegistration[]
-  /** Read-only tool names reachable only inside codemode scripts. */
-  scriptTools: string[]
+  /** Tools the model has to load with `tool_search` before it can call them. */
+  loadable: string[]
 }
 
 /**
  * Issue tools: the live public status comment, the case file, run-history
- * search, the MCP server's write tools, and one codemode tool whose scripts
- * call the server's read-only tools. The host no longer knows which services
- * exist; the server's tool list decides, narrowed to the run's media type.
+ * search, and every tool the MCP server lists. The host does not know which
+ * services exist; the server's tool list decides. Server tools start out
+ * unloaded so their schemas stay out of the prompt until `tool_search` loads
+ * the ones a run needs.
  */
 export function buildIssueTools(deps: IssueToolDeps): IssueTools {
   const config = deps.config
-  const mcp = buildMcpTools(deps.mcp, deps.mediaScope)
-  // Frames are worthless to a model that cannot view them.
-  const readOnly = mcp.readOnly.filter(
-    (tool) =>
-      tool.name !== "media_frames" || deps.modelInput?.includes("image"),
+  const viewsImages = deps.modelInput?.includes("image") === true
+  const mcp = buildMcpTools(deps.mcp, viewsImages).filter(
+    // Frames are worthless to a model that cannot view them.
+    (tool) => tool.name !== "media_frames" || viewsImages,
   )
   return {
     tools: [
@@ -68,12 +64,10 @@ export function buildIssueTools(deps: IssueToolDeps): IssueTools {
       ),
       buildCaseFileTool(deps.casefile),
       buildHistoryTool(config.dataDir, deps.sessionFileRef),
-      ...mcp.direct,
-      // Without a read-only tool a script could do nothing at all.
-      ...(readOnly.length > 0
-        ? [buildCodemodeTool(readOnly, deps.modelInput)]
-        : []),
+      ...mcp,
+      // Without a server tool there is nothing to load.
+      ...(mcp.length > 0 ? [buildToolSearchTool(mcp)] : []),
     ],
-    scriptTools: readOnly.map((tool) => tool.name),
+    loadable: mcp.map((tool) => tool.name),
   }
 }

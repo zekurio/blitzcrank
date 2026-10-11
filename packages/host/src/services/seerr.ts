@@ -17,15 +17,6 @@ export interface SeerrUser {
 
 export interface SeerrIssue {
   createdBy?: SeerrUser
-  media?: { mediaType?: string }
-}
-
-/** Reads the runtime Media.mediaType field from one Seerr issue response. */
-export function seerrIssueMediaType(
-  issue: SeerrIssue,
-): "movie" | "tv" | undefined {
-  const type = issue.media?.mediaType
-  return type === "movie" || type === "tv" ? type : undefined
 }
 
 /** Host-owned Seerr issue lifecycle: fetching, commenting, status changes. */

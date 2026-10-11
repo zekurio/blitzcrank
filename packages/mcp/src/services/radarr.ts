@@ -11,16 +11,15 @@ import {
   pick,
   type JsonObject,
 } from "../json.ts"
-import type { PlanStore } from "../plans.ts"
 import {
   action,
-  defineRead,
-  definePlanApply,
+  defineReads,
+  defineWrites,
   listResult,
   resource,
   toolFail,
-  type PlanEffect,
   type ServerTool,
+  type WriteEffect,
 } from "../tools.ts"
 import {
   arrList,
@@ -29,12 +28,10 @@ import {
   arrRequest,
   arrSharedActions,
   arrSharedReads,
-  candidateFingerprint,
+  candidateFile,
   candidateWarnings,
-  importTargetFingerprint,
   manualImportScope,
   matchCandidates,
-  monitoringFingerprint,
   monitoringReadBack,
   postCommand,
   qualityName,
@@ -55,10 +52,7 @@ const movieIdParam = Type.Integer({
   description: "Internal Radarr movie id (not tmdbId)",
 })
 
-export function buildRadarrTools(
-  cfg: ServiceConfig,
-  plans: PlanStore,
-): ServerTool[] {
+export function buildRadarrTools(cfg: ServiceConfig): ServerTool[] {
   const arr: Arr = {
     service: "radarr",
     cfg,
@@ -76,13 +70,10 @@ export function buildRadarrTools(
       downloadIgnored: 9,
     },
   }
+  const service = { name: "radarr", label: "Radarr (movies)" }
   return [
-    defineRead(
-      "radarr",
-      "Read Radarr state for movies: tracking, files, queue, history, and release candidates.",
-      radarrReads(arr),
-    ),
-    ...definePlanApply("radarr", radarrActions(arr), plans),
+    ...defineReads(service, radarrReads(arr)),
+    ...defineWrites(service, radarrActions(arr)),
   ]
 }
 
@@ -149,7 +140,7 @@ function radarrReads(arr: Arr) {
           ),
         ),
     }),
-    movieFiles: resource({
+    movie_files: resource({
       description: "Files of one movie with quality and media info",
       params: Type.Object({ movieId: movieIdParam }),
       run: (params, signal) =>
@@ -161,7 +152,7 @@ function radarrReads(arr: Arr) {
     queue: shared.queue,
     history: shared.history,
     blocklist: shared.blocklist,
-    qualityProfiles: shared.qualityProfiles,
+    quality_profiles: shared.quality_profiles,
     calendar: resource({
       description:
         "Movies with a cinema, digital, or physical release in a date window",
@@ -210,8 +201,8 @@ function radarrReads(arr: Arr) {
           signal,
         ),
     }),
-    manualImportCandidates: shared.manualImportCandidates,
-    command: shared.command,
+    manual_import_candidates: shared.manual_import_candidates,
+    command_status: shared.command_status,
     raw: shared.raw,
   }
 }
@@ -276,18 +267,10 @@ const manualImportFile = Type.Object(
   {
     path: Type.String({
       minLength: 1,
-      description: "Candidate path, exactly as manualImportCandidates has it",
+      description:
+        "Candidate path, exactly as radarr_manual_import_candidates has it",
     }),
-    folderName: Type.Optional(Type.String()),
     movieId: movieIdParam,
-    quality: Type.Record(Type.String(), Type.Unknown(), {
-      description: "The candidate's quality object, unchanged",
-    }),
-    languages: Type.Array(Type.Record(Type.String(), Type.Unknown()), {
-      description: "The candidate's languages, unchanged",
-    }),
-    releaseGroup: Type.Optional(Type.String()),
-    downloadId: Type.Optional(Type.String()),
   },
   { additionalProperties: false },
 )
@@ -318,15 +301,15 @@ function movieMonitoringUpdate(movieId: number): MonitoringUpdate {
 function radarrActions(arr: Arr) {
   const shared = arrSharedActions(arr)
   return {
-    search: action({
+    auto_search: action({
       description:
         "Search indexers for one movie. Radarr picks and grabs the release",
       params: Type.Object({ movieId: movieIdParam }),
-      plan: (params, signal) =>
+      resolve: (params, signal) =>
         Effect.gen(function* () {
           const movie = yield* readMovie(arr, params.movieId, signal)
           const label = movieLabel(movie)
-          const effect: PlanEffect = {
+          const effect: WriteEffect = {
             kind: "search",
             target: `movie ${params.movieId}: ${label}`,
             detail:
@@ -335,7 +318,7 @@ function radarrActions(arr: Arr) {
                 : "has no file",
           }
           return {
-            state: { movie },
+            state: null,
             summary: `MoviesSearch for ${label}${movie.hasFile === true ? ", whose file a grab may replace" : ""}`,
             effects: [effect],
             warnings: [
@@ -350,22 +333,15 @@ function radarrActions(arr: Arr) {
             ],
           }
         }),
-      fingerprint: (state) => ({
-        movieId: state.movie.id ?? null,
-        monitored: state.movie.monitored ?? null,
-        hasFile: state.movie.hasFile ?? null,
-        movieFileId: state.movie.movieFileId ?? null,
-        isAvailable: state.movie.isAvailable ?? null,
-      }),
-      apply: (params) =>
+      write: (params) =>
         postCommand(arr, { name: "MoviesSearch", movieIds: [params.movieId] }),
       verify: (_params, result) => verifyCommand(arr, result),
     }),
-    setMovieMonitoring: action({
+    set_movie_monitoring: action({
       description:
         "Change whether Radarr monitors a movie. Every other movie field is kept",
       params: Type.Object({ movieId: movieIdParam, monitored: Type.Boolean() }),
-      plan: (params, signal) =>
+      resolve: (params, signal) =>
         Effect.gen(function* () {
           const record = yield* arrRecord(
             yield* readMovie(arr, params.movieId, signal),
@@ -376,7 +352,7 @@ function radarrActions(arr: Arr) {
               `movie ${params.movieId} already has monitored=${params.monitored}; there is nothing to change`,
             )
           }
-          const effect: PlanEffect = {
+          const effect: WriteEffect = {
             kind: "update",
             target: `movie ${params.movieId} monitored`,
             detail: `${String(record.monitored)} -> ${params.monitored}`,
@@ -388,12 +364,7 @@ function radarrActions(arr: Arr) {
             warnings: [],
           }
         }),
-      fingerprint: (state, params) =>
-        monitoringFingerprint(
-          state.record,
-          movieMonitoringUpdate(params.movieId),
-        ),
-      apply: (params, state) =>
+      write: (params, state) =>
         arrRequest(arr, `/api/v3/movie/${params.movieId}`, {
           method: "PUT",
           body: { ...state.record, monitored: params.monitored },
@@ -416,11 +387,11 @@ function radarrActions(arr: Arr) {
           )
         }),
     }),
-    deleteMovieFile: action({
+    delete_movie_file: action({
       description:
         "Delete one movie file from disk so a replacement can be searched",
       params: Type.Object({ movieFileId: Type.Integer({ minimum: 1 }) }),
-      plan: (params, signal) =>
+      resolve: (params, signal) =>
         Effect.gen(function* () {
           const file = yield* arrObject(
             arr,
@@ -433,25 +404,19 @@ function radarrActions(arr: Arr) {
             : undefined
           const label = movie ? movieLabel(movie) : "an unknown movie"
           const path = String(file.path ?? `movie file ${params.movieFileId}`)
-          const effect: PlanEffect = {
+          const effect: WriteEffect = {
             kind: "delete",
             target: path,
             detail: `${sizeText(file.size)}; the file of ${label}`,
           }
           return {
-            state: { file },
+            state: null,
             summary: `Delete movie file ${params.movieFileId} (${path}, ${sizeText(file.size)}) of ${label}`,
             effects: [effect],
             warnings: ["this removes the movie's only copy from disk"],
           }
         }),
-      fingerprint: (state) => ({
-        movieFileId: state.file.id ?? null,
-        movieId: state.file.movieId ?? null,
-        path: state.file.path ?? null,
-        size: state.file.size ?? null,
-      }),
-      apply: (params) =>
+      write: (params) =>
         arrRequest(arr, `/api/v3/moviefile/${params.movieFileId}`, {
           method: "DELETE",
         }).pipe(
@@ -466,13 +431,14 @@ function radarrActions(arr: Arr) {
           "movie file",
         ),
     }),
-    removeQueueItem: shared.removeQueueItem,
-    markHistoryFailed: shared.markHistoryFailed,
-    deleteBlocklistEntry: shared.deleteBlocklistEntry,
-    grabRelease: shared.grabRelease,
-    manualImport: action({
+    remove_queue_item: shared.remove_queue_item,
+    mark_history_failed: shared.mark_history_failed,
+    delete_blocklist_entry: shared.delete_blocklist_entry,
+    grab_release: shared.grab_release,
+    manual_import: action({
       description:
-        "Import files Radarr offers as manual-import candidates into named movies",
+        "Import files Radarr offers as manual-import candidates into named movies. " +
+        "Quality, languages, and release group come from the live candidate",
       params: Type.Object({
         files: Type.Array(manualImportFile, { minItems: 1, maxItems: 50 }),
         importMode: Type.Enum(["auto", "move", "copy"], {
@@ -480,7 +446,7 @@ function radarrActions(arr: Arr) {
         }),
         ...manualImportScope(),
       }),
-      plan: (params, signal) =>
+      resolve: (params, signal) =>
         Effect.gen(function* () {
           const matches = yield* matchCandidates(
             arr,
@@ -498,48 +464,40 @@ function radarrActions(arr: Arr) {
               ),
             ),
           )
-          const effects = params.files.map((file): PlanEffect => {
+          const effects = params.files.map((file): WriteEffect => {
             const movie = movies.get(file.movieId)
+            const match = matches.find((entry) => entry.path === file.path)
             return {
               kind: "import",
               target: file.path,
-              detail: `${params.importMode} into ${movie ? movieLabel(movie) : `movie ${file.movieId}`} as ${String(qualityName(file.quality as JsonValue) ?? "unknown quality")}`,
+              detail: `${params.importMode} into ${movie ? movieLabel(movie) : `movie ${file.movieId}`} as ${String(qualityName(match?.candidate.quality) ?? "unknown quality")}`,
             }
           })
           return {
-            state: {
-              matches,
-              targets: params.files.map((file) => ({
-                movie: movies.get(file.movieId) ?? null,
-              })),
-            },
+            state: { matches },
             summary: `Manual import of ${params.files.length} file(s), mode ${params.importMode}`,
             effects,
             warnings: candidateWarnings(matches),
           }
         }),
-      fingerprint: (state) => ({
-        candidates: candidateFingerprint(state.matches),
-        targets: state.targets.map(importTargetFingerprint),
-      }),
-      apply: (params) =>
+      write: (params, state) =>
         postCommand(arr, {
           name: "ManualImport",
           importMode: params.importMode,
-          files: params.files.map((file) => ({
-            path: file.path,
-            folderName: file.folderName,
-            movieId: file.movieId,
-            // SAFETY: both arrived as JSON and passed the file schema.
-            quality: file.quality as JsonValue,
-            languages: file.languages as JsonValue,
-            releaseGroup: file.releaseGroup,
-            downloadId: file.downloadId ?? params.downloadId,
-          })),
+          files: state.matches.flatMap((match) => {
+            const file = params.files.find((entry) => entry.path === match.path)
+            if (!file) return []
+            return [
+              {
+                ...candidateFile(match, params.downloadId),
+                movieId: file.movieId,
+              },
+            ]
+          }),
         }),
       verify: (_params, result) => verifyCommand(arr, result),
     }),
-    command: action({
+    run_command: action({
       description:
         "Make Radarr re-read disk or downloader state: RefreshMovie and RescanMovie need movieId, " +
         "DownloadedMoviesScan needs path",
@@ -553,16 +511,16 @@ function radarrActions(arr: Arr) {
           }),
         ),
       }),
-      plan: (params, signal) =>
+      resolve: (params, signal) =>
         Effect.gen(function* () {
           if (params.name === "RefreshMonitoredDownloads") {
-            const effect: PlanEffect = {
+            const effect: WriteEffect = {
               kind: "command",
               target: "download clients",
               detail: "RefreshMonitoredDownloads",
             }
             return {
-              state: { target: null as JsonValue },
+              state: null,
               summary:
                 "Re-check every monitored download in the download clients",
               effects: [effect],
@@ -575,10 +533,10 @@ function radarrActions(arr: Arr) {
             }
             const matches = yield* scanCandidates(arr, params.path, signal)
             return {
-              state: { target: candidateFingerprint(matches) },
+              state: null,
               summary: `Scan ${params.path} and import what Radarr accepts: ${matches.length} candidate file(s)`,
               effects: matches.map(
-                (match): PlanEffect => ({
+                (match): WriteEffect => ({
                   kind: "import",
                   target: match.path,
                   detail: `mapped to ${String(objectField(match.candidate, "movie")?.title ?? "no movie")}`,
@@ -591,24 +549,19 @@ function radarrActions(arr: Arr) {
             return yield* toolFail(`${params.name} needs movieId`)
           }
           const movie = yield* readMovie(arr, params.movieId, signal)
-          const effect: PlanEffect = {
+          const effect: WriteEffect = {
             kind: "command",
             target: `movie ${params.movieId}: ${movieLabel(movie)}`,
             detail: `${params.name} over ${String(movie.path ?? "its folder")}`,
           }
-          const target: JsonValue = {
-            movieId: movie.id ?? null,
-            path: movie.path ?? null,
-          }
           return {
-            state: { target },
+            state: null,
             summary: `${params.name} for ${movieLabel(movie)}`,
             effects: [effect],
             warnings: [],
           }
         }),
-      fingerprint: (state) => state.target,
-      apply: (params) =>
+      write: (params) =>
         postCommand(arr, {
           name: params.name,
           ...(params.name === "DownloadedMoviesScan"

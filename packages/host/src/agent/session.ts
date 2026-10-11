@@ -64,6 +64,11 @@ export interface AgentTurnOptions {
   modelSpec: string
   systemPrompt: string
   tools: ToolRegistration[]
+  /**
+   * Names in `tools` the conversation does not offer until a tool result
+   * loads them with `control.addTools`.
+   */
+  loadableTools?: readonly string[] | undefined
   prompt: string
   storageFile: string | undefined
   requestId: string

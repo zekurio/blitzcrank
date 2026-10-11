@@ -2,7 +2,7 @@
   "name": "@blitzcrank/mcp",
   "version": "0.1.0",
   "private": true,
-  "description": "Blitzcrank MCP server: typed reads and plan/apply writes for Seerr, Sonarr, Radarr, SABnzbd, and Jellyfin",
+  "description": "Blitzcrank MCP server: typed reads and verified writes for Seerr, Sonarr, Radarr, SABnzbd, and Jellyfin",
   "license": "MIT",
   "bin": {
     "blitzcrank-mcp": "./dist/cli.js"

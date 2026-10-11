@@ -10,8 +10,6 @@ export interface Config {
   token: string
   host: string
   port: number
-  /** How long a plan may wait for its apply. */
-  planTtlMs: number
   seerr: ServiceConfig | undefined
   sonarr: ServiceConfig | undefined
   radarr: ServiceConfig | undefined
@@ -28,13 +26,6 @@ export function loadConfig(env: Env = process.env): Config {
     token: requiredToken(env),
     host: env.BLITZCRANK_MCP_HOST?.trim() || "127.0.0.1",
     port: integer(env, "BLITZCRANK_MCP_PORT", 8485, 0, 65_535),
-    planTtlMs: integer(
-      env,
-      "BLITZCRANK_MCP_PLAN_TTL_MS",
-      30 * 60_000,
-      1000,
-      24 * 60 * 60_000,
-    ),
     seerr: service(env, "SEERR"),
     sonarr: service(env, "SONARR"),
     radarr: service(env, "RADARR"),

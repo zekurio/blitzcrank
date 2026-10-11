@@ -12,42 +12,33 @@ substitute IMDb or anime metadata. Keep TVDB, series, episode, episode-file,
 queue, history, blocklist, and download IDs distinct. One file may cover several
 episodes. Correlate SAB jobs by download ID.
 
-Read with `sonarr_read` inside a `codemode` script. One script can run several
-reads and return only what you need. A failed read throws with the server's
-message. Results are compacted and lists are capped, and they say when.
+Load the tools you need with `tool_search`, then call them directly. Put
+independent reads in one response. A failed read returns the server's message.
+Results are compacted and lists are capped, and they say when.
 
-```js
-const seriesId = 483
-const episodes = await tools.sonarr_read({
-  resource: "episodes",
-  seriesId,
-  seasonNumber: 2,
-})
-const queue = await tools.sonarr_read({ resource: "queue", seriesId })
-return { episodes, queue }
-```
-
-- Tracking: `series` with `tvdbId` or `seriesId`. One record with seasons and
-  statistics.
-- Lookup: `lookup` with `term`. Lookup does not prove tracking.
-- Episodes: `episodes` with `seriesId`, optional `seasonNumber`. Each episode
-  carries its file summary. Match season/episode numbers and check series type.
-- Files: `episodeFiles` with `seriesId`.
-- Queue: `queue` with `seriesId`. Omit `seriesId` to read the whole queue,
-  unknown-series items included, when looking for orphans.
-- History: `history` with `seriesId`, optional `eventType`, `page`, `pageSize`
-  (max 100).
-- Blocklist: `blocklist` with `seriesId`.
-- Profiles: `qualityProfiles`.
-- Dates: `calendar` with ISO `start` and `end`. Bound the window and match IDs.
-  Prefer `airDate`/`airDateUtc`; state timezone uncertainty. Airing does not
-  guarantee local availability.
-- Manual import: `manualImportCandidates` with `folder` and/or `downloadId`.
-- Command status: `command` with `commandId`.
-- Anything without a resource: `raw` with a GET `path` under `/api/v3`, for
+- Tracking: `sonarr_series` with `tvdbId` or `seriesId`. One record with
+  seasons and statistics.
+- Lookup: `sonarr_lookup` with `term`. Lookup does not prove tracking.
+- Episodes: `sonarr_episodes` with `seriesId`, optional `seasonNumber`. Each
+  episode carries its file summary. Match season/episode numbers and check
+  series type.
+- Files: `sonarr_episode_files` with `seriesId`.
+- Queue: `sonarr_queue` with `seriesId`. Omit `seriesId` to read the whole
+  queue, unknown-series items included, when looking for orphans.
+- History: `sonarr_history` with `seriesId`, optional `eventType`, `page`,
+  `pageSize` (max 100).
+- Blocklist: `sonarr_blocklist` with `seriesId`.
+- Profiles: `sonarr_quality_profiles`.
+- Dates: `sonarr_calendar` with ISO `start` and `end`. Bound the window and
+  match IDs. Prefer `airDate`/`airDateUtc`; state timezone uncertainty. Airing
+  does not guarantee local availability.
+- Manual import: `sonarr_manual_import_candidates` with `folder` and/or
+  `downloadId`.
+- Command status: `sonarr_command_status` with `commandId`.
+- Anything without a tool: `sonarr_raw` with a GET `path` under `/api/v3`, for
   example the language profiles on versions that still have them.
 
-Read candidates with `releases`: `episodeId`, or `seriesId` with
+Read candidates with `sonarr_releases`: `episodeId`, or `seriesId` with
 `seasonNumber`. Inspect approval, rejections, quality, and custom-format
 scores; it grabs nothing. Counts cover every indexer hit, but the listing is one
 filtered page: narrow with `publishedAfter`, `titleContains`, `approvedOnly`,
@@ -62,35 +53,17 @@ SAB job's storage path. Inspect Jellyfin streams. Arr `languages` parse release
 names. `MULTi`, `DL`, and `GERMAN` do not prove stream contents or justify
 replacement.
 
-## Plan, then apply
+## Writes
 
-A write with an unknown outcome stops the run for operator review. A
-completed write whose verification failed is still reported as completed.
+A write acts on its first call. Nothing asks you to confirm, so read the exact
+target first and establish its full extent: which episodes, which files, how
+many already have a file. The write resolves its target against live state, so
+an ID that does not exist fails with nothing written. The result carries
+`summary`, `effects`, `warnings`, and a `verification` read-back.
 
-Every write is two calls. In a script, call `sonarr_plan` with an `action` and
-return the plan. Planning changes nothing. It resolves the target against live
-state, so an ID that does not exist fails here. Read the plan's `summary`,
-`effects`, and `warnings`. If they match what you intend, call the
-`sonarr_apply` tool directly with the `planId`. Scripts cannot call it.
-
-```js
-return await tools.sonarr_plan({
-  action: "search",
-  seriesId: 483,
-  episodeIds: [9012],
-})
-```
-
-Apply re-reads the state the plan depended on. `plan is stale: ...` means that
-state moved. Re-read, decide again, and plan again. Apply returns the write's
-`result` and a `verification` read-back. `verificationError` means the write
-ran and only the read-back failed, so re-read the state yourself before
-planning anything else. A second apply of one `planId` returns the first outcome
-with `replayed: true` and runs nothing. Plans end at `expiresAt` and do not
-survive a server restart, so plan in the run that applies. Import plans also
-check mappings, destination paths, and existing file ids. Queue-removal plans
-check other items sharing the download; deleting from a truncated queue is
-refused because its full extent is unknown.
+A rejected write names its reason; read current state before another attempt.
+On a `verificationError` the write ran: inspect the live result before any
+further write.
 
 ## Search and replacement
 
@@ -99,47 +72,49 @@ paths. Never search unaired/unmonitored episodes or duplicate progressing work.
 If nothing is grabbed, report concrete candidate rejections.
 
 Change monitoring only when the issue asks for it or a wrong flag blocks the
-requested media. `setSeriesMonitoring` takes `seriesId` and any of `monitored`,
-`seasons`, and `monitorNewItems`. It keeps every other series field, and its
-plan shows the field-level diff. Setting a season's flag sets all of its
-episodes to match, overriding deliberate per-episode choices; check them first.
-For single episodes, plan `setEpisodeMonitoring` with `episodeIds` and
-`monitored`.
+requested media. `sonarr_set_series_monitoring` takes `seriesId` and any of
+`monitored`, `seasons`, and `monitorNewItems`. It keeps every other series
+field, and its `effects` show the field-level diff. Setting a season's flag
+sets all of its episodes to match, overriding deliberate per-episode choices;
+check them first. For single episodes, call `sonarr_set_episode_monitoring`
+with `episodeIds` and `monitored`.
 
-Plan `search` with `seriesId` plus `episodeIds` or `seasonNumber`. `seriesId`
-alone searches the whole series and needs a whole-series issue. The plan counts
-the monitored episodes in scope and how many already have files that a grab may
-replace, and it warns about unaired ones. Narrow the scope until the plan
-matches the report. Test hypotheses on one episode, never a season. Probe an
-existing file before replacing it on language grounds; missing episodes need
-no probe. Let Sonarr choose the release. Plan `grabRelease` with a `guid` and
-`indexerId` copied from a fresh `releases` read only when the fix is one
-specific release that a search will not pick.
+Call `sonarr_auto_search` with `seriesId` plus `episodeIds` or `seasonNumber`.
+`seriesId` alone searches the whole series and needs a whole-series issue. A
+series or season search covers every monitored episode in scope, including
+ones that already have a file a grab may replace, so read `sonarr_episodes`
+and name `episodeIds` until the scope matches the report. Test hypotheses on
+one episode, never a season. Probe an existing file before replacing it on
+language grounds; missing episodes need no probe. Let Sonarr choose the
+release. Call `sonarr_grab_release` with a `guid` and `indexerId` copied from a
+fresh `sonarr_releases` read only when the fix is one specific release that a
+search will not pick. Sonarr only grabs a release still in its search cache,
+about 30 minutes after that read.
 
 Ask if scope is unclear. Probe corrupt/wrong-content files and inspect Jellyfin
 streams. Obtain reporter confirmation before deleting a verified wrong file.
-Plan `deleteEpisodeFile` with the `episodeFileId`. The plan names the path, the
-size, and every episode the file covers, so check shared-file impact there and
-preserve multi-episode relationships. For a wrong season, establish and
-announce the full affected set, then replace all of it. Search only affected
-episodes.
+Before `sonarr_delete_episode_file`, read `sonarr_episodes` and find every
+episode sharing that `episodeFileId`: one file may hold several, and deleting
+it removes them all. For a wrong season, establish and announce the full
+affected set, then replace all of it. Search only affected episodes.
 
 Identify the bad release's finished `grabbed` history record before repair.
-Blocklisting an active grab discards it, and the plan warns when the record is
-one. Blocklist only with reliable release identity, before replacement, by
-planning `markHistoryFailed` with the `historyId`. Default
-`autoRedownloadFailed` also searches; do not add a `search`. Usenet blocklisting
-matches one posting, so a re-post of the same title stays grabbable; check
-`releases` with `titleContains` for re-posts first. Verify the blocklist and a
-different replacement. Plan `deleteBlocklistEntry` with the `blocklistId` only
-with a clear identity match.
+Blocklisting an active grab discards it, so read `sonarr_queue` for its
+download ID first. Blocklist only with reliable release identity, before
+replacement, by calling `sonarr_mark_history_failed` with the `historyId`.
+Default `autoRedownloadFailed` also searches; do not add `sonarr_auto_search`.
+Usenet blocklisting matches one posting, so a re-post of the same title stays
+grabbable; check `sonarr_releases` with `titleContains` for re-posts first.
+Verify the blocklist and a different replacement. Call
+`sonarr_delete_blocklist_entry` with the `blocklistId` only with a clear
+identity match.
 
 For missing tracks, search only if a different release is plausible. If streams
 exist, investigate Jellyfin/client selection.
 
 For stalls, diagnose category, mapping, permissions, space, locks, naming, and
 usable video. Allow download, repair, and unpack work to finish. Fix
-infrastructure before retrying. The `command` action runs `RefreshSeries`,
+infrastructure before retrying. `sonarr_run_command` runs `RefreshSeries`,
 `RescanSeries`, `DownloadedEpisodesScan`, or `RefreshMonitoredDownloads` when
 Sonarr must re-read disk or downloader state. Refresh and rescan need the
 `seriesId`; the scan needs the folder `path`. For upgrade loops, inspect
@@ -149,24 +124,26 @@ blocklist entries.
 
 ## Manual import
 
-Read the exact queue folder/download ID and current `manualImportCandidates`.
-Inspect every `rejections` array. Import only candidates mapped to that queued
-episode and download, with acceptable quality/language evidence. Reject wrong
-targets, samples, missing paths, permission or duplicate conflicts, unwanted
-language, and low score/cutoff. Never import during downloader post-processing
-or while files are locked/changing.
+Read the exact queue folder/download ID and current
+`sonarr_manual_import_candidates`. Inspect every `rejections` array. Import
+only candidates mapped to that queued episode and download, with acceptable
+quality/language evidence. Reject wrong targets, samples, missing paths,
+permission or duplicate conflicts, unwanted language, and low score/cutoff.
+Never import during downloader post-processing or while files are
+locked/changing. Resolve every rejection before importing: the import does not
+wait for you to read its warnings.
 
-Plan `manualImport` with `importMode: "move"` and `files` carrying `path`,
-`folderName`, `seriesId`, `episodeIds`, `quality`, `languages`, and
-`releaseGroup`. Every submitted path and ID must come from a Sonarr read. The
-plan re-reads the candidates, matches yours by path, and reports rejections as
-warnings. Resolve each warning before applying. No generic force import exists.
-The apply's verification shows the command just after submission; read
-`command` until it finishes, then re-read queue, episode, and file state. Search
-is not acquisition; SAB completion is not import. After import, verify Jellyfin
-streams and the reported symptom.
+Call `sonarr_manual_import` with `importMode: "move"` and `files`, each a
+candidate `path` with its `seriesId` and `episodeIds`. Pass the `folder` or
+`downloadId` the candidates were read with. The server matches each path
+against the live candidates and sends their quality, languages, and release
+group unchanged; a path Sonarr does not offer fails with nothing written. No
+generic force import exists. The verification shows the command just after
+submission; read `sonarr_command_status` until it finishes, then re-read
+queue, episode, and file state. Search is not acquisition; SAB completion is
+not import. After import, verify Jellyfin streams and the reported symptom.
 
-If cleanup is warranted instead, plan `removeQueueItem` with `queueId`,
-`removeFromClient`, and `blocklist`. `removeFromClient: true` removes the
-download and its data. `removeFromClient: false` with `blocklist: true` drops
-only the queue entry and blocklists the release.
+If cleanup is warranted instead, call `sonarr_remove_queue_item` with
+`queueId`, `removeFromClient`, and `blocklist`. `removeFromClient: true`
+removes the download and its data. `removeFromClient: false` with
+`blocklist: true` drops only the queue entry and blocklists the release.

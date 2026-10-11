@@ -45,7 +45,6 @@ export function buildMediaFramesTool(roots: readonly string[]): ServerTool {
       "of the video fail.",
     inputSchema: { ...FRAMES_INPUT, type: "object" },
     annotations: { readOnlyHint: true },
-    label: () => undefined,
     execute: (args, signal) =>
       Effect.gen(function* () {
         const params = yield* checkArgs("media_frames", FRAMES_INPUT, args)
@@ -95,8 +94,6 @@ export function buildMediaFramesTool(roots: readonly string[]): ServerTool {
             { type: "image", data: frame.data, mimeType: "image/jpeg" },
           ]),
         ]
-        // No `structuredContent`: a script gets these blocks and shows each
-        // image block to the model.
         return { content }
       }),
   }

@@ -16,19 +16,18 @@ import {
   pick,
   type JsonObject,
 } from "../json.ts"
-import type { PlanStore } from "../plans.ts"
 import {
   action,
-  defineRead,
-  definePlanApply,
+  defineReads,
+  defineWrites,
   listResult,
   rawPath,
   rawResult,
   resource,
   toolFail,
-  type PlanEffect,
   type ServerTool,
   type ToolFailure,
+  type WriteEffect,
 } from "../tools.ts"
 
 type Signal = AbortSignal | undefined
@@ -79,17 +78,11 @@ const PERMISSIONS: Record<string, number> = {
   CREATE_ISSUES: 4_194_304,
 }
 
-export function buildSeerrTools(
-  cfg: ServiceConfig,
-  plans: PlanStore,
-): ServerTool[] {
+export function buildSeerrTools(cfg: ServiceConfig): ServerTool[] {
+  const service = { name: "seerr", label: "Seerr (requests and issues)" }
   return [
-    defineRead(
-      "seerr",
-      "Read Seerr issues, requests, media identity, users, and quotas.",
-      seerrReads(cfg),
-    ),
-    ...definePlanApply("seerr", seerrActions(cfg), plans),
+    ...defineReads(service, seerrReads(cfg)),
+    ...defineWrites(service, seerrActions(cfg)),
   ]
 }
 
@@ -312,7 +305,7 @@ function seerrReads(cfg: ServiceConfig) {
     }),
     raw: resource({
       description:
-        "Any other GET below /api/v1. Uncompacted; prefer a named resource",
+        "Any other GET below /api/v1. Uncompacted; prefer a named tool",
       params: Type.Object({
         path: Type.String({
           description:
@@ -332,7 +325,7 @@ function seerrReads(cfg: ServiceConfig) {
   }
 }
 
-/** The request set a new request would join, as a plan depends on it. */
+/** The request set a new request would join. */
 function existingRequests(details: JsonObject): JsonObject[] {
   return objectList(objectField(details, "mediaInfo")?.requests)
 }
@@ -360,7 +353,7 @@ function requestSummary(request: JsonObject): string {
 
 function seerrActions(cfg: ServiceConfig) {
   return {
-    createRequest: action({
+    create_request: action({
       description:
         "Request a movie or series, which is how media gets added to the Arrs",
       params: Type.Object({
@@ -382,7 +375,7 @@ function seerrActions(cfg: ServiceConfig) {
           }),
         ),
       }),
-      plan: (params, signal) =>
+      resolve: (params, signal) =>
         Effect.gen(function* () {
           if (params.mediaType === "movie" && params.seasons !== undefined) {
             return yield* toolFail("seasons applies to tv requests only")
@@ -422,7 +415,7 @@ function seerrActions(cfg: ServiceConfig) {
                     ? `seasons ${params.seasons.join(", ")}`
                     : "every season",
                 ]
-          const effect: PlanEffect = {
+          const effect: WriteEffect = {
             kind: "request",
             target: `${params.mediaType} ${title}, TMDB ${params.mediaId}`,
             detail: [
@@ -433,7 +426,7 @@ function seerrActions(cfg: ServiceConfig) {
             ].join("; "),
           }
           return {
-            state: { requests, mediaStatus: mediaStatus ?? null },
+            state: null,
             summary: `Request ${params.mediaType} ${title}${seasonText.length > 0 ? `, ${seasonText.join("")}` : ""}`,
             effects: [effect],
             warnings: [
@@ -446,17 +439,7 @@ function seerrActions(cfg: ServiceConfig) {
             ],
           }
         }),
-      fingerprint: (state) => ({
-        mediaStatus: state.mediaStatus,
-        requests: state.requests
-          .map((request) => ({
-            id: isNumber(request.id) ? request.id : 0,
-            status: request.status ?? null,
-            seasons: seasonNumbers(request.seasons),
-          }))
-          .sort((a, b) => a.id - b.id),
-      }),
-      apply: (params) =>
+      write: (params) =>
         seerrRequest(cfg, "/api/v1/request", {
           method: "POST",
           body: {
@@ -488,11 +471,11 @@ function seerrActions(cfg: ServiceConfig) {
         ).pipe(Effect.map(compactRequest))
       },
     }),
-    retryRequest: action({
+    retry_request: action({
       description:
         "Re-send a failed request to its Arr, once the cause is fixed",
       params: Type.Object({ requestId: Type.Integer({ minimum: 1 }) }),
-      plan: (params, signal) =>
+      resolve: (params, signal) =>
         Effect.gen(function* () {
           const request = yield* seerrObject(
             cfg,
@@ -516,13 +499,13 @@ function seerrActions(cfg: ServiceConfig) {
               details?.name ??
               `TMDB ${String(media?.tmdbId ?? "unknown")}`,
           )
-          const effect: PlanEffect = {
+          const effect: WriteEffect = {
             kind: "retry",
             target: `request ${params.requestId}: ${type} ${title}`,
             detail: requestSummary(request),
           }
           return {
-            state: { request },
+            state: null,
             summary: `Retry request ${params.requestId} for ${type} ${title}`,
             effects: [effect],
             warnings:
@@ -533,12 +516,7 @@ function seerrActions(cfg: ServiceConfig) {
                   ],
           }
         }),
-      fingerprint: (state) => ({
-        requestId: state.request.id ?? null,
-        status: state.request.status ?? null,
-        seasons: seasonNumbers(state.request.seasons),
-      }),
-      apply: (params) =>
+      write: (params) =>
         seerrRequest(cfg, `/api/v1/request/${params.requestId}/retry`, {
           method: "POST",
         }).pipe(

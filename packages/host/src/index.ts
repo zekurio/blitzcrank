@@ -105,13 +105,7 @@ function restoreRevisits(
       const delayMs = revisitDelay(file, Date.now())
       const revisit = file.revisit
       if (delayMs === undefined || !revisit) continue
-      issueWork.armRevisit(
-        file.issueId,
-        delayMs,
-        revisit.reason,
-        revisit.mediaScope,
-        revisit.dueAt,
-      )
+      issueWork.armRevisit(file.issueId, delayMs, revisit.reason, revisit.dueAt)
     }
   })
 }
