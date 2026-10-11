@@ -11,7 +11,7 @@ import type { Gateways, Intake } from "./gateway.ts"
 export interface ServerDeps {
   gateways: Gateways
   intake: Intake
-  stats: () => { queued: number; pendingRevisits: number }
+  stats: () => { queued: number }
 }
 
 const WEBHOOK_PREFIX = "/webhook/"

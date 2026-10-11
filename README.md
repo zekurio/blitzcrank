@@ -6,10 +6,9 @@ durable investigations across Seerr, Sonarr, Radarr, SABnzbd, and Jellyfin.
 It runs as two processes:
 
 - The host (`packages/host`, command `blitzcrank`) receives the Seerr webhook,
-  runs the agent, posts its final message as the comment, resolves issues, and
-  schedules revisits. It holds the model credentials and the Seerr key it
-  comments with. Seerr is one gateway behind an interface; the agent loop only
-  sees threads.
+  runs the agent, posts its final message as the comment, and resolves
+  issues. It holds the model credentials and the Seerr key it comments with.
+  Seerr is one gateway behind an interface; the agent loop only sees threads.
 - The MCP server (`packages/mcp`, command `blitzcrank-mcp`) holds the service
   API keys and the media mounts. Every read and write the agent makes goes
   through it, one tool per operation.

@@ -14,7 +14,6 @@ import { Gateways } from "./gateway.ts"
 import { createSeerrGateway } from "./gateways/seerr/gateway.ts"
 import { JobStore } from "./jobs.ts"
 import { connectMcpEffect } from "./mcp/client.ts"
-import { revisitDelay } from "./revisits.ts"
 import { createApp } from "./server.ts"
 import { storageIO } from "./storage.ts"
 import { ThreadWork } from "./thread-work.ts"
@@ -44,20 +43,12 @@ export function startServerEffect(): Effect.Effect<void, unknown> {
       config.maxParallelRuns,
     )
     yield* work.restoreEffect()
-    yield* restoreRevisits(gateways, work)
 
     const server = createServer(
       createApp({
         gateways,
-        intake: {
-          submit: (message) =>
-            work.submitEffect({ kind: "message", ...message }),
-          closed: (thread) => work.closedEffect(thread),
-        },
-        stats: () => ({
-          queued: work.queue.size,
-          pendingRevisits: work.revisits.pending,
-        }),
+        intake: { submit: (message) => work.enqueueEffect(message) },
+        stats: () => ({ queued: work.queue.size }),
       }),
     )
     server.listen(config.port)
@@ -99,25 +90,6 @@ function checkMcpEffect(config: Config) {
   )
 }
 
-function restoreRevisits(
-  gateways: Gateways,
-  work: ThreadWork,
-): Effect.Effect<void, unknown> {
-  return Effect.gen(function* () {
-    // Re-arm saved follow-ups. Spread overdue runs through revisitDelay.
-    for (const store of gateways.stores()) {
-      for (const file of yield* store.cases.pendingRevisitsEffect()) {
-        const thread = { gateway: store.gateway, id: file.id }
-        if (work.hasPending(thread)) continue
-        const delayMs = revisitDelay(file, Date.now())
-        const revisit = file.revisit
-        if (delayMs === undefined || !revisit) continue
-        work.armRevisit(thread, delayMs, revisit.reason, revisit.dueAt)
-      }
-    }
-  })
-}
-
 function installShutdown(
   server: Server,
   work: ThreadWork,
@@ -132,8 +104,6 @@ function installShutdown(
       }
       shuttingDown = true
       console.log(`[shutdown] ${signal} received; stopping`)
-      work.revisits.stop()
-      // Persisted revisit plans return at boot. Stop all new queue admission now.
       work.queue.close()
       const deadline = (yield* Clock.currentTimeMillis) + SHUTDOWN_GRACE_MS
       yield* withDeadline(

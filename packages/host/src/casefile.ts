@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises"
+import { readFile } from "node:fs/promises"
 import path from "node:path"
 
 import { Effect } from "effect"
@@ -15,13 +15,12 @@ import type { StorageError } from "./storage.ts"
  * standing between a follow-up comment and a blank slate. It stays because it
  * outranks the transcript: it is the fallback when a session file is missing
  * or unreadable, it survives compaction dropping the early turns, and it holds
- * the host-written run history, usage, and revisit state.
+ * the host-written run history and usage.
  *
  * Two writers, deliberately separated:
  *  - the agent writes `summary` through the `update_case_file` tool (what is
  *    established, what is ruled out, what is still open),
- *  - the host writes everything factual: run records, cumulative usage, the
- *    pending revisit and its chain length.
+ *  - the host writes everything factual: run records and cumulative usage.
  */
 
 export interface CaseSummary {
@@ -35,7 +34,6 @@ export interface CaseSummary {
 
 export interface CaseRun {
   at: string
-  trigger: "message" | "revisit"
   /** `RunUsage.newTokens`: input + cache writes + output, no cache reads. */
   tokens: number
   /** Undefined on runs recorded before split usage was introduced. */
@@ -44,15 +42,6 @@ export interface CaseRun {
   outputTokens?: number
   commented: boolean
   resolved: boolean
-}
-
-export interface PendingRevisit {
-  dueAt: string
-  reason: string
-  /** How many revisits have chained since the last user message. */
-  chain: number
-  /** The delay used, so a fruitless follow-up can back off. */
-  delayMs: number
 }
 
 export interface CaseFile {
@@ -92,7 +81,6 @@ export interface CaseFile {
     /** Cumulative API-priced USD; undefined for legacy cases. */
     costUsd: number | undefined
   }
-  revisit: PendingRevisit | undefined
 }
 
 export const MAX_ENTRIES = 12
@@ -119,7 +107,6 @@ export function emptyCase(id: string): CaseFile {
       outputTokens: 0,
       costUsd: 0,
     },
-    revisit: undefined,
   }
 }
 
@@ -171,10 +158,7 @@ export function renderCase(file: CaseFile): string | undefined {
 
   const history = file.runs
     .slice(-4)
-    .map(
-      (run) =>
-        `- ${run.at} ${run.trigger}: ${run.commented ? "commented" : "no comment"}`,
-    )
+    .map((run) => `- ${run.at}: ${run.commented ? "commented" : "no comment"}`)
   if (history.length > 0) {
     lines.push(`Previous runs (${file.spend.runs} total):`)
     lines.push(...history)
@@ -209,7 +193,7 @@ export class CaseStore {
           updatedAt: isString(parsed.updatedAt)
             ? parsed.updatedAt
             : empty.updatedAt,
-          revisit: parsed.revisit,
+
           // Re-clamped on the way in as well: the cap has to be a property of the
           // prompt, not only of the write path.
           summary: clampSummary(parsed.summary),
@@ -257,24 +241,6 @@ export class CaseStore {
         ),
       )
       yield* writeAtomic(target, body)
-    })
-  }
-
-  /** Pending revisits across this store, for re-arming after a restart. */
-  pendingRevisitsEffect(): Effect.Effect<CaseFile[]> {
-    return Effect.gen({ self: this }, function* () {
-      const entries = yield* storageIO(() => readdir(this.dir)).pipe(
-        Effect.catch(() => Effect.succeed([])),
-      )
-      const files: CaseFile[] = []
-      for (const entry of entries) {
-        if (!entry.endsWith(".json")) continue
-        const file = yield* this.loadEffect(path.basename(entry, ".json")).pipe(
-          Effect.catch(() => Effect.succeed(undefined)),
-        )
-        if (file?.revisit) files.push(file)
-      }
-      return files
     })
   }
 }

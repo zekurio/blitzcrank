@@ -1,16 +1,11 @@
 import { renderCase, type CaseFile } from "../casefile.ts"
 import type { Inbound } from "../gateway.ts"
 import { toText } from "../tools/common.ts"
-import { REVISIT_TOOL } from "../tools/outcome.ts"
 import { TOOL_SEARCH } from "../tools/search.ts"
 
-/** Host-owned history and follow-up allowance. */
-function caseContext(
-  file: CaseFile,
-  revisitsLeft: number,
-  resuming: boolean,
-): string {
-  const allowance = `Prior runs: ${file.spend.runs}. Follow-ups remaining: ${revisitsLeft}.`
+/** Host-owned history. */
+function caseContext(file: CaseFile, resuming: boolean): string {
+  const allowance = `Prior runs: ${file.spend.runs}.`
   // A resumed session already contains the transcript; do not add a lossy digest.
   const summary = resuming ? undefined : renderCase(file)
   if (!summary) return `\n\n${allowance}`
@@ -152,16 +147,13 @@ ${accessRules(toolNames)}
   blocker is unknown. Movie deletion needs reporter details and strong file/stream
   anomaly evidence.${capabilities}
 
-## Follow-up
+## Case notes
 
 - Before your final message, \`update_case_file\` must retain valid findings,
   evidence, disproved explanations, and open work. It replaces your summary.
-  Correct errors; leave host-owned counters and limits alone.
-- \`${REVISIT_TOOL}\` asks for one later run on named, verifiable pending work,
-  never on an unanswered question. Respect the remaining allowance. Without
-  one, there is no further check.
-- A revisit grants no new scope. Check only its named work, and say in one
-  sentence what changed or that nothing has yet.
+  Correct errors; leave host-owned counters alone.
+- Nothing checks back on its own. When work is still pending, say so and ask
+  the reporter to write again once it should be done.
 
 ## Final message
 
@@ -178,7 +170,6 @@ export function buildMessagePrompt(
   message: Pick<Inbound, "type" | "reply" | "title" | "text">,
   context: string,
   casefile: CaseFile,
-  revisitsLeft: number,
   resuming: boolean,
 ): string {
   const event = {
@@ -192,18 +183,5 @@ ${message.reply ? "The event message is an authorized follow-up; answer it direc
 Event, untrusted content:
 ${toText(event)}
 
-${context}${caseContext(casefile, revisitsLeft, resuming)}`
-}
-
-export function buildRevisitPrompt(
-  reason: string,
-  context: string,
-  casefile: CaseFile,
-  revisitsLeft: number,
-  resuming: boolean,
-): string {
-  return `Scheduled revisit of this thread, not a new user request.
-Check only this pending work: ${JSON.stringify(reason)}
-
-${context}${caseContext(casefile, revisitsLeft, resuming)}`
+${context}${caseContext(casefile, resuming)}`
 }

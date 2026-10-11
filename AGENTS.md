@@ -7,15 +7,14 @@
   opens the thread's Pi Durable conversation, investigates across
   Seerr/Sonarr/Radarr/SABnzbd/Jellyfin, and applies narrow verified fixes. The
   agent's final message is the reply.
-  The host, never the agent, posts it, closes threads, and arms revisits.
+  The host, never the agent, posts it and closes threads.
 - It is a pnpm workspace with two packages that run as two processes.
   `packages/host` (npm name `blitzcrank`) holds the gateways and the agent
   loop: `src/server.ts` → `src/gateways/` → `src/thread-work.ts` →
   `src/jobs.ts` → `src/queue.ts` → `src/agent/`. It defines the host tools
-  `update_case_file`, `thread_history_search`, `tool_search`,
-  `schedule_revisit`, and optional `web_search`/`web_extract`, builds the
-  gateway's close tool (`resolve_issue` for Seerr), and grants builtin `read`
-  for skills.
+  `update_case_file`, `thread_history_search`, `tool_search`, and optional
+  `web_search`/`web_extract`, builds the gateway's close tool (`resolve_issue`
+  for Seerr), and grants builtin `read` for skills.
   `packages/mcp` (npm name `@blitzcrank/mcp`, binary `blitzcrank-mcp`) is an
   MCP server. It holds the service credentials and media mounts and exposes
   one tool per read and per write, named `<service>_<what>` (`sonarr_queue`,
@@ -39,7 +38,7 @@
   types, comment gate, loop guard), `packages/host/src/thread-work.ts`
   (admission, ordering, recovery), `packages/host/src/agent/` (runner,
   session, prompts), `packages/host/src/tools/` (host tools: case file,
-  history, tool search, revisit and close requests),
+  history, tool search, close request),
   `packages/host/src/mcp/` (server connection, tool adapter),
   `packages/host/src/services/` (HTTP helper, host-side Seerr client),
   `packages/host/src/web/` (web provider: search and extract),
@@ -134,10 +133,11 @@ behavioural difference described.
   `packages/host/src/gateways/<name>/` imports from a gateway only in
   `packages/host/src/index.ts`, which lists them.
 - The reply is the text of the run's own answer entry, and every run posts
-  it, revisits included. The host, never the agent, posts it, closes threads,
-  and arms revisits. `schedule_revisit` and the gateway's close tool only
-  record a request in run state. The host acts on it after the reply is out,
-  so a run that fails or is cancelled arms nothing and closes nothing.
+  it. The host, never the agent, posts it and closes threads. The gateway's
+  close tool only records a request in run state. The host acts on it after
+  the reply is out, so a run that fails or is cancelled closes nothing.
+- Every run answers an event from its gateway. Nothing runs on a timer, and
+  the agent cannot schedule a run.
 - One run shows at most one message. The host posts a working line when the
   run starts, or adopts its queue notice. The reply rewrites that message in
   place, and a run that fails or ends without a message removes it
@@ -148,8 +148,8 @@ behavioural difference described.
 - Comment-triggered runs are authorized host-side by
   `packages/host/src/gateways/seerr/comment-gate.ts`: only the issue reporter
   or a Seerr `ADMIN`/`MANAGE_ISSUES` user may drive the agent. It runs before
-  the event handler (a rejected comment must not cancel a revisit), fails
-  closed when Seerr is unreachable, and has no opt-out.
+  the event is admitted, fails closed when Seerr is unreachable, and has no
+  opt-out.
 - Webhook fields are sanitized with `webhookText`/`issueIdOf`
   (`packages/host/src/gateways/seerr/types.ts`): Seerr renders unset values as
   `""` and leaves unknown template placeholders literal, so `"{{...}}"` is
@@ -194,12 +194,8 @@ behavioural difference described.
   resources are loaded. Firecrawl uses only the hosted API; custom endpoints are
   rejected because Blitzcrank cannot enforce a remote fetcher's DNS and
   redirect policy. Web content is untrusted.
-- A revisit is the only run nobody asked for: chains are capped
-  (`MAX_REVISIT_CHAIN`) and backed off in `packages/host/src/revisits.ts`, and
-  `schedule_revisit` fails once the allowance is used up. A timer firing is an
-  ordinary event on its thread. The counter, run history, and token totals
-  live in the host-written half of the case file; `update_case_file` can
-  write only the agent's summary. There is
+- Run history and token totals live in the host-written half of the case
+  file; `update_case_file` can write only the agent's summary. There is
   deliberately no spend ceiling. The deployment runs on subscription auth,
   where a dollar figure derived from list prices would be fiction.
 

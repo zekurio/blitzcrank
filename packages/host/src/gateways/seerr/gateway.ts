@@ -63,7 +63,7 @@ export function createSeerrGateway(config: Config): Gateway {
       description:
         "Mark this Seerr issue resolved. Only for a verified fix: partial, pending, uncertain, or " +
         "confirmation-dependent outcomes stay open. The host resolves the issue after it posts your final " +
-        "message, and a resolved issue gets no revisit.",
+        "message.",
       effect: () =>
         seerr.setStatusEffect(issueId, "resolved").pipe(Effect.asVoid),
     },
@@ -88,10 +88,10 @@ export function createSeerrGateway(config: Config): Gateway {
       }),
     // A queued comment is checked again: its author may have lost the right
     // to drive the agent while the host was down.
-    authorizeEffect: (event) =>
-      event.kind === "message" && event.reply
+    authorizeEffect: (message) =>
+      message.reply
         ? // SAFETY: `source` is the webhook payload this gateway stored.
-          allowComment(event.source as unknown as SeerrWebhookPayload)
+          allowComment(message.source as unknown as SeerrWebhookPayload)
         : Effect.succeed(true),
     channel,
   }
@@ -123,7 +123,6 @@ function webhookEffect(
     }
     const thread: ThreadRef = { gateway: NAME, id: issueId }
     if (payload.notification_type === "ISSUE_RESOLVED") {
-      yield* intake.closed(thread)
       return { ok: true, ignored: "issue resolved" }
     }
     const comment = payload.notification_type === "ISSUE_COMMENT"
@@ -131,8 +130,6 @@ function webhookEffect(
       if (isBotComment(payload, deps.botUsername)) {
         return { ok: true, ignored: "own comment" }
       }
-      // Before anything acts on the comment: a rejected one must not cancel
-      // a revisit.
       if (!(yield* deps.allowComment(payload))) {
         return { ok: true, ignored: "comment author not authorized" }
       }

@@ -32,17 +32,13 @@ export interface Inbound {
   source: JsonValue
 }
 
-export type ThreadEvent =
-  | ({ kind: "message" } & Inbound)
-  | { kind: "revisit"; thread: ThreadRef; reason: string }
-
 /**
  * Every signature the host writes starts with this, so a gateway can tell
  * the host's own messages from a person's.
  */
 export const SIGNATURE_PREFIX = "[blitzcrank w/"
 
-/** One string per thread, for timers, locks, and log lines. */
+/** One string per thread, for the queue and log lines. */
 export function threadKey(thread: ThreadRef): string {
   return `${thread.gateway}:${thread.id}`
 }
@@ -80,8 +76,6 @@ export interface Channel {
 /** What a gateway may ask of the host. */
 export interface Intake {
   submit(message: Inbound): Effect.Effect<"cancelling" | "queued", unknown>
-  /** The thread was closed from outside, so its pending revisit is dropped. */
-  closed(thread: ThreadRef): Effect.Effect<void, unknown>
 }
 
 export interface Gateway {
@@ -98,8 +92,8 @@ export interface Gateway {
     body: unknown,
     intake: Intake,
   ): Effect.Effect<Record<string, JsonValue>, unknown>
-  /** Whether an accepted event may still run after a restart. */
-  authorizeEffect(event: ThreadEvent): Effect.Effect<boolean, unknown>
+  /** Whether an accepted message may still run after a restart. */
+  authorizeEffect(message: Inbound): Effect.Effect<boolean, unknown>
   channel(threadId: string): Channel
 }
 
@@ -152,14 +146,6 @@ export class Gateways {
       this.entry(thread).dirs.sessions,
       `${encodeURIComponent(thread.id)}.sqlite`,
     )
-  }
-
-  /** Every gateway's case store, for re-arming revisits after a restart. */
-  stores(): { gateway: string; cases: CaseStore }[] {
-    return [...this.entries].map(([gateway, entry]) => ({
-      gateway,
-      cases: entry.cases,
-    }))
   }
 
   private entry(thread: ThreadRef) {

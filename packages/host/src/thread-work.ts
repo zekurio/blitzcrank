@@ -4,16 +4,14 @@ import type { ThreadRunner } from "./agent/runner.ts"
 import {
   threadKey,
   type Gateways,
+  type Inbound,
   type Marker,
-  type ThreadEvent,
-  type ThreadRef,
 } from "./gateway.ts"
 import { JobStore, type Job } from "./jobs.ts"
 import { ThreadQueue } from "./queue.ts"
-import { RevisitScheduler } from "./revisits.ts"
 
 interface ThreadJob {
-  event: ThreadEvent
+  event: Inbound
   runsAhead: number
 }
 
@@ -26,7 +24,6 @@ interface PendingRun {
 /** Admission, ordering, and recovery of runs, for every gateway's threads. */
 export class ThreadWork {
   readonly queue: ThreadQueue
-  readonly revisits = new RevisitScheduler()
 
   /** The job each busy thread is running. A thread has one at most. */
   private readonly active = new Map<string, string>()
@@ -43,7 +40,7 @@ export class ThreadWork {
     this.queue = new ThreadQueue(maxParallelRuns)
   }
 
-  /** Restore accepted work before re-arming timers or opening HTTP admission. */
+  /** Restore accepted work before opening HTTP admission. */
   restoreEffect(): Effect.Effect<void, unknown> {
     return this.transitions.withPermit(
       Effect.gen({ self: this }, function* () {
@@ -72,7 +69,7 @@ export class ThreadWork {
           admitted.push(job)
         }
         for (const job of admitted) {
-          // A failed older cleanup still owns this thread's case projection.
+          // A failed older cleanup still owns this thread's status message.
           // Leave later accepted work queued for a future recovery attempt.
           if (!this.isCancelling(threadKey(job.payload.event.thread)))
             this.admit(job)
@@ -81,80 +78,23 @@ export class ThreadWork {
     )
   }
 
-  hasPending(thread: ThreadRef): boolean {
-    const key = threadKey(thread)
-    return (
-      this.active.has(key) ||
-      this.isCancelling(key) ||
-      [...this.pending].some((pending) => pending.key === key)
-    )
-  }
-
-  armRevisit(
-    thread: ThreadRef,
-    delayMs: number,
-    reason: string,
-    dueAt?: string,
-  ): void {
-    const key = threadKey(thread)
-    if (this.isCancelling(key)) return
-    this.revisits.scheduleEffect(key, delayMs, () =>
-      this.enqueueEffect(
-        { kind: "revisit", thread, reason },
-        dueAt === undefined ? undefined : `revisit:${key}:${dueAt}`,
-      ).pipe(Effect.asVoid),
-    )
-  }
-
-  /** New activity in a thread replaces any revisit it was waiting on. */
-  submitEffect(
-    event: ThreadEvent,
-  ): Effect.Effect<"cancelling" | "queued", unknown> {
-    return Effect.suspend(() => {
-      this.revisits.cancel(threadKey(event.thread))
-      return this.enqueueEffect(event)
-    })
-  }
-
   enqueueEffect(
-    event: ThreadEvent,
-    requestId?: string,
+    event: Inbound,
   ): Effect.Effect<"cancelling" | "queued", unknown> {
-    return this.transitions.withPermit(this.enqueueEvent(event, requestId))
-  }
-
-  /** The thread was closed from outside, so nothing should wake it again. */
-  closedEffect(thread: ThreadRef): Effect.Effect<void, unknown> {
-    return Effect.suspend(() => {
-      const key = threadKey(thread)
-      this.revisits.cancel(key)
-      return this.clearRevisit(thread).pipe(
-        Effect.tap((cleared) =>
-          Effect.sync(() => {
-            if (cleared) console.log(`[${key}] closed; revisit dropped`)
-          }),
-        ),
-      )
-    })
-  }
-
-  private enqueueEvent(
-    event: ThreadEvent,
-    requestId?: string,
-  ): Effect.Effect<"cancelling" | "queued", unknown> {
-    return Effect.gen({ self: this }, function* () {
-      const key = threadKey(event.thread)
-      if (this.queue.closed)
-        return yield* Effect.fail(new Error("queue is closed"))
-      if (this.isCancelling(key)) {
-        console.log(`[${key}] cancellation cleanup pending; event ignored`)
-        return "cancelling"
-      }
-      const runsAhead = this.queue.ahead(key)
-      const job = this.jobs.create({ event, runsAhead }, requestId)
-      this.admit(job)
-      return "queued"
-    })
+    return this.transitions.withPermit(
+      Effect.gen({ self: this }, function* () {
+        const key = threadKey(event.thread)
+        if (this.queue.closed)
+          return yield* Effect.fail(new Error("queue is closed"))
+        if (this.isCancelling(key)) {
+          console.log(`[${key}] cancellation cleanup pending; event ignored`)
+          return "cancelling"
+        }
+        const runsAhead = this.queue.ahead(key)
+        this.admit(this.jobs.create({ event, runsAhead }))
+        return "queued"
+      }),
+    )
   }
 
   private admit(job: Job<ThreadJob>): void {
@@ -166,17 +106,13 @@ export class ThreadWork {
       this.jobs.actionEffect(
         job.id,
         "queue-notice",
-        event.kind === "message" && runsAhead > 0
+        runsAhead > 0
           ? this.runner.notifyQueuedEffect(event.thread, runsAhead)
           : Effect.succeed<Marker>({ id: undefined }),
       ),
     )
     const key = threadKey(event.thread)
-    const pending: PendingRun = {
-      job,
-      key,
-      status,
-    }
+    const pending: PendingRun = { job, key, status }
     this.pending.add(pending)
     this.jobs.enqueue(this.queue.lane(key), job, () =>
       this.run(event, pending).pipe(
@@ -186,28 +122,18 @@ export class ThreadWork {
   }
 
   private run(
-    event: ThreadEvent,
+    event: Inbound,
     pending: PendingRun,
   ): Effect.Effect<void, unknown> {
     return Effect.gen({ self: this }, function* () {
-      const thread = event.thread
-      const key = pending.key
       const status = yield* Fiber.join(pending.status)
       this.pending.delete(pending)
-      this.active.set(key, pending.job.id)
-      yield* Effect.gen({ self: this }, function* () {
-        const result = yield* this.runner.runEffect(
-          event,
-          status,
-          pending.job.id,
-        )
-        const revisit = result.casefile.revisit
-        if (!revisit) return
-        this.armRevisit(thread, revisit.delayMs, revisit.reason, revisit.dueAt)
-      }).pipe(
+      this.active.set(pending.key, pending.job.id)
+      yield* this.runner.runEffect(event, status, pending.job.id).pipe(
         Effect.ensuring(
           Effect.sync(() => {
-            if (this.active.get(key) === pending.job.id) this.active.delete(key)
+            if (this.active.get(pending.key) === pending.job.id)
+              this.active.delete(pending.key)
           }),
         ),
       )
@@ -219,9 +145,7 @@ export class ThreadWork {
   ): Effect.Effect<void, unknown> {
     const event = job.payload.event
     return Effect.gen({ self: this }, function* () {
-      // Clear stale timers before cleanup can fail. Cancellation never resumes
-      // model work.
-      yield* this.clearRevisit(event.thread)
+      // Cancellation never resumes model work.
       const status = yield* this.jobs
         .actions(job.id)
         .some((action) => action.key === "queue-notice")
@@ -232,7 +156,6 @@ export class ThreadWork {
           )
         : Effect.succeed<Marker>({ id: undefined })
       yield* this.runner.cancelEffect(event, status, job.id)
-      yield* this.clearRevisit(event.thread)
       this.jobs.markCancelled(job.id)
     }).pipe(
       Effect.catchCause((cause) =>
@@ -255,18 +178,6 @@ export class ThreadWork {
     })
   }
 
-  /** Drops the thread's saved revisit and says whether there was one. */
-  private clearRevisit(thread: ThreadRef): Effect.Effect<boolean, unknown> {
-    const cases = this.gateways.cases(thread)
-    return cases.loadEffect(thread.id).pipe(
-      Effect.flatMap((file) => {
-        if (!file.revisit) return Effect.succeed(false)
-        file.revisit = undefined
-        return cases.saveEffect(file).pipe(Effect.as(true))
-      }),
-    )
-  }
-
   /**
    * A journal entry as a job of a gateway this host still has. The host wrote
    * the event after its gateway accepted it.
@@ -281,8 +192,8 @@ export class ThreadWork {
       !("event" in payload) ||
       payload.event === null ||
       typeof payload.event !== "object" ||
-      !("kind" in payload.event) ||
-      !["message", "revisit"].includes(String(payload.event.kind)) ||
+      !("type" in payload.event) ||
+      typeof payload.event.type !== "string" ||
       !("thread" in payload.event)
     )
       return undefined

@@ -10,23 +10,18 @@ import {
   type Channel,
   type Gateways,
   type Marker,
+  type Inbound,
   type Notice,
-  type ThreadEvent,
   type ThreadRef,
 } from "../gateway.ts"
 import { JobStore } from "../jobs.ts"
 import { connectMcpEffect } from "../mcp/client.ts"
-import { MAX_REVISIT_CHAIN, planRevisit } from "../revisits.ts"
 import { storageIO } from "../storage.ts"
 import { buildRunTools, type SessionFileRef } from "../tools/index.ts"
 import type { RunIntents } from "../tools/outcome.ts"
 import { buildWebProvider } from "../web/index.ts"
 import { SdkError } from "./effect.ts"
-import {
-  buildMessagePrompt,
-  buildRevisitPrompt,
-  buildSystemPrompt,
-} from "./prompt.ts"
+import { buildMessagePrompt, buildSystemPrompt } from "./prompt.ts"
 import {
   modelAnchor,
   resolveModel,
@@ -35,14 +30,6 @@ import {
   type AgentTurnOptions,
   type AgentTurnResult,
 } from "./session.ts"
-
-export interface RunOutcome {
-  thread: ThreadRef
-  /** The reply as posted. Empty when the run ended without a message. */
-  reply: string
-  /** The case file as persisted, including the revisit the host armed. */
-  casefile: CaseFile
-}
 
 /**
  * Runs one event of one thread. It reaches the outside only through the
@@ -75,10 +62,10 @@ export class ThreadRunner {
   }
 
   runEffect(
-    event: ThreadEvent,
+    event: Inbound,
     status: Marker,
     runId: string,
-  ): Effect.Effect<RunOutcome, unknown> {
+  ): Effect.Effect<void, unknown> {
     return Effect.gen({ self: this }, function* () {
       const thread = event.thread
       const key = threadKey(thread)
@@ -108,11 +95,6 @@ export class ThreadRunner {
         status.id = shown.id
         const context = yield* channel.contextEffect()
         const sessionFileRef: SessionFileRef = { current: undefined }
-        const revisitsLeft = Math.max(
-          0,
-          MAX_REVISIT_CHAIN -
-            (event.kind === "revisit" ? (casefile.revisit?.chain ?? 0) : 0),
-        )
         // The clean cut never opens old coding-agent JSONL. Existing case
         // summaries remain useful when the first Durable conversation starts.
         const storageFile = this.gateways.sessionFile(thread)
@@ -125,7 +107,7 @@ export class ThreadRunner {
         // is down fails the run here, before the model is ever asked.
         const mcp = yield* connectMcpEffect(this.config.mcp)
         const web = buildWebProvider(this.config.web)
-        const intents: RunIntents = { revisit: undefined, close: false }
+        const intents: RunIntents = { close: false }
         const runTools = buildRunTools({
           modelInput: resolveModel(this.modelRuntime, this.modelSpec).input,
           mcp,
@@ -133,7 +115,6 @@ export class ThreadRunner {
           sessionFileRef,
           casefile,
           intents,
-          revisitsLeft,
           close: channel.close,
         })
         const tools = [...runTools.tools, ...web.tools]
@@ -142,21 +123,7 @@ export class ThreadRunner {
           runId,
           "prompt",
           Effect.sync(() =>
-            event.kind === "message"
-              ? buildMessagePrompt(
-                  event,
-                  context,
-                  casefile,
-                  revisitsLeft,
-                  resuming,
-                )
-              : buildRevisitPrompt(
-                  event.reason,
-                  context,
-                  casefile,
-                  revisitsLeft,
-                  resuming,
-                ),
+            buildMessagePrompt(event, context, casefile, resuming),
           ),
           { replaySafe: true },
         )
@@ -187,14 +154,12 @@ export class ThreadRunner {
         if (turn.failure) {
           casefile.runs.push({
             at: new Date().toISOString(),
-            trigger: event.kind,
             tokens: turn.usage.newTokens,
             inputTokens: turn.usage.inputTokens,
             outputTokens: turn.usage.outputTokens,
             commented: false,
             resolved: false,
           })
-          casefile.revisit = undefined
           yield* cases.saveEffect(casefile)
           return yield* Effect.fail(
             new SdkError({
@@ -251,31 +216,13 @@ export class ThreadRunner {
         )
         casefile.runs.push({
           at: new Date(completedAt).toISOString(),
-          trigger: event.kind,
           tokens: turn.usage.newTokens,
           inputTokens: turn.usage.inputTokens,
           outputTokens: turn.usage.outputTokens,
           commented: reply !== "",
           resolved: close !== undefined,
         })
-        const plan = planRevisit({
-          requestedMs:
-            intents.revisit === undefined
-              ? undefined
-              : intents.revisit.minutes * 60_000,
-          reason: intents.revisit?.reason,
-          previous: casefile.revisit,
-          isRevisitRun: event.kind === "revisit",
-          producedNews: reply !== "",
-          maxChain: MAX_REVISIT_CHAIN,
-          now: completedAt,
-        })
-        if (plan.refused) console.warn(`[${key}] ${plan.refused}`)
-        // A closed thread is done: never wake it again on an old schedule.
-        casefile.revisit = close ? undefined : plan.revisit
         yield* cases.saveEffect(casefile)
-
-        return { thread, reply, casefile }
       }).pipe(
         // Releases the MCP connection when the run exits.
         Effect.scoped,
@@ -300,7 +247,7 @@ export class ThreadRunner {
 
   /** Recovery of a cancelled job restores audit/state but cannot call the model. */
   cancelEffect(
-    event: ThreadEvent,
+    event: Inbound,
     status: Marker,
     requestId: string,
   ): Effect.Effect<void, unknown> {
@@ -342,13 +289,12 @@ export class ThreadRunner {
           prompt: "",
           tools: [],
           builtinRead: false,
-          hostState: runState(casefile, { revisit: undefined, close: false }),
+          hostState: runState(casefile, { close: false }),
           sessionFileRef: undefined,
           signal: AbortSignal.abort(),
         })
         projectSpend(casefile, turn)
         casefile.sessionFile = turn.sessionFile
-        casefile.revisit = undefined
         const published = actions.some(
           (action) => action.key === "publish-reply" && action.completed,
         )
@@ -361,7 +307,6 @@ export class ThreadRunner {
         if (published?.reply) casefile.lastAnswer = clampEntry(published.reply)
         casefile.runs.push({
           at: new Date().toISOString(),
-          trigger: event.kind,
           tokens: turn.usage.newTokens,
           inputTokens: turn.usage.inputTokens,
           outputTokens: turn.usage.outputTokens,
@@ -410,7 +355,6 @@ function runState(
         ...casefile.summary,
         hypothesis: casefile.summary.hypothesis ?? null,
       },
-      revisit: intents.revisit ?? null,
       close: intents.close,
     }),
     restore: (value) => {
@@ -429,15 +373,6 @@ function runState(
         ruledOut: clampEntries(summary.ruledOut),
         openQuestions: clampEntries(summary.openQuestions),
       }
-      const revisit = value.revisit
-      intents.revisit =
-        revisit !== null &&
-        typeof revisit === "object" &&
-        !Array.isArray(revisit) &&
-        typeof revisit.minutes === "number" &&
-        typeof revisit.reason === "string"
-          ? { minutes: revisit.minutes, reason: revisit.reason }
-          : undefined
       intents.close = value.close === true
     },
   }

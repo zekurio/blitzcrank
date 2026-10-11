@@ -6,7 +6,7 @@ import type { McpConnection } from "../mcp/client.ts"
 import { buildMcpTools } from "../mcp/tools.ts"
 import { buildCaseFileTool } from "./casefile.ts"
 import { buildHistoryTool } from "./history.ts"
-import { buildCloseTool, buildRevisitTool, type RunIntents } from "./outcome.ts"
+import { buildCloseTool, type RunIntents } from "./outcome.ts"
 import { buildToolSearchTool } from "./search.ts"
 
 export interface SessionFileRef {
@@ -24,7 +24,6 @@ export interface RunToolDeps {
   casefile: CaseFile
   /** What the run asks of the host once its reply is out. */
   intents: RunIntents
-  revisitsLeft: number
   /** Set when the thread's gateway lets the agent close it. */
   close: Channel["close"]
 }
@@ -37,8 +36,8 @@ export interface RunTools {
 }
 
 /**
- * A run's tools: the case file, history search, the revisit request, the
- * gateway's close request, and every tool the MCP server lists. None of them
+ * A run's tools: the case file, history search, the gateway's close request,
+ * and every tool the MCP server lists. None of them
  * knows which gateway the thread came from, and the host does not know which
  * services exist; the server's tool list decides. Server tools start out
  * unloaded so their schemas stay out of the prompt until `tool_search` loads
@@ -54,7 +53,7 @@ export function buildRunTools(deps: RunToolDeps): RunTools {
     tools: [
       buildCaseFileTool(deps.casefile),
       buildHistoryTool(deps.history, deps.sessionFileRef),
-      buildRevisitTool(deps.intents, deps.revisitsLeft),
+
       ...(deps.close ? [buildCloseTool(deps.close, deps.intents)] : []),
       ...mcp,
       // Without a server tool there is nothing to load.

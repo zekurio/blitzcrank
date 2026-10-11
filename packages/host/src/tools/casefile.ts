@@ -18,7 +18,7 @@ import { textResult } from "./common.ts"
  * declares the caps so an oversized entry fails visibly instead of being
  * silently cut by the host clamp.
  *
- * Only the summary is writable: run history, spend, and revisit chain are
+ * Only the summary is writable: run history and spend are
  * host-written facts the agent must not be able to edit.
  */
 export function buildCaseFileTool(file: CaseFile): ToolRegistration {
