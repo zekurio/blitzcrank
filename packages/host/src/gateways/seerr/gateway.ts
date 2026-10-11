@@ -1,5 +1,3 @@
-import path from "node:path"
-
 import { Effect, Semaphore } from "effect"
 
 import type { Config } from "../../config.ts"
@@ -65,9 +63,6 @@ export function createSeerrGateway(config: Config): Gateway {
     brief:
       "Each conversation is one Seerr issue and its comments. Your final message is posted on the issue as a comment. " +
       "You cannot resolve an issue. After a verified fix, ask the reporter to mark it resolved.",
-    // Seerr was the only source of threads before gateways existed. Its files
-    // stay where they were written.
-    sessions: path.join("sessions", "issues"),
     authorized: (authorization) =>
       !config.webhookSecret ||
       authorization === config.webhookSecret ||

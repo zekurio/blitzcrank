@@ -72,15 +72,16 @@ export interface Intake {
 }
 
 export interface Gateway {
-  /** Routes `POST /webhook/<name>` and tags this gateway's threads. */
+  /**
+   * Routes `POST /webhook/<name>`, tags this gateway's threads, and names the
+   * directory their conversations are kept in.
+   */
   readonly name: string
   /**
    * For the system prompt: where messages come from, where a reply goes, and
    * what the thread leaves to the reporter.
    */
   readonly brief: string
-  /** Where its threads keep their conversations, below the data dir. */
-  readonly sessions: string
   /** Checked before a webhook body is read. */
   authorized(authorization: string | undefined): boolean
   /** Handles one webhook body and returns the JSON to answer with. */
@@ -93,30 +94,30 @@ export interface Gateway {
   channel(threadId: string): Channel
 }
 
-/** The host's gateways by name, each with its own storage. */
+/** The host's gateways by name, each with its own directory of conversations. */
 export class Gateways {
-  private readonly entries: Map<string, { gateway: Gateway; sessions: string }>
+  private readonly entries: Map<string, Gateway>
 
-  constructor(dataDir: string, gateways: readonly Gateway[]) {
-    this.entries = new Map(
-      gateways.map((gateway) => [
-        gateway.name,
-        { gateway, sessions: path.join(dataDir, gateway.sessions) },
-      ]),
-    )
+  constructor(
+    private readonly dataDir: string,
+    gateways: readonly Gateway[],
+  ) {
+    this.entries = new Map(gateways.map((gateway) => [gateway.name, gateway]))
   }
 
   find(name: string): Gateway | undefined {
-    return this.entries.get(name)?.gateway
+    return this.entries.get(name)
   }
 
   of(thread: ThreadRef): Gateway {
-    return this.entry(thread).gateway
+    const gateway = this.entries.get(thread.gateway)
+    if (!gateway) throw new Error(`Unknown gateway ${thread.gateway}`)
+    return gateway
   }
 
   /** The directory holding every conversation of this thread's gateway. */
   sessionsDir(thread: ThreadRef): string {
-    return this.entry(thread).sessions
+    return path.join(this.dataDir, "sessions", this.of(thread).name)
   }
 
   sessionFile(thread: ThreadRef): string {
@@ -124,11 +125,5 @@ export class Gateways {
       this.sessionsDir(thread),
       `${encodeURIComponent(thread.id)}.sqlite`,
     )
-  }
-
-  private entry(thread: ThreadRef) {
-    const entry = this.entries.get(thread.gateway)
-    if (!entry) throw new Error(`Unknown gateway ${thread.gateway}`)
-    return entry
   }
 }

@@ -24,7 +24,7 @@ const MAX_FILES = 1000
 const MAX_ENTRIES = 500
 const MAX_RECORD_BYTES = 64_000
 
-/** Exact host-owned locations only. No recursive discovery or legacy JSONL. */
+/** Exact host-owned locations only, with no recursive discovery. */
 function listTranscripts(dir: string) {
   return Effect.tryPromise(() => readdir(dir, { withFileTypes: true })).pipe(
     Effect.map((entries) =>

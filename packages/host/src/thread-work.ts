@@ -45,17 +45,7 @@ export class ThreadWork {
     return this.transitions.withPermit(
       Effect.gen({ self: this }, function* () {
         const admitted: Job<ThreadJob>[] = []
-        for (const stored of this.jobs.pending()) {
-          const job = this.threadJob(stored)
-          if (!job) {
-            // Written by another version, or for a gateway that is gone.
-            // Nothing here can run it or clean up after it.
-            console.error(`[job:${stored.id}] unreadable job; dropped`)
-            if (stored.status === "cancelling")
-              this.jobs.markCancelled(stored.id)
-            this.jobs.markFailed(stored.id, "Unreadable persisted job")
-            continue
-          }
+        for (const job of this.unfinished()) {
           if (job.status === "cancelling") {
             yield* this.recoverCancellation(job)
             continue
@@ -171,43 +161,18 @@ export class ThreadWork {
   }
 
   private isCancelling(key: string): boolean {
-    return this.jobs.pending().some((stored) => {
-      if (stored.status !== "cancelling") return false
-      const job = this.threadJob(stored)
-      return job !== undefined && threadKey(job.payload.event.thread) === key
-    })
+    return this.unfinished().some(
+      (job) =>
+        job.status === "cancelling" &&
+        threadKey(job.payload.event.thread) === key,
+    )
   }
 
-  /**
-   * A journal entry as a job of a gateway this host still has. The host wrote
-   * the event after its gateway accepted it.
-   */
-  private threadJob(job: Job): Job<ThreadJob> | undefined {
-    const payload = job.payload
-    if (
-      payload === null ||
-      typeof payload !== "object" ||
-      !("runsAhead" in payload) ||
-      typeof payload.runsAhead !== "number" ||
-      !("event" in payload) ||
-      payload.event === null ||
-      typeof payload.event !== "object" ||
-      !("type" in payload.event) ||
-      typeof payload.event.type !== "string" ||
-      !("thread" in payload.event)
-    )
-      return undefined
-    const thread = payload.event.thread
-    if (
-      thread === null ||
-      typeof thread !== "object" ||
-      !("gateway" in thread) ||
-      typeof thread.gateway !== "string" ||
-      !("id" in thread) ||
-      typeof thread.id !== "string" ||
-      !this.gateways.find(thread.gateway)
-    )
-      return undefined
-    return job as Job<ThreadJob>
+  /** Accepted jobs that have not ended, oldest first. */
+  private unfinished(): Job<ThreadJob>[] {
+    // SAFETY: This host is the journal's only writer, and `enqueueEffect`
+    // writes nothing but thread jobs. State from another version is not
+    // supported.
+    return this.jobs.pending() as Job<ThreadJob>[]
   }
 }
