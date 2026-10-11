@@ -71,7 +71,7 @@ For missing episodes, inspect monitoring, air dates, files, queue, history, and
 paths. Never search unaired/unmonitored episodes or duplicate progressing work.
 If nothing is grabbed, report concrete candidate rejections.
 
-Change monitoring only when the issue asks for it or a wrong flag blocks the
+Change monitoring only when the report asks for it or a wrong flag blocks the
 requested media. `sonarr_set_series_monitoring` takes `seriesId` and any of
 `monitored`, `seasons`, and `monitorNewItems`. It keeps every other series
 field, and its `effects` show the field-level diff. Setting a season's flag
@@ -80,7 +80,7 @@ check them first. For single episodes, call `sonarr_set_episode_monitoring`
 with `episodeIds` and `monitored`.
 
 Call `sonarr_auto_search` with `seriesId` plus `episodeIds` or `seasonNumber`.
-`seriesId` alone searches the whole series and needs a whole-series issue. A
+`seriesId` alone searches the whole series and needs a whole-series report. A
 series or season search covers every monitored episode in scope, including
 ones that already have a file a grab may replace, so read `sonarr_episodes`
 and name `episodeIds` until the scope matches the report. Test hypotheses on

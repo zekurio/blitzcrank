@@ -1,11 +1,11 @@
 import { Effect, Semaphore } from "effect"
 
-import type { Config } from "../../config.ts"
 import type { Channel, Gateway, Intake, ThreadRef } from "../../gateway.ts"
 import type { JsonValue } from "../../services/http.ts"
-import { SeerrClient } from "../../services/seerr.ts"
 import { toText } from "../../tools/common.ts"
+import { SeerrClient } from "./client.ts"
 import { createCommentGateEffect } from "./comment-gate.ts"
+import type { SeerrConfig } from "./config.ts"
 import { isBotComment } from "./loop-guard.ts"
 import {
   isIssueEvent,
@@ -16,12 +16,18 @@ import {
 
 const NAME = "seerr"
 
+const BRIEF =
+  "Each conversation is one Seerr issue and its comments. Every event comes with a fresh read of the issue; read " +
+  "it again only if that read is cut or you need newer state. Your final message is posted on the issue as a " +
+  "comment. The issue's status is the reporter's to change. Do not mention it, and do not ask anyone to resolve " +
+  "or close the issue."
+
 /**
  * Seerr issues as threads: one issue is one thread, an issue comment is a
  * message in it, and the reply is a comment the host posts with its own key.
  */
-export function createSeerrGateway(config: Config): Gateway {
-  const seerr = new SeerrClient(config.seerr, config.seerrBotUserId)
+export function createSeerrGateway(config: SeerrConfig): Gateway {
+  const seerr = new SeerrClient(config)
   const allowComment = createCommentGateEffect(seerr)
   // `postComment` infers the new comment's id from the issue's comment list,
   // so two posts in flight together could return the same id. One run would
@@ -29,6 +35,7 @@ export function createSeerrGateway(config: Config): Gateway {
   const posting = Semaphore.makeUnsafe(1)
 
   const channel = (issueId: string): Channel => ({
+    brief: BRIEF,
     contextEffect: () =>
       seerr
         .getIssueEffect(issueId)
@@ -60,10 +67,6 @@ export function createSeerrGateway(config: Config): Gateway {
 
   return {
     name: NAME,
-    brief:
-      "Each conversation is one Seerr issue and its comments. Your final message is posted on the issue as a comment. " +
-      "The issue's status is the reporter's to change. Do not mention it, and do not ask anyone to resolve or close " +
-      "the issue.",
     authorized: (authorization) =>
       !config.webhookSecret ||
       authorization === config.webhookSecret ||
@@ -72,7 +75,7 @@ export function createSeerrGateway(config: Config): Gateway {
       // SAFETY: Webhook fields stay optional and are sanitized before use.
       webhookEffect(body as SeerrWebhookPayload, intake, {
         allowComment,
-        botUsername: config.seerrBotUsername,
+        botUsername: config.botUsername,
       }),
     // A queued comment is checked again: its author may have lost the right
     // to drive the agent while the host was down.

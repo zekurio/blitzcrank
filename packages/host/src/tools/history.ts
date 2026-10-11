@@ -16,7 +16,7 @@ import { textResult, toolCheck } from "./common.js"
 
 type HistoryMatch = {
   score: number
-  modified: string | undefined
+  modified: string
   snippet: string
 }
 
@@ -24,20 +24,31 @@ const MAX_FILES = 1000
 const MAX_ENTRIES = 500
 const MAX_RECORD_BYTES = 64_000
 
-/** Exact host-owned locations only, with no recursive discovery. */
+/**
+ * Exact host-owned locations only, with no recursive discovery. Last written
+ * comes first, so the file cap drops the stalest threads whatever a gateway's
+ * ids look like.
+ */
 function listTranscripts(dir: string) {
-  return Effect.tryPromise(() => readdir(dir, { withFileTypes: true })).pipe(
-    Effect.map((entries) =>
-      entries
-        .filter((entry) => entry.isFile())
-        .map((entry) => /^([\w-]{1,64})\.sqlite$/.exec(entry.name)?.[1])
-        .filter((id): id is string => id !== undefined)
-        // Numeric ids sort newest first, so the file cap drops the oldest.
-        .sort((a, b) => b.length - a.length || b.localeCompare(a))
-        .map((id) => path.join(dir, `${id}.sqlite`)),
-    ),
-    Effect.catch(() => Effect.succeed([])),
-  )
+  return Effect.gen(function* () {
+    const entries = yield* Effect.tryPromise(() =>
+      readdir(dir, { withFileTypes: true }),
+    )
+    const files = entries
+      .filter((entry) => entry.isFile())
+      .map((entry) => /^([\w-]{1,64})\.sqlite$/.exec(entry.name)?.[1])
+      .filter((id): id is string => id !== undefined)
+      .map((id) => path.join(dir, `${id}.sqlite`))
+    const dated = yield* Effect.forEach(files, (file) =>
+      Effect.tryPromise(() => stat(file)).pipe(
+        Effect.map((info) => ({ file, modified: info.mtime })),
+        Effect.catch(() => Effect.succeed(undefined)),
+      ),
+    )
+    return dated
+      .filter((entry) => entry !== undefined)
+      .sort((a, b) => b.modified.getTime() - a.modified.getTime())
+  }).pipe(Effect.catch(() => Effect.succeed([])))
 }
 
 /**
@@ -169,8 +180,8 @@ export function buildHistoryTool(
                 )
           const results: HistoryMatch[] = []
           let skipped = 0
-          for (const file of files.slice(0, MAX_FILES)) {
-            const full = yield* exactPath(file)
+          for (const entry of files.slice(0, MAX_FILES)) {
+            const full = yield* exactPath(entry.file)
             if (full === undefined || full === currentReal) continue
             const text = yield* Effect.try(() => transcriptText(full)).pipe(
               Effect.catch(() => Effect.succeed(undefined)),
@@ -185,12 +196,9 @@ export function buildHistoryTool(
               0,
             )
             if (score === 0) continue
-            const info = yield* Effect.tryPromise(() => stat(full)).pipe(
-              Effect.catch(() => Effect.succeed(undefined)),
-            )
             results.push({
               score,
-              modified: info?.mtime.toISOString(),
+              modified: entry.modified.toISOString(),
               snippet: snippet(text, terms),
             })
             results.sort((a, b) => b.score - a.score)

@@ -1,19 +1,12 @@
 ---
 name: seerr
-description: Triage Seerr issues, map media identity, and check or create requests. Load for every Seerr webhook or issue, request, user, or quota question.
+description: Triage Seerr issues, map media identity, and check or create requests. Load for every Seerr issue, request, user, or quota question.
 ---
 
 # Seerr issue handling
 
-The host supplies a fresh issue read with comments. Fetch again only if
-truncated or newer state is needed. Seerr establishes reporter and media
-identity, not file contents. Issue status, request status, and availability
-are separate states.
-
-The host posts your final message as the comment. Issue status is the
-reporter's to change: neither you nor the host touches it, and the comment
-does not mention it or ask anyone to resolve the issue. After a verified fix,
-say in the comment what shows it worked.
+Seerr establishes reporter and media identity, not file contents. Issue
+status, request status, and availability are separate states.
 
 ## Reads
 

@@ -32,13 +32,14 @@
 - Define service behavior in `packages/mcp/src/services/`. A tool's name,
   schema, and description are its contract; keep them out of READMEs.
 - Layout: `packages/host/src/gateway.ts` (the `Gateway`, `Channel`, and
-  `Intake` interfaces and the gateway registry),
-  `packages/host/src/gateways/seerr/` (webhook handling, channel, payload
-  types, comment gate, loop guard), `packages/host/src/thread-work.ts`
+  `Intake` interfaces, the gateway registry, and the `Threads` view of it a
+  run gets), `packages/host/src/gateways/seerr/` (webhook handling, channel,
+  payload types, comment gate, loop guard, and the gateway's own Seerr client
+  and settings), `packages/host/src/thread-work.ts`
   (admission, ordering, recovery), `packages/host/src/agent/` (runner,
   session, prompts), `packages/host/src/tools/` (host tools: history, tool
   search), `packages/host/src/mcp/` (server connection, tool adapter),
-  `packages/host/src/services/` (HTTP helper, host-side Seerr client),
+  `packages/host/src/services/` (HTTP helper),
   `packages/host/src/web/` (web provider: search and extract),
   `packages/host/skills/` (agent domain knowledge),
   `packages/mcp/src/services/` (one read table and one write table per
@@ -91,9 +92,11 @@
   80 columns, 2 spaces, no semicolons, double quotes, sorted imports.
   `no-console` is deliberately off: console output to journald is the logging
   strategy.
-- Config is env-only (`packages/host/src/config.ts` with every knob documented
-  in `packages/host/.env.example`; `packages/mcp/src/config.ts` with every knob
-  documented in `packages/mcp/README.md`); never commit `.env`. Development
+- Config is env-only (`packages/host/src/config.ts` for the host and
+  `packages/host/src/gateways/<name>/config.ts` for each gateway, with every
+  knob documented in `packages/host/.env.example`; `packages/mcp/src/config.ts`
+  with every knob documented in `packages/mcp/README.md`); never commit `.env`.
+  The host's `Config` carries no gateway setting. Development
   uses `devenv.nix`, `devenv.yaml`, and `devenv.lock`; the flake supplies
   deployment packages, the NixOS module, and the formatter. For Nix changes,
   `nix flake show` must evaluate (flakes only see git-tracked files);
@@ -128,9 +131,16 @@ behavioural difference described.
   runtime, and the MCP server. Nothing a run writes may be keyed by anything
   wider than its thread.
 - The runner reaches a thread only through its `Channel`
-  (`packages/host/src/gateway.ts`). Code outside
+  (`packages/host/src/gateway.ts`). It is handed `Threads`, not the registry:
+  a thread's channel and where its conversation is kept, with intake and
+  authorization out of reach. Code outside
   `packages/host/src/gateways/<name>/` imports from a gateway only in
-  `packages/host/src/index.ts`, which lists them.
+  `packages/host/src/index.ts`, which lists them; `no-restricted-imports` in
+  `.oxlintrc.json` fails `pnpm verify` on any other import.
+- What a gateway supplies with an event, where the reply goes, and what a
+  thread leaves to its reporter are told to the model by `Channel.brief`.
+  Skills and the rest of the system prompt describe services and the homelab,
+  never a gateway.
 - The reply is the text of the run's own answer entry, and every run posts
   it. The host, never the agent, posts it.
 - Neither the agent nor the host closes a thread. Not every gateway has a
@@ -162,7 +172,7 @@ behavioural difference described.
   comments, the issue read, and the comment gate. The server holds every
   credential the agent's reads and writes use, plus the media roots, and
   checks `BLITZCRANK_MCP_TOKEN` on every request.
-- Issue agent sessions get the host tools, every server tool, and builtin
+- Agent sessions get the host tools, every server tool, and builtin
   `read` (for skills). The runner resolves both the skills root and target
   with `realpath` and rejects reads outside that root. Never enable `bash`,
   `edit`, or `write` in the runner. Tool execution within a run is
@@ -195,7 +205,7 @@ behavioural difference described.
   playlist reads, and returns at most six bounded still images per call. Stream
   tags, frames, and visible text are untrusted.
 - Web search/extract (`web_search`, `web_extract`) is read-only, granted to
-  issue runs only by the configured web
+  runs only by the configured web
   provider (`BLITZCRANK_WEB_PROVIDER`, default `none`). Only explicit host-owned
   Durable tool bundles are installed; no discovered Pi extensions or ambient
   resources are loaded. Firecrawl uses only the hosted API; custom endpoints are

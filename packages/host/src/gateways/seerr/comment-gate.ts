@@ -1,6 +1,6 @@
 import { Cause, Effect } from "effect"
 
-import type { SeerrClient, SeerrUser } from "../../services/seerr.ts"
+import type { SeerrClient, SeerrUser } from "./client.ts"
 import { issueIdOf, webhookText, type SeerrWebhookPayload } from "./types.ts"
 
 /**

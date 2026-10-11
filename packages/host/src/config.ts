@@ -1,8 +1,3 @@
-export interface ServiceConfig {
-  url: string
-  apiKey: string
-}
-
 export interface McpConfig {
   /** Streamable HTTP endpoint, e.g. http://127.0.0.1:8485/mcp. */
   url: string
@@ -14,16 +9,18 @@ export type WebConfig =
   | { provider: "firecrawl"; apiKey: string }
   | { provider: "none" }
 
+/**
+ * The host's own settings. A gateway reads its own in
+ * `gateways/<name>/config.ts`, so none of them appear here.
+ */
 export interface Config {
   port: number
   /** How many threads may run at once. A thread never runs twice at once. */
   maxParallelRuns: number
   /** Persistent state (session transcripts) lives here. */
   dataDir: string
-  /** Shared secret checked against the Authorization header of incoming webhooks. */
-  webhookSecret: string | undefined
   /**
-   * Required model for issue runs, e.g. "anthropic/claude-sonnet-4-5".
+   * Required model for every run, e.g. "anthropic/claude-sonnet-4-5".
    * blitzcrank deliberately ships no built-in model default.
    */
   model: string
@@ -39,25 +36,12 @@ export interface Config {
    * loaded; unset loads no models file rather than discovering one.
    */
   modelsPath: string | undefined
-  /** Language for public comments (default German, matching the deployment). */
+  /** Language of replies (default German, matching the deployment). */
   language: string
-  /** External web search/extract for issue runs. */
+  /** External web search/extract for runs. */
   web: WebConfig
-  /** Seerr user id sent as X-Api-User so bot comments are attributed correctly. */
-  seerrBotUserId: string | undefined
-  /** Display name of the bot's Seerr user; its own comment webhooks are ignored. */
-  seerrBotUsername: string | undefined
-  /** Host-side Seerr access only: comments, the issue read, the comment gate. */
-  seerr: ServiceConfig
   /** The MCP server every agent-facing service read and write goes through. */
   mcp: McpConfig
-}
-
-function service(prefix: string): ServiceConfig | undefined {
-  const url = process.env[`${prefix}_URL`]
-  const apiKey = process.env[`${prefix}_API_KEY`]
-  if (!url || !apiKey) return undefined
-  return { url: url.replace(/\/+$/, ""), apiKey }
 }
 
 /** A port that silently becomes NaN would bind nowhere useful. */
@@ -148,23 +132,15 @@ function web(): WebConfig {
 }
 
 export function loadConfig(): Config {
-  const seerr = service("SEERR")
-  if (!seerr) {
-    throw new Error("SEERR_URL and SEERR_API_KEY are required")
-  }
   return {
     port: number("BLITZCRANK_PORT", process.env.BLITZCRANK_PORT, 8484),
     maxParallelRuns: maxParallelRuns(),
     dataDir: process.env.BLITZCRANK_DATA_DIR ?? "data",
-    webhookSecret: process.env.BLITZCRANK_WEBHOOK_SECRET,
     model: requiredModel(),
     authPath: process.env.BLITZCRANK_AUTH_PATH,
     modelsPath: process.env.BLITZCRANK_MODELS_PATH,
     language: process.env.BLITZCRANK_LANGUAGE ?? "German",
     web: web(),
-    seerrBotUserId: process.env.SEERR_BOT_USER_ID,
-    seerrBotUsername: process.env.SEERR_BOT_USERNAME,
-    seerr,
     mcp: mcp(),
   }
 }

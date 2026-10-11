@@ -58,6 +58,11 @@ export interface Notice {
  * not every gateway has a closed state, so that stays with the people in it.
  */
 export interface Channel {
+  /**
+   * For the system prompt: where messages come from, where a reply goes, and
+   * what the thread leaves to the reporter.
+   */
+  readonly brief: string
   /** The thread as it is now, for the prompt. Untrusted content. */
   contextEffect(): Effect.Effect<string, unknown>
   /** Posts the run's one visible message, or rewrites it in place. */
@@ -77,11 +82,6 @@ export interface Gateway {
    * directory their conversations are kept in.
    */
   readonly name: string
-  /**
-   * For the system prompt: where messages come from, where a reply goes, and
-   * what the thread leaves to the reporter.
-   */
-  readonly brief: string
   /** Checked before a webhook body is read. */
   authorized(authorization: string | undefined): boolean
   /** Handles one webhook body and returns the JSON to answer with. */
@@ -115,6 +115,10 @@ export class Gateways {
     return gateway
   }
 
+  channel(thread: ThreadRef): Channel {
+    return this.of(thread).channel(thread.id)
+  }
+
   /** The directory holding every conversation of this thread's gateway. */
   sessionsDir(thread: ThreadRef): string {
     return path.join(this.dataDir, "sessions", this.of(thread).name)
@@ -127,3 +131,9 @@ export class Gateways {
     )
   }
 }
+
+/**
+ * All a run is handed of the gateways: its thread's channel and where the
+ * thread's conversation is kept. Intake and authorization stay out of reach.
+ */
+export type Threads = Pick<Gateways, "channel" | "sessionFile" | "sessionsDir">

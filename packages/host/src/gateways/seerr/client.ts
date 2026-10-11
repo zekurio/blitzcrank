@@ -1,11 +1,11 @@
 import { Effect } from "effect"
 
-import type { ServiceConfig } from "../config.ts"
 import {
   jsonRequestEffect,
   type JsonValue,
   type JsonRequestError,
-} from "./http.ts"
+} from "../../services/http.ts"
+import type { SeerrConfig } from "./config.ts"
 
 export interface SeerrUser {
   id?: number
@@ -19,17 +19,16 @@ export interface SeerrIssue {
   createdBy?: SeerrUser
 }
 
-/** Host-owned Seerr issue lifecycle: fetching, commenting, status changes. */
+/** The gateway's own Seerr access: the issue read, its users, and comments. */
 export class SeerrClient {
   constructor(
-    private readonly cfg: ServiceConfig,
-    private readonly botUserId: string | undefined,
+    private readonly cfg: Pick<SeerrConfig, "url" | "apiKey" | "botUserId">,
   ) {}
 
   private headers(): Record<string, string> {
     return {
       "X-Api-Key": this.cfg.apiKey,
-      ...(this.botUserId ? { "X-Api-User": this.botUserId } : {}),
+      ...(this.cfg.botUserId ? { "X-Api-User": this.cfg.botUserId } : {}),
     }
   }
 

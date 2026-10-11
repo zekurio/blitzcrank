@@ -72,7 +72,7 @@ Never duplicate progressing work. Let Radarr choose the release. Call
 will not pick. Radarr only grabs a release still in its search cache, about 30
 minutes after that read.
 
-Change monitoring only when the issue asks for it or a wrong flag blocks the
+Change monitoring only when the report asks for it or a wrong flag blocks the
 requested movie. `radarr_set_movie_monitoring` takes `movieId` and `monitored`
 and keeps every other movie field.
 

@@ -7,11 +7,11 @@ import type { Config } from "../config.ts"
 import {
   threadKey,
   type Channel,
-  type Gateways,
   type Marker,
   type Inbound,
   type Notice,
   type ThreadRef,
+  type Threads,
 } from "../gateway.ts"
 import { JobStore } from "../jobs.ts"
 import { connectMcpEffect } from "../mcp/client.ts"
@@ -37,7 +37,7 @@ export class ThreadRunner {
     private readonly modelRuntime: ModelRuntime,
     private readonly modelSpec: string,
     private readonly jobs: JobStore,
-    private readonly gateways: Gateways,
+    private readonly threads: Threads,
   ) {}
 
   get anchor(): string {
@@ -51,7 +51,7 @@ export class ThreadRunner {
    */
   notifyQueuedEffect(thread: ThreadRef, runsAhead: number) {
     const marker: Marker = { id: undefined }
-    return showEffect(this.channel(thread), marker, {
+    return showEffect(this.threads.channel(thread), marker, {
       text: queuedMessage(this.config.language, runsAhead),
       signature: this.anchor,
     })
@@ -65,8 +65,7 @@ export class ThreadRunner {
     return Effect.gen({ self: this }, function* () {
       const thread = event.thread
       const key = threadKey(thread)
-      const gateway = this.gateways.of(thread)
-      const channel = gateway.channel(thread.id)
+      const channel = this.threads.channel(thread)
       return yield* Effect.gen({ self: this }, function* () {
         // The reporter sees that work started. The reply rewrites this same
         // message, and a run that dies first removes it, so a run leaves one
@@ -82,7 +81,7 @@ export class ThreadRunner {
         status.id = shown.id
         const context = yield* channel.contextEffect()
         const sessionFileRef: SessionFileRef = { current: undefined }
-        const storageFile = this.gateways.sessionFile(thread)
+        const storageFile = this.threads.sessionFile(thread)
         const resuming = yield* storageIO(() => stat(storageFile)).pipe(
           Effect.map((s) => s.isFile()),
           Effect.catch(() => Effect.succeed(false)),
@@ -95,7 +94,7 @@ export class ThreadRunner {
         const runTools = buildRunTools({
           modelInput: resolveModel(this.modelRuntime, this.modelSpec).input,
           mcp,
-          history: this.gateways.sessionsDir(thread),
+          history: this.threads.sessionsDir(thread),
           sessionFileRef,
         })
         const tools = [...runTools.tools, ...web.tools]
@@ -110,7 +109,7 @@ export class ThreadRunner {
           modelRuntime: this.modelRuntime,
           modelSpec: this.modelSpec,
           systemPrompt: buildSystemPrompt({
-            brief: gateway.brief,
+            brief: channel.brief,
             language: this.config.language,
             web: { search: web.searchTool, extract: web.extractTool },
             toolNames: tools.map((tool) => tool.name),
@@ -182,7 +181,7 @@ export class ThreadRunner {
   ): Effect.Effect<void, unknown> {
     return Effect.gen({ self: this }, function* () {
       const thread = event.thread
-      const storageFile = this.gateways.sessionFile(thread)
+      const storageFile = this.threads.sessionFile(thread)
       const actions = this.jobs.actions(requestId)
       // The run may have replaced the queue notice's marker with its own. An
       // unrecorded working line fails here for review.
@@ -236,12 +235,8 @@ export class ThreadRunner {
           .some((action) => action.key === "publish-reply")
       )
         return Effect.void
-      return publishEffect(this.channel(thread), status, undefined)
+      return publishEffect(this.threads.channel(thread), status, undefined)
     })
-  }
-
-  private channel(thread: ThreadRef): Channel {
-    return this.gateways.of(thread).channel(thread.id)
   }
 }
 

@@ -11,6 +11,7 @@ import { resolveModel } from "./agent/session.ts"
 import { modelRuntimeOptions } from "./auth.ts"
 import { loadConfig, type Config } from "./config.ts"
 import { Gateways } from "./gateway.ts"
+import { loadSeerrConfig } from "./gateways/seerr/config.ts"
 import { createSeerrGateway } from "./gateways/seerr/gateway.ts"
 import { JobStore } from "./jobs.ts"
 import { connectMcpEffect } from "./mcp/client.ts"
@@ -27,6 +28,11 @@ const SHUTDOWN_GRACE_MS = 30_000
 export function startServerEffect(): Effect.Effect<void, unknown> {
   return Effect.gen(function* () {
     const config = loadConfig()
+    // A new gateway is one more entry here. Each reads its own settings, so a
+    // missing one stops the service before anything else starts.
+    const gateways = new Gateways(config.dataDir, [
+      createSeerrGateway(loadSeerrConfig()),
+    ])
     const runtime = yield* Effect.tryPromise(() =>
       ModelRuntime.create(modelRuntimeOptions(config)),
     )
@@ -34,8 +40,6 @@ export function startServerEffect(): Effect.Effect<void, unknown> {
     yield* checkMcpEffect(config)
     yield* storageIO(() => mkdir(config.dataDir, { recursive: true }))
     const jobs = new JobStore(path.join(config.dataDir, "jobs.sqlite"))
-    // A new gateway is one more entry here.
-    const gateways = new Gateways(config.dataDir, [createSeerrGateway(config)])
     const work = new ThreadWork(
       new ThreadRunner(config, runtime, config.model, jobs, gateways),
       gateways,
