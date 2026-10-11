@@ -31,6 +31,7 @@ import {
   arrSharedReads,
   candidateFingerprint,
   candidateWarnings,
+  importTargetFingerprint,
   manualImportScope,
   matchCandidates,
   monitoringFingerprint,
@@ -506,13 +507,21 @@ function radarrActions(arr: Arr) {
             }
           })
           return {
-            state: { matches },
+            state: {
+              matches,
+              targets: params.files.map((file) => ({
+                movie: movies.get(file.movieId) ?? null,
+              })),
+            },
             summary: `Manual import of ${params.files.length} file(s), mode ${params.importMode}`,
             effects,
             warnings: candidateWarnings(matches),
           }
         }),
-      fingerprint: (state) => candidateFingerprint(state.matches),
+      fingerprint: (state) => ({
+        candidates: candidateFingerprint(state.matches),
+        targets: state.targets.map(importTargetFingerprint),
+      }),
       apply: (params) =>
         postCommand(arr, {
           name: "ManualImport",

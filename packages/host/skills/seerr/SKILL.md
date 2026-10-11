@@ -65,6 +65,9 @@ Search first and verify TMDB identity, media type, existing requests, and TV
 seasons. If a Seerr reporter identity exists, check that user's permissions and
 quota, and pass their `userId` so the request is theirs.
 
+A write with an unknown outcome stops the run for operator review. A
+completed write whose verification failed is still reported as completed.
+
 Every write is two calls. In a script, call `seerr_plan` and return the plan.
 Planning changes nothing. Read its `summary`, `effects`, and `warnings`, then
 call the `seerr_apply` tool directly with the `planId`. Scripts cannot call it.

@@ -48,6 +48,9 @@ redownload valid data that is inaccessible or still processing.
 Use job writes only for accidental pauses, failures whose cause is fixed, or
 orphans. Never delete a job Arr awaits without handling Arr state.
 
+A write with an unknown outcome stops the run for operator review. A
+completed write whose verification failed is still reported as completed.
+
 Every write is two calls. In a script, call `sabnzbd_plan` with an `action` and
 the job's `nzoId`, and return the plan. Planning changes nothing, and a job that
 is not in the named list fails here. The plan names the job's title, category,
@@ -62,7 +65,8 @@ return await tools.sabnzbd_plan({
 ```
 
 Apply fails with `plan is stale: ...` when the job left the list or changed
-status. Read it again and decide again. Apply re-reads the list and returns that
+status, identity, category, priority, storage path, or failure reason.
+Download progress alone does not invalidate a plan. Read it again and decide again. Apply re-reads the list and returns that
 as `verification`. `verificationError` means the write ran and only the
 read-back failed. A second apply of one `planId` returns the first outcome with
 `replayed: true`. Plans end at `expiresAt` and do not survive a server restart.

@@ -522,12 +522,15 @@ function compactSearchResult(result: JsonObject): JsonObject {
   }
 }
 
-/** The item exists and still lives at the path the plan saw. */
+/** Preserve the item's identity, including an operator's intervening rematch. */
 function itemFingerprint(state: { item: JsonObject }): JsonValue {
   return {
     itemId: state.item.Id ?? null,
     type: state.item.Type ?? null,
     path: state.item.Path ?? null,
+    name: state.item.Name ?? null,
+    productionYear: state.item.ProductionYear ?? null,
+    providerIds: state.item.ProviderIds ?? null,
   }
 }
 

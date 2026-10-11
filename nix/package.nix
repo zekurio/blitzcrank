@@ -27,10 +27,7 @@ stdenv.mkDerivation (finalAttrs: {
     inherit (finalAttrs) pname version src;
     inherit pnpm;
     fetcherVersion = 4;
-    # PLACEHOLDER: the workspace lockfile changed and the package only builds
-    # on linux. Run `nix build .#blitzcrank` on a linux host and replace this
-    # with the `got: sha256-...` value from the hash mismatch it reports.
-    hash = lib.fakeHash;
+    hash = "sha256-LxUIpq1T8jigu3ilEAIzRXClPf8i4UAcvJemofYVFNs=";
   };
 
   buildPhase = ''

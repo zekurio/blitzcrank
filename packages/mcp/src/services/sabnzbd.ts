@@ -365,12 +365,21 @@ function jobPlan(
   }
 }
 
-/** The job is in the named list with the status the plan saw. */
+/** Identity and editable state, excluding continuously changing progress. */
 function jobFingerprint(state: JobState): JsonValue {
   return {
     list: state.list,
     nzoId: state.job.nzo_id ?? null,
     status: state.job.status ?? null,
+    ...pick(state.job, [
+      "filename",
+      "name",
+      "cat",
+      "category",
+      "priority",
+      "storage",
+      "fail_message",
+    ]),
   }
 }
 

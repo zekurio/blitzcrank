@@ -75,8 +75,13 @@ function directTool(connection: McpConnection, tool: Tool): ToolRegistration {
         args,
         context.abortSignal,
       )
-      // The server answered, so the outcome is known even when it is a
-      // domain error such as a stale plan. Only a rejection is uncertain.
+      // The MCP server may answer after losing the service's write response.
+      // Throw so Durable leaves the unsafe intent unresolved and stops the run.
+      if (result.structuredContent?.writeOutcome === "unknown") {
+        throw new Error(resultText(result) || `${tool.name} outcome is unknown`)
+      }
+      // Validation, stale plans and explicit service rejections are known
+      // failures and may be checkpointed without blocking continuation.
       return {
         content: toLlmContent(result).map((block) =>
           block.type === "text"

@@ -64,6 +64,9 @@ replacement.
 
 ## Plan, then apply
 
+A write with an unknown outcome stops the run for operator review. A
+completed write whose verification failed is still reported as completed.
+
 Every write is two calls. In a script, call `sonarr_plan` with an `action` and
 return the plan. Planning changes nothing. It resolves the target against live
 state, so an ID that does not exist fails here. Read the plan's `summary`,
@@ -84,7 +87,10 @@ state moved. Re-read, decide again, and plan again. Apply returns the write's
 ran and only the read-back failed, so re-read the state yourself before
 planning anything else. A second apply of one `planId` returns the first outcome
 with `replayed: true` and runs nothing. Plans end at `expiresAt` and do not
-survive a server restart, so plan in the run that applies.
+survive a server restart, so plan in the run that applies. Import plans also
+check mappings, destination paths, and existing file ids. Queue-removal plans
+check other items sharing the download; deleting from a truncated queue is
+refused because its full extent is unknown.
 
 ## Search and replacement
 

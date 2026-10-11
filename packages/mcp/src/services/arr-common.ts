@@ -840,8 +840,39 @@ export function candidateFingerprint(matches: CandidateMatch[]): JsonValue {
       path: match.path,
       size: match.candidate.size ?? null,
       rejections: rejectionReasons(match.candidate),
+      target: importTargetFingerprint(match.candidate),
+      quality: match.candidate.quality ?? null,
+      languages: match.candidate.languages ?? null,
+      releaseGroup: match.candidate.releaseGroup ?? null,
+      downloadId: match.candidate.downloadId ?? null,
     }))
     .sort((a, b) => a.path.localeCompare(b.path))
+}
+
+/** Both an automatic mapping and an explicit import depend on its destination. */
+export function importTargetFingerprint(target: JsonObject): JsonValue {
+  return {
+    series: pick(objectField(target, "series"), ["id", "title", "path"]),
+    movie: pick(objectField(target, "movie"), [
+      "id",
+      "title",
+      "path",
+      "hasFile",
+      "movieFileId",
+    ]),
+    episodes: objectList(target.episodes)
+      .map((episode) => ({
+        id: isNumber(episode.id) ? episode.id : 0,
+        ...pick(episode, [
+          "seriesId",
+          "seasonNumber",
+          "episodeNumber",
+          "hasFile",
+          "episodeFileId",
+        ]),
+      }))
+      .sort((a, b) => a.id - b.id),
+  }
 }
 
 export function candidateWarnings(matches: CandidateMatch[]): string[] {
@@ -1043,6 +1074,11 @@ export function arrSharedActions(arr: Arr) {
       plan: (params, signal) =>
         Effect.gen(function* () {
           const queue = yield* readQueue(arr, signal)
+          if (params.removeFromClient && queue.records.length < queue.total) {
+            return yield* toolFail(
+              "the queue is truncated; cannot establish every item sharing this download before deleting it",
+            )
+          }
           const item = queue.records.find(
             (entry) => entry.id === params.queueId,
           )
@@ -1071,7 +1107,7 @@ export function arrSharedActions(arr: Arr) {
             ].join("; "),
           }
           return {
-            state: { item },
+            state: { item, siblings },
             summary: `Remove queue item ${params.queueId} (${title})${params.removeFromClient ? " and delete its download" : ""}${params.blocklist ? ", blocklisting the release" : ""}`,
             effects: [effect],
             warnings: [
@@ -1087,9 +1123,24 @@ export function arrSharedActions(arr: Arr) {
           }
         }),
       fingerprint: (state) => ({
-        queueId: state.item.id ?? null,
-        downloadId: state.item.downloadId ?? null,
-        title: state.item.title ?? null,
+        item: pick(state.item, [
+          "id",
+          "downloadId",
+          "title",
+          "status",
+          "trackedDownloadStatus",
+          "trackedDownloadState",
+          "outputPath",
+          "seriesId",
+          "episodeId",
+          "movieId",
+        ]),
+        siblings: state.siblings
+          .map((item) => ({
+            id: isNumber(item.id) ? item.id : 0,
+            ...pick(item, ["seriesId", "episodeId", "movieId"]),
+          }))
+          .sort((a, b) => a.id - b.id),
       }),
       apply: (params) =>
         arrRequest(arr, `/api/v3/queue/${params.queueId}`, {

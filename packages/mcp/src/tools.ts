@@ -354,7 +354,7 @@ export function definePlanApply(
     description:
       `Apply one ${service} plan by planId. Re-reads the planned state first and fails with "plan is stale" when it ` +
       "changed. Returns the write's result and a verification read-back. Applying a planId again returns the first " +
-      "outcome with replayed: true and runs nothing.",
+      "outcome with replayed: true and runs nothing. An unknown write outcome requires operator review.",
     inputSchema: { ...APPLY_INPUT, type: "object" },
     annotations: {
       readOnlyHint: false,
@@ -450,9 +450,10 @@ function applyAttempt(
         written.error.status < 500
       return applied({
         ok: false,
+        writeOutcome: rejected ? "rejected" : "unknown",
         message: rejected
           ? `${label} was rejected by the service and changed nothing: ${reason}. The plan is consumed. Plan again once the cause is fixed.`
-          : `${label} failed and its result is unknown: ${reason}. The plan is consumed and the write may or may not have taken effect. Read the state again before planning anything else.`,
+          : `${label} failed and its result is unknown: ${reason}. The plan is consumed and the write may or may not have taken effect. Operator review is required before another write.`,
       })
     }
     const result = written.result ?? { ok: true }
@@ -483,7 +484,8 @@ function applyAttempt(
         writeSent
           ? applied({
               ok: false,
-              message: `${label} crashed after its write was sent: ${message}. The plan is consumed. Read the state again.`,
+              writeOutcome: "unknown",
+              message: `${label} crashed after its write was sent: ${message}. The plan is consumed. Operator review is required before another write.`,
             })
           : untouched(
               `${label} could not start, so nothing was written: ${message}`,
@@ -524,11 +526,21 @@ function applyResult(
   replayed: boolean,
 ): ToolResult {
   if (!outcome.ok) {
-    return errorResult(
-      replayed
-        ? `${outcome.message} (replayed: this is the recorded outcome of the first apply; nothing ran again)`
-        : outcome.message,
-    )
+    return {
+      ...errorResult(
+        replayed
+          ? `${outcome.message} (replayed: this is the recorded outcome of the first apply; nothing ran again)`
+          : outcome.message,
+      ),
+      // A successful MCP exchange does not establish whether the service wrote.
+      // Keep that distinction machine-readable, including when replaying it.
+      structuredContent: {
+        planId,
+        action: actionName,
+        writeOutcome: outcome.writeOutcome,
+        replayed,
+      },
+    }
   }
   return jsonResult({
     planId,

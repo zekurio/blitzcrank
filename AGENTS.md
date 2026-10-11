@@ -307,7 +307,9 @@ small named helpers below it. Extract only when it names a real concept.
   read-back and must not hide a completed write. An action without a
   fingerprint needs its reason stated in the contract, as `grabRelease` has.
 - A failed write is recorded as its plan's outcome and replayed, never re-run:
-  its result is unknown. A re-read that fails because the service is down
+  an unknown result carries `writeOutcome: "unknown"` across MCP, and the host
+  stops the Durable run for review without checkpointing a known outcome.
+  A re-read that fails because the service is down
   writes nothing and keeps the plan. An apply keeps running when its client
   disconnects, so a write is never left half-recorded.
 - The server compacts service responses to the fields the agent needs, pages

@@ -47,12 +47,15 @@ the file inspected in Arr.
 
 ## Writes
 
+A write with an unknown outcome stops the run for operator review. A
+completed write whose verification failed is still reported as completed.
+
 Every write is two calls. In a script, call `jellyfin_plan` and return the
 plan. Planning changes nothing, and an item that does not exist fails here. The
 plan names the item, its type, and its path. Check them, then call the
 `jellyfin_apply` tool directly with the `planId`. Scripts cannot call it. Apply
-fails with `plan is stale: ...` when the item's path changed; read and plan
-again. It returns a `verification` re-read of the item, and a second apply of
+fails with `plan is stale: ...` when the item's identity, path, name, year, or
+provider ids changed; read and plan again. It returns a `verification` re-read of the item, and a second apply of
 one `planId` returns the first outcome with `replayed: true`.
 
 ```js

@@ -22,7 +22,11 @@ export type ApplyOutcome =
       verification?: JsonValue
       verificationError?: string
     }
-  | { ok: false; message: string }
+  | {
+      ok: false
+      writeOutcome: "rejected" | "unknown"
+      message: string
+    }
 
 /**
  * How one apply attempt left its plan. `applied` consumes it, including when
@@ -118,6 +122,7 @@ export class PlanStore {
         kind: "applied",
         outcome: {
           ok: false,
+          writeOutcome: "unknown",
           message: `apply crashed and its write may have run: ${cause instanceof Error ? cause.message : String(cause)}`,
         },
       }),
