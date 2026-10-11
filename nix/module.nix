@@ -1,6 +1,7 @@
 {
   config,
   lib,
+  options,
   pkgs,
   ...
 }:
@@ -201,42 +202,20 @@ in
       '';
     };
 
-    mediaRoots = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [ ];
-      example = [
-        "/mnt/media"
-        "/mnt/downloads/complete"
-      ];
-      description = ''
-        Absolute directories the read-only {command}`media_probe` tool may
-        inspect with ffprobe: the media library plus the download client's
-        completed directory, so a release's real audio/subtitle tracks can be
-        checked before import. Paths resolving outside these roots are
-        rejected. Empty (the default) disables the tool entirely.
-
-        These must be the paths *as blitzcrank sees them*: if Sonarr runs in a
-        container with a different mapping, the probe needs the host path. They
-        are pulled in as mount dependencies, so the unit waits for a ZFS pool or
-        network share instead of starting on an empty mountpoint.
-
-        The service runs as a {option}`DynamicUser` with no supplementary
-        groups: the roots must be readable by `others`, or the unit needs
-        {option}`systemd.services.blitzcrank.serviceConfig.SupplementaryGroups`
-        and `DynamicUser = false`.
-      '';
-    };
-
     environmentFile = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
       default = null;
       example = "/run/secrets/blitzcrank.env";
       description = ''
-        Environment file with secrets: SEERR_URL/SEERR_API_KEY (required),
-        SONARR_/RADARR_/SABNZBD_/JELLYFIN_ URLs and API keys,
-        BLITZCRANK_WEBHOOK_SECRET, FIRECRAWL_API_KEY when
-        {option}`webProvider` is "firecrawl", and provider API keys
-        such as ANTHROPIC_API_KEY when not using OAuth.
+        Environment file with the host's secrets: SEERR_URL/SEERR_API_KEY
+        (required; the host comments on and resolves issues itself),
+        BLITZCRANK_MCP_TOKEN (required; must be the same token as in
+        {option}`mcp.environmentFile`), BLITZCRANK_WEBHOOK_SECRET,
+        FIRECRAWL_API_KEY when {option}`webProvider` is "firecrawl", and
+        provider API keys such as ANTHROPIC_API_KEY when not using OAuth.
+
+        Sonarr, Radarr, SABnzbd, and Jellyfin credentials do not belong here:
+        only the MCP server holds them, see {option}`mcp.environmentFile`.
       '';
     };
 
@@ -247,6 +226,91 @@ in
         SEERR_BOT_USERNAME = "blitzcrank";
       };
       description = "Extra non-secret environment variables.";
+    };
+
+    mcp = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = ''
+          Whether to run the MCP server on this host as
+          `blitzcrank-mcp.service`. It holds the Sonarr, Radarr, SABnzbd, and
+          Jellyfin credentials and the media mounts, and serves the typed
+          reads and plan/apply writes the agent uses. Disable it only when the
+          server runs elsewhere, and point {option}`mcp.url` at it.
+        '';
+      };
+
+      port = lib.mkOption {
+        type = lib.types.port;
+        default = 8485;
+        description = "Listen port of the MCP server, bound to 127.0.0.1.";
+      };
+
+      url = lib.mkOption {
+        type = lib.types.str;
+        default = "http://127.0.0.1:${toString cfg.mcp.port}/mcp";
+        defaultText = lib.literalExpression ''"http://127.0.0.1:''${toString config.services.blitzcrank.mcp.port}/mcp"'';
+        example = "https://mcp.media.example/mcp";
+        description = ''
+          MCP endpoint the host connects to at the start of every issue run.
+          The default reaches the server this module runs. Set it when
+          {option}`mcp.enable` is false and the server runs elsewhere; the
+          bearer token travels with every request, so use TLS or a private
+          network for anything but loopback.
+        '';
+      };
+
+      mediaRoots = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+        example = [
+          "/mnt/media"
+          "/mnt/downloads/complete"
+        ];
+        description = ''
+          Absolute directories the read-only {command}`media_probe` and
+          {command}`media_frames` tools may inspect with ffprobe and ffmpeg:
+          the media library plus the download client's completed directory,
+          so a release's real audio/subtitle tracks can be checked before
+          import. Paths resolving outside these roots are rejected. Empty
+          (the default) disables both tools entirely.
+
+          These must be the paths *as the MCP server sees them*: if Sonarr
+          runs in a container with a different mapping, the probe needs the
+          host path. They are pulled in as mount dependencies, so the unit
+          waits for a ZFS pool or network share instead of starting on an
+          empty mountpoint.
+
+          The server runs as a {option}`DynamicUser` with no supplementary
+          groups: the roots must be readable by `others`, or the unit needs
+          {option}`systemd.services.blitzcrank-mcp.serviceConfig.SupplementaryGroups`
+          and `DynamicUser = false`.
+        '';
+      };
+
+      environmentFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+        example = "/run/secrets/blitzcrank-mcp.env";
+        description = ''
+          Environment file with the MCP server's secrets: BLITZCRANK_MCP_TOKEN
+          (required; must be the same token as in {option}`environmentFile`),
+          the SONARR_/RADARR_/SABNZBD_/JELLYFIN_ URLs and API keys, and
+          SEERR_URL/SEERR_API_KEY for the server's Seerr reads. A service
+          without both its URL and API key is not served, and the server
+          refuses to start with none.
+        '';
+      };
+
+      settings = lib.mkOption {
+        type = lib.types.attrsOf lib.types.str;
+        default = { };
+        example = {
+          BLITZCRANK_MCP_PLAN_TTL_MS = "900000";
+        };
+        description = "Extra non-secret environment variables for the MCP server.";
+      };
     };
   };
 
@@ -259,16 +323,23 @@ in
         message = "services.blitzcrank.authSeedFile requires authFile to live under ${stateDir}, the only path the sandboxed service can write.";
       }
       {
-        assertion = lib.all (root: lib.hasPrefix "/" root && root != "/") cfg.mediaRoots;
-        message = "services.blitzcrank.mediaRoots entries must be absolute paths below /.";
+        assertion = lib.all (root: lib.hasPrefix "/" root && root != "/") cfg.mcp.mediaRoots;
+        message = "services.blitzcrank.mcp.mediaRoots entries must be absolute paths below /.";
+      }
+      {
+        # Without the local server nothing answers on the default loopback URL.
+        assertion =
+          cfg.mcp.enable
+          || options.services.blitzcrank.mcp.url.highestPrio < (lib.mkOptionDefault null).priority;
+        message = "services.blitzcrank.mcp.url must be set when services.blitzcrank.mcp.enable is false.";
       }
     ];
 
     systemd.services.blitzcrank = {
       description = "blitzcrank agentic Seerr issue gateway";
       wantedBy = [ "multi-user.target" ];
-      after = [ "network-online.target" ];
-      wants = [ "network-online.target" ];
+      after = [ "network-online.target" ] ++ lib.optional cfg.mcp.enable "blitzcrank-mcp.service";
+      wants = [ "network-online.target" ] ++ lib.optional cfg.mcp.enable "blitzcrank-mcp.service";
 
       environment = {
         BLITZCRANK_PORT = toString cfg.port;
@@ -277,20 +348,9 @@ in
         BLITZCRANK_DATA_DIR = stateDir;
         BLITZCRANK_AUTH_PATH = cfg.authFile;
         BLITZCRANK_WEB_PROVIDER = cfg.webProvider;
-      }
-      // lib.optionalAttrs (cfg.mediaRoots != [ ]) {
-        BLITZCRANK_MEDIA_ROOTS = lib.concatStringsSep ":" cfg.mediaRoots;
+        BLITZCRANK_MCP_URL = cfg.mcp.url;
       }
       // cfg.settings;
-
-      # ffprobe for media_probe; it is looked up on PATH.
-      path = lib.optional (cfg.mediaRoots != [ ]) pkgs.ffmpeg-headless;
-
-      # Media roots must exist before the probe can read them; without this a
-      # late NFS/CIFS mount is invisible inside the unit's mount namespace.
-      unitConfig = lib.mkIf (cfg.mediaRoots != [ ]) {
-        RequiresMountsFor = cfg.mediaRoots;
-      };
 
       serviceConfig = {
         ExecStart = lib.getExe cfg.package;
@@ -299,12 +359,9 @@ in
         Restart = "on-failure";
         RestartSec = 10;
 
-        # Hardening. ProtectSystem=strict already mounts every media root
-        # read-only; binding them in as well would pin the mount tree as it
-        # looks at unit start, which hides datasets mounted later.
+        # Hardening. The host reads no media and holds no Arr credentials.
         ProtectSystem = "strict";
-        # Media libraries under /home stay reachable; nothing is writable.
-        ProtectHome = if lib.any (lib.hasPrefix "/home") cfg.mediaRoots then "read-only" else true;
+        ProtectHome = true;
         PrivateTmp = true;
         NoNewPrivileges = true;
         RestrictSUIDSGID = true;
@@ -322,6 +379,59 @@ in
       // lib.optionalAttrs (cfg.authSeedFile != null) {
         LoadCredential = [ "auth-seed:${cfg.authSeedFile}" ];
         ExecStartPre = seedAuthFile;
+      };
+    };
+
+    systemd.services.blitzcrank-mcp = lib.mkIf cfg.mcp.enable {
+      description = "blitzcrank MCP server for the Seerr/Arr/Jellyfin stack";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "network-online.target" ];
+      wants = [ "network-online.target" ];
+
+      environment = {
+        BLITZCRANK_MCP_HOST = "127.0.0.1";
+        BLITZCRANK_MCP_PORT = toString cfg.mcp.port;
+      }
+      // lib.optionalAttrs (cfg.mcp.mediaRoots != [ ]) {
+        BLITZCRANK_MEDIA_ROOTS = lib.concatStringsSep ":" cfg.mcp.mediaRoots;
+      }
+      // cfg.mcp.settings;
+
+      # ffprobe and ffmpeg for the media tools; both are looked up on PATH.
+      path = lib.optional (cfg.mcp.mediaRoots != [ ]) pkgs.ffmpeg-headless;
+
+      # Media roots must exist before the probe can read them; without this a
+      # late NFS/CIFS mount is invisible inside the unit's mount namespace.
+      unitConfig = lib.mkIf (cfg.mcp.mediaRoots != [ ]) {
+        RequiresMountsFor = cfg.mcp.mediaRoots;
+      };
+
+      serviceConfig = {
+        ExecStart = "${cfg.package}/bin/blitzcrank-mcp";
+        DynamicUser = true;
+        Restart = "on-failure";
+        RestartSec = 10;
+
+        # Hardening. The server is stateless, so it gets no state directory.
+        # ProtectSystem=strict already mounts every media root read-only;
+        # binding them in as well would pin the mount tree as it looks at
+        # unit start, which hides datasets mounted later.
+        ProtectSystem = "strict";
+        # Media libraries under /home stay reachable; nothing is writable.
+        ProtectHome = if lib.any (lib.hasPrefix "/home") cfg.mcp.mediaRoots then "read-only" else true;
+        PrivateTmp = true;
+        NoNewPrivileges = true;
+        RestrictSUIDSGID = true;
+        ProtectKernelTunables = true;
+        ProtectControlGroups = true;
+        RestrictAddressFamilies = [
+          "AF_INET"
+          "AF_INET6"
+          "AF_UNIX"
+        ];
+      }
+      // lib.optionalAttrs (cfg.mcp.environmentFile != null) {
+        EnvironmentFile = cfg.mcp.environmentFile;
       };
     };
   };

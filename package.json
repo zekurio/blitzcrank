@@ -1,28 +1,22 @@
 {
-  "name": "blitzcrank",
+  "name": "blitzcrank-workspace",
   "version": "0.1.0",
   "private": true,
   "description": "Agentic webhook gateway for the Seerr/Arr/Jellyfin homelab stack, built on Pi Durable",
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/cli.ts",
-    "auth": "tsx src/cli.ts auth",
-    "build": "tsc",
-    "start": "node dist/cli.js",
-    "typecheck": "tsc --noEmit",
+    "auth": "pnpm --filter blitzcrank auth",
+    "build": "pnpm -r build",
+    "dev": "pnpm --filter blitzcrank dev",
+    "dev:mcp": "pnpm --filter @blitzcrank/mcp dev",
     "fmt": "oxfmt .",
     "fmt:check": "oxfmt --check .",
     "lint": "oxlint .",
+    "start": "pnpm --filter blitzcrank start",
+    "start:mcp": "pnpm --filter @blitzcrank/mcp start",
+    "typecheck": "pnpm -r typecheck",
     "verify": "pnpm fmt:check && pnpm lint && pnpm typecheck"
-  },
-  "dependencies": {
-    "@earendil-works/chord": "1.0.3",
-    "@earendil-works/pi-ai": "1.0.3",
-    "@earendil-works/pi-coding-agent": "1.0.3",
-    "@earendil-works/pi-durable": "1.0.3",
-    "effect": "4.0.0-rc.112",
-    "typebox": "1.1.38"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

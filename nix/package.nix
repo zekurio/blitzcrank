@@ -27,22 +27,39 @@ stdenv.mkDerivation (finalAttrs: {
     inherit (finalAttrs) pname version src;
     inherit pnpm;
     fetcherVersion = 4;
-    hash = "sha256-SlXuNqHDXg4AUkGVWTQR+Eyz+tOIxNr2hYr572kG5+w=";
+    # PLACEHOLDER: the workspace lockfile changed and the package only builds
+    # on linux. Run `nix build .#blitzcrank` on a linux host and replace this
+    # with the `got: sha256-...` value from the hash mismatch it reports.
+    hash = lib.fakeHash;
   };
 
   buildPhase = ''
     runHook preBuild
     pnpm build
-    pnpm prune --prod --ignore-scripts
+    # `pnpm prune --prod` cannot prune a workspace in place: it asks to purge
+    # node_modules and aborts without a TTY. Reinstall the production
+    # dependencies from the offline store instead.
+    rm -rf node_modules packages/*/node_modules
+    pnpm install --offline --prod --frozen-lockfile --ignore-scripts
     runHook postBuild
   '';
 
   installPhase = ''
     runHook preInstall
-    mkdir -p $out/lib/blitzcrank
-    cp -r dist node_modules skills package.json $out/lib/blitzcrank/
+    root=$out/lib/blitzcrank
+    mkdir -p $root/packages/host $root/packages/mcp
+    # The workspace layout is kept as-is: packages/*/node_modules hold
+    # relative symlinks into the root node_modules/.pnpm, and the host reads
+    # skills from its own package root.
+    cp -r node_modules package.json pnpm-workspace.yaml $root/
+    cp -r packages/host/{dist,node_modules,skills,package.json} $root/packages/host/
+    cp -r packages/mcp/{dist,node_modules,package.json} $root/packages/mcp/
+    # pnpm's install state records the build directory and a timestamp.
+    rm -f $root/node_modules/{.modules.yaml,.pnpm-workspace-state-v1.json}
     makeWrapper ${nodejs}/bin/node $out/bin/blitzcrank \
-      --add-flags "$out/lib/blitzcrank/dist/cli.js"
+      --add-flags "$root/packages/host/dist/cli.js"
+    makeWrapper ${nodejs}/bin/node $out/bin/blitzcrank-mcp \
+      --add-flags "$root/packages/mcp/dist/cli.js"
     runHook postInstall
   '';
 

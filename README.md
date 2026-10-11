@@ -2,8 +2,17 @@
 
 An agentic webhook gateway for a private media homelab. Jellyseerr issues start
 durable investigations across Seerr, Sonarr, Radarr, SABnzbd, and Jellyfin.
-The agent applies fixes through typed tools; the host posts comments, resolves
-issues, and schedules revisits.
+
+It runs as two processes:
+
+- The host (`packages/host`, command `blitzcrank`) receives the Seerr webhook,
+  runs the agent, posts comments, resolves issues, and schedules revisits. It
+  holds the model credentials and the Seerr key it comments with.
+- The MCP server (`packages/mcp`, command `blitzcrank-mcp`) holds the service
+  API keys and the media mounts. The agent reads through it and changes
+  anything only as a plan followed by an apply.
+  [`packages/mcp/README.md`](packages/mcp/README.md) is the tool contract and
+  lists every read and write.
 
 Built on [Pi Durable](https://www.npmjs.com/package/@earendil-works/pi-durable)
 as an SDK dependency. Blitzcrank does not package or launch the Pi app.
@@ -19,16 +28,37 @@ Add `github:zekurio/blitzcrank` as a flake input, then:
     enable = true;
     model = "openai/gpt-6-astra:medium"; # choose a model your account can use
     environmentFile = "/run/secrets/blitzcrank.env";
-    settings.SEERR_BOT_USERNAME = "blitzcrank";
+    mcp = {
+      environmentFile = "/run/secrets/blitzcrank-mcp.env";
+      mediaRoots = [ "/mnt/media" "/mnt/downloads/complete" ]; # optional
+    };
   };
 }
 ```
 
-Put service URLs, API keys, and `BLITZCRANK_WEBHOOK_SECRET` in that environment
-file. `SEERR_URL` and `SEERR_API_KEY` are required.
-[`.env.example`](.env.example) documents all settings.
+The module runs two systemd units. `blitzcrank` is the host. `blitzcrank-mcp`
+is the server, hardened, with the media roots and ffmpeg. Each unit has its own
+environment:
 
-The module installs one command, `blitzcrank`. For subscription authentication:
+- The host's environment file holds `SEERR_URL`, `SEERR_API_KEY`,
+  `BLITZCRANK_WEBHOOK_SECRET`, and `BLITZCRANK_MCP_TOKEN`.
+  [`packages/host/.env.example`](packages/host/.env.example) documents all host
+  settings.
+- The server's environment file (`mcp.environmentFile`) holds the service URLs
+  and API keys and the same `BLITZCRANK_MCP_TOKEN`. `mcp.mediaRoots` sets the
+  media roots. The [server README](packages/mcp/README.md#environment)
+  documents its settings.
+
+The server binds to localhost on `mcp.port`, and the module points the host at
+it through `BLITZCRANK_MCP_URL`. To run the server on another machine, set
+`mcp.enable = false` and `mcp.url`. [`nix/module.nix`](nix/module.nix)
+describes every option.
+
+The package's dependency hash in [`nix/package.nix`](nix/package.nix) must
+match `pnpm-lock.yaml`. After a lockfile change, build once on Linux and copy
+the hash Nix reports.
+
+The module installs the `blitzcrank` command. For subscription authentication:
 
 ```sh
 sudo blitzcrank auth login openai
@@ -41,8 +71,8 @@ previous running or stopped state afterward. Run it in an interactive terminal,
 including over SSH.
 
 State lives in `/var/lib/blitzcrank`. Back it up with the service stopped, or use
-SQLite-aware backups including committed WAL data. Only one service process may
-own this directory.
+SQLite-aware backups including committed WAL data. Only one host process may
+own this directory. The server keeps nothing on disk.
 
 ## Authentication and models
 
@@ -83,23 +113,40 @@ select an `openai/…` model; do not rename credential entries.
 The standalone [devenv](https://devenv.sh) environment supplies Node, pnpm 11,
 ffmpeg, and ffprobe. The flake remains responsible for deployment packages.
 
+The repository is a pnpm workspace. Install once at the root, then run each
+package from its own directory with its own `.env`, in two terminals. Start
+the server first; the host connects to it at the start of every run.
+
 ```sh
+# Terminal 1: the MCP server
 devenv shell
 pnpm install --frozen-lockfile
+cd packages/mcp
+# Write .env from the Environment table in README.md: BLITZCRANK_MCP_TOKEN
+# plus the service URLs and API keys.
+pnpm exec tsx watch --env-file=.env src/cli.ts
+```
+
+```sh
+# Terminal 2: the host
+devenv shell
+cd packages/host
 cp .env.example .env
-# Fill in service credentials and BLITZCRANK_MODEL.
+# Fill in BLITZCRANK_MODEL, SEERR_URL, SEERR_API_KEY, the same
+# BLITZCRANK_MCP_TOKEN, and BLITZCRANK_MCP_URL=http://127.0.0.1:8485/mcp.
 pnpm exec tsx --env-file=.env src/cli.ts auth login openai
 pnpm exec tsx watch --env-file=.env src/cli.ts
 ```
 
 Skip login if using an API key. Nothing automatically activates the shell or
-loads `.env`. `pnpm dev`, `pnpm start`, and `pnpm auth` use the caller's exported
-environment. With exported configuration, `pnpm auth login openai` is the local
-shortcut. Auth and service commands must use the same data directory/auth path.
+loads `.env`. The root scripts `pnpm dev`, `pnpm dev:mcp`, `pnpm start`,
+`pnpm start:mcp`, and `pnpm auth` use the caller's exported environment. With
+exported configuration, `pnpm auth login openai` is the local shortcut. Auth
+and host commands must use the same data directory/auth path.
 
 Without devenv, supply Node >= 24, pnpm 11, and ffmpeg/ffprobe yourself.
-For compiled local runs, use `pnpm build` followed by
-`node --env-file=.env dist/cli.js`.
+For compiled local runs, use `pnpm build` at the root, then
+`node --env-file=.env dist/cli.js` in each package.
 
 ## Connect Jellyseerr
 
@@ -117,21 +164,25 @@ allows new events without replaying stopped work or undoing changes.
 
 ## Optional features
 
-- **Media inspection:** `BLITZCRANK_MEDIA_ROOTS` permits read-only ffprobe
-  inspection of service-supplied paths. Frame extraction also needs ffmpeg
-  and an image-capable model.
-- **Web:** `BLITZCRANK_WEB_PROVIDER=firecrawl` plus `FIRECRAWL_API_KEY` enables
-  read-only search/extraction through hosted Firecrawl. Off by default.
+- **Media inspection** is configured on the server. `BLITZCRANK_MEDIA_ROOTS`
+  in the server's environment permits read-only ffprobe inspection of paths
+  inside the roots, as the server sees them. Frame extraction also needs
+  ffmpeg on the server and an image-capable model.
+- **Web** stays on the host. `BLITZCRANK_WEB_PROVIDER=firecrawl` plus
+  `FIRECRAWL_API_KEY` enables read-only search/extraction through hosted
+  Firecrawl. Off by default.
 
-HTTP also exposes an unauthenticated `GET /healthz`.
+Both processes answer an unauthenticated `GET /healthz`.
 
-## Safety and checks
+## Checks
 
-Raw service requests are GET-only. Typed mutations require previously read
-target IDs, a reason, and meaningful verification. Web pages, frames, and
-issue history cannot authorize changes. Ambiguous interrupted writes
-fail closed for review; inspect the service state and logs rather than reset
-the job journal to force a retry.
+The host owns public output: the agent cannot comment on or resolve a Seerr
+issue, and only the reporter or a Seerr user with `ADMIN`/`MANAGE_ISSUES` can
+drive a run through comments. Every write is a plan followed by an apply: the
+plan names what will change, and the apply refuses with `plan is stale` if the
+state it read has moved since. Interrupted writes that cannot be proven
+replay-safe fail closed for operator review; inspect the service state and logs
+rather than reset the job journal to force a retry.
 
 ```sh
 devenv shell -- pnpm verify
@@ -139,7 +190,9 @@ devenv shell -- pnpm build
 nix flake check
 ```
 
-[AGENTS.md](AGENTS.md) records the safety invariants and contribution rules.
-[`skills/`](skills) contains service-specific knowledge.
+[AGENTS.md](AGENTS.md) records the host invariants and contribution rules.
+[`packages/host/skills/`](packages/host/skills) contains service-specific
+knowledge. [`packages/mcp/README.md`](packages/mcp/README.md) is the tool
+contract.
 
 [MIT](LICENSE)
