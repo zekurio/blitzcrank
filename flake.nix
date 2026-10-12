@@ -25,12 +25,14 @@
       # The service is deployed on NixOS only; no darwin packages.
       packages = forSystems linuxSystems (pkgs: rec {
         blitzcrank = pkgs.callPackage ./nix/package.nix { };
+        blitzcrank-mcp = pkgs.callPackage ./nix/package.nix { component = "mcp"; };
         default = blitzcrank;
       });
 
-      # `nix flake check` builds the package on linux CI.
+      # `nix flake check` builds both packages on linux CI.
       checks = forSystems linuxSystems (pkgs: {
         blitzcrank = self.packages.${pkgs.stdenv.hostPlatform.system}.blitzcrank;
+        blitzcrank-mcp = self.packages.${pkgs.stdenv.hostPlatform.system}.blitzcrank-mcp;
       });
 
       nixosModules = rec {
@@ -42,7 +44,20 @@
               self.packages.${pkgs.stdenv.hostPlatform.system}.blitzcrank
             );
           };
-        default = blitzcrank;
+        blitzcrank-mcp =
+          { pkgs, lib, ... }:
+          {
+            imports = [ ./nix/mcp-module.nix ];
+            services.blitzcrank-mcp.package = lib.mkDefault (
+              self.packages.${pkgs.stdenv.hostPlatform.system}.blitzcrank-mcp
+            );
+          };
+        default = {
+          imports = [
+            blitzcrank
+            blitzcrank-mcp
+          ];
+        };
       };
 
       formatter = forAllSystems (pkgs: pkgs.nixfmt);

@@ -1,0 +1,26 @@
+{
+  "name": "@blitzcrank/mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Blitzcrank MCP server: typed reads and verified writes for Seerr, Sonarr, Radarr, SABnzbd, and Jellyfin",
+  "license": "MIT",
+  "bin": {
+    "blitzcrank-mcp": "./dist/cli.js"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/cli.ts",
+    "start": "node dist/cli.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "effect": "4.0.0-rc.112",
+    "typebox": "1.3.27",
+    "zod": "4.3.6"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  }
+}

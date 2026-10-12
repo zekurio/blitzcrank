@@ -1,0 +1,107 @@
+import { Effect } from "effect"
+
+import {
+  jsonRequestEffect,
+  type JsonValue,
+  type JsonRequestError,
+} from "../../services/http.ts"
+import type { SeerrConfig } from "./config.ts"
+
+export interface SeerrUser {
+  id?: number
+  email?: string
+  username?: string
+  displayName?: string
+  permissions?: number
+}
+
+export interface SeerrIssue {
+  createdBy?: SeerrUser
+  [key: string]: unknown
+}
+
+/** The gateway's own Seerr access: the issue read, its users, and comments. */
+export class SeerrClient {
+  constructor(
+    private readonly cfg: Pick<SeerrConfig, "url" | "apiKey" | "botUserId">,
+  ) {}
+
+  private headers(): Record<string, string> {
+    return {
+      "X-Api-Key": this.cfg.apiKey,
+      ...(this.cfg.botUserId ? { "X-Api-User": this.cfg.botUserId } : {}),
+    }
+  }
+
+  getIssueEffect(
+    issueId: string | number,
+  ): Effect.Effect<SeerrIssue, JsonRequestError> {
+    return jsonRequestEffect<SeerrIssue>(
+      this.cfg.url,
+      `/api/v1/issue/${issueId}`,
+      {
+        headers: this.headers(),
+      },
+    )
+  }
+
+  listUsersEffect(): Effect.Effect<SeerrUser[], JsonRequestError> {
+    return jsonRequestEffect<{ results?: SeerrUser[] }>(
+      this.cfg.url,
+      "/api/v1/user?take=200",
+      { headers: this.headers() },
+    ).pipe(Effect.map((response) => response.results ?? []))
+  }
+
+  /**
+   * Posts a comment; returns its id (newest of the returned issue comments).
+   * The inference is ambiguous when two posts to one issue race, so posting
+   * must be serialized by the caller (see the Seerr gateway's channel).
+   */
+  postCommentEffect(
+    issueId: string | number,
+    message: string,
+  ): Effect.Effect<number | undefined, JsonRequestError> {
+    return jsonRequestEffect<{ comments?: Array<{ id?: number }> }>(
+      this.cfg.url,
+      `/api/v1/issue/${issueId}/comment`,
+      { method: "POST", headers: this.headers(), body: { message } },
+    ).pipe(
+      Effect.map((issue) => {
+        const ids = (issue?.comments ?? [])
+          .map((comment) => comment.id)
+          .filter((id): id is number => typeof id === "number")
+        return ids.length > 0 ? Math.max(...ids) : undefined
+      }),
+    )
+  }
+
+  /** Rewrites an existing comment in place (author or MANAGE_ISSUES only). */
+  updateCommentEffect(
+    commentId: number,
+    message: string,
+  ): Effect.Effect<JsonValue, JsonRequestError> {
+    return jsonRequestEffect(
+      this.cfg.url,
+      `/api/v1/issueComment/${commentId}`,
+      {
+        method: "PUT",
+        headers: this.headers(),
+        body: { message },
+      },
+    )
+  }
+
+  deleteCommentEffect(
+    commentId: number,
+  ): Effect.Effect<JsonValue, JsonRequestError> {
+    return jsonRequestEffect(
+      this.cfg.url,
+      `/api/v1/issueComment/${commentId}`,
+      {
+        method: "DELETE",
+        headers: this.headers(),
+      },
+    )
+  }
+}

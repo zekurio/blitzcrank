@@ -71,7 +71,7 @@ jobs:
         run: pnpm audit
 
   nix:
-    name: Nix package
+    name: Nix packages
     runs-on: ubuntu-latest
 
     steps:
@@ -84,7 +84,7 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
 
-      # Builds the x86_64-linux package via the flake's checks output,
+      # Builds both x86_64-linux packages via the flake's checks output,
       # validating the pinned pnpm deps hash on every push.
       - name: Check Nix flake
         run: nix flake check --print-build-logs

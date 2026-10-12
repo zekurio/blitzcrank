@@ -1,0 +1,23 @@
+import type { ToolRegistration } from "@earendil-works/pi-durable"
+
+import type { WebConfig } from "../config.ts"
+import { buildFirecrawlTools } from "./firecrawl.ts"
+
+export interface WebProvider {
+  tools: ToolRegistration[]
+  /** Registered tool names, so prompts can track capabilities exactly. */
+  searchTool: string | undefined
+  extractTool: string | undefined
+}
+
+/** Web tools for one run, from the configured provider. */
+export function buildWebProvider(config: WebConfig): WebProvider {
+  if (config.provider === "firecrawl") {
+    return {
+      tools: buildFirecrawlTools(config),
+      searchTool: "web_search",
+      extractTool: "web_extract",
+    }
+  }
+  return { tools: [], searchTool: undefined, extractTool: undefined }
+}

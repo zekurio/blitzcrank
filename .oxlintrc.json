@@ -70,5 +70,27 @@
     "unicorn/no-array-sort": "off",
     "unicorn/no-null": "off",
     "unicorn/prefer-set-has": "off"
-  }
+  },
+  "overrides": [
+    {
+      "files": ["packages/host/src/**"],
+      "excludeFiles": [
+        "packages/host/src/index.ts",
+        "packages/host/src/gateways/**"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["**/gateways/**"],
+                "message": "Only index.ts lists gateways. Everything else sees Gateway and Channel from gateway.ts."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
 }
