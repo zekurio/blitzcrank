@@ -151,8 +151,8 @@ behavioural difference described.
   the Seerr issue.
 - The token totals in a reply's signature come from Durable's usage ledger for
   that conversation, which no tool can write. There is deliberately no spend
-  ceiling. The deployment runs on subscription auth, where a dollar figure
-  derived from list prices would be fiction.
+  ceiling. Under subscription auth a dollar figure derived from list prices
+  would be fiction, so the signature carries a cost only for API-key auth.
 
 ### The Seerr gateway
 
