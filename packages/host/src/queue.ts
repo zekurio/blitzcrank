@@ -1,5 +1,7 @@
 import { Cause, Effect, Fiber, Latch } from "effect"
 
+import { errorKind, logEvent } from "./log.ts"
+
 /** Where a task for one thread is put. */
 export interface Lane {
   readonly closed: boolean
@@ -71,7 +73,11 @@ export class ThreadQueue {
         Latch.whenOpen(turn),
         Effect.catchCause((cause) =>
           Effect.sync(() =>
-            console.error("[queue] task failed:", Cause.squash(cause)),
+            logEvent(
+              "queue.failed",
+              { thread: key, error: errorKind(Cause.squash(cause)) },
+              "error",
+            ),
           ),
         ),
       ),

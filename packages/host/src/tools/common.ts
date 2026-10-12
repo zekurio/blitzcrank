@@ -5,7 +5,7 @@ import type { JsonValue } from "../services/http.ts"
 export const MAX_RESULT_CHARS = 30_000
 
 export function toText(data: JsonValue): string {
-  const text = isString(data) ? data : JSON.stringify(data, null, 2)
+  const text = isString(data) ? data : JSON.stringify(data)
   if (text == null) return "null"
   if (text.length <= MAX_RESULT_CHARS) return text
   return `${text.slice(0, MAX_RESULT_CHARS)}\n... [truncated ${text.length - MAX_RESULT_CHARS} chars — narrow your query]`

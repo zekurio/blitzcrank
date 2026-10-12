@@ -195,6 +195,37 @@ through comments.
 
 Both processes answer an unauthenticated `GET /healthz`.
 
+## Logs and journals
+
+The host writes JSON lifecycle records to stdout/stderr, captured by journald
+on NixOS. They include job admission and recovery, queue time, run duration,
+model requests and token/cache/reasoning counts, tool starts and outcomes, and
+reply publication. Filter by `runId` to follow a run across both processes.
+`run.admitted` maps that ID to its `thread`, such as `seerr:21`.
+
+```sh
+sudo journalctl -u blitzcrank -u blitzcrank-mcp --since today -o cat
+sudo journalctl -u blitzcrank -u blitzcrank-mcp -o cat |
+  jq -R 'fromjson? | select(.runId == "RUN_ID")'
+```
+
+`tool.completed` with `status: "error"` is a tool result the model can handle.
+An MCP `unknown` outcome or a host `review_required` rejection stops a write
+for review. `model.completed` records provider attempts, including failures;
+these log counts are diagnostic, not the durable usage ledger. The
+`threadInputTokens` and `threadOutputTokens` on `run.answer` are conversation
+totals, not per-run totals.
+
+Operational records omit arguments, result bodies, prompts, replies, user
+identities, and error messages that might contain private data. Full details
+remain in the existing SQLite journals under `BLITZCRANK_DATA_DIR`:
+`jobs.sqlite` records admission, status, publication intents/results, and
+failures; `sessions/<gateway>/<thread>.sqlite` holds the Durable transcript,
+tool outcomes, and usage ledger. These files contain private data. Use the run
+ID to find the job and its matching Durable submission. No second transcript
+or model-writable memory is kept. A completed action replay is logged as
+`action.replayed`, not as another publication.
+
 ## Checks
 
 ```sh

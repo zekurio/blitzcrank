@@ -29,6 +29,18 @@ const VERIFY_TIMEOUT_MS = 30_000
 // lock covers this process's calls, not external or still-pending writes.
 const activeWriteKeys = new Set<string>()
 
+/**
+ * Reads kept for reuse, by key. Every write through this server drops them
+ * all, since any of them may answer differently afterwards. `writeMarks`
+ * moves when a write starts and when it settles, so a read that overlapped
+ * one is never kept.
+ */
+const keptReads = new Map<
+  string,
+  { at: number; until: number; items: JsonObject[] }
+>()
+let writeMarks = 0
+
 export class ToolError extends Data.TaggedError("ToolError")<{
   message: string
 }> {}
@@ -58,7 +70,7 @@ export function toolCheck<A>(check: () => A): Effect.Effect<A, ToolError> {
 }
 
 export function toText(data: JsonValue | undefined): string {
-  const text = typeof data === "string" ? data : JSON.stringify(data, null, 2)
+  const text = typeof data === "string" ? data : JSON.stringify(data)
   if (text === undefined) return "null"
   if (text.length <= MAX_RESULT_CHARS) return text
   return `${text.slice(0, MAX_RESULT_CHARS)}\n... [truncated ${text.length - MAX_RESULT_CHARS} chars]`
@@ -197,6 +209,39 @@ export function defineReads(
   })
 }
 
+/**
+ * Answers a list read from the copy kept under `key` while that copy is
+ * younger than `maxAgeMs`, and says how old the answer is.
+ */
+export function keptRead<E>(
+  key: string,
+  maxAgeMs: number,
+  read: Effect.Effect<JsonObject[], E>,
+): Effect.Effect<{ items: JsonObject[]; ageMs: number }, E> {
+  return Effect.suspend(() => {
+    const now = Date.now()
+    for (const [other, kept] of keptReads) {
+      if (kept.until <= now) keptReads.delete(other)
+    }
+    const kept = keptReads.get(key)
+    if (kept) return Effect.succeed({ items: kept.items, ageMs: now - kept.at })
+    const marks = writeMarks
+    return read.pipe(
+      Effect.map((items) => {
+        const at = Date.now()
+        if (marks === writeMarks)
+          keptReads.set(key, { at, until: at + maxAgeMs, items })
+        return { items, ageMs: 0 }
+      }),
+    )
+  })
+}
+
+function dropKeptReads() {
+  writeMarks += 1
+  keptReads.clear()
+}
+
 export type WriteEffect = { kind: string; target: string; detail?: string }
 
 /** A write's target as live state has it, and what the write does to it. */
@@ -326,7 +371,9 @@ function writeAndVerify(
   resolved: Resolved<unknown>,
 ): Effect.Effect<ToolResult, ToolError | WriteOutcomeUnknown> {
   return Effect.gen(function* () {
+    dropKeptReads()
     const written = yield* spec.write(params, resolved.state).pipe(
+      Effect.ensuring(Effect.sync(dropKeptReads)),
       Effect.timeoutOrElse({
         duration: WRITE_TIMEOUT_MS,
         orElse: () =>

@@ -26,6 +26,7 @@ import { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite"
 import { openNodeSqliteDatabase } from "@earendil-works/pi-durable/storage/sqlite/node"
 import { createReadTool } from "@earendil-works/pi-durable/tools"
 
+import { errorKind, logEvent } from "../log.ts"
 import { HttpError } from "../services/http.ts"
 import { ToolError } from "../tools/common.ts"
 import {
@@ -174,12 +175,19 @@ export async function runDurableTurn(
     const blocked = await gate(api)
     if (blocked) throw new Error(blocked)
     const prior = (await runSnapshot())?.operations[String(api.taskId)]
-    if (prior?.result !== null && prior?.result !== undefined)
+    if (prior?.result !== null && prior?.result !== undefined) {
+      logEvent("tool.replayed", {
+        runId: opts.requestId,
+        tool: tool.name,
+        callId: api.callId,
+      })
       return JSON.parse(prior.result) as ToolExecutionResult
+    }
     if (prior?.unsafe)
       throw new Error("Uncertain prior write requires operator review")
     if (stopping) throw new Error("Run stopped")
     active += 1
+    const started = performance.now()
     try {
       await api.commit(async (tx) => {
         const run = await tx.doc(DurableRunDoc, opts.requestId, policy)
@@ -191,6 +199,12 @@ export async function runDurableTurn(
           result: null,
         }
       }, context)
+      logEvent("tool.started", {
+        runId: opts.requestId,
+        tool: tool.name,
+        callId: api.callId,
+        replaySafe: tool.replay === "safe",
+      })
       // The host does not cancel the invocation until write and read-back end.
       const result: ToolExecutionResult = await tool
         .execute(args, api, invocation)
@@ -207,6 +221,18 @@ export async function runDurableTurn(
           // never marks an uncertain write. MCP tools report domain failures
           // as results; a rejection from them stays uncertain.
           if (cause instanceof ToolError) return errorResult(cause.message)
+          logEvent(
+            "tool.rejected",
+            {
+              runId: opts.requestId,
+              tool: tool.name,
+              callId: api.callId,
+              status: tool.replay === "safe" ? "failed" : "review_required",
+              durationMs: Math.round(performance.now() - started),
+              error: errorKind(cause),
+            },
+            "error",
+          )
           throw cause
         })
       await api.commit(async (tx) => {
@@ -216,6 +242,17 @@ export async function runDurableTurn(
         )
         if (failure) run.failure = JSON.stringify(failure)
       }, context)
+      logEvent(
+        "tool.completed",
+        {
+          runId: opts.requestId,
+          tool: tool.name,
+          callId: api.callId,
+          status: result.isError ? "error" : "ok",
+          durationMs: Math.round(performance.now() - started),
+        },
+        result.isError ? "warn" : "info",
+      )
       return result
     } finally {
       active -= 1
@@ -237,7 +274,7 @@ export async function runDurableTurn(
         },
       }),
       hook(GenerationTask, {
-        beforeRequest: async () => {
+        beforeRequest: async (_request, api) => {
           const state = await runSnapshot()
           const uncertain = Object.values(state?.operations ?? {}).filter(
             (operation) => operation.unsafe && operation.result === null,
@@ -251,7 +288,29 @@ export async function runDurableTurn(
             }
           if (failure || state?.policy !== policy || stopping)
             throw new Error(failure?.message ?? "Durable run stopped")
+          logEvent("model.started", {
+            runId: opts.requestId,
+            taskId: String(api.taskId),
+            model: opts.modelSpec,
+          })
           return undefined
+        },
+        afterResponse: (message, api) => {
+          logEvent(
+            "model.completed",
+            {
+              runId: opts.requestId,
+              taskId: String(api.taskId),
+              status: message.stopReason,
+              durationMs: message.durationMs,
+              inputTokens: message.usage.input,
+              outputTokens: message.usage.output,
+              cacheReadTokens: message.usage.cacheRead,
+              cacheWriteTokens: message.usage.cacheWrite,
+              reasoningTokens: message.usage.reasoning,
+            },
+            message.stopReason === "error" ? "error" : "info",
+          )
         },
       }),
     ],
@@ -373,7 +432,9 @@ export async function runDurableTurn(
           ? await conversation.submit(
               {
                 type: "input",
-                content: opts.prompt,
+                // Persist the time with this submission, outside the cached
+                // system prefix. Recovery reuses this input and its timestamp.
+                content: `Current date and time at run submission: ${new Date().toISOString()} (UTC).\n\n${opts.prompt}`,
                 requestId: opts.requestId,
               },
               context,

@@ -21,6 +21,7 @@ import {
 } from "../json.ts"
 import {
   action,
+  keptRead,
   listResult,
   MAX_RESULT_CHARS,
   rawPath,
@@ -53,6 +54,12 @@ type Signal = AbortSignal | undefined
 
 /** Release searches wait on every indexer; the default 30s is too short. */
 const RELEASE_TIMEOUT_MS = 120_000
+/**
+ * How long one release search answers later reads of the same target. Well
+ * under the half hour the Arr keeps the search itself, so a release listed
+ * from a kept search can still be grabbed.
+ */
+export const RELEASE_REUSE_MINUTES = 10
 /**
  * A manual-import scan probes every file below the folder. Kept under the
  * time a write has to resolve its target, so the scan's own timeout reports
@@ -250,8 +257,15 @@ export function compactCommand(command: JsonObject): JsonObject {
   }
 }
 
-function compactQualityProfile(profile: JsonObject): JsonObject {
+function compactQualityProfile(
+  profile: JsonObject,
+  offset: number,
+): JsonObject {
   const items = objectList(profile.items)
+  const scores = objectList(profile.formatItems).filter(
+    (item) => isNumber(item.score) && item.score !== 0,
+  )
+  const listed = scores.slice(offset, offset + 60)
   const cutoff = items.find(
     (item) =>
       item.id === profile.cutoff ||
@@ -271,10 +285,15 @@ function compactQualityProfile(profile: JsonObject): JsonObject {
     allowedQualities: items
       .filter((item) => item.allowed === true)
       .map((item) => item.name ?? objectField(item, "quality")?.name ?? null),
-    formatScores: objectList(profile.formatItems)
-      .filter((item) => isNumber(item.score) && item.score !== 0)
-      .slice(0, 60)
-      .map((item) => ({ name: item.name ?? null, score: item.score ?? null })),
+    formatScores: listed.map((item) => ({
+      name: item.name ?? null,
+      score: item.score ?? null,
+    })),
+    formatScoresTotal: scores.length,
+    formatScoresOffset: offset,
+    ...(offset + listed.length < scores.length
+      ? { nextFormatScoreOffset: offset + listed.length }
+      : {}),
   }
 }
 
@@ -465,14 +484,42 @@ export function arrSharedReads(arr: Arr) {
         }),
     }),
     quality_profiles: resource({
-      description: "Quality profiles with cutoff and custom-format scores",
-      params: Type.Object({}),
-      run: (_params, signal) =>
-        arrList(arr, "/api/v3/qualityprofile", { signal }).pipe(
-          Effect.map((profiles) =>
-            listResult(profiles.map(compactQualityProfile)),
-          ),
+      description:
+        "List quality profile IDs and names, or pass profileId for one profile's cutoff, allowed qualities, and nonzero custom-format scores",
+      params: Type.Object({
+        profileId: Type.Optional(Type.Integer({ minimum: 1 })),
+        offset: offsetParam,
+        formatScoreOffset: Type.Optional(
+          Type.Integer({
+            minimum: 0,
+            description:
+              "With profileId only: use nextFormatScoreOffset to read more scores",
+          }),
         ),
+      }),
+      run: (params, signal) =>
+        Effect.gen(function* () {
+          if (params.profileId !== undefined) {
+            if (params.offset !== undefined)
+              return yield* toolFail("offset applies to the profile list only")
+            const profile = yield* arrObject(
+              arr,
+              `/api/v3/qualityprofile/${params.profileId}`,
+              `quality profile ${params.profileId}`,
+              signal,
+            )
+            return compactQualityProfile(profile, params.formatScoreOffset ?? 0)
+          }
+          if (params.formatScoreOffset !== undefined)
+            return yield* toolFail("formatScoreOffset requires profileId")
+          const profiles = yield* arrList(arr, "/api/v3/qualityprofile", {
+            signal,
+          })
+          return listResult(
+            profiles.map((profile) => pick(profile, ["id", "name"])),
+            { offset: params.offset },
+          )
+        }),
     }),
     manual_import_candidates: resource({
       description:
@@ -565,6 +612,10 @@ export const releaseFilterParams = () => ({
  * candidates, which once read as "no replacement exists". Releases the Arr
  * mapped to another item are only counted: an episode search also returns
  * other episodes' releases, which buried the requested ones.
+ *
+ * The search asks every indexer, so its raw hits are kept and later reads of
+ * the same target are filtered from that copy. Approvals in a kept search are
+ * as old as `searchAgeSeconds` says.
  */
 export function readReleases(
   arr: Arr,
@@ -573,10 +624,12 @@ export function readReleases(
   signal: Signal,
 ): Effect.Effect<JsonObject, ToolFailure> {
   return Effect.gen(function* () {
-    const releases = yield* arrList(arr, target.path, {
-      timeoutMs: RELEASE_TIMEOUT_MS,
-      signal,
-    })
+    const search = yield* keptRead(
+      `${arr.service} ${target.path}`,
+      RELEASE_REUSE_MINUTES * 60_000,
+      arrList(arr, target.path, { timeoutMs: RELEASE_TIMEOUT_MS, signal }),
+    )
+    const releases = search.items
     const forTarget = releases.filter(target.matches)
     const elsewhere = releases.filter((release) => !target.matches(release))
     const matching = forTarget.filter((release) =>
@@ -590,6 +643,7 @@ export function readReleases(
       }))
     return fitListing(
       {
+        searchAgeSeconds: Math.round(search.ageMs / 1000),
         total: releases.length,
         forTarget: forTarget.length,
         approvedForTarget: forTarget.filter(
@@ -1240,7 +1294,7 @@ export function arrSharedActions(arr: Arr) {
         ),
     }),
     grab_release: action({
-      description: `Grab one specific release from a fresh ${arr.service}_releases read, bypassing the Arr's own choice`,
+      description: `Grab one release listed by ${arr.service}_releases without another indexer search. The Arr only has a release for about 30 minutes after the search that listed it`,
       params: Type.Object({
         guid: Type.String({
           minLength: 1,

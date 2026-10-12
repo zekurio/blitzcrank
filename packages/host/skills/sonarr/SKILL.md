@@ -28,7 +28,10 @@ Results are compacted and lists are capped, and they say when.
 - History: `sonarr_history` with `seriesId`, optional `eventType`, `page`,
   `pageSize` (max 100).
 - Blocklist: `sonarr_blocklist` with `seriesId`.
-- Profiles: `sonarr_quality_profiles`.
+- Profiles: `sonarr_quality_profiles` with the series' `qualityProfileId` as
+  `profileId` for its cutoff, allowed qualities, and nonzero format scores.
+  Without `profileId`, it lists IDs and names only. Follow
+  `nextFormatScoreOffset` with `formatScoreOffset` if scores are paged.
 - Dates: `sonarr_calendar` with ISO `start` and `end`. Bound the window and
   match IDs. Prefer `airDate`/`airDateUtc`; state timezone uncertainty. Airing
   does not guarantee local availability.
@@ -42,7 +45,10 @@ Read candidates with `sonarr_releases`: `episodeId`, or `seriesId` with
 `seasonNumber`. Inspect approval, rejections, quality, and custom-format
 scores; it grabs nothing. Counts cover every indexer hit, but the listing is one
 filtered page: narrow with `publishedAfter`, `titleContains`, `approvedOnly`,
-or `limit` before concluding a release is absent.
+or `limit` before concluding a release is absent. One search answers every
+read of the same episode or season for ten minutes, whatever the filters, and
+`searchAgeSeconds` is its age; a write drops it. Do not read again only to
+re-check a listing this thread already has.
 
 An empty tracking list does not mean unaired. Candidate rejections describe local
 acceptance, not global absence.
@@ -85,11 +91,17 @@ series or season search covers every monitored episode in scope, including
 ones that already have a file a grab may replace, so read `sonarr_episodes`
 and name `episodeIds` until the scope matches the report. Test hypotheses on
 one episode, never a season. Probe an existing file before replacing it on
-language grounds; missing episodes need no probe. Let Sonarr choose the
-release. Call `sonarr_grab_release` with a `guid` and `indexerId` copied from a
-fresh `sonarr_releases` read only when the fix is one specific release that a
-search will not pick. Sonarr only grabs a release still in its search cache,
-about 30 minutes after that read.
+language grounds; missing episodes need no probe.
+
+Let Sonarr choose the release. For one episode whose candidates this thread
+already read, do not search again: re-read the episode and the queue, then
+call `sonarr_grab_release` with the `guid` and `indexerId` of the first
+approved release in that listing, unfiltered or `approvedOnly`. That is the
+release a search would grab, and no indexer is asked again. Take another
+listed release only when the fix is one specific release that a search will
+not pick. Sonarr forgets a search after about 30 minutes and then rejects the
+grab; call `sonarr_auto_search` then. Call it too when no candidates were
+read, and for a season or several episodes.
 
 Ask if scope is unclear. Probe corrupt/wrong-content files and inspect Jellyfin
 streams. Obtain reporter confirmation before deleting a verified wrong file.

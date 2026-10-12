@@ -17,6 +17,7 @@ export interface SeerrUser {
 
 export interface SeerrIssue {
   createdBy?: SeerrUser
+  [key: string]: unknown
 }
 
 /** The gateway's own Seerr access: the issue read, its users, and comments. */

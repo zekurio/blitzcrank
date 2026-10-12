@@ -24,7 +24,10 @@ Results are compacted and lists are capped, and they say when.
 - History: `radarr_history` with `movieId`, optional `eventType`, `page`,
   `pageSize`.
 - Blocklist: `radarr_blocklist` with `movieId`.
-- Profiles: `radarr_quality_profiles`.
+- Profiles: `radarr_quality_profiles` with the movie's `qualityProfileId` as
+  `profileId` for its cutoff, allowed qualities, and nonzero format scores.
+  Without `profileId`, it lists IDs and names only. Follow
+  `nextFormatScoreOffset` with `formatScoreOffset` if scores are paged.
 - Dates: `radarr_calendar` with ISO `start` and `end`. Bound the window and
   match the movie ID. Distinguish `inCinemas`, `digitalRelease`, and
   `physicalRelease`; state uncertainty.
@@ -37,7 +40,9 @@ Read candidates with `radarr_releases` and `movieId`. Inspect approval,
 rejections, quality, and custom-format scores; it grabs nothing. Counts cover
 every indexer hit, but the listing is one filtered page: narrow with
 `publishedAfter`, `titleContains`, `approvedOnly`, or `limit` before concluding
-a release is absent.
+a release is absent. One search answers every read of the same movie for ten
+minutes, whatever the filters, and `searchAgeSeconds` is its age; a write drops
+it. Do not read again only to re-check a listing this thread already has.
 
 An empty tracking list does not mean unreleased. Dates and candidate rejections
 prove neither watchability nor global source absence.
@@ -66,11 +71,16 @@ For missing movies, inspect monitoring, minimum availability, files, queue,
 history, and SAB handoff. Respect monitoring and availability. Call
 `radarr_auto_search` with the `movieId` once, only when the movie is missing,
 after clearing a failed release, or for an explicit replacement/fix request.
-Never duplicate progressing work. Let Radarr choose the release. Call
-`radarr_grab_release` with a `guid` and `indexerId` copied from a fresh
-`radarr_releases` read only when the fix is one specific release that a search
-will not pick. Radarr only grabs a release still in its search cache, about 30
-minutes after that read.
+Never duplicate progressing work.
+
+Let Radarr choose the release. When this thread already read the movie's
+candidates, do not search again: re-read the movie and the queue, then call
+`radarr_grab_release` with the `guid` and `indexerId` of the first approved
+release in that listing, unfiltered or `approvedOnly`. That is the release a
+search would grab, and no indexer is asked again. Take another listed release
+only when the fix is one specific release that a search will not pick. Radarr
+forgets a search after about 30 minutes and then rejects the grab; call
+`radarr_auto_search` then, or when no candidates were read.
 
 Change monitoring only when the report asks for it or a wrong flag blocks the
 requested movie. `radarr_set_movie_monitoring` takes `movieId` and `monitored`

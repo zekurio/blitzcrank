@@ -3,6 +3,7 @@ import { DatabaseSync } from "node:sqlite"
 
 import { Cause, Effect } from "effect"
 
+import { errorKind, logEvent } from "./log.ts"
 import type { Lane } from "./queue.ts"
 
 export type JobStatus =
@@ -67,6 +68,7 @@ export class JobStore {
     this.db
       .prepare("INSERT INTO jobs(id,payload,createdAt,status) VALUES(?,?,?,?)")
       .run(id, json(payload), Date.now(), "queued")
+    logEvent("job.queued", { runId: id })
     return this.get(id)! as Job<T>
   }
 
@@ -97,16 +99,18 @@ export class JobStore {
     this.db
       .prepare("UPDATE jobs SET error=? WHERE id=? AND status='cancelling'")
       .run(String(error), id)
+    logEvent("job.failure", { runId: id, error: errorKind(error) }, "error")
   }
   requestCancel(id: string): void {
     this.mark(id, "cancelling")
   }
   markCancelled(id: string): void {
-    this.db
+    const changed = this.db
       .prepare(
         "UPDATE jobs SET status='cancelled',error=NULL WHERE id=? AND status IN ('queued','running','cancelling')",
       )
       .run(id)
+    if (changed.changes > 0) logEvent("job.cancelled", { runId: id })
   }
 
   enqueue(
@@ -155,20 +159,33 @@ export class JobStore {
         .get(jobId, key)
       if (action?.result !== null && action?.result !== undefined) {
         const recorded = JSON.parse(String(action.result)) as { value?: T }
+        logEvent("action.replayed", { runId: jobId, action: key })
         return Effect.succeed(recorded.value as T)
       }
-      if (action && !options.replaySafe)
+      if (action && !options.replaySafe) {
+        logEvent(
+          "action.review_required",
+          { runId: jobId, action: key },
+          "error",
+        )
         return Effect.fail(new UncertainActionError(jobId, key))
+      }
       if (!action)
         this.db
           .prepare("INSERT INTO actions(jobId,key) VALUES(?,?)")
           .run(jobId, key)
+      logEvent("action.started", {
+        runId: jobId,
+        action: key,
+        retry: Boolean(action),
+      })
       return effect.pipe(
         Effect.tap((value) =>
           Effect.sync(() => {
             this.db
               .prepare("UPDATE actions SET result=? WHERE jobId=? AND key=?")
               .run(json({ value }), jobId, key)
+            logEvent("action.completed", { runId: jobId, action: key })
           }),
         ),
       )
@@ -188,11 +205,12 @@ export class JobStore {
   }
 
   private mark(id: string, status: JobStatus, error?: string): void {
-    this.db
+    const changed = this.db
       .prepare(
         "UPDATE jobs SET status=?,error=? WHERE id=? AND status IN ('queued','running')",
       )
       .run(status, error ?? null, id)
+    if (changed.changes > 0) logEvent(`job.${status}`, { runId: id })
   }
 
   private decode(row: Record<string, unknown>): Job {

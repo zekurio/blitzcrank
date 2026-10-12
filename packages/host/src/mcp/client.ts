@@ -10,6 +10,7 @@ import {
 import { Data, Effect } from "effect"
 
 import type { McpConfig } from "../config.ts"
+import { errorKind, logEvent } from "../log.ts"
 
 /**
  * Must outlast every service call the server makes for one tool call. A
@@ -44,10 +45,13 @@ export interface McpConnection {
  * One connection for one run. It closes with the enclosing scope, so a caller
  * cannot leak it past the end of the run.
  */
-export function connectMcpEffect(config: McpConfig) {
+export function connectMcpEffect(
+  config: McpConfig,
+  run?: { runId: string; thread: string },
+) {
   return Effect.acquireRelease(
     Effect.tryPromise({
-      try: (interruption) => connect(config, interruption),
+      try: (interruption) => connect(config, run, interruption),
       catch: (cause) =>
         new McpConnectError({ message: connectFailure(config, cause), cause }),
     }),
@@ -57,6 +61,7 @@ export function connectMcpEffect(config: McpConfig) {
 
 async function connect(
   config: McpConfig,
+  run: { runId: string; thread: string } | undefined,
   signal: AbortSignal,
 ): Promise<McpConnection> {
   // The package root holds package.json next to dist/ and src/ alike.
@@ -70,7 +75,15 @@ async function connect(
   await client.connect(
     new StreamableHttpTransport({
       url: config.url,
-      headers: { Authorization: `Bearer ${config.token}` },
+      headers: {
+        Authorization: `Bearer ${config.token}`,
+        ...(run
+          ? {
+              "X-Blitzcrank-Run-Id": run.runId,
+              "X-Blitzcrank-Thread": run.thread,
+            }
+          : {}),
+      },
       // The server is stateless and answers each POST with JSON. It serves
       // no server-to-client stream, so do not probe for one on every run.
       openGetStream: false,
@@ -78,7 +91,7 @@ async function connect(
   )
   const close = () =>
     client.close().then(undefined, (cause: unknown) => {
-      console.warn("[mcp] closing the connection failed:", cause)
+      logEvent("mcp.close_failed", { ...run, error: errorKind(cause) }, "warn")
     })
   const tools = await client
     .listTools({ signal })
@@ -86,6 +99,7 @@ async function connect(
       await close()
       throw cause
     })
+  logEvent("mcp.connected", { ...run, tools: tools.length })
   return {
     tools,
     callTool: (name, args, callSignal) =>

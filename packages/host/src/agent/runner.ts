@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises"
 
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent"
-import { Effect } from "effect"
+import { Cause, Effect } from "effect"
 
 import type { Config } from "../config.ts"
 import {
@@ -14,6 +14,7 @@ import {
   type Threads,
 } from "../gateway.ts"
 import { JobStore } from "../jobs.ts"
+import { errorKind, logEvent } from "../log.ts"
 import { connectMcpEffect } from "../mcp/client.ts"
 import { storageIO } from "../storage.ts"
 import { buildRunTools, type SessionFileRef } from "../tools/index.ts"
@@ -90,7 +91,10 @@ export class ThreadRunner {
 
         // One connection per run, closed with the scope below. A server that
         // is down fails the run here, before the model is ever asked.
-        const mcp = yield* connectMcpEffect(this.config.mcp)
+        const mcp = yield* connectMcpEffect(this.config.mcp, {
+          runId,
+          thread: key,
+        })
         const web = buildWebProvider(this.config.web)
         const runTools = buildRunTools({
           modelInput: resolveModel(this.modelRuntime, this.modelSpec).input,
@@ -122,6 +126,18 @@ export class ThreadRunner {
           requestId: runId,
           sessionFileRef,
         })
+        logEvent(
+          "run.answer",
+          {
+            runId,
+            thread: key,
+            status:
+              turn.failure?.kind ?? (turn.text.trim() ? "answered" : "empty"),
+            threadInputTokens: turn.usage.inputTokens,
+            threadOutputTokens: turn.usage.outputTokens,
+          },
+          turn.failure ? "error" : "info",
+        )
         if (turn.failure)
           return yield* Effect.fail(
             new SdkError({
@@ -132,9 +148,7 @@ export class ThreadRunner {
 
         const reply = turn.text.trim()
         if (!reply) {
-          console.warn(
-            `[${key}] run ended without a final message; nothing posted`,
-          )
+          logEvent("reply.empty", { runId, thread: key }, "warn")
         }
         // Once publication begins its outcome can be uncertain. Never retract
         // a marker that might now carry the reply after a crash.
@@ -165,7 +179,15 @@ export class ThreadRunner {
             .pipe(
               Effect.catchCause((cause) =>
                 Effect.sync(() => {
-                  console.error(`[${key}] failed to retract status:`, cause)
+                  logEvent(
+                    "reply.retract_failed",
+                    {
+                      runId,
+                      thread: key,
+                      error: errorKind(Cause.squash(cause)),
+                    },
+                    "error",
+                  )
                 }),
               ),
             ),

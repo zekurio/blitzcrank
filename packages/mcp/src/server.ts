@@ -12,6 +12,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js"
 import { Data, Effect } from "effect"
 
+import { logEvent } from "./log.ts"
 import { runTool, type ServerTool } from "./tools.ts"
 
 /** Tool arguments are small; nothing legitimate comes close. */
@@ -42,7 +43,11 @@ export function createHttpServer(options: ServerOptions): http.Server {
     Effect.runPromise(
       handleRequest(req, res, registry, expected, options.version),
     ).then(undefined, (cause: unknown) => {
-      console.error("[mcp] request failed:", cause)
+      logEvent(
+        "request.failed",
+        { error: cause instanceof Error ? cause.name : "UnknownError" },
+        "error",
+      )
       if (res.headersSent) return res.destroy()
       sendRpcError(res, 500, ErrorCode.InternalError, "Internal server error")
     })
@@ -82,7 +87,10 @@ function handleRequest(
       return
     }
     const body = yield* readJsonBody(req)
-    const server = mcpServer(registry, version)
+    const server = mcpServer(registry, version, {
+      runId: logHeader(req.headers["x-blitzcrank-run-id"]),
+      thread: logHeader(req.headers["x-blitzcrank-thread"]),
+    })
     // No `sessionIdGenerator` is what makes the transport stateless.
     const transport = new StreamableHTTPServerTransport({
       enableJsonResponse: true,
@@ -105,7 +113,11 @@ function handleRequest(
   )
 }
 
-function mcpServer(registry: Map<string, ServerTool>, version: string): Server {
+function mcpServer(
+  registry: Map<string, ServerTool>,
+  version: string,
+  run: { runId: string | undefined; thread: string | undefined },
+): Server {
   const server = new Server(
     { name: "blitzcrank-mcp", version },
     { capabilities: { tools: {} } },
@@ -127,14 +139,30 @@ function mcpServer(registry: Map<string, ServerTool>, version: string): Server {
       )
     }
     const started = performance.now()
+    const fields = {
+      ...run,
+      tool: tool.name,
+      requestId: String(extra.requestId).slice(0, 128),
+    }
+    logEvent("tool.started", fields)
     const outcome = await runTool(
       tool,
       request.params.arguments ?? {},
       extra.signal,
     )
-    // One line per call. Arguments may carry paths and titles; never log them.
-    console.log(
-      `[mcp] ${tool.name} ${outcome.status} ${Math.round(performance.now() - started)}ms`,
+    // Arguments may carry paths and titles; never log them.
+    logEvent(
+      "tool.completed",
+      {
+        ...fields,
+        status: outcome.status,
+        durationMs: Math.round(performance.now() - started),
+      },
+      outcome.status === "unknown"
+        ? "error"
+        : outcome.status === "error"
+          ? "warn"
+          : "info",
     )
     // A protocol error, not a result: the host must not hand an unknown write
     // outcome to the model as an ordinary failure.
@@ -144,6 +172,13 @@ function mcpServer(registry: Map<string, ServerTool>, version: string): Server {
     return { ...outcome.result }
   })
   return server
+}
+
+/** Correlation is supplied by an authenticated client, but is still bounded. */
+function logHeader(value: string | string[] | undefined): string | undefined {
+  return typeof value === "string" && /^[a-zA-Z0-9_:-]{1,160}$/.test(value)
+    ? value
+    : undefined
 }
 
 /** Hashing first makes the comparison constant-time for any token length. */
@@ -214,5 +249,9 @@ function sendRpcError(
 }
 
 function logCloseFailure(cause: unknown): void {
-  console.warn("[mcp] closing a request's transport failed:", cause)
+  logEvent(
+    "transport.close_failed",
+    { error: cause instanceof Error ? cause.name : "UnknownError" },
+    "warn",
+  )
 }

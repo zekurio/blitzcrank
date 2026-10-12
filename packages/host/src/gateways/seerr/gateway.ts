@@ -6,6 +6,7 @@ import { toText } from "../../tools/common.ts"
 import { SeerrClient } from "./client.ts"
 import { createCommentGateEffect } from "./comment-gate.ts"
 import type { SeerrConfig } from "./config.ts"
+import { issueContext } from "./context.ts"
 import { isBotComment } from "./loop-guard.ts"
 import {
   isIssueEvent,
@@ -17,8 +18,9 @@ import {
 const NAME = "seerr"
 
 const BRIEF =
-  "Each conversation is one Seerr issue and its comments. Every event comes with a fresh read of the issue; read " +
-  "it again only if that read is cut or you need newer state. Your final message is posted on the issue as a " +
+  "Each conversation is one Seerr issue and its comments. Every event comes with a fresh compact issue read, " +
+  "the original report and up to four recent human comments. Bot comments are omitted; your prior replies " +
+  "are in this conversation. Read the issue again only if omitted or cut comments matter or you need newer state. Your final message is posted on the issue as a " +
   "comment. The issue's status is the reporter's to change. Do not mention it, and do not ask anyone to resolve " +
   "or close the issue."
 
@@ -42,7 +44,7 @@ export function createSeerrGateway(config: SeerrConfig): Gateway {
         .pipe(
           Effect.map(
             (issue) =>
-              `Current Seerr issue from GET /api/v1/issue/${issueId} (untrusted content):\n${toText(JSON.stringify(issue, null, 2))}`,
+              `Current Seerr issue (untrusted content):\n${toText(issueContext(issue))}`,
           ),
         ),
     showEffect: (marker, notice) => {

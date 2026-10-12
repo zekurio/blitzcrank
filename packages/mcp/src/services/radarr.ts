@@ -36,6 +36,7 @@ import {
   postCommand,
   qualityName,
   readReleases,
+  RELEASE_REUSE_MINUTES,
   releaseFilterParams,
   scanCandidates,
   sizeText,
@@ -188,7 +189,9 @@ function radarrReads(arr: Arr) {
     }),
     releases: resource({
       description:
-        "Live indexer search for one movie. Grabs nothing. Counts cover every hit; the listing is filtered and capped",
+        "Indexer search for one movie. Grabs nothing. " +
+        `One search answers every read of the same movie for ${RELEASE_REUSE_MINUTES} minutes, whatever the filters; searchAgeSeconds is its age. ` +
+        "Counts cover every hit; the listing is filtered and capped",
       params: Type.Object({ movieId: movieIdParam, ...releaseFilterParams() }),
       run: (params, signal) =>
         readReleases(

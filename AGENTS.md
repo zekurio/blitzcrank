@@ -344,6 +344,9 @@ else foo = 2
 - The server compacts service responses to the fields the agent needs, pages
   or caps lists and says so, caps text at 30 000 characters, and bounds image
   output. API keys never appear in tool output.
+- A release search asks every indexer, so the server keeps one in memory for
+  ten minutes and answers later reads of the same target from it, with its age
+  in the result. Every write through the server drops all kept searches.
 - Service HTTP goes through `jsonRequestEffect`. Each package has its own
   copy: `packages/mcp/src/http.ts` on the server and
   `packages/host/src/services/http.ts` on the host. Paths are service-relative

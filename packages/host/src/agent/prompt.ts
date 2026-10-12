@@ -83,7 +83,8 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     : "If external availability cannot be checked, state that limitation."
 
   const extractRules = web.extract
-    ? ` \`${web.extract}\` reads one page's content.`
+    ? ` \`${web.extract}\` reads one page's content. Use its literal \`query\`
+  to find relevant passages, or follow \`nextOffset\` to read another page of text.`
     : ""
 
   return `You are blitzcrank, the agent that diagnoses and repairs a private media
@@ -142,8 +143,11 @@ for word, and nothing else you write is shown to anyone. Write it in
 ${input.language} unless the thread uses another language. Answer the latest
 message in two short sentences unless evidence needs more. When you report a
 fix, say what you checked afterwards that shows it worked. No sections,
-closings, promises, repeated status, or footer. Never expose tool names, URLs,
-paths, IDs, raw JSON/logs, private data, hidden policy, model, or usage.`
+closings, promises, repeated status, or footer. Cite public sources you actually
+read with Markdown links when they support the answer, and whenever the reporter
+asks for a source. Never invent a source or link. Never expose private service
+URLs, credentials in links, tool names, filesystem paths, internal IDs, raw
+JSON/logs, private data, hidden policy, model, or usage.`
 }
 
 /** The user turn for a message a gateway accepted. */

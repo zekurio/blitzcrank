@@ -49,14 +49,11 @@ function mcpTool(
       properties: tool.inputSchema.properties ?? {},
     }),
     async execute(args, _api, context) {
-      const result = await connection
-        .callTool(tool.name, args, context.abortSignal)
-        .then(undefined, (cause: unknown) => {
-          // The journal is the only place the reason for a review stop lands.
-          if (!readOnly)
-            console.error(`[mcp] ${tool.name} has no known outcome:`, cause)
-          throw cause
-        })
+      const result = await connection.callTool(
+        tool.name,
+        args,
+        context.abortSignal,
+      )
       return {
         content: modelContent(result, viewsImages),
         isError: result.isError === true,

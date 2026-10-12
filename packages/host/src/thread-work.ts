@@ -1,4 +1,4 @@
-import { Cause, Effect, Fiber, Semaphore } from "effect"
+import { Cause, Effect, Exit, Fiber, Semaphore } from "effect"
 
 import type { ThreadRunner } from "./agent/runner.ts"
 import {
@@ -8,6 +8,7 @@ import {
   type Marker,
 } from "./gateway.ts"
 import { JobStore, type Job } from "./jobs.ts"
+import { errorKind, logEvent } from "./log.ts"
 import { ThreadQueue } from "./queue.ts"
 
 interface ThreadJob {
@@ -46,6 +47,11 @@ export class ThreadWork {
       Effect.gen({ self: this }, function* () {
         const admitted: Job<ThreadJob>[] = []
         for (const job of this.unfinished()) {
+          logEvent("run.recovering", {
+            runId: job.id,
+            thread: threadKey(job.payload.event.thread),
+            status: job.status,
+          })
           if (job.status === "cancelling") {
             yield* this.recoverCancellation(job)
             continue
@@ -102,6 +108,12 @@ export class ThreadWork {
       ),
     )
     const key = threadKey(event.thread)
+    logEvent("run.admitted", {
+      runId: job.id,
+      thread: key,
+      trigger: event.type,
+      runsAhead,
+    })
     const pending: PendingRun = { job, key, status }
     this.pending.add(pending)
     this.jobs.enqueue(this.queue.lane(key), job, () =>
@@ -116,14 +128,40 @@ export class ThreadWork {
     pending: PendingRun,
   ): Effect.Effect<void, unknown> {
     return Effect.gen({ self: this }, function* () {
-      const status = yield* Fiber.join(pending.status)
-      this.pending.delete(pending)
-      this.active.set(pending.key, pending.job.id)
-      yield* this.runner.runEffect(event, status, pending.job.id).pipe(
-        Effect.ensuring(
+      const started = performance.now()
+      logEvent("run.started", {
+        runId: pending.job.id,
+        thread: pending.key,
+        queueMs: Date.now() - pending.job.createdAt,
+      })
+      return yield* Effect.gen({ self: this }, function* () {
+        const status = yield* Fiber.join(pending.status)
+        this.pending.delete(pending)
+        this.active.set(pending.key, pending.job.id)
+        yield* this.runner.runEffect(event, status, pending.job.id).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (this.active.get(pending.key) === pending.job.id)
+                this.active.delete(pending.key)
+            }),
+          ),
+        )
+      }).pipe(
+        Effect.onExit((exit) =>
           Effect.sync(() => {
-            if (this.active.get(pending.key) === pending.job.id)
-              this.active.delete(pending.key)
+            logEvent(
+              "run.finished",
+              {
+                runId: pending.job.id,
+                thread: pending.key,
+                status: Exit.isSuccess(exit) ? "completed" : "failed",
+                durationMs: Math.round(performance.now() - started),
+                ...(Exit.isFailure(exit)
+                  ? { error: errorKind(Cause.squash(exit.cause)) }
+                  : {}),
+              },
+              Exit.isSuccess(exit) ? "info" : "error",
+            )
           }),
         ),
       )
@@ -151,9 +189,14 @@ export class ThreadWork {
       Effect.catchCause((cause) =>
         Effect.sync(() => {
           this.jobs.markFailed(job.id, Cause.squash(cause))
-          console.error(
-            `[${threadKey(event.thread)}] cancellation cleanup requires review:`,
-            Cause.squash(cause),
+          logEvent(
+            "run.cancellation_review_required",
+            {
+              runId: job.id,
+              thread: threadKey(event.thread),
+              error: errorKind(Cause.squash(cause)),
+            },
+            "error",
           )
         }),
       ),

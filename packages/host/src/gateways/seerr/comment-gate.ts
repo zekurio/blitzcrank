@@ -1,5 +1,6 @@
 import { Cause, Effect } from "effect"
 
+import { errorKind, logEvent } from "../../log.ts"
 import type { SeerrClient, SeerrUser } from "./client.ts"
 import { issueIdOf, webhookText, type SeerrWebhookPayload } from "./types.ts"
 
@@ -29,8 +30,13 @@ export function createCommentGateEffect(
         name: normalize(payload.comment?.commentedBy_username),
       }
       if (issueId === undefined || (!who.email && !who.name)) {
-        console.warn(
-          "[comment-gate] comment event without identifiable author; ignoring",
+        logEvent(
+          "comment.denied",
+          {
+            thread: issueId ? `seerr:${issueId}` : undefined,
+            reason: "missing_identity",
+          },
+          "warn",
         )
         return false
       }
@@ -43,19 +49,26 @@ export function createCommentGateEffect(
       const permissions = commenter?.permissions ?? 0
       const allowed = (permissions & (ADMIN | MANAGE_ISSUES)) !== 0
       if (!allowed) {
-        console.warn(
-          `[comment-gate] issue=${issueId} comment by "${who.email ?? who.name}"` +
-            ` is neither reporter nor admin; ignoring`,
+        logEvent(
+          "comment.denied",
+          { thread: `seerr:${issueId}`, reason: "not_authorized" },
+          "warn",
         )
       }
       return allowed
     }).pipe(
       Effect.catchCause((cause) => {
         if (Cause.hasInterrupts(cause)) return Effect.interrupt
-        const err = Cause.squash(cause)
-        console.warn(
-          `[comment-gate] issue=${issueIdOf(payload)} could not verify comment author; failing closed:`,
-          err instanceof Error ? err.message : err,
+        logEvent(
+          "comment.denied",
+          {
+            thread: issueIdOf(payload)
+              ? `seerr:${issueIdOf(payload)}`
+              : undefined,
+            reason: "authorization_unavailable",
+            error: errorKind(Cause.squash(cause)),
+          },
+          "warn",
         )
         return Effect.succeed(false)
       }),

@@ -11,9 +11,12 @@ registers every tool it lists.
 - Binary: `blitzcrank-mcp` (`dist/cli.js`). No arguments.
 - Connect using MCP Streamable HTTP at `/mcp`. Use `/healthz` for health checks.
 - Configure clients with `Authorization: Bearer <BLITZCRANK_MCP_TOKEN>`.
-- Logging: one line per tool call with the tool, `ok`, `error`, or `unknown`,
-  and the duration. Arguments are never logged. `unknown` is a write that went
-  out and got no answer; the host stops that run for review.
+- Logging: JSON start and completion records with the tool, `ok`, `error`, or
+  `unknown`, and the duration. The host sends `X-Blitzcrank-Run-Id` and
+  `X-Blitzcrank-Thread` for correlation; other clients may omit them. Arguments
+  and result bodies are never logged. `unknown` is a write that went out and
+  got no answer; the host stops that run for review. `ok` means the call
+  returned, not that a queued operation finished or its verification passed.
 - Stop with `SIGINT` or `SIGTERM` and let active calls finish before restarting.
 
 Whole-record monitoring updates hold a resource lock through their read-back.

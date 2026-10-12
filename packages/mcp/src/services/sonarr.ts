@@ -41,6 +41,7 @@ import {
   postCommand,
   qualityName,
   readReleases,
+  RELEASE_REUSE_MINUTES,
   releaseFilterParams,
   scanCandidates,
   sizeText,
@@ -240,7 +241,8 @@ function sonarrReads(arr: Arr) {
     }),
     releases: resource({
       description:
-        "Live indexer search for one episode (episodeId) or one season (seriesId with seasonNumber). Grabs nothing. " +
+        "Indexer search for one episode (episodeId) or one season (seriesId with seasonNumber). Grabs nothing. " +
+        `One search answers every read of the same target for ${RELEASE_REUSE_MINUTES} minutes, whatever the filters; searchAgeSeconds is its age. ` +
         "Counts cover every hit; the listing is filtered and capped",
       params: Type.Object({
         episodeId: Type.Optional(
