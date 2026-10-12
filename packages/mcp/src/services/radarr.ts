@@ -30,15 +30,17 @@ import {
   arrSharedReads,
   candidateFile,
   candidateWarnings,
+  folderScanAction,
   manualImportScope,
   matchCandidates,
   monitoringReadBack,
+  namesOrNull,
   postCommand,
   qualityName,
   readReleases,
   RELEASE_REUSE_MINUTES,
   releaseFilterParams,
-  scanCandidates,
+  scalars,
   sizeText,
   verifyCommand,
   verifyDeleted,
@@ -61,6 +63,8 @@ export function buildRadarrTools(cfg: ServiceConfig): ServerTool[] {
     itemNoun: "movie",
     unknownItemsParam: "includeUnknownMovieItems",
     itemHistoryPath: "/api/v3/history/movie",
+    clientSettingPrefix: "movie",
+    scanCommand: "DownloadedMoviesScan",
     eventTypes: {
       grabbed: 1,
       downloadFolderImported: 3,
@@ -142,13 +146,25 @@ function radarrReads(arr: Arr) {
         ),
     }),
     movie_files: resource({
-      description: "Files of one movie with quality and media info",
+      description:
+        "Files of one movie with quality, custom formats and score, cutoff status, and media info",
       params: Type.Object({ movieId: movieIdParam }),
       run: (params, signal) =>
         arrList(arr, "/api/v3/moviefile", {
           query: { movieId: params.movieId },
           signal,
-        }).pipe(Effect.map((files) => listResult(files.map(compactMovieFile)))),
+        }).pipe(
+          Effect.map((files) =>
+            listResult(
+              files.map((file) => ({
+                ...compactMovieFile(file),
+                // The file a movie record embeds carries neither of these.
+                ...scalars(file, ["customFormatScore"]),
+                customFormats: namesOrNull(file.customFormats),
+              })),
+            ),
+          ),
+        ),
     }),
     queue: shared.queue,
     history: shared.history,
@@ -206,7 +222,9 @@ function radarrReads(arr: Arr) {
     }),
     manual_import_candidates: shared.manual_import_candidates,
     command_status: shared.command_status,
-    raw: shared.raw,
+    health: shared.health,
+    disk_space: shared.disk_space,
+    download_clients: shared.download_clients,
   }
 }
 
@@ -252,6 +270,7 @@ function compactMovieFile(file: JsonObject): JsonObject {
       "edition",
     ]),
     quality: qualityName(file.quality),
+    ...scalars(file, ["qualityCutoffNotMet"]),
     languages: names(file.languages),
     mediaInfo: pick(objectField(file, "mediaInfo"), [
       "audioLanguages",
@@ -281,7 +300,6 @@ const manualImportFile = Type.Object(
 const COMMANDS = [
   "RefreshMovie",
   "RescanMovie",
-  "DownloadedMoviesScan",
   "RefreshMonitoredDownloads",
 ] as const
 
@@ -501,23 +519,24 @@ function radarrActions(arr: Arr) {
         }),
       verify: (_params, result) => verifyCommand(arr, result),
     }),
+    scan_import_folder: folderScanAction(arr, (candidate) =>
+      String(objectField(candidate, "movie")?.title ?? "no movie"),
+    ),
     run_command: action({
       description:
-        "Make Radarr re-read disk or downloader state: RefreshMovie and RescanMovie need movieId, " +
-        "DownloadedMoviesScan needs path",
+        "Make Radarr re-read disk or downloader state. RefreshMovie and RescanMovie need movieId; RefreshMonitoredDownloads covers every download and takes none",
       params: Type.Object({
         name: Type.Enum(COMMANDS),
         movieId: Type.Optional(movieIdParam),
-        path: Type.Optional(
-          Type.String({
-            minLength: 1,
-            description: "Folder to scan and import, as Radarr sees it",
-          }),
-        ),
       }),
       resolve: (params, signal) =>
         Effect.gen(function* () {
           if (params.name === "RefreshMonitoredDownloads") {
+            if (params.movieId !== undefined) {
+              return yield* toolFail(
+                "RefreshMonitoredDownloads covers every download and takes no movieId",
+              )
+            }
             const effect: WriteEffect = {
               kind: "command",
               target: "download clients",
@@ -529,24 +548,6 @@ function radarrActions(arr: Arr) {
                 "Re-check every monitored download in the download clients",
               effects: [effect],
               warnings: [],
-            }
-          }
-          if (params.name === "DownloadedMoviesScan") {
-            if (params.path === undefined) {
-              return yield* toolFail("DownloadedMoviesScan needs path")
-            }
-            const matches = yield* scanCandidates(arr, params.path, signal)
-            return {
-              state: null,
-              summary: `Scan ${params.path} and import what Radarr accepts: ${matches.length} candidate file(s)`,
-              effects: matches.map(
-                (match): WriteEffect => ({
-                  kind: "import",
-                  target: match.path,
-                  detail: `mapped to ${String(objectField(match.candidate, "movie")?.title ?? "no movie")}`,
-                }),
-              ),
-              warnings: candidateWarnings(matches),
             }
           }
           if (params.movieId === undefined) {
@@ -568,9 +569,6 @@ function radarrActions(arr: Arr) {
       write: (params) =>
         postCommand(arr, {
           name: params.name,
-          ...(params.name === "DownloadedMoviesScan"
-            ? { path: params.path }
-            : {}),
           ...(params.name === "RefreshMovie" && isNumber(params.movieId)
             ? { movieIds: [params.movieId] }
             : {}),

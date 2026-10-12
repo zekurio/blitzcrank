@@ -35,15 +35,17 @@ import {
   arrSharedReads,
   candidateFile,
   candidateWarnings,
+  folderScanAction,
   manualImportScope,
   matchCandidates,
   monitoringReadBack,
+  namesOrNull,
   postCommand,
   qualityName,
   readReleases,
   RELEASE_REUSE_MINUTES,
   releaseFilterParams,
-  scanCandidates,
+  scalars,
   sizeText,
   verifyCommand,
   verifyDeleted,
@@ -73,6 +75,8 @@ export function buildSonarrTools(cfg: ServiceConfig): ServerTool[] {
     itemNoun: "series",
     unknownItemsParam: "includeUnknownSeriesItems",
     itemHistoryPath: "/api/v3/history/series",
+    clientSettingPrefix: "tv",
+    scanCommand: "DownloadedEpisodesScan",
     eventTypes: {
       grabbed: 1,
       seriesFolderImported: 2,
@@ -192,7 +196,8 @@ function sonarrReads(arr: Arr) {
         }),
     }),
     episode_files: resource({
-      description: "Episode files of a series with quality and media info",
+      description:
+        "Episode files of a series with quality, custom formats and score, cutoff status, and media info",
       params: Type.Object({ seriesId: seriesIdParam, offset: offsetParam }),
       run: (params, signal) =>
         readEpisodeFiles(arr, params.seriesId, signal).pipe(
@@ -200,6 +205,7 @@ function sonarrReads(arr: Arr) {
             listResult(
               files.map((file) => ({
                 ...compactEpisodeFile(file),
+                customFormats: namesOrNull(file.customFormats),
                 seasonNumber: file.seasonNumber ?? null,
               })),
               { offset: params.offset },
@@ -263,7 +269,9 @@ function sonarrReads(arr: Arr) {
     }),
     manual_import_candidates: shared.manual_import_candidates,
     command_status: shared.command_status,
-    raw: shared.raw,
+    health: shared.health,
+    disk_space: shared.disk_space,
+    download_clients: shared.download_clients,
   }
 }
 
@@ -339,6 +347,7 @@ function compactEpisodeFile(file: JsonObject): JsonObject {
   return {
     ...pick(file, ["id", "path", "size", "releaseGroup", "sceneName"]),
     quality: qualityName(file.quality),
+    ...scalars(file, ["customFormatScore", "qualityCutoffNotMet"]),
     languages: names(file.languages),
     mediaInfo: pick(objectField(file, "mediaInfo"), [
       "audioLanguages",
@@ -466,7 +475,6 @@ const manualImportFile = Type.Object(
 const COMMANDS = [
   "RefreshSeries",
   "RescanSeries",
-  "DownloadedEpisodesScan",
   "RefreshMonitoredDownloads",
 ] as const
 
@@ -996,23 +1004,26 @@ function sonarrActions(arr: Arr) {
         }),
       verify: (_params, result) => verifyCommand(arr, result),
     }),
+    scan_import_folder: folderScanAction(
+      arr,
+      (candidate) =>
+        `${String(objectField(candidate, "series")?.title ?? "no series")} ${objectList(candidate.episodes).map(episodeLabel).join(", ") || "no episode"}`,
+    ),
     run_command: action({
       description:
-        "Make Sonarr re-read disk or downloader state: RefreshSeries and RescanSeries need seriesId, " +
-        "DownloadedEpisodesScan needs path",
+        "Make Sonarr re-read disk or downloader state. RefreshSeries and RescanSeries need seriesId; RefreshMonitoredDownloads covers every download and takes none",
       params: Type.Object({
         name: Type.Enum(COMMANDS),
         seriesId: Type.Optional(seriesIdParam),
-        path: Type.Optional(
-          Type.String({
-            minLength: 1,
-            description: "Folder to scan and import, as Sonarr sees it",
-          }),
-        ),
       }),
       resolve: (params, signal) =>
         Effect.gen(function* () {
           if (params.name === "RefreshMonitoredDownloads") {
+            if (params.seriesId !== undefined) {
+              return yield* toolFail(
+                "RefreshMonitoredDownloads covers every download and takes no seriesId",
+              )
+            }
             return {
               state: null,
               summary:
@@ -1025,24 +1036,6 @@ function sonarrActions(arr: Arr) {
                 },
               ],
               warnings: [],
-            }
-          }
-          if (params.name === "DownloadedEpisodesScan") {
-            if (params.path === undefined) {
-              return yield* toolFail("DownloadedEpisodesScan needs path")
-            }
-            const matches = yield* scanCandidates(arr, params.path, signal)
-            return {
-              state: null,
-              summary: `Scan ${params.path} and import what Sonarr accepts: ${matches.length} candidate file(s)`,
-              effects: matches.map(
-                (match): WriteEffect => ({
-                  kind: "import",
-                  target: match.path,
-                  detail: `mapped to ${String(objectField(match.candidate, "series")?.title ?? "no series")} ${objectList(match.candidate.episodes).map(episodeLabel).join(", ") || "no episode"}`,
-                }),
-              ),
-              warnings: candidateWarnings(matches),
             }
           }
           if (params.seriesId === undefined) {
@@ -1065,9 +1058,6 @@ function sonarrActions(arr: Arr) {
       write: (params) =>
         postCommand(arr, {
           name: params.name,
-          ...(params.name === "DownloadedEpisodesScan"
-            ? { path: params.path }
-            : {}),
           ...(params.name === "RefreshSeries" || params.name === "RescanSeries"
             ? { seriesId: params.seriesId }
             : {}),

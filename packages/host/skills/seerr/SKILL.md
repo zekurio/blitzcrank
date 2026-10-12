@@ -17,6 +17,12 @@ Load the tools you need with `tool_search`, then call them directly.
 - Search: `seerr_search` with `query`. Each match has `mediaType`, `tmdbId` or
   `tvdbId`, title, and year.
 - User: `seerr_user` with `userId`. Includes a permissions summary.
+- A reporter, commenter, requester, or user carries `jellyfinUserId`, the
+  Jellyfin account Seerr linked them to. Use that ID when a Jellyfin read
+  needs their view. A display name or username does not identify a Jellyfin
+  user. A record without the ID does not prove the account is unlinked: read
+  `seerr_user` with the person's `id`. If it is absent there too, say the ID
+  is unavailable and do not guess a Jellyfin user.
 - Quota: `seerr_quota` with `userId`.
 - Anything without a tool: `seerr_raw` with a GET `path` under `/api/v1`.
 

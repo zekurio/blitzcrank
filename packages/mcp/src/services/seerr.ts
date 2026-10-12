@@ -125,10 +125,20 @@ function labelled(code: JsonValue | undefined, labels: string[]): JsonObject {
   return { status: code, statusLabel: labels[code] ?? "unknown" }
 }
 
-/** Who someone is, without the email address Seerr stores next to it. */
+/**
+ * Who someone is, without the email address Seerr stores next to it.
+ * `jellyfinUserId` is the Jellyfin account Seerr linked them to, which is
+ * what identifies them there; a display name does not.
+ */
 function compactPerson(user: JsonObject | undefined): JsonValue {
   if (!user) return null
-  return pick(user, ["id", "displayName", "username", "jellyfinUsername"])
+  return pick(user, [
+    "id",
+    "displayName",
+    "username",
+    "jellyfinUsername",
+    "jellyfinUserId",
+  ])
 }
 
 function compactMedia(media: JsonObject | undefined): JsonValue {
@@ -181,7 +191,8 @@ function year(date: JsonValue | undefined): JsonValue {
 function seerrReads(cfg: ServiceConfig) {
   return {
     issue: resource({
-      description: "One issue with its comments, media identity, and reporter",
+      description:
+        "One issue with its comments, media identity, and reporter, including the reporter's jellyfinUserId",
       params: Type.Object({ issueId: Type.Integer({ minimum: 1 }) }),
       run: (params, signal) =>
         seerrObject(
@@ -265,7 +276,8 @@ function seerrReads(cfg: ServiceConfig) {
         ),
     }),
     user: resource({
-      description: "One user with a permissions summary and request limits",
+      description:
+        "One user with their linked jellyfinUserId, a permissions summary, and request limits",
       params: Type.Object({ userId: Type.Integer({ minimum: 1 }) }),
       run: (params, signal) =>
         seerrObject(
@@ -280,6 +292,7 @@ function seerrReads(cfg: ServiceConfig) {
               "displayName",
               "username",
               "jellyfinUsername",
+              "jellyfinUserId",
               "requestCount",
               "movieQuotaLimit",
               "movieQuotaDays",

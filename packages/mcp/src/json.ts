@@ -56,3 +56,16 @@ export function pick(
   }
   return picked
 }
+
+/**
+ * Copies the listed fields, with `null` for one the service did not send. For
+ * fields whose absence would otherwise read as a value, such as a false.
+ */
+export function pickOrNull(
+  record: JsonObject | undefined,
+  keys: readonly string[],
+): JsonObject {
+  const picked: JsonObject = {}
+  for (const key of keys) picked[key] = record?.[key] ?? null
+  return picked
+}

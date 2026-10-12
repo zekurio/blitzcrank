@@ -21,15 +21,16 @@ import {
 } from "../json.ts"
 import {
   action,
+  fittingCount,
   keptRead,
+  largestFitting,
   listResult,
+  MAX_LIST_ITEMS,
   MAX_RESULT_CHARS,
-  rawPath,
-  rawResult,
   resource,
   toolCheck,
+  ToolError,
   toolFail,
-  toText,
   type ToolFailure,
   type WriteEffect,
 } from "../tools.ts"
@@ -43,6 +44,13 @@ export interface Arr {
   itemNoun: "series" | "movie"
   unknownItemsParam: "includeUnknownSeriesItems" | "includeUnknownMovieItems"
   itemHistoryPath: "/api/v3/history/series" | "/api/v3/history/movie"
+  /**
+   * How a download client's settings name this Arr's category, post-import
+   * category, and directory: `tvCategory` or `movieCategory`, and so on.
+   */
+  clientSettingPrefix: "tv" | "movie"
+  /** The command that scans a folder and imports what the Arr accepts. */
+  scanCommand: "DownloadedEpisodesScan" | "DownloadedMoviesScan"
   /**
    * History event names as records carry them, mapped to the number the paged
    * history endpoint filters by. It accepts no names.
@@ -75,6 +83,14 @@ const PAGE_SIZE = 1000
 const MAX_SCAN_PAGES = 5
 const HISTORY_SCAN_PAGE_SIZE = 500
 const MAX_HISTORY_SCAN_PAGES = 10
+/** A record with its formats is some 650 characters, so 30 fit one result. */
+const DEFAULT_HISTORY_PAGE_SIZE = 30
+const MAX_NAMES = 30
+const MAX_SETTING_CHARS = 300
+const MAX_MESSAGE_CHARS = 500
+/** A URL with user info, or a query that names a key, token, or password. */
+const CREDENTIAL_SHAPED =
+  /:\/\/[^/\s]*@|[?&](?:api_?key|token|pass(?:word|wd)?|secret)=/i
 
 export function arrRequest(
   arr: Arr,
@@ -110,6 +126,10 @@ export function arrObject(
   )
 }
 
+/**
+ * A list read is evidence of what exists, so an entry that is no record fails
+ * the read. Dropping it would shorten the list, down to an empty one.
+ */
 export function arrList(
   arr: Arr,
   path: string,
@@ -117,14 +137,21 @@ export function arrList(
 ): Effect.Effect<JsonObject[], ToolFailure> {
   return arrRequest(arr, path, opts).pipe(
     Effect.flatMap((value) =>
-      Array.isArray(value)
-        ? Effect.succeed(value.filter(isJsonObject))
-        : toolFail(`${arr.service} returned no list for ${path}`),
+      Array.isArray(value) && value.every(isJsonObject)
+        ? Effect.succeed(value)
+        : toolFail(
+            Array.isArray(value)
+              ? `${arr.service} returned a list for ${path} with entries that are not records`
+              : `${arr.service} returned no list for ${path}`,
+          ),
     ),
   )
 }
 
-/** One page of a paged resource (`{ records, totalRecords }`). */
+/**
+ * One page of a paged resource (`{ records, totalRecords }`). The total says
+ * whether more pages follow, so a page without one is no page.
+ */
 function arrPage(
   arr: Arr,
   path: string,
@@ -133,16 +160,19 @@ function arrPage(
 ): Effect.Effect<{ records: JsonObject[]; total: number }, ToolFailure> {
   return arrRequest(arr, path, { query, signal }).pipe(
     Effect.flatMap((value) => {
-      if (!isJsonObject(value) || !Array.isArray(value.records)) {
+      if (
+        !isJsonObject(value) ||
+        !Array.isArray(value.records) ||
+        !isNumber(value.totalRecords)
+      ) {
         return toolFail(`${arr.service} returned no page for ${path}`)
       }
-      const records = value.records.filter(isJsonObject)
-      return Effect.succeed({
-        records,
-        total: isNumber(value.totalRecords)
-          ? value.totalRecords
-          : records.length,
-      })
+      const records = value.records
+      return records.every(isJsonObject)
+        ? Effect.succeed({ records, total: value.totalRecords })
+        : toolFail(
+            `${arr.service} returned a page for ${path} with entries that are not records`,
+          )
     }),
   )
 }
@@ -191,6 +221,10 @@ export function compactQueueItem(item: JsonObject): JsonObject {
   }
 }
 
+/**
+ * A grab and the import that followed carry their own parsed quality, score,
+ * and formats. Where they differ is where an upgrade loop shows up.
+ */
 function compactHistory(record: JsonObject): JsonObject {
   return {
     ...pick(record, [
@@ -204,6 +238,9 @@ function compactHistory(record: JsonObject): JsonObject {
       "movieId",
     ]),
     quality: qualityName(record.quality),
+    languages: namesOrNull(record.languages),
+    ...scalars(record, ["customFormatScore", "qualityCutoffNotMet"]),
+    customFormats: namesOrNull(record.customFormats),
     data: pick(objectField(record, "data"), [
       "droppedPath",
       "importedPath",
@@ -303,6 +340,292 @@ export function qualityName(value: JsonValue | undefined): JsonValue {
   return objectField(model, "quality")?.name ?? null
 }
 
+/**
+ * The names in a list. `null` when the Arr sent no list, or one with an entry
+ * that carries no name: unknown, not none. Only an empty list is known empty.
+ */
+export function namesOrNull(value: JsonValue | undefined): string[] | null {
+  if (!Array.isArray(value)) return null
+  const all = names(value)
+  if (all.length !== value.length) return null
+  return all.length > MAX_NAMES
+    ? [...all.slice(0, MAX_NAMES), `(${all.length - MAX_NAMES} more)`]
+    : all
+}
+
+/** Where a history read starts: a page, and a record within that page. */
+interface HistoryStart {
+  page: number
+  pageSize: number
+  pageOffset: number
+}
+
+/**
+ * One history page from `pageOffset` on, cut to what a single result holds.
+ * `records` is the whole page as the Arr has it. `next` is what reads on from
+ * the last record listed: the rest of this page when it was cut, the page
+ * after it when one follows. A changed `pageSize` would move the start, so
+ * the rest of a cut page is addressed within the same page.
+ */
+function historyPage(
+  start: HistoryStart,
+  total: number,
+  records: JsonObject[],
+): JsonObject {
+  const items = records.slice(start.pageOffset).map(compactHistory)
+  const withCount = (count: number): JsonObject => {
+    const reached = start.pageOffset + count
+    const cut = reached < records.length
+    const after =
+      records.length === start.pageSize && start.page * start.pageSize < total
+    return {
+      total,
+      page: start.page,
+      pageSize: start.pageSize,
+      ...(start.pageOffset > 0 ? { pageOffset: start.pageOffset } : {}),
+      listed: count,
+      ...(cut ? { truncated: true } : {}),
+      ...(cut
+        ? {
+            next: {
+              page: start.page,
+              pageSize: start.pageSize,
+              pageOffset: reached,
+            },
+          }
+        : after
+          ? { next: { page: start.page + 1, pageSize: start.pageSize } }
+          : {}),
+      items: items.slice(0, count),
+    }
+  }
+  return withCount(
+    fittingCount(items.length, withCount, {
+      entry: `the history record at pageOffset ${start.pageOffset} of page ${start.page}`,
+    }),
+  )
+}
+
+/**
+ * One named download-client setting, looked up by its exact field name.
+ * `null` is a setting this client does not report, which is not a false. A
+ * field the Arr marks as a credential is never copied, whatever its name.
+ */
+function clientSetting(fields: readonly JsonObject[], name: string): JsonValue {
+  const field = fields.find((entry) => entry.name === name)
+  if (!field) return null
+  if (field.privacy !== undefined && field.privacy !== "normal") return null
+  const value = field.value
+  return isString(value) && CREDENTIAL_SHAPED.test(value)
+    ? "[withheld: it looks like it carries a credential]"
+    : scalar(value)
+}
+
+/** A bounded scalar, or `null` for anything else in its place. */
+function scalar(
+  value: JsonValue | undefined,
+  max = MAX_SETTING_CHARS,
+): JsonValue {
+  if (isString(value)) return value.slice(0, max)
+  return isNumber(value) || typeof value === "boolean" ? value : null
+}
+
+/**
+ * The listed fields as bounded scalars, so no nested record passes through.
+ * `null` is a field the Arr did not send, which is not a false.
+ */
+export function scalars(
+  record: JsonObject,
+  keys: readonly string[],
+): JsonObject {
+  return Object.fromEntries(keys.map((key) => [key, scalar(record[key])]))
+}
+
+/**
+ * What a stall diagnosis needs of one download client: where it is, whether
+ * it is used, and which category and directory this Arr hands it. The
+ * client's settings list is never passed on.
+ */
+function compactDownloadClient(arr: Arr, client: JsonObject): JsonObject {
+  if (!isString(client.name)) {
+    throw new Error(`${arr.service} returned a download client without a name`)
+  }
+  const fields = client.fields
+  // A setting that cannot be read by name would report as one the client
+  // does not have.
+  if (
+    !Array.isArray(fields) ||
+    !fields.every(isJsonObject) ||
+    !fields.every((field) => isString(field.name))
+  ) {
+    throw new Error(
+      `${arr.service} returned download client ${client.name} without a settings list that can be read`,
+    )
+  }
+  const prefix = arr.clientSettingPrefix
+  return {
+    ...scalars(client, [
+      "id",
+      "name",
+      "implementation",
+      "protocol",
+      "enable",
+      "priority",
+      "removeCompletedDownloads",
+      "removeFailedDownloads",
+    ]),
+    host: clientSetting(fields, "host"),
+    port: clientSetting(fields, "port"),
+    useSsl: clientSetting(fields, "useSsl"),
+    urlBase: clientSetting(fields, "urlBase"),
+    category: clientSetting(fields, `${prefix}Category`),
+    importedCategory: clientSetting(fields, `${prefix}ImportedCategory`),
+    directory: clientSetting(fields, `${prefix}Directory`),
+    watchFolder: clientSetting(fields, "watchFolder"),
+  }
+}
+
+/**
+ * A record of a diagnostic list, required to carry the string fields its
+ * reading rests on. One without them is no finding, so it fails the read
+ * instead of listing as a row of nulls.
+ */
+function diagnosticRecord(
+  arr: Arr,
+  what: string,
+  record: JsonObject,
+  required: readonly string[],
+): JsonObject {
+  const missing = required.filter((key) => !isString(record[key]))
+  if (missing.length > 0) {
+    throw new Error(
+      `${arr.service} returned a ${what} without a readable ${missing.join(", ")}`,
+    )
+  }
+  return record
+}
+
+interface DownloadClientReads {
+  clients: JsonObject[]
+  mappings: JsonObject[]
+  handling: JsonObject
+}
+
+/**
+ * Clients, path mappings, and handling settings as one result. The two lists
+ * share its room: the mappings are offered half of it first, the clients take
+ * what that leaves, and the mappings then take what the clients left. Each
+ * list says where it was cut.
+ */
+function downloadClientsResult(
+  arr: Arr,
+  read: DownloadClientReads,
+  offsets: {
+    clientOffset?: number | undefined
+    mappingOffset?: number | undefined
+  },
+): JsonObject {
+  const clients = read.clients.map((client) =>
+    compactDownloadClient(arr, client),
+  )
+  const mappings = read.mappings.map((mapping) =>
+    scalars(
+      diagnosticRecord(arr, "remote path mapping", mapping, PATH_MAPPING),
+      ["id", ...PATH_MAPPING],
+    ),
+  )
+  const clientOffset = offsets.clientOffset ?? 0
+  const mappingOffset = offsets.mappingOffset ?? 0
+  const clientPage = clients.slice(clientOffset, clientOffset + MAX_LIST_ITEMS)
+  const mappingPage = mappings.slice(
+    mappingOffset,
+    mappingOffset + MAX_LIST_ITEMS,
+  )
+  const build = (clientCount: number, mappingCount: number): JsonObject => ({
+    clients: listPart(
+      clients.length,
+      clientOffset,
+      clientPage.slice(0, clientCount),
+      "nextClientOffset",
+    ),
+    remotePathMappings: listPart(
+      mappings.length,
+      mappingOffset,
+      mappingPage.slice(0, mappingCount),
+      "nextMappingOffset",
+    ),
+    handling: scalars(read.handling, [
+      "enableCompletedDownloadHandling",
+      "autoRedownloadFailed",
+      "autoRedownloadFailedFromInteractiveSearch",
+    ]),
+  })
+  const chars = (clientCount: number, mappingCount: number) =>
+    JSON.stringify(build(clientCount, mappingCount)).length
+  const half = (MAX_RESULT_CHARS + chars(0, 0)) / 2
+  const offered = largestFitting(
+    mappingPage.length,
+    (count) => chars(0, count) <= half,
+  )
+  const clientCount = largestFitting(
+    clientPage.length,
+    (count) => chars(count, Math.max(offered, 0)) <= MAX_RESULT_CHARS,
+  )
+  const mappingCount = largestFitting(
+    mappingPage.length,
+    (count) => chars(Math.max(clientCount, 0), count) <= MAX_RESULT_CHARS,
+  )
+  // Settings are bounded, so one entry of each list always fits. Should that
+  // ever fail, a list that shows nothing must not pass for one that was read.
+  if (
+    clientCount < Math.min(1, clientPage.length) ||
+    mappingCount < Math.min(1, mappingPage.length)
+  ) {
+    throw new Error(
+      `${arr.service} download clients and path mappings do not fit one result of ${MAX_RESULT_CHARS} characters with an entry of each`,
+    )
+  }
+  return build(clientCount, mappingCount)
+}
+
+const PATH_MAPPING = ["host", "remotePath", "localPath"] as const
+
+/** One list of a result that holds several, with where to read on from. */
+function listPart(
+  total: number,
+  offset: number,
+  items: JsonObject[],
+  nextKey: string,
+): JsonObject {
+  const reached = offset + items.length
+  return {
+    total,
+    listed: items.length,
+    ...(offset > 0 ? { offset } : {}),
+    ...(reached < total ? { truncated: true, [nextKey]: reached } : {}),
+    items,
+  }
+}
+
+/**
+ * A read one diagnostic is built from. Its failure names the part that could
+ * not be read, so a partial answer is never taken for the whole one.
+ */
+function component<A>(
+  arr: Arr,
+  what: string,
+  read: Effect.Effect<A, ToolFailure>,
+): Effect.Effect<A, ToolError> {
+  return read.pipe(
+    Effect.mapError(
+      (error) =>
+        new ToolError({
+          message: `${arr.service} ${what} could not be read, so nothing is reported: ${error.message}`,
+        }),
+    ),
+  )
+}
+
 export function sizeText(bytes: JsonValue | undefined): string {
   if (!isNumber(bytes)) return "unknown size"
   if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GiB`
@@ -341,14 +664,27 @@ function itemIdOf(arr: Arr, params: object): number | undefined {
 const historyRead = (arr: Arr) => {
   const eventNames = Object.keys(arr.eventTypes)
   return resource({
-    description: `History, newest first. With ${arr.itemKey} it is that ${arr.itemNoun}'s whole history`,
+    description:
+      `History, newest first. With ${arr.itemKey} it is that ${arr.itemNoun}'s whole history. ` +
+      "A result carries next while more remains: pass its values with the same filters to read on",
     params: withItemId(
       arr,
       Type.Object({
         eventType: Type.Optional(Type.Enum(eventNames)),
         page: Type.Optional(Type.Integer({ minimum: 1 })),
         pageSize: Type.Optional(
-          Type.Integer({ minimum: 1, maximum: 100, description: "Default 50" }),
+          Type.Integer({
+            minimum: 1,
+            maximum: 100,
+            description: `Default ${DEFAULT_HISTORY_PAGE_SIZE}. A page too long for one result is cut, and next has the rest`,
+          }),
+        ),
+        pageOffset: Type.Optional(
+          Type.Integer({
+            minimum: 0,
+            description:
+              "Skip this many records of that page. Only from next, with its page and pageSize",
+          }),
         ),
       }),
       `Internal ${arr.service} ${arr.itemNoun} id; omit for every ${arr.itemNoun}`,
@@ -357,8 +693,16 @@ const historyRead = (arr: Arr) => {
       Effect.gen(function* () {
         const itemId = itemIdOf(arr, params)
         const eventType = params.eventType
-        const page = params.page ?? 1
-        const pageSize = params.pageSize ?? 50
+        const start: HistoryStart = {
+          page: params.page ?? 1,
+          pageSize: params.pageSize ?? DEFAULT_HISTORY_PAGE_SIZE,
+          pageOffset: params.pageOffset ?? 0,
+        }
+        if (start.pageOffset >= start.pageSize) {
+          return yield* toolFail(
+            `pageOffset skips records within one page, so it must be below pageSize ${start.pageSize}`,
+          )
+        }
         if (itemId !== undefined) {
           const all = yield* arrList(arr, arr.itemHistoryPath, {
             query: { [arr.itemKey]: itemId },
@@ -368,22 +712,21 @@ const historyRead = (arr: Arr) => {
             (record) =>
               eventType === undefined || record.eventType === eventType,
           )
-          const start = (page - 1) * pageSize
-          const items = matching.slice(start, start + pageSize)
-          return {
-            total: matching.length,
-            page,
-            pageSize,
-            listed: items.length,
-            items: items.map(compactHistory),
-          }
+          const first = (start.page - 1) * start.pageSize
+          return yield* toolCheck(() =>
+            historyPage(
+              start,
+              matching.length,
+              matching.slice(first, first + start.pageSize),
+            ),
+          )
         }
         const result = yield* arrPage(
           arr,
           "/api/v3/history",
           {
-            page,
-            pageSize,
+            page: start.page,
+            pageSize: start.pageSize,
             sortKey: "date",
             sortDirection: "descending",
             eventType:
@@ -391,13 +734,9 @@ const historyRead = (arr: Arr) => {
           },
           signal,
         )
-        return {
-          total: result.total,
-          page,
-          pageSize,
-          listed: result.records.length,
-          items: result.records.map(compactHistory),
-        }
+        return yield* toolCheck(() =>
+          historyPage(start, result.total, result.records),
+        )
       }),
   })
 }
@@ -523,7 +862,8 @@ export function arrSharedReads(arr: Arr) {
     }),
     manual_import_candidates: resource({
       description:
-        "Files the Arr could import from a folder or download, with its mapping and rejections",
+        "Files the Arr could import from a folder or download, with its mapping and rejections. " +
+        "rejections null is a candidate the Arr sent no rejection list for: unknown, not accepted",
       params: Type.Object(manualImportScope()),
       run: (params, signal) =>
         readCandidates(arr, params, signal).pipe(
@@ -543,26 +883,105 @@ export function arrSharedReads(arr: Arr) {
           signal,
         ).pipe(Effect.map(compactCommand)),
     }),
-    raw: resource({
+    health: resource({
       description:
-        "Any other GET below /api/v3. Uncompacted; prefer a named tool",
+        "The Arr's own health checks, each with its source, level, and message. An empty list is no reported problem, not proof that every dependency works",
+      params: Type.Object({}),
+      run: (_params, signal) =>
+        arrList(arr, "/api/v3/health", { signal }).pipe(
+          Effect.flatMap((checks) =>
+            toolCheck(() =>
+              listResult(
+                checks.map((check) => ({
+                  ...scalars(
+                    diagnosticRecord(arr, "health check", check, [
+                      "type",
+                      "message",
+                    ]),
+                    ["source", "type", "wikiUrl"],
+                  ),
+                  message: scalar(check.message, MAX_MESSAGE_CHARS),
+                })),
+              ),
+            ),
+          ),
+        ),
+    }),
+    disk_space: resource({
+      description:
+        "Free and total bytes of every disk the Arr sees, by the path it sees it at. A null size is one the Arr did not report",
+      params: Type.Object({}),
+      run: (_params, signal) =>
+        arrList(arr, "/api/v3/diskspace", { signal }).pipe(
+          Effect.flatMap((disks) =>
+            toolCheck(() =>
+              listResult(
+                disks.map((disk) =>
+                  scalars(diagnosticRecord(arr, "disk", disk, ["path"]), [
+                    "path",
+                    "label",
+                    "freeSpace",
+                    "totalSpace",
+                  ]),
+                ),
+              ),
+            ),
+          ),
+        ),
+    }),
+    download_clients: resource({
+      description:
+        "Download clients with protocol, enabled state, host, and the category and directory this Arr hands them, " +
+        "plus remote path mappings and whether completed and failed downloads are handled automatically. No credentials. A null setting is one the client does not report. " +
+        "The two lists share one result and each says where it was cut",
       params: Type.Object({
-        path: Type.String({
-          description:
-            "Service-relative path with its query string, e.g. /api/v3/languageprofile",
-        }),
+        clientOffset: Type.Optional(
+          Type.Integer({
+            minimum: 0,
+            description: "Skip this many clients; clients.nextClientOffset",
+          }),
+        ),
+        mappingOffset: Type.Optional(
+          Type.Integer({
+            minimum: 0,
+            description:
+              "Skip this many mappings; remotePathMappings.nextMappingOffset",
+          }),
+        ),
       }),
       run: (params, signal) =>
         Effect.gen(function* () {
-          const path = yield* rawPath(params.path, "/api/v3")
-          const response = yield* arrRequest(arr, path, {
-            signal,
-            jsonOnly: true,
-          })
-          return rawResult(response, [arr.cfg.apiKey])
+          const clients = yield* component(
+            arr,
+            "download clients",
+            arrList(arr, "/api/v3/downloadclient", { signal }),
+          )
+          const mappings = yield* component(
+            arr,
+            "remote path mappings",
+            arrList(arr, "/api/v3/remotepathmapping", { signal }),
+          )
+          const handling = yield* component(
+            arr,
+            "download handling settings",
+            readDownloadHandling(arr, signal),
+          )
+          return yield* toolCheck(() =>
+            downloadClientsResult(arr, { clients, mappings, handling }, params),
+          )
         }),
     }),
   }
+}
+
+/** The Arr's settings for what it does with finished and failed downloads. */
+function readDownloadHandling(arr: Arr, signal: Signal) {
+  return arrObject(
+    arr,
+    "/api/v3/config/downloadclient",
+    "download handling settings",
+    signal,
+  )
 }
 
 export interface ReleaseFilters {
@@ -641,25 +1060,21 @@ export function readReleases(
         ...compactRelease(release),
         ...target.describe?.(release),
       }))
-    return fitListing(
-      {
-        searchAgeSeconds: Math.round(search.ageMs / 1000),
-        total: releases.length,
-        forTarget: forTarget.length,
-        approvedForTarget: forTarget.filter(
-          (release) => release.approved === true,
-        ).length,
-        matchingFilters: matching.length,
-        rejectionsInMatching: rejectionGroups(matching),
-        otherTargets: {
-          count: elsewhere.length,
-          examples: elsewhere
-            .slice(0, 5)
-            .map((release) => release.title ?? null),
-        },
+    const summary: JsonObject = {
+      searchAgeSeconds: Math.round(search.ageMs / 1000),
+      total: releases.length,
+      forTarget: forTarget.length,
+      approvedForTarget: forTarget.filter(
+        (release) => release.approved === true,
+      ).length,
+      matchingFilters: matching.length,
+      rejectionsInMatching: rejectionGroups(matching),
+      otherTargets: {
+        count: elsewhere.length,
+        examples: elsewhere.slice(0, 5).map((release) => release.title ?? null),
       },
-      listed,
-    )
+    }
+    return yield* toolCheck(() => fitListing(summary, listed))
   })
 }
 
@@ -673,10 +1088,11 @@ function fitListing(summary: JsonObject, listed: JsonObject[]): JsonObject {
     listed: count,
     releases: listed.slice(0, count),
   })
-  const fits = listed
-    .map((_, index) => listed.length - index)
-    .find((count) => toText(withCount(count)).length <= MAX_RESULT_CHARS)
-  return withCount(fits ?? 0)
+  return withCount(
+    fittingCount(listed.length, withCount, {
+      entry: "the first matching release",
+    }),
+  )
 }
 
 function matchesFilters(release: JsonObject, filters: ReleaseFilters): boolean {
@@ -790,14 +1206,42 @@ export function compactCandidate(candidate: JsonObject): JsonObject {
           ),
         }
       : {}),
-    rejections: rejectionReasons(candidate),
+    rejections: rejectionReasons(candidate) ?? null,
   }
 }
 
-export function rejectionReasons(candidate: JsonObject): string[] {
-  return objectList(candidate.rejections).flatMap((rejection) =>
-    isString(rejection.reason) ? [rejection.reason] : [],
+/**
+ * Why the Arr would not import a candidate, or `undefined` when it sent no
+ * list of reasons that can be read. An empty list is the only answer that
+ * means it rejects nothing.
+ */
+export function rejectionReasons(candidate: JsonObject): string[] | undefined {
+  const rejections = candidate.rejections
+  if (!Array.isArray(rejections)) return undefined
+  const reasons = rejections.flatMap((rejection) =>
+    isJsonObject(rejection) && isString(rejection.reason)
+      ? [rejection.reason]
+      : [],
   )
+  return reasons.length === rejections.length ? reasons : undefined
+}
+
+/**
+ * Fails an import whose candidates carry no readable rejection list. Those
+ * would otherwise go out looking as if the Arr accepted them.
+ */
+function requireKnownRejections(
+  arr: Arr,
+  matches: CandidateMatch[],
+): Effect.Effect<CandidateMatch[], ToolFailure> {
+  const unknown = matches.filter(
+    (match) => rejectionReasons(match.candidate) === undefined,
+  )
+  return unknown.length === 0
+    ? Effect.succeed(matches)
+    : toolFail(
+        `${arr.service} sent no readable rejection list for ${unknown.map((match) => match.path).join(", ")}; whether it rejects them is unknown, so nothing was written`,
+      )
 }
 
 export interface CandidateMatch {
@@ -852,10 +1296,13 @@ export function matchCandidates(
         `not among ${arr.service}'s current manual-import candidates: ${missing.join(", ")}`,
       )
     }
-    return paths.flatMap((path) => {
-      const candidate = candidates.find((entry) => entry.path === path)
-      return candidate ? [{ path, candidate }] : []
-    })
+    return yield* requireKnownRejections(
+      arr,
+      paths.flatMap((path) => {
+        const candidate = candidates.find((entry) => entry.path === path)
+        return candidate ? [{ path, candidate }] : []
+      }),
+    )
   })
 }
 
@@ -897,8 +1344,15 @@ export function scanCandidates(
       const matches = candidates.flatMap((candidate) =>
         isString(candidate.path) ? [{ path: candidate.path, candidate }] : [],
       )
+      // The scan imports every candidate, so one that cannot be named is one
+      // the write could not show.
+      if (matches.length < candidates.length) {
+        return toolFail(
+          `${arr.service} listed ${candidates.length - matches.length} of ${candidates.length} candidates under ${path} without a path, so what the scan would import is unknown; nothing was written`,
+        )
+      }
       return matches.length > 0
-        ? Effect.succeed(matches)
+        ? requireKnownRejections(arr, matches)
         : toolFail(`${arr.service} sees no importable file under ${path}`)
     }),
   )
@@ -906,10 +1360,49 @@ export function scanCandidates(
 
 export function candidateWarnings(matches: CandidateMatch[]): string[] {
   return matches.flatMap((match) =>
-    rejectionReasons(match.candidate).map(
+    (rejectionReasons(match.candidate) ?? []).map(
       (reason) => `${match.path}: ${reason}`,
     ),
   )
+}
+
+/**
+ * The write that scans one folder and imports what the Arr accepts from it.
+ * `mapping` says where the Arr would put one candidate.
+ */
+export function folderScanAction(
+  arr: Arr,
+  mapping: (candidate: JsonObject) => string,
+) {
+  return action({
+    description:
+      `Scan one folder and import every file in it the Arr accepts into the library (${arr.scanCommand}). ` +
+      "Accepted files are moved or copied out of the folder as the Arr decides; rejected files stay where they are",
+    params: Type.Object({
+      path: Type.String({
+        minLength: 1,
+        description: "Folder to scan and import, as the Arr sees it",
+      }),
+    }),
+    resolve: (params, signal) =>
+      scanCandidates(arr, params.path, signal).pipe(
+        Effect.map((matches) => ({
+          state: null,
+          summary: `Scan ${params.path} and import what ${arr.service} accepts: ${matches.length} candidate file(s)`,
+          effects: matches.map(
+            (match): WriteEffect => ({
+              kind: "import",
+              target: match.path,
+              detail: `mapped to ${mapping(match.candidate)}`,
+            }),
+          ),
+          warnings: candidateWarnings(matches),
+        })),
+      ),
+    write: (params) =>
+      postCommand(arr, { name: arr.scanCommand, path: params.path }),
+    verify: (_params, result) => verifyCommand(arr, result),
+  })
 }
 
 export function postCommand(arr: Arr, body: JsonObject) {
@@ -920,16 +1413,20 @@ export function postCommand(arr: Arr, body: JsonObject) {
   )
 }
 
-/** Follow-up read on the queued command so the model sees it was accepted. */
+/**
+ * Follow-up read on the queued command so the model sees it was accepted. A
+ * response without a usable id is a verification that failed, never a write
+ * that did not happen: the Arr answered the command with success.
+ */
 export function verifyCommand(
   arr: Arr,
   result: JsonValue,
 ): Effect.Effect<JsonValue, ToolFailure> {
   const id = isJsonObject(result) && isNumber(result.id) ? result.id : undefined
   if (id === undefined) {
-    return Effect.succeed({
-      warning: `the command response had no id; read /api/v3/command with ${arr.service}_raw`,
-    })
+    return toolFail(
+      `${arr.service} accepted the command, but its answer carried no command id, so its status could not be read back. Do not send it again to get one: read the state it changes`,
+    )
   }
   return arrObject(
     arr,
@@ -1072,6 +1569,58 @@ function findHistoryRecord(
   })
 }
 
+/**
+ * Whether the Arr starts a replacement search itself once a release is marked
+ * failed. It reads its own settings for that: redownload must be on, and for
+ * a release that was grabbed from an interactive search, on for those too.
+ * The record that is marked failed is the one whose release source counts.
+ */
+function redownloadAfterFailure(
+  handling: JsonObject,
+  record: JsonObject,
+): { searches: boolean | undefined; detail: string } {
+  const enabled = handling.autoRedownloadFailed
+  if (typeof enabled !== "boolean") {
+    return {
+      searches: undefined,
+      detail:
+        "this Arr reported no autoRedownloadFailed setting, so whether it searches a replacement itself is unknown; read the queue afterwards",
+    }
+  }
+  if (!enabled) {
+    return {
+      searches: false,
+      detail:
+        "autoRedownloadFailed is off: the Arr starts no replacement search itself",
+    }
+  }
+  if (objectField(record, "data")?.releaseSource !== "InteractiveSearch") {
+    return {
+      searches: true,
+      detail: "started by the Arr itself: autoRedownloadFailed is on",
+    }
+  }
+  const interactive = handling.autoRedownloadFailedFromInteractiveSearch
+  if (typeof interactive !== "boolean") {
+    return {
+      searches: undefined,
+      detail:
+        "this release came from an interactive search and this Arr reported no autoRedownloadFailedFromInteractiveSearch setting, so whether it searches a replacement itself is unknown; read the queue afterwards",
+    }
+  }
+  return interactive
+    ? {
+        searches: true,
+        detail:
+          "started by the Arr itself: autoRedownloadFailed is on, for interactive-search grabs too",
+      }
+    : {
+        searches: false,
+        detail:
+          "this release came from an interactive search and autoRedownloadFailedFromInteractiveSearch is off: the Arr starts no replacement search itself",
+      }
+}
+
 /** The writes both Arrs serve from the same endpoints. */
 export function arrSharedActions(arr: Arr) {
   return {
@@ -1164,7 +1713,7 @@ export function arrSharedActions(arr: Arr) {
     }),
     mark_history_failed: action({
       description:
-        "Mark a grabbed release failed, which blocklists it and lets the Arr search a replacement",
+        "Mark a grabbed release failed, which blocklists it. The result says whether the Arr then searches a replacement itself, from its own redownload settings",
       params: withItemId(
         arr,
         Type.Object({
@@ -1190,16 +1739,26 @@ export function arrSharedActions(arr: Arr) {
               entry.downloadId === record.downloadId,
           )
           const title = String(record.sourceTitle ?? "untitled")
+          const redownload = redownloadAfterFailure(
+            yield* readDownloadHandling(arr, signal),
+            record,
+          )
           const effect: WriteEffect = {
             kind: "blocklist",
             target: `history record ${params.historyId}: ${title}`,
             detail: `event ${String(record.eventType ?? "unknown")}; downloadId ${String(record.downloadId ?? "none")}`,
           }
+          const search: WriteEffect = {
+            kind: "search",
+            target: `a replacement for ${title}`,
+            detail: redownload.detail,
+          }
           return {
             state: { record },
             summary: `Mark ${title} failed and blocklist it`,
-            effects: [effect],
+            effects: redownload.searches === true ? [effect, search] : [effect],
             warnings: [
+              ...(redownload.searches === true ? [] : [redownload.detail]),
               ...(active.length > 0
                 ? [
                     `this release is still in the queue (${active.map((entry) => `item ${String(entry.id)} ${String(entry.status ?? "")}`).join(", ")}); marking it failed discards that active download`,
@@ -1210,7 +1769,6 @@ export function arrSharedActions(arr: Arr) {
                     `record ${params.historyId} is a ${String(record.eventType)} event, not the grab; the Arr fails the grab that shares its downloadId`,
                   ]
                 : []),
-              "with automatic redownload on (the default) the Arr searches a replacement itself",
             ],
           }
         }),
