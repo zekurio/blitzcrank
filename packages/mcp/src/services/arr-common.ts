@@ -1702,6 +1702,11 @@ export function arrSharedActions(arr: Arr) {
               (entry) => entry.id === params.queueId,
             )
             if (!left) {
+              if (queue.records.length < queue.total) {
+                return {
+                  warning: `the queue read is truncated; cannot confirm queue item ${params.queueId} is gone`,
+                }
+              }
               return { confirmed: `queue item ${params.queueId} is gone` }
             }
             return {
@@ -1839,16 +1844,23 @@ export function arrSharedActions(arr: Arr) {
         }),
       verify: (params) =>
         readBlocklist(arr, undefined).pipe(
-          Effect.map(
-            (blocklist): JsonValue =>
+          Effect.map((blocklist): JsonValue => {
+            if (
               blocklist.records.some((entry) => entry.id === params.blocklistId)
-                ? {
-                    warning: `blocklist entry ${params.blocklistId} is still listed`,
-                  }
-                : {
-                    confirmed: `blocklist entry ${params.blocklistId} is gone`,
-                  },
-          ),
+            ) {
+              return {
+                warning: `blocklist entry ${params.blocklistId} is still listed`,
+              }
+            }
+            if (blocklist.records.length < blocklist.total) {
+              return {
+                warning: `the blocklist read is truncated; cannot confirm blocklist entry ${params.blocklistId} is gone`,
+              }
+            }
+            return {
+              confirmed: `blocklist entry ${params.blocklistId} is gone`,
+            }
+          }),
         ),
     }),
     grab_release: action({

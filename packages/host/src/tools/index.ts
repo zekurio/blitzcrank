@@ -34,10 +34,7 @@ export interface RunTools {
  */
 export function buildRunTools(deps: RunToolDeps): RunTools {
   const viewsImages = deps.modelInput?.includes("image") === true
-  const mcp = buildMcpTools(deps.mcp, viewsImages).filter(
-    // Frames are worthless to a model that cannot view them.
-    (tool) => tool.name !== "media_frames" || viewsImages,
-  )
+  const mcp = buildMcpTools(deps.mcp, viewsImages)
   return {
     tools: [
       buildHistoryTool(deps.history, deps.sessionFileRef),

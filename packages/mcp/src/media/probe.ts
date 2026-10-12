@@ -12,7 +12,7 @@ import {
   ToolError,
   type ServerTool,
 } from "../tools.ts"
-import { execFileTextEffect } from "./exec.ts"
+import { execFileTextEffect, MEDIA_INPUT_ARGS } from "./exec.ts"
 import {
   fsEffect,
   largestMediaFileEffect,
@@ -62,6 +62,14 @@ export function buildMediaProbeTool(roots: readonly string[]): ServerTool {
         const params = yield* checkArgs("media_probe", PROBE_INPUT, args)
         const target = yield* resolveMediaPathEffect(params.path, roots)
         const info = yield* fsEffect(() => stat(target))
+        if (!info.isFile() && !info.isDirectory()) {
+          return yield* Effect.fail(
+            new ToolError({
+              message:
+                "media_probe requires a regular file or release directory",
+            }),
+          )
+        }
         const file = info.isDirectory()
           ? yield* largestMediaFileEffect(target)
           : { path: target, size: info.size }
@@ -70,6 +78,7 @@ export function buildMediaProbeTool(roots: readonly string[]): ServerTool {
           [
             "-v",
             "error",
+            ...MEDIA_INPUT_ARGS,
             "-show_entries",
             "stream=index,codec_type,codec_name,channels,channel_layout:stream_tags=language,title:stream_disposition=default,forced:format=duration",
             "-of",

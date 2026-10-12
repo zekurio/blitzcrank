@@ -226,9 +226,10 @@ The files named here are in `packages/host/src/gateways/seerr/`.
 - `media_probe` (ffprobe) and `media_frames` (ffmpeg) run on the server, are
   read-only, and require `BLITZCRANK_MEDIA_ROOTS` in the server's environment.
   Both resolve targets with `realpath` before the containment check, so no
-  symlink reads outside the roots. `media_frames` additionally requires a
-  regular file, restricts input protocols and formats to prevent network or
-  playlist reads, and returns at most six bounded still images per call.
+  symlink reads outside the roots. Both restrict input protocols and formats
+  to prevent network or playlist reads. `media_probe` accepts a regular file
+  or release directory; `media_frames` requires a regular file and returns at
+  most six bounded still images per call.
   Stream tags, frames, and visible text are untrusted.
 
 ## Branch names

@@ -6,6 +6,14 @@ import { Data, Effect } from "effect"
 const MAX_ERROR_DETAIL_CHARS = 8_000
 const execFileAsync = promisify(execFile)
 
+/** A contained file must not open playlists, other files, or network inputs. */
+export const MEDIA_INPUT_ARGS = [
+  "-protocol_whitelist",
+  "file,pipe",
+  "-format_whitelist",
+  "matroska,webm,mov,mp4,m4a,3gp,3g2,mj2,avi,mpegts,mpeg,asf,flv,ogg",
+]
+
 /** Carries the helper's exit status alongside its error output. */
 export class ExecError extends Data.TaggedError("ExecError")<{
   message: string

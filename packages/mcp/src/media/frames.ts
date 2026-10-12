@@ -12,6 +12,7 @@ import {
   type ContentBlock,
   type ServerTool,
 } from "../tools.ts"
+import { MEDIA_INPUT_ARGS } from "./exec.ts"
 import { fsEffect, resolveMediaPathEffect } from "./paths.ts"
 
 const ffmpeg = promisify(execFile)
@@ -114,11 +115,7 @@ function extractFrame(
             "-hide_banner",
             "-loglevel",
             "error",
-            // Do not allow playlists or network inputs to escape the media roots.
-            "-protocol_whitelist",
-            "file,pipe",
-            "-format_whitelist",
-            "matroska,webm,mov,mp4,m4a,3gp,3g2,mj2,avi,mpegts,mpeg,asf,flv,ogg",
+            ...MEDIA_INPUT_ARGS,
             "-threads",
             "1",
             "-ss",

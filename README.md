@@ -107,9 +107,9 @@ blitzcrank auth status
 blitzcrank auth logout openai
 ```
 
-`openai` supports **Sign in with ChatGPT** through Pi 1.0. Follow the browser
+`openai` supports **Sign in with ChatGPT**. Follow the browser
 URL, then complete the callback or paste the final redirect URL into the
-terminal. `openai-codex` is the legacy provider, not the new subscription flow.
+terminal.
 Other OAuth-capable providers use the same `auth login <provider>` command.
 Auth commands do not need service credentials or a model selection.
 
@@ -125,10 +125,6 @@ across ordinary rebuilds.
 
 **Choose a model explicitly.** `BLITZCRANK_MODEL` is required and has no default.
 Use `provider/model[:thinking]`, for example `openai/gpt-6-astra:medium`.
-
-Existing deployments that relied on `~/.pi/agent/auth.json` must set an explicit
-path or log in again. To move from legacy Codex auth, log in to `openai` and
-select an `openai/…` model; do not rename credential entries.
 
 ## Develop locally
 

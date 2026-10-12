@@ -70,9 +70,8 @@ function exactPath(file: string) {
 }
 
 function transcriptText(file: string): string {
-  // Durable 1.0.3's writable adapters migrate on open and checkpoint on close.
   // A deferred read transaction gives one committed WAL snapshot without
-  // opening Harness, recovering tasks, migrating, or checkpointing.
+  // opening Harness, recovering tasks, changing schema, or checkpointing.
   const db = new DatabaseSync(file, { readOnly: true, timeout: 100 })
   try {
     db.exec("BEGIN")

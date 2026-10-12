@@ -16,7 +16,8 @@ const CAPABILITY_LINES: ReadonlyArray<readonly [string, string]> = [
   [
     "media_frames",
     `- For wrong-content reports, load media-probe and call \`media_frames\`.
-  Scenes alone may not identify an episode.`,
+  Scenes alone may not identify an episode. If the result says images were
+  omitted, visual contents remain unverified.`,
   ],
   [
     "media_probe",
