@@ -1,6 +1,6 @@
 import path from "node:path"
 
-import type { Effect } from "effect"
+import { Effect, type Scope } from "effect"
 
 import type { JsonValue } from "./services/http.ts"
 
@@ -76,19 +76,30 @@ export interface Intake {
   submit(message: Inbound): Effect.Effect<"cancelling" | "queued", unknown>
 }
 
-export interface Gateway {
-  /**
-   * Routes `POST /webhook/<name>`, tags this gateway's threads, and names the
-   * directory their conversations are kept in.
-   */
-  readonly name: string
-  /** Checked before a webhook body is read. */
+/** A gateway's endpoint at `POST /webhook/<name>`, for a platform that calls the host. */
+export interface Webhook {
+  /** Checked before the body is read. */
   authorized(authorization: string | undefined): boolean
-  /** Handles one webhook body and returns the JSON to answer with. */
-  webhookEffect(
+  /** Handles one body and returns the JSON to answer with. */
+  handleEffect(
     body: unknown,
     intake: Intake,
   ): Effect.Effect<Record<string, JsonValue>, unknown>
+}
+
+export interface Gateway {
+  /**
+   * Tags this gateway's threads, names the directory their conversations are
+   * kept in, and routes its webhook.
+   */
+  readonly name: string
+  readonly webhook?: Webhook
+  /**
+   * For a platform the host connects to. Opens that connection and submits
+   * what arrives, and returns once it is listening. Closing the scope stops
+   * admission only: runs still drain through `channel` after it closes.
+   */
+  listenEffect?(intake: Intake): Effect.Effect<void, unknown, Scope.Scope>
   /** Whether an accepted message may still run after a restart. */
   authorizeEffect(message: Inbound): Effect.Effect<boolean, unknown>
   channel(threadId: string): Channel
@@ -111,8 +122,17 @@ export class Gateways {
 
   of(thread: ThreadRef): Gateway {
     const gateway = this.entries.get(thread.gateway)
-    if (!gateway) throw new Error(`Unknown gateway ${thread.gateway}`)
+    if (!gateway) throw new Error(`Gateway ${thread.gateway} is not enabled`)
     return gateway
+  }
+
+  /** Opens admission on every gateway that listens, in the caller's scope. */
+  listenEffect(intake: Intake): Effect.Effect<void, unknown, Scope.Scope> {
+    return Effect.forEach(
+      this.entries.values(),
+      (gateway) => gateway.listenEffect?.(intake) ?? Effect.void,
+      { discard: true },
+    )
   }
 
   channel(thread: ThreadRef): Channel {
@@ -134,6 +154,7 @@ export class Gateways {
 
 /**
  * All a run is handed of the gateways: its thread's channel and where the
- * thread's conversation is kept. Intake and authorization stay out of reach.
+ * thread's conversation is kept. Intake, listening, and authorization stay out
+ * of reach.
  */
 export type Threads = Pick<Gateways, "channel" | "sessionFile" | "sessionsDir">
