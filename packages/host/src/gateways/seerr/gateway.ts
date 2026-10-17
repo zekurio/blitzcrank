@@ -69,16 +69,18 @@ export function createSeerrGateway(config: SeerrConfig): Gateway {
 
   return {
     name: NAME,
-    authorized: (authorization) =>
-      !config.webhookSecret ||
-      authorization === config.webhookSecret ||
-      authorization === `Bearer ${config.webhookSecret}`,
-    webhookEffect: (body, intake) =>
-      // SAFETY: Webhook fields stay optional and are sanitized before use.
-      webhookEffect(body as SeerrWebhookPayload, intake, {
-        allowComment,
-        botUsername: config.botUsername,
-      }),
+    webhook: {
+      authorized: (authorization) =>
+        !config.webhookSecret ||
+        authorization === config.webhookSecret ||
+        authorization === `Bearer ${config.webhookSecret}`,
+      handleEffect: (body, intake) =>
+        // SAFETY: Webhook fields stay optional and are sanitized before use.
+        webhookEffect(body as SeerrWebhookPayload, intake, {
+          allowComment,
+          botUsername: config.botUsername,
+        }),
+    },
     // A queued comment is checked again: its author may have lost the right
     // to drive the agent while the host was down.
     authorizeEffect: (message) =>

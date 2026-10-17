@@ -1,15 +1,17 @@
 # blitzcrank
 
-An agentic webhook gateway for a private media homelab. Jellyseerr issues start
-durable investigations across Seerr, Sonarr, Radarr, SABnzbd, and Jellyfin.
+An agentic gateway for a private media homelab. Jellyseerr issues and Discord
+messages start durable investigations across Seerr, Sonarr, Radarr, SABnzbd,
+and Jellyfin.
 
 It runs as two processes:
 
-- The host (`packages/host`, command `blitzcrank`) receives the Seerr webhook,
-  runs the agent, and posts its final message as the comment. Resolving the
-  issue is left to its reporter. The host holds the model credentials and the
-  Seerr key it comments with. Seerr is one gateway behind an interface; the
-  agent loop only sees threads.
+- The host (`packages/host`, command `blitzcrank`) takes Seerr webhooks and,
+  when enabled, Discord messages, runs the agent, and posts its final message
+  as the issue comment or in the Discord thread. Resolving an issue is left to
+  its reporter. The host holds the model credentials and what its gateways
+  post with: the Seerr key and the Discord bot token. The agent loop only sees
+  threads, never the gateway behind them.
 - The MCP server (`packages/mcp`, command `blitzcrank-mcp`) holds the service
   API keys and the media mounts. Every read and write the agent makes goes
   through it, one tool per operation.
@@ -178,6 +180,40 @@ Under **Settings → Notifications → Webhook**, set:
 Set `SEERR_BOT_USER_ID` and `SEERR_BOT_USERNAME` for the bot's Seerr identity.
 Only the reporter or a Seerr user with `ADMIN`/`MANAGE_ISSUES` may drive an issue
 through comments.
+
+## Connect Discord
+
+The Discord gateway is off by default. Enable it with
+`BLITZCRANK_GATEWAYS=seerr,discord`, or `services.blitzcrank.gateways` on NixOS.
+Leave out `seerr` to run Discord alone.
+
+The bot watches the channels in `DISCORD_CHANNELS` and nothing else, DMs
+included. Only members listed by user id in `DISCORD_ALLOWED_USERS` or holding a
+role in `DISCORD_ALLOWED_ROLES` get an answer. Their messages go to a
+classifier first:
+
+- A message that triage judges a homelab request opens a thread, and the agent
+  answers there. Without a mention, triage must be at least
+  `DISCORD_TRIAGE_THRESHOLD` sure (0.8 by default). With one, the most likely
+  label decides.
+- An off-topic message gets a fixed denial line if it mentions the bot, and
+  nothing otherwise.
+- Later messages in a bot thread are follow-ups. They need no mention and skip
+  triage.
+
+`DISCORD_TRIAGE_MODEL` is required and names a classifier model, not a chat
+model. TypeSafe's Jev is one: `opencode/jev-1.13` or `opencode/jev-1.13-free`
+with `OPENCODE_API_KEY`, `openrouter/~typesafe/jev-latest` with
+`OPENROUTER_API_KEY`, or `typesafe/jev-latest` with `TYPESAFE_API_KEY`. The
+host refuses to start if the model is unknown or its provider has no key.
+
+In the [developer portal](https://discord.com/developers/applications), create
+an application with a bot, copy its token into `DISCORD_BOT_TOKEN`, and turn on
+the **Message Content** intent. Invite the bot with the `bot` scope and these
+permissions in the watched channels: View Channel, Send Messages, Send Messages
+in Threads, Create Public Threads, and Read Message History. The host connects
+to Discord itself and needs no inbound port for it. Messages sent while the
+host is down are not picked up later.
 
 ## Optional features
 

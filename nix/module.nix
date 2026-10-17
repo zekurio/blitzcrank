@@ -160,6 +160,26 @@ in
       description = "Language for public comments.";
     };
 
+    gateways = lib.mkOption {
+      type = lib.types.nonEmptyListOf (
+        lib.types.enum [
+          "seerr"
+          "discord"
+        ]
+      );
+      default = [ "seerr" ];
+      description = ''
+        Gateways the host runs. Each reads its own settings, and a listed
+        gateway without them stops the service at startup. Pending work for
+        a gateway that is no longer listed also stops it.
+
+        "discord" needs DISCORD_BOT_TOKEN in {option}`environmentFile`, the
+        triage provider's API key there or in the auth file, and
+        DISCORD_CHANNELS, DISCORD_ALLOWED_USERS or DISCORD_ALLOWED_ROLES, and
+        DISCORD_TRIAGE_MODEL in {option}`settings`.
+      '';
+    };
+
     webProvider = lib.mkOption {
       type = lib.types.enum [
         "none"
@@ -211,7 +231,8 @@ in
       example = "/run/secrets/blitzcrank.env";
       description = ''
         Environment file with the host's secrets: SEERR_URL/SEERR_API_KEY
-        (required; the host comments on issues itself),
+        (required for the seerr gateway; the host comments on issues itself),
+        DISCORD_BOT_TOKEN (required for the discord gateway),
         BLITZCRANK_MCP_TOKEN (required; must be the same token as in
         the MCP server's environment file), BLITZCRANK_WEBHOOK_SECRET,
         FIRECRAWL_API_KEY when {option}`webProvider` is "firecrawl", and
@@ -268,6 +289,7 @@ in
         BLITZCRANK_PORT = toString cfg.port;
         BLITZCRANK_MODEL = cfg.model;
         BLITZCRANK_LANGUAGE = cfg.language;
+        BLITZCRANK_GATEWAYS = lib.concatStringsSep "," cfg.gateways;
         BLITZCRANK_DATA_DIR = stateDir;
         BLITZCRANK_AUTH_PATH = cfg.authFile;
         BLITZCRANK_WEB_PROVIDER = cfg.webProvider;
