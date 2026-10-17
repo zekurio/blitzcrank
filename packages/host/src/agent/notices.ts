@@ -1,6 +1,7 @@
 /**
- * The host's own lines on a thread: the queue notice and the working line a
- * run shows until its reply replaces it. The model writes neither.
+ * The host's own lines on a thread: the queue notice, the working line a run
+ * shows until its reply replaces it, and the line a gateway posts when it
+ * turns a request away. The model writes none of them.
  */
 
 export function queuedMessage(language: string, runsAhead: number): string {
@@ -22,6 +23,13 @@ export function workingMessage(language: string): string {
   return isGerman(language)
     ? `⚙️ Blitzcrank ${pick(WORKING_DE)} …`
     : `⚙️ Blitzcrank is ${pick(WORKING_EN)} …`
+}
+
+/** For a request outside the homelab. It starts no run. */
+export function outOfScopeMessage(language: string): string {
+  return isGerman(language)
+    ? "🤖 Blitzcrank hilft nur beim Medienserver: Anfragen, Downloads, Wiedergabe, Untertitel und so weiter."
+    : "🤖 Blitzcrank only helps with the media server: requests, downloads, playback, subtitles, and the like."
 }
 
 function isGerman(language: string): boolean {

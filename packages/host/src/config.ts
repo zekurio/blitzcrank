@@ -15,6 +15,8 @@ export type WebConfig =
  */
 export interface Config {
   port: number
+  /** The gateways to run, by name. Each reads its own settings. */
+  gateways: readonly string[]
   /** How many threads may run at once. A thread never runs twice at once. */
   maxParallelRuns: number
   /** Persistent state (session transcripts) lives here. */
@@ -131,9 +133,28 @@ function web(): WebConfig {
   return { provider, apiKey }
 }
 
+/**
+ * A deployment runs only the gateways it lists, so it needs no settings for
+ * the others. Seerr alone unless the operator lists more.
+ */
+function gateways(): readonly string[] {
+  const value = process.env.BLITZCRANK_GATEWAYS?.trim() || "seerr"
+  const names = value
+    .split(",")
+    .map((name) => name.trim())
+    .filter((name) => name !== "")
+  if (names.length === 0) {
+    throw new Error(
+      `BLITZCRANK_GATEWAYS must name at least one gateway, got "${value}"`,
+    )
+  }
+  return [...new Set(names)]
+}
+
 export function loadConfig(): Config {
   return {
     port: number("BLITZCRANK_PORT", process.env.BLITZCRANK_PORT, 8484),
+    gateways: gateways(),
     maxParallelRuns: maxParallelRuns(),
     dataDir: process.env.BLITZCRANK_DATA_DIR ?? "data",
     model: requiredModel(),
