@@ -102,7 +102,15 @@ function verdictEffect(
   }
   const label = LABELS.find((known) => known === answer.choice)
   const stack = answer.probabilities.stack
-  if (label === undefined || stack === undefined || !Number.isFinite(stack)) {
+  // The SDK only checks for a finite number, and a stack of 2 would clear any
+  // threshold.
+  if (
+    label === undefined ||
+    stack === undefined ||
+    !Number.isFinite(stack) ||
+    stack < 0 ||
+    stack > 1
+  ) {
     return Effect.fail(new TriageError({ reason: "malformed" }))
   }
   return Effect.succeed({ label, stack })

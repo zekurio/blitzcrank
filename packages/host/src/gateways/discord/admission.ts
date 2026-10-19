@@ -36,6 +36,27 @@ export function allowed(
   )
 }
 
+/**
+ * Whether someone may use the bot now, by a live member lookup. A user id
+ * admits only a current member, as a role does. A failed lookup is an error,
+ * not a no.
+ */
+export function memberAllowedEffect(
+  discord: DiscordClient,
+  config: Allowlist,
+  guild: string,
+  author: string,
+): Effect.Effect<boolean, DiscordError> {
+  return discord
+    .memberEffect(guild, author)
+    .pipe(
+      Effect.map(
+        (member) =>
+          member !== undefined && allowed(config, author, member.roles),
+      ),
+    )
+}
+
 type Place = { kind: "channel" } | { kind: "thread"; parent: string }
 
 const THREAD_TYPES: ReadonlySet<ChannelType> = new Set([
@@ -125,6 +146,9 @@ export function admitEffect(
   deps: AdmissionDeps,
 ): Effect.Effect<void> {
   return Effect.gen(function* () {
+    // The socket opens before recovery. Until the host is ready, a message
+    // only waits here, where closing the listener can still interrupt it.
+    yield* deps.intake.opened
     if (message.author.bot || message.webhook_id !== undefined) return
     if (
       message.type !== MessageType.Default &&

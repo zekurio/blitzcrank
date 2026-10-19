@@ -4,7 +4,16 @@ import path from "node:path"
 
 import { ModelRuntime } from "@earendil-works/pi-coding-agent"
 import { McpAuthRequiredError } from "@earendil-works/pi-mcp"
-import { Cause, Clock, Effect, Exit, Option, Schedule, Scope } from "effect"
+import {
+  Cause,
+  Clock,
+  Effect,
+  Exit,
+  Latch,
+  Option,
+  Schedule,
+  Scope,
+} from "effect"
 
 import { ThreadRunner } from "./agent/runner.ts"
 import { resolveModel } from "./agent/session.ts"
@@ -92,22 +101,38 @@ export function startServerEffect(): Effect.Effect<void, unknown> {
       jobs,
       config.maxParallelRuns,
     )
-    yield* work.restoreEffect()
 
-    const intake: Intake = { submit: (message) => work.enqueueEffect(message) }
-    // Admission opens only after recovery. Shutdown closes this scope to stop
-    // the gateways that listen before the queue closes.
+    // Gateways that listen connect before recovery, so a platform that cannot
+    // be reached stops the service before a recovered run starts. What they
+    // hear waits on this until recovered work is queued and shutdown is in
+    // place to stop admission.
+    const admission = Latch.makeUnsafe(false)
+    const intake: Intake = {
+      opened: admission.await,
+      submit: (message) => work.enqueueEffect(message),
+    }
+    // Shutdown closes this scope to stop the gateways that listen before the
+    // queue closes. A failed startup closes it too, rather than leaving its
+    // connections to the process exit.
     const listening = yield* Scope.make()
-    yield* gateways.listenEffect(intake).pipe(Scope.provide(listening))
-    const server = createServer(
-      createApp({
-        gateways,
-        intake,
-        stats: () => ({ queued: work.queue.size }),
-      }),
+    yield* Effect.gen(function* () {
+      yield* gateways.listenEffect(intake).pipe(Scope.provide(listening))
+      yield* work.restoreEffect()
+      const server = createServer(
+        createApp({
+          gateways,
+          intake,
+          stats: () => ({ queued: work.queue.size }),
+        }),
+      )
+      server.listen(config.port)
+      installShutdown(server, listening, work, jobs)
+      yield* admission.open
+    }).pipe(
+      // Admission never opened, so every message still waiting on it is
+      // interrupted before it could act.
+      Effect.onError((cause) => Scope.close(listening, Exit.failCause(cause))),
     )
-    server.listen(config.port)
-    installShutdown(server, listening, work, jobs)
   })
 }
 

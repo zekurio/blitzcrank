@@ -73,6 +73,13 @@ export interface Channel {
 
 /** What a gateway may ask of the host. */
 export interface Intake {
+  /**
+   * Succeeds once recovered work is queued and shutdown owns admission. A
+   * gateway that listens may connect before then, but acts on nothing it
+   * hears until this succeeds. A webhook needs no wait: the host serves HTTP
+   * only after recovery.
+   */
+  readonly opened: Effect.Effect<void>
   submit(message: Inbound): Effect.Effect<"cancelling" | "queued", unknown>
 }
 
@@ -95,8 +102,9 @@ export interface Gateway {
   readonly name: string
   readonly webhook?: Webhook
   /**
-   * For a platform the host connects to. Opens that connection and submits
-   * what arrives, and returns once it is listening. Closing the scope stops
+   * For a platform the host connects to. Opens that connection and returns
+   * once it is listening, which can be before `intake.opened` succeeds; what
+   * arrives waits for that before anything acts on it. Closing the scope stops
    * admission only: runs still drain through `channel` after it closes.
    */
   listenEffect?(intake: Intake): Effect.Effect<void, unknown, Scope.Scope>
@@ -126,7 +134,10 @@ export class Gateways {
     return gateway
   }
 
-  /** Opens admission on every gateway that listens, in the caller's scope. */
+  /**
+   * Connects every gateway that listens, in the caller's scope. Their
+   * admission waits for `intake.opened`.
+   */
   listenEffect(intake: Intake): Effect.Effect<void, unknown, Scope.Scope> {
     return Effect.forEach(
       this.entries.values(),
