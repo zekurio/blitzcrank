@@ -19,7 +19,7 @@ const WEBHOOK_PREFIX = "/webhook/"
 /**
  * The listener for `GET /healthz` and `POST /webhook/<gateway>`. What a
  * webhook means is the gateway's business; this only finds it, checks its
- * secret, and reads the body.
+ * secret, and reads the body. A gateway without a webhook is not found.
  */
 export function createApp(deps: ServerDeps): RequestListener {
   return (request, response) => {
@@ -47,15 +47,15 @@ function handleRequest(
       json(response, 200, { status: "ok", ...deps.stats() })
       return
     }
-    const gateway =
+    const webhook =
       request.method === "POST" && url.pathname.startsWith(WEBHOOK_PREFIX)
-        ? deps.gateways.find(url.pathname.slice(WEBHOOK_PREFIX.length))
+        ? deps.gateways.find(url.pathname.slice(WEBHOOK_PREFIX.length))?.webhook
         : undefined
-    if (!gateway) {
+    if (!webhook) {
       json(response, 404, { error: "not found" })
       return
     }
-    if (!gateway.authorized(request.headers.authorization)) {
+    if (!webhook.authorized(request.headers.authorization)) {
       json(response, 401, { error: "unauthorized" })
       return
     }
@@ -66,7 +66,7 @@ function handleRequest(
       json(response, 400, { error: "invalid JSON" })
       return
     }
-    json(response, 200, yield* gateway.webhookEffect(body, deps.intake))
+    json(response, 200, yield* webhook.handleEffect(body, deps.intake))
   })
 }
 

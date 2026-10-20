@@ -1,8 +1,9 @@
 # blitzcrank
 
-blitzcrank is an agent for a private media homelab. A Seerr issue webhook
-starts a Pi Durable run that investigates across Seerr, Sonarr, Radarr,
-SABnzbd, and Jellyfin, applies narrow verified fixes, and replies on the issue.
+blitzcrank is an agent for a private media homelab. A Seerr issue webhook or a
+Discord message starts a Pi Durable run that investigates across Seerr,
+Sonarr, Radarr, SABnzbd, and Jellyfin, applies narrow verified fixes, and
+replies on the issue or in the thread.
 
 Safety comes first, then reliability. Enforce rules in code, not in the prompt.
 Do not reintroduce removed runtimes, plan/apply writes, per-run tool subsets,
@@ -38,15 +39,18 @@ the runner's tool allowlist, or which server tools a run gets.
   it sets `readOnlyHint`. Recovery fails closed on a changed tool policy or an
   uncertain unsafe call.
 - The reply is the run's final message, read from that submission's answer ID,
-  never from the last assistant entry in history. The host posts it. One run
-  shows at most one message, and neither the agent nor the host closes a thread.
+  never from the last assistant entry in history. The host posts it, and no
+  other model output reaches a thread. One run shows at most one message, and
+  neither the agent nor the host closes a thread.
 - Only `packages/host/src/index.ts` imports from a gateway. The runner reaches
   a thread through its `Channel`, and only `Channel.brief` describes a gateway
   to the model. Skills describe services, never a gateway.
-- The Seerr comment gate runs before admission, fails closed when Seerr is
-  unreachable, and has no opt-out.
-- The host holds no service credential except the Seerr key, and no media
-  mounts. Never enable `bash`, `edit`, or `write` in the runner.
+- A gateway checks the sender before admission and before any model sees the
+  message, and again when recovery resumes it. The check fails closed when the
+  gateway's platform is unreachable and has no opt-out.
+- The host holds no media mounts and no service credential beyond what a
+  gateway needs to reach its own platform. Never enable `bash`, `edit`, or
+  `write` in the runner.
 - Every run gets every server tool, unloaded until `tool_search` loads it.
 - A server write is one call that resolves its target against live state,
   writes, and reads the result back. A service rejection is an error result. A

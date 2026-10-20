@@ -4,13 +4,24 @@ import path from "node:path"
 
 import { ModelRuntime } from "@earendil-works/pi-coding-agent"
 import { McpAuthRequiredError } from "@earendil-works/pi-mcp"
-import { Cause, Clock, Effect, Option, Schedule } from "effect"
+import {
+  Cause,
+  Clock,
+  Effect,
+  Exit,
+  Latch,
+  Option,
+  Schedule,
+  Scope,
+} from "effect"
 
 import { ThreadRunner } from "./agent/runner.ts"
 import { resolveModel } from "./agent/session.ts"
 import { modelRuntimeOptions } from "./auth.ts"
 import { loadConfig, type Config } from "./config.ts"
-import { Gateways } from "./gateway.ts"
+import { Gateways, type Gateway, type Intake } from "./gateway.ts"
+import { loadDiscordConfig } from "./gateways/discord/config.ts"
+import { createDiscordGateway } from "./gateways/discord/gateway.ts"
 import { loadSeerrConfig } from "./gateways/seerr/config.ts"
 import { createSeerrGateway } from "./gateways/seerr/gateway.ts"
 import { JobStore } from "./jobs.ts"
@@ -25,18 +36,62 @@ import { ThreadWork } from "./thread-work.ts"
  */
 const SHUTDOWN_GRACE_MS = 30_000
 
+/** What a gateway may take from the host when it is built. */
+interface GatewayHost {
+  runtime: ModelRuntime
+  language: string
+}
+
+type BuildGateway = (host: GatewayHost) => Gateway
+
+/**
+ * Every gateway the host can run, under the name `BLITZCRANK_GATEWAYS` uses.
+ * An entry reads the gateway's settings at once, so a missing one stops the
+ * service before anything starts, and builds the gateway once the model
+ * runtime exists. A new gateway is one more entry here.
+ */
+const GATEWAYS = new Map<string, () => BuildGateway>([
+  [
+    "seerr",
+    () => {
+      const settings = loadSeerrConfig()
+      return () => createSeerrGateway(settings)
+    },
+  ],
+  [
+    "discord",
+    () => {
+      const settings = loadDiscordConfig()
+      return (host) => createDiscordGateway(settings, host)
+    },
+  ],
+])
+
+function loadGateways(names: readonly string[]): BuildGateway[] {
+  return names.map((name) => {
+    const load = GATEWAYS.get(name)
+    if (!load) {
+      throw new Error(
+        `BLITZCRANK_GATEWAYS names unknown gateway "${name}"; known: ${[...GATEWAYS.keys()].join(", ")}`,
+      )
+    }
+    return load()
+  })
+}
+
 export function startServerEffect(): Effect.Effect<void, unknown> {
   return Effect.gen(function* () {
     const config = loadConfig()
-    // A new gateway is one more entry here. Each reads its own settings, so a
-    // missing one stops the service before anything else starts.
-    const gateways = new Gateways(config.dataDir, [
-      createSeerrGateway(loadSeerrConfig()),
-    ])
+    const builds = loadGateways(config.gateways)
     const runtime = yield* Effect.tryPromise(() =>
       ModelRuntime.create(modelRuntimeOptions(config)),
     )
     resolveModel(runtime, config.model)
+    const host: GatewayHost = { runtime, language: config.language }
+    const gateways = new Gateways(
+      config.dataDir,
+      builds.map((build) => build(host)),
+    )
     yield* checkMcpEffect(config)
     yield* storageIO(() => mkdir(config.dataDir, { recursive: true }))
     const jobs = new JobStore(path.join(config.dataDir, "jobs.sqlite"))
@@ -46,17 +101,38 @@ export function startServerEffect(): Effect.Effect<void, unknown> {
       jobs,
       config.maxParallelRuns,
     )
-    yield* work.restoreEffect()
 
-    const server = createServer(
-      createApp({
-        gateways,
-        intake: { submit: (message) => work.enqueueEffect(message) },
-        stats: () => ({ queued: work.queue.size }),
-      }),
+    // Gateways that listen connect before recovery, so a platform that cannot
+    // be reached stops the service before a recovered run starts. What they
+    // hear waits on this until recovered work is queued and shutdown is in
+    // place to stop admission.
+    const admission = Latch.makeUnsafe(false)
+    const intake: Intake = {
+      opened: admission.await,
+      submit: (message) => work.enqueueEffect(message),
+    }
+    // Shutdown closes this scope to stop the gateways that listen before the
+    // queue closes. A failed startup closes it too, rather than leaving its
+    // connections to the process exit.
+    const listening = yield* Scope.make()
+    yield* Effect.gen(function* () {
+      yield* gateways.listenEffect(intake).pipe(Scope.provide(listening))
+      yield* work.restoreEffect()
+      const server = createServer(
+        createApp({
+          gateways,
+          intake,
+          stats: () => ({ queued: work.queue.size }),
+        }),
+      )
+      server.listen(config.port)
+      installShutdown(server, listening, work, jobs)
+      yield* admission.open
+    }).pipe(
+      // Admission never opened, so every message still waiting on it is
+      // interrupted before it could act.
+      Effect.onError((cause) => Scope.close(listening, Exit.failCause(cause))),
     )
-    server.listen(config.port)
-    installShutdown(server, work, jobs)
   })
 }
 
@@ -96,6 +172,7 @@ function checkMcpEffect(config: Config) {
 
 function installShutdown(
   server: Server,
+  listening: Scope.Closeable,
   work: ThreadWork,
   jobs: JobStore,
 ): void {
@@ -108,8 +185,16 @@ function installShutdown(
       }
       shuttingDown = true
       console.log(`[shutdown] ${signal} received; stopping`)
-      work.queue.close()
       const deadline = (yield* Clock.currentTimeMillis) + SHUTDOWN_GRACE_MS
+      // Listening stops while the queue still takes work: a gateway that is
+      // halfway through admitting a message, such as one that has opened its
+      // Discord thread, gets to queue its run.
+      yield* withDeadline(
+        Scope.close(listening, Exit.void),
+        deadline,
+        "[shutdown] gateways did not stop listening in time",
+      )
+      work.queue.close()
       yield* withDeadline(
         Effect.callback<void>((resume) => {
           server.close(() => resume(Effect.void))
