@@ -6,12 +6,12 @@ import { loadConfig, type Config } from "./config.ts"
 import { buildMediaFramesTool } from "./media/frames.ts"
 import { buildMediaProbeTool } from "./media/probe.ts"
 import { createHttpServer } from "./server.ts"
-import { buildJellyfinTools } from "./services/jellyfin.ts"
-import { buildRadarrTools } from "./services/radarr.ts"
-import { buildSabnzbdTools } from "./services/sabnzbd.ts"
-import { buildSeerrTools } from "./services/seerr.ts"
-import { buildSonarrTools } from "./services/sonarr.ts"
-import type { ServerTool } from "./tools.ts"
+import { buildJellyfinTools } from "./services/jellyfin/index.ts"
+import { buildRadarrTools } from "./services/radarr/index.ts"
+import { buildSabnzbdTools } from "./services/sabnzbd/index.ts"
+import { buildSeerrTools } from "./services/seerr/index.ts"
+import { buildSonarrTools } from "./services/sonarr/index.ts"
+import type { ServerTool } from "./tools/tool.ts"
 
 /** Tools for the configured services only; the rest are never declared. */
 function buildTools(config: Config): ServerTool[] {
