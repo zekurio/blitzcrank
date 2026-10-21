@@ -1,5 +1,8 @@
+import { ids, threshold } from "../chat-config.ts"
+import type { ChatConfig } from "../chat.ts"
+
 /** Everything the Fluxer gateway reads from the environment. */
-export interface FluxerConfig {
+export interface FluxerConfig extends ChatConfig {
   /**
    * The instance's web origin, such as https://fluxer.app, with no trailing
    * slash. Its discovery document names the API and gateway endpoints.
@@ -7,38 +10,22 @@ export interface FluxerConfig {
   instance: string
   /** The bot token, the host's only Fluxer credential. */
   token: string
-  /** Channels the bot watches. It answers nowhere else, DMs included. */
-  channels: ReadonlySet<string>
-  /** Members who may use the bot, by user id. */
-  users: ReadonlySet<string>
-  /** Members who may use the bot, by role id. Either list admits a member. */
-  roles: ReadonlySet<string>
   /** Classifier model as provider/model. There is no default. */
   triageModel: string
-  /** How sure triage must be before an unmentioned message opens a thread. */
-  triageThreshold: number
 }
-
-const SNOWFLAKE = /^\d{17,20}$/
-/** `<application id>.<secret>`, as Fluxer issues a bot token. */
-const BOT_TOKEN = /^\d{17,20}\.[A-Za-z0-9_-]{16,}$/
 
 export function loadFluxerConfig(): FluxerConfig {
   const instance = instanceOrigin()
+  // Its shape is not checked here: listening asks Fluxer before the socket
+  // opens. The value never goes into a message: it is the credential.
   const token = process.env.FLUXER_BOT_TOKEN?.trim().replace(/^Bot\s+/i, "")
   if (!token) throw new Error("FLUXER_BOT_TOKEN is required")
-  // The value never goes into the message: it is the credential.
-  if (!BOT_TOKEN.test(token)) {
-    throw new Error(
-      "FLUXER_BOT_TOKEN must be a bot token of the form <application id>.<secret>",
-    )
-  }
-  const channels = ids("FLUXER_CHANNELS")
+  const channels = ids("FLUXER_CHANNELS", "Fluxer")
   if (channels.size === 0) {
     throw new Error("FLUXER_CHANNELS must list at least one channel id")
   }
-  const users = ids("FLUXER_ALLOWED_USERS")
-  const roles = ids("FLUXER_ALLOWED_ROLES")
+  const users = ids("FLUXER_ALLOWED_USERS", "Fluxer")
+  const roles = ids("FLUXER_ALLOWED_ROLES", "Fluxer")
   // An empty allowlist would make the bot answer nobody, or tempt an
   // allow-all switch. Neither exists.
   if (users.size === 0 && roles.size === 0) {
@@ -60,7 +47,7 @@ export function loadFluxerConfig(): FluxerConfig {
     users,
     roles,
     triageModel,
-    triageThreshold: threshold(),
+    triageThreshold: threshold("FLUXER_TRIAGE_THRESHOLD"),
   }
 }
 
@@ -90,28 +77,4 @@ function instanceOrigin(): string {
     )
   }
   return url.origin
-}
-
-function ids(name: string): ReadonlySet<string> {
-  const values = (process.env[name] ?? "")
-    .split(",")
-    .map((value) => value.trim())
-    .filter((value) => value !== "")
-  const invalid = values.find((value) => !SNOWFLAKE.test(value))
-  if (invalid !== undefined) {
-    throw new Error(`${name} must list Fluxer ids, got "${invalid}"`)
-  }
-  return new Set(values)
-}
-
-function threshold(): number {
-  const value = process.env.FLUXER_TRIAGE_THRESHOLD
-  if (value === undefined || value.trim() === "") return 0.8
-  const parsed = Number(value)
-  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 1) {
-    throw new Error(
-      `FLUXER_TRIAGE_THRESHOLD must be above 0 and at most 1, got "${value}"`,
-    )
-  }
-  return parsed
 }

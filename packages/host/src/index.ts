@@ -7,6 +7,7 @@ import { McpAuthRequiredError } from "@earendil-works/pi-mcp"
 import {
   Cause,
   Clock,
+  Deferred,
   Effect,
   Exit,
   Latch,
@@ -19,7 +20,12 @@ import { ThreadRunner } from "./agent/runner.ts"
 import { resolveModel } from "./agent/session.ts"
 import { modelRuntimeOptions } from "./auth.ts"
 import { loadConfig, type Config } from "./config.ts"
-import { Gateways, type Gateway, type Intake } from "./gateway.ts"
+import {
+  Gateways,
+  type Gateway,
+  type GatewayHost,
+  type Intake,
+} from "./gateway.ts"
 import { loadDiscordConfig } from "./gateways/discord/config.ts"
 import { createDiscordGateway } from "./gateways/discord/gateway.ts"
 import { loadFluxerConfig } from "./gateways/fluxer/config.ts"
@@ -37,12 +43,6 @@ import { ThreadWork } from "./thread-work.ts"
  * but a stuck run cannot keep the service in `deactivating` indefinitely.
  */
 const SHUTDOWN_GRACE_MS = 30_000
-
-/** What a gateway may take from the host when it is built. */
-interface GatewayHost {
-  runtime: ModelRuntime
-  language: string
-}
 
 type BuildGateway = (host: GatewayHost) => Gateway
 
@@ -116,15 +116,19 @@ export function startServerEffect(): Effect.Effect<void, unknown> {
     // hear waits on this until recovered work is queued and shutdown is in
     // place to stop admission.
     const admission = Latch.makeUnsafe(false)
+    // The first gateway that stops listening for good completes this. It can
+    // land before shutdown is in place, so it is kept until that is.
+    const gatewayLost = yield* Deferred.make<Error>()
     const intake: Intake = {
       opened: admission.await,
       submit: (message) => work.enqueueEffect(message),
+      lost: (error) => Deferred.succeed(gatewayLost, error).pipe(Effect.asVoid),
     }
     // Shutdown closes this scope to stop the gateways that listen before the
     // queue closes. A failed startup closes it too, rather than leaving its
     // connections to the process exit.
     const listening = yield* Scope.make()
-    yield* Effect.gen(function* () {
+    const shutdown = yield* Effect.gen(function* () {
       yield* gateways.listenEffect(intake).pipe(Scope.provide(listening))
       yield* work.restoreEffect()
       const server = createServer(
@@ -135,13 +139,18 @@ export function startServerEffect(): Effect.Effect<void, unknown> {
         }),
       )
       server.listen(config.port)
-      installShutdown(server, listening, work, jobs)
+      const stop = installShutdown(server, listening, work, jobs)
       yield* admission.open
+      return stop
     }).pipe(
       // Admission never opened, so every message still waiting on it is
       // interrupted before it could act.
       Effect.onError((cause) => Scope.close(listening, Exit.failCause(cause))),
     )
+    // A host that cannot hear a platform it listens to stops with a failure,
+    // so the service manager restarts it instead of leaving it deaf.
+    const error = yield* Deferred.await(gatewayLost)
+    yield* shutdown(`gateway lost (${error.message})`, 1)
   })
 }
 
@@ -179,21 +188,26 @@ function checkMcpEffect(config: Config) {
   )
 }
 
+/**
+ * Stops the service on SIGINT or SIGTERM, and returns the same shutdown for
+ * other reasons to stop it. Only the first request runs: it stops listening,
+ * the queue, and HTTP, gives runs the grace budget, and exits with `code`.
+ */
 function installShutdown(
   server: Server,
   listening: Scope.Closeable,
   work: ThreadWork,
   jobs: JobStore,
-): void {
+): (reason: string, code: number) => Effect.Effect<void> {
   let shuttingDown = false
-  const shutdown = (signal: string) =>
+  const shutdown = (reason: string, code: number) =>
     Effect.gen(function* () {
       if (shuttingDown) {
-        console.warn(`[shutdown] ${signal} ignored; already shutting down`)
+        console.warn(`[shutdown] ${reason}; already shutting down`)
         return
       }
       shuttingDown = true
-      console.log(`[shutdown] ${signal} received; stopping`)
+      console.log(`[shutdown] ${reason}; stopping`)
       const deadline = (yield* Clock.currentTimeMillis) + SHUTDOWN_GRACE_MS
       // Listening stops while the queue still takes work: a gateway that is
       // halfway through admitting a message, such as one that has opened its
@@ -220,23 +234,22 @@ function installShutdown(
       // process exits; closing it under an active tool would lose its outcome.
       if (work.queue.size === 0) jobs.close()
       console.log("[shutdown] bye")
-      process.exit(0)
-    })
-  // Signal emitters cannot await. This boundary owns and contains the fiber.
-  const onSignal = (signal: NodeJS.Signals): void => {
-    Effect.runFork(
-      shutdown(signal).pipe(
-        Effect.catchCause((cause) =>
-          Effect.sync(() => {
-            console.error("[shutdown] failed:", Cause.squash(cause))
-            process.exit(1)
-          }),
-        ),
+      process.exit(code)
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.sync(() => {
+          console.error("[shutdown] failed:", Cause.squash(cause))
+          process.exit(1)
+        }),
       ),
     )
+  // Signal emitters cannot await. This boundary owns and contains the fiber.
+  const onSignal = (signal: NodeJS.Signals): void => {
+    Effect.runFork(shutdown(`${signal} received`, 0))
   }
   process.on("SIGINT", onSignal)
   process.on("SIGTERM", onSignal)
+  return shutdown
 }
 
 function withDeadline(

@@ -410,6 +410,8 @@ interface Session {
   readonly url: string
   readonly token: string
   readonly onDispatch: (event: Dispatch) => void
+  /** Told of a fatal close after the first READY. */
+  readonly onDead: (error: Error) => Effect.Effect<void>
   /** Succeeds with the first READY, or fails on a fatal close before it. */
   readonly ready: Deferred.Deferred<void, Error>
   /** READY's session id, while a resume may still find it. */
@@ -436,19 +438,22 @@ interface Connection {
  * READY has reached `onDispatch`, then keeps the session alive in the
  * caller's scope: heartbeats, a resume after a drop, a fresh identify when
  * the session is gone, and backoff between sockets. A close that reconnecting
- * cannot fix ends it with an error log, and REST keeps working without it.
- * Closing the scope closes the socket.
+ * cannot fix ends the session: before READY it fails this, and after READY
+ * it goes to `onDead`, since no message arrives without the socket. Closing
+ * the scope closes the socket.
  */
 export function connectSocketEffect(
   endpoints: Endpoints,
   token: string,
   onDispatch: (event: Dispatch) => void,
+  onDead: (error: Error) => Effect.Effect<void>,
 ): Effect.Effect<void, Error, Scope.Scope> {
   return Effect.gen(function* () {
     const session: Session = {
       url: yield* socketUrlEffect(endpoints.gateway),
       token,
       onDispatch,
+      onDead,
       ready: yield* Deferred.make<void, Error>(),
       id: undefined,
       seq: null,
@@ -482,14 +487,20 @@ function socketUrlEffect(gateway: string): Effect.Effect<string, Error> {
   })
 }
 
-/** One socket after another, until a fatal close or the scope ends it. */
+/**
+ * One socket after another, until the scope ends it or a close that
+ * reconnecting cannot fix. That close fails `ready` while startup still waits
+ * on it, and goes to `onDead` once READY has come.
+ */
 function sessionEffect(session: Session): Effect.Effect<void> {
   return Effect.gen(function* () {
     for (;;) {
       const ending = yield* connectionEffect(session)
       if (ending.kind === "closed" && FATAL_CLOSE_CODES.has(ending.code)) {
         logEvent("fluxer.socket_dead", { code: ending.code }, "error")
-        yield* Deferred.fail(session.ready, fatalError(ending))
+        const error = fatalError(ending)
+        const starting = yield* Deferred.fail(session.ready, error)
+        if (!starting) yield* session.onDead(error)
         return
       }
       if (

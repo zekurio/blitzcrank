@@ -212,8 +212,10 @@ an application with a bot, copy its token into `DISCORD_BOT_TOKEN`, and turn on
 the **Message Content** intent. Invite the bot with the `bot` scope and these
 permissions in the watched channels: View Channel, Send Messages, Send Messages
 in Threads, Create Public Threads, and Read Message History. The host connects
-to Discord itself and needs no inbound port for it. Messages sent while the
-host is down are not picked up later.
+to Discord itself and needs no inbound port for it. If Discord closes that
+connection for good, such as after the token is regenerated or the Message
+Content intent is turned off, the host stops with a failure and systemd
+restarts it. Messages sent while the host is down are not picked up later.
 
 ## Connect Fluxer
 
@@ -263,11 +265,14 @@ exactly those permissions and gives it to the bot. Fluxer feature-gates the two 
 role may come without them. If it does, grant them on the role in the guild
 settings. At startup the host checks its permissions in each watched channel
 and refuses to start if one is missing, if a watched channel is in no guild it
-can see, or if no guild state arrives within 30 seconds of connecting.
+can see, or if no guild state arrives within 30 seconds of the connection being
+ready.
 
 Fluxer has no gateway intents, so message content always arrives. The host
-connects to the instance itself and needs no inbound port for it. Messages sent
-while the host is down are not picked up later.
+connects to the instance itself and needs no inbound port for it. If Fluxer
+closes that connection for good, such as after the token is regenerated, the
+host stops with a failure and systemd restarts it. Messages sent while the host
+is down are not picked up later.
 
 ## Optional features
 
