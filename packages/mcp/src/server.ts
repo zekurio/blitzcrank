@@ -13,7 +13,7 @@ import {
 import { Data, Effect } from "effect"
 
 import { logEvent } from "./log.ts"
-import { runTool, type ServerTool } from "./tools.ts"
+import { runTool, type ServerTool } from "./tools/tool.ts"
 
 /** Tool arguments are small; nothing legitimate comes close. */
 const MAX_BODY_BYTES = 1024 * 1024

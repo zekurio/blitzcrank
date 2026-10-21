@@ -51,7 +51,7 @@ not `http(s)`, or a media root that is relative or `/`.
 ## Source
 
 - [Service tables](src/services)
-- [Tool helpers](src/tools.ts)
+- [Tool helpers](src/tools)
 - [Host adapter](../host/src/mcp/tools.ts)
 
 ## Layout
@@ -62,10 +62,24 @@ src/
   config.ts       env parsing
   http.ts         jsonRequestEffect and errors
   server.ts       MCP Server, auth, tools/list and tools/call dispatch
-  tools.ts        defineReads / defineWrites helpers, result shaping, caps
   json.ts         JSON narrowing and the field picker compaction uses
+  tools/
+    tool.ts       ServerTool, runTool, read and write deadlines
+    reads.ts      resource and defineReads
+    writes.ts     action and defineWrites: resolve, write, read back, locks
+    kept-reads.ts the read cache every write drops
+    results.ts    result shaping and caps
+    params.ts     argument checks against a table entry's schema
+    errors.ts     ToolError, WriteOutcomeUnknown, failure messages
+    raw.ts        raw-path checks and secret redaction
   services/
-    seerr.ts sonarr.ts radarr.ts arr-common.ts sabnzbd.ts jellyfin.ts
+    <service>/
+      index.ts    build<Service>Tools: the service's tool list
+      client.ts   authenticated requests and the reads they share
+      reads.ts    the defineReads table
+      writes.ts   the defineWrites table
+      ...         compaction and helpers, one concern per module
+    arr/          what Sonarr and Radarr share: client, tables, helpers
   media/
     probe.ts frames.ts exec.ts paths.ts
 ```

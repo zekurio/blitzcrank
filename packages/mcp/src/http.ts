@@ -63,6 +63,9 @@ export interface JsonRequestOptions {
   jsonOnly?: boolean | undefined
 }
 
+/** The abort signal a request runs under, when it has one. */
+export type Signal = AbortSignal | undefined
+
 export type JsonValue =
   | string
   | number

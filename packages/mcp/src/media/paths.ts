@@ -3,7 +3,7 @@ import path from "node:path"
 
 import { Effect } from "effect"
 
-import { toolCheck, ToolError } from "../tools.ts"
+import { toolCheck, ToolError } from "../tools/errors.ts"
 
 const MEDIA_EXTENSIONS = new Set([
   ".mkv",
