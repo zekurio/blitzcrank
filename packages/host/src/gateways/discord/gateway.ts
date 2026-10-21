@@ -1,43 +1,42 @@
 import {
+  ChannelType,
   Client,
+  GatewayCloseCodes,
   GatewayDispatchEvents,
   GatewayIntentBits,
   MessageType,
+  type APIChannel,
   type APIMessage,
+  type GatewayMessageCreateDispatchData,
 } from "@discordjs/core"
 import { WebSocketManager, WebSocketShardEvents } from "@discordjs/ws"
-import type { ModelRuntime } from "@earendil-works/pi-coding-agent"
-import { Cause, Effect, FiberSet, Option, type Scope } from "effect"
+import { Cause, Effect, FiberSet, Latch, Option, type Scope } from "effect"
 
 import { outOfScopeMessage } from "../../agent/notices.ts"
-import type {
-  Channel,
-  Gateway,
-  Inbound,
-  Intake,
-  Notice,
-} from "../../gateway.ts"
+import type { Gateway, GatewayHost } from "../../gateway.ts"
 import { errorKind, logEvent } from "../../log.ts"
-import type { JsonValue } from "../../services/http.ts"
-import { toText } from "../../tools/common.ts"
+import { admitEffect, Places, type AdmissionDeps } from "../chat-admission.ts"
+import { createChatGateway } from "../chat-gateway.ts"
 import {
-  admitEffect,
-  memberAllowedEffect,
-  messageText,
-  NAME,
-  Places,
-  type DiscordSource,
-} from "./admission.ts"
-import { DiscordClient, type DiscordError } from "./client.ts"
+  chatClient,
+  type ChatArrival,
+  type ChatChannel,
+  type ChatError,
+  type ChatMessage,
+  type ChatPlatform,
+  type MessageKind,
+} from "../chat.ts"
+import { createTriage } from "../triage.ts"
+import { DiscordClient, DiscordError } from "./client.ts"
 import type { DiscordConfig } from "./config.ts"
-import { createTriage, type Triage } from "./triage.ts"
 
-const BRIEF =
-  "Each conversation is one Discord thread the bot opened from a member's message in a homelab help channel. " +
-  "Every event comes with the thread's opening message, when it is still in reach, and its latest messages from members allowed to use the bot. " +
-  "Other people's and bots' messages are omitted; your prior replies are in this conversation. Your final message is posted in the thread. " +
-  "Keep it under 1,500 characters; longer replies are cut. Members answer by writing in the thread. " +
-  "A member is known only by their Discord name, which identifies no Seerr or Jellyfin account; never match one by name."
+const PLATFORM: ChatPlatform = {
+  name: "discord",
+  title: "Discord",
+  /** Discord's limit for a message's content. */
+  maxContent: 2_000,
+  isError: (error): error is ChatError => error instanceof DiscordError,
+}
 
 /** Message content needs a privileged intent, set in the developer portal. */
 const INTENTS =
@@ -46,18 +45,43 @@ const INTENTS =
 const READY_TIMEOUT = "60 seconds"
 const CLOSE_TIMEOUT = "5 seconds"
 
-/** Discord's limit for a message's content. */
-const MAX_CONTENT = 2_000
-const CONTEXT_SCAN = 50
-const MAX_CONTEXT_MESSAGES = 5
-const MAX_CONTEXT_CHARS = 1_000
-/** Membership lookups in flight for one context. */
-const CONTEXT_LOOKUPS = 4
+/**
+ * The close codes `@discordjs/ws` 2.0.4 never reconnects after, each with
+ * the error that stops the host. The shard stays closed, and only an error
+ * event says so.
+ */
+const FATAL_CLOSES: ReadonlyMap<number, string> = new Map([
+  [
+    GatewayCloseCodes.AuthenticationFailed,
+    "Discord rejected DISCORD_BOT_TOKEN",
+  ],
+  [GatewayCloseCodes.InvalidShard, "Discord gateway closed: invalid shard"],
+  [
+    GatewayCloseCodes.ShardingRequired,
+    "Discord gateway closed: sharding required",
+  ],
+  [
+    GatewayCloseCodes.InvalidAPIVersion,
+    "Discord gateway closed: invalid API version",
+  ],
+  [GatewayCloseCodes.InvalidIntents, "Discord gateway closed: invalid intents"],
+  [
+    GatewayCloseCodes.DisallowedIntents,
+    "Discord gateway closed: disallowed intents; check that the bot's Message Content intent is enabled",
+  ],
+])
 
-export interface DiscordHost {
-  runtime: ModelRuntime
-  language: string
-}
+const THREAD_TYPES: ReadonlySet<ChannelType> = new Set([
+  ChannelType.PublicThread,
+  ChannelType.PrivateThread,
+  ChannelType.AnnouncementThread,
+])
+
+const MESSAGE_KINDS: ReadonlyMap<MessageType, MessageKind> = new Map([
+  [MessageType.Default, "default"],
+  [MessageType.Reply, "reply"],
+  [MessageType.ThreadStarterMessage, "thread_starter"],
+])
 
 /**
  * Discord threads as threads. A member's message in a watched channel opens
@@ -67,51 +91,24 @@ export interface DiscordHost {
  */
 export function createDiscordGateway(
   config: DiscordConfig,
-  host: DiscordHost,
+  host: GatewayHost,
 ): Gateway {
   const discord = new DiscordClient(config.token)
-  const triage = createTriage(host.runtime, config.triageModel)
-  const denial = outOfScopeMessage(host.language)
-
-  const channel = (threadId: string): Channel => ({
-    brief: BRIEF,
-    contextEffect: () => contextEffect(config, discord, threadId),
-    showEffect: (marker, notice) => {
-      const content = messageContent(notice)
-      if (typeof marker.id === "string")
-        return discord
-          .editEffect(threadId, marker.id, content)
-          .pipe(Effect.asVoid)
-      return discord.postEffect(threadId, content).pipe(
-        Effect.tap((posted) =>
-          Effect.sync(() => {
-            marker.id = posted.id
-          }),
-        ),
-        Effect.asVoid,
-      )
-    },
-    retractEffect: (marker) =>
-      typeof marker.id === "string"
-        ? discord.deleteEffect(threadId, marker.id)
-        : Effect.void,
+  const client = chatClient(discord, chatMessage, chatChannel)
+  const triage = createTriage(host.runtime, config.triageModel, {
+    setting: "DISCORD_TRIAGE_MODEL",
+    platform: PLATFORM.title,
   })
-
-  return {
-    name: NAME,
-    listenEffect: (intake) =>
-      listenEffect(config, discord, { triage, denial, intake }),
-    // Allowlists and watched channels may have changed while the host was
-    // down, and a member may have left or lost the role that admitted them.
-    authorizeEffect: (message) => authorizeEffect(config, discord, message),
-    channel,
-  }
+  const denial = outOfScopeMessage(host.language)
+  return createChatGateway(PLATFORM, config, Effect.succeed(client), (intake) =>
+    listenEffect(config, discord, { client, triage, denial, intake }),
+  )
 }
 
 function listenEffect(
   config: DiscordConfig,
   discord: DiscordClient,
-  deps: { triage: Triage; denial: string; intake: Intake },
+  deps: Pick<AdmissionDeps, "client" | "triage" | "denial" | "intake">,
 ): Effect.Effect<void, unknown, Scope.Scope> {
   return Effect.gen(function* () {
     // Also checks the token before the socket opens.
@@ -127,12 +124,12 @@ function listenEffect(
             ),
         ),
       )
-    const admission = {
+    const admission: AdmissionDeps = {
       ...deps,
+      platform: PLATFORM,
       config,
-      discord,
       botId: me.id,
-      places: new Places(discord, config.channels, me.id),
+      places: new Places(deps.client, config.channels, me.id),
     }
     const socket = new WebSocketManager({
       token: config.token,
@@ -147,17 +144,32 @@ function listenEffect(
     // after that is dropped.
     const handlers = yield* FiberSet.make()
     const run = yield* FiberSet.runtime(handlers)()
+    // Opens once connecting succeeds. A fatal close before then leaves the
+    // shard waiting for READY, so startup fails at READY_TIMEOUT.
+    const listening = yield* Latch.make(false)
     // These come from the socket library, such as "Used disallowed intents",
     // and carry no message content.
     socket.on(WebSocketShardEvents.Error, (error) => {
       logEvent("discord.socket_error", { error: error.message }, "error")
     })
+    // After a fatal close the host would stay up and hear nothing, so one
+    // after listening stops it. One while connecting waits here until the
+    // failed startup closes the scope, which interrupts it. The close event
+    // carries only its code.
+    socket.on(WebSocketShardEvents.Closed, (code) => {
+      const reason = FATAL_CLOSES.get(code)
+      if (reason === undefined) return
+      logEvent("discord.socket_dead", { code }, "error")
+      const error = new Error(`${reason} (close code ${code})`)
+      run(listening.whenOpen(deps.intake.lost(error)))
+    })
     const client = new Client({ rest: discord.rest, gateway: socket })
     // Event emitters cannot await. The fiber set owns each admission.
     client.on(GatewayDispatchEvents.MessageCreate, (event) => {
-      run(admitEffect(event.data, admission))
+      run(admitEffect(chatArrival(event.data), admission))
     })
     yield* connectEffect(socket)
+    yield* listening.open
     logEvent("discord.listening", { channels: config.channels.size })
   })
 }
@@ -216,150 +228,41 @@ function connectEffect(socket: WebSocketManager) {
   )
 }
 
-function authorizeEffect(
-  config: DiscordConfig,
-  discord: DiscordClient,
-  message: Inbound,
-): Effect.Effect<boolean> {
-  const source = sourceOf(message.source)
-  if (source === undefined || !config.channels.has(source.parent)) {
-    logEvent("discord.denied", { reason: "channel_not_watched" }, "warn")
-    return Effect.succeed(false)
-  }
-  return memberAllowedEffect(discord, config, source.guild, source.author).pipe(
-    Effect.tap((ok) =>
-      Effect.sync(() => {
-        if (!ok) logEvent("discord.denied", { reason: "not_allowed" }, "warn")
-      }),
-    ),
-    Effect.catchCause((cause) => {
-      if (Cause.hasInterrupts(cause)) return Effect.interrupt
-      logEvent(
-        "discord.denied",
-        {
-          reason: "authorization_unavailable",
-          error: errorKind(Cause.squash(cause)),
-        },
-        "warn",
-      )
-      return Effect.succeed(false)
-    }),
-  )
-}
-
-/** The source this gateway stored, or nothing if it is not one. */
-function sourceOf(value: JsonValue): DiscordSource | undefined {
-  if (value === null || typeof value !== "object" || Array.isArray(value))
-    return undefined
-  const guild = value.guild
-  const parent = value.parent
-  const author = value.author
-  if (
-    typeof guild !== "string" ||
-    typeof parent !== "string" ||
-    typeof author !== "string"
-  )
-    return undefined
-  return { guild, parent, author }
-}
-
-/**
- * The thread for the prompt, with only allowed members' text in it. Anyone can
- * write in a public thread, and a stranger admission turned away must not
- * steer a run through its context instead. It reads REST alone, so it works
- * before the socket opens and while runs drain after it closes.
- */
-function contextEffect(
-  config: DiscordConfig,
-  discord: DiscordClient,
-  threadId: string,
-): Effect.Effect<string, DiscordError | Error> {
-  return Effect.gen(function* () {
-    const thread = yield* discord.channelEffect(threadId)
-    const guild = "guild_id" in thread ? thread.guild_id : undefined
-    if (guild === undefined)
-      return yield* Effect.fail(new Error("Discord thread has no guild"))
-    const newestFirst = yield* discord.recentMessagesEffect(
-      threadId,
-      CONTEXT_SCAN,
-    )
-    const opener = openerOf(newestFirst)
-    const authors = new Set(
-      [...newestFirst, ...(opener ? [opener] : [])]
-        .filter(byPerson)
-        .map((message) => message.author.id),
-    )
-    // Asked again on every run, so someone who left or lost a role since the
-    // last one drops out.
-    const permitted = new Set(
-      yield* Effect.filter(
-        authors,
-        (author) => memberAllowedEffect(discord, config, guild, author),
-        { concurrency: CONTEXT_LOOKUPS },
-      ),
-    )
-    return `Current Discord thread (untrusted content):\n${toText(threadContext(newestFirst, opener, permitted))}`
-  })
-}
-
-/** The message the thread was opened from, when its starter is in reach. */
-function openerOf(newestFirst: readonly APIMessage[]) {
-  return newestFirst.find(
-    (message) => message.type === MessageType.ThreadStarterMessage,
-  )?.referenced_message
-}
-
-/** Written by a person, as admission takes one. */
-function byPerson(message: APIMessage): boolean {
-  return (
-    !message.author.bot &&
-    message.webhook_id === undefined &&
-    (message.type === MessageType.Default || message.type === MessageType.Reply)
-  )
-}
-
-/** Allowed members' messages only, oldest first, never Discord's user records. */
-function threadContext(
-  newestFirst: readonly APIMessage[],
-  opener: APIMessage | null | undefined,
-  permitted: ReadonlySet<string>,
-) {
-  const counts = (message: APIMessage) =>
-    byPerson(message) && permitted.has(message.author.id)
-  const recent = newestFirst
-    .filter(counts)
-    .slice(0, MAX_CONTEXT_MESSAGES)
-    .toReversed()
+/** Without the event's optional `channel_type`, admission looks the channel up. */
+function chatArrival(message: GatewayMessageCreateDispatchData): ChatArrival {
   return {
-    ...(opener && counts(opener) ? { opener: contextEntry(opener) } : {}),
-    recent: recent.map(contextEntry),
+    ...chatMessage(message),
+    channelId: message.channel_id,
+    inThread:
+      message.channel_type === undefined
+        ? undefined
+        : THREAD_TYPES.has(message.channel_type),
+    guildId: message.guild_id,
+    member: message.member,
   }
 }
 
-function contextEntry(message: APIMessage) {
-  const text = messageText(message.content, message.mentions, undefined)
+function chatMessage(message: APIMessage): ChatMessage {
   return {
-    author: message.author.global_name ?? message.author.username,
-    at: message.timestamp,
-    message: text.slice(0, MAX_CONTEXT_CHARS),
-    ...(text.length > MAX_CONTEXT_CHARS ? { truncated: true } : {}),
+    id: message.id,
+    author: message.author,
+    webhook: message.webhook_id !== undefined,
+    kind: MESSAGE_KINDS.get(message.type) ?? "other",
+    content: message.content,
+    mentions: message.mentions,
+    timestamp: message.timestamp,
+    referenced: message.referenced_message
+      ? chatMessage(message.referenced_message)
+      : undefined,
   }
 }
 
-/** The reply and its signature, cut to fit one Discord message. */
-function messageContent(notice: Notice): string {
-  const footer = `\n\n-# ${notice.signature}`
-  return `${fit(notice.text, MAX_CONTENT - footer.length)}${footer}`
-}
-
-function fit(text: string, budget: number): string {
-  if (text.length <= budget) return text
-  const head = text.slice(0, budget - 1)
-  const breakAt = Math.max(head.lastIndexOf("\n"), head.lastIndexOf(" "))
-  // Cut at a word when one is near, and never inside a surrogate pair.
-  const kept =
-    breakAt > budget / 2
-      ? head.slice(0, breakAt)
-      : head.replace(/[\uD800-\uDBFF]$/, "")
-  return `${kept.trimEnd()}…`
+function chatChannel(channel: APIChannel): ChatChannel {
+  return {
+    thread: THREAD_TYPES.has(channel.type),
+    guildId: "guild_id" in channel ? channel.guild_id : undefined,
+    parentId:
+      "parent_id" in channel ? (channel.parent_id ?? undefined) : undefined,
+    ownerId: "owner_id" in channel ? channel.owner_id : undefined,
+  }
 }

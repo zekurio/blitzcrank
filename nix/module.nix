@@ -165,6 +165,7 @@ in
         lib.types.enum [
           "seerr"
           "discord"
+          "fluxer"
         ]
       );
       default = [ "seerr" ];
@@ -177,6 +178,11 @@ in
         triage provider's API key there or in the auth file, and
         DISCORD_CHANNELS, DISCORD_ALLOWED_USERS or DISCORD_ALLOWED_ROLES, and
         DISCORD_TRIAGE_MODEL in {option}`settings`.
+
+        "fluxer" needs FLUXER_BOT_TOKEN in {option}`environmentFile`, the
+        triage provider's API key there or in the auth file, and
+        FLUXER_INSTANCE_URL, FLUXER_CHANNELS, FLUXER_ALLOWED_USERS or
+        FLUXER_ALLOWED_ROLES, and FLUXER_TRIAGE_MODEL in {option}`settings`.
       '';
     };
 
@@ -233,6 +239,7 @@ in
         Environment file with the host's secrets: SEERR_URL/SEERR_API_KEY
         (required for the seerr gateway; the host comments on issues itself),
         DISCORD_BOT_TOKEN (required for the discord gateway),
+        FLUXER_BOT_TOKEN (required for the fluxer gateway),
         BLITZCRANK_MCP_TOKEN (required; must be the same token as in
         the MCP server's environment file), BLITZCRANK_WEBHOOK_SECRET,
         FIRECRAWL_API_KEY when {option}`webProvider` is "firecrawl", and

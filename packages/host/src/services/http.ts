@@ -50,7 +50,7 @@ export type JsonRequestError =
   | HttpTimeoutError
 
 export interface JsonRequestOptions {
-  method?: "GET" | "POST" | "PUT" | "DELETE" | undefined
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | undefined
   headers?: Headers | Record<string, string> | undefined
   query?: Record<string, string | number | boolean | undefined> | undefined
   body?: JsonValue | undefined

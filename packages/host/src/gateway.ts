@@ -1,5 +1,6 @@
 import path from "node:path"
 
+import type { ModelRuntime } from "@earendil-works/pi-coding-agent"
 import { Effect, type Scope } from "effect"
 
 import type { JsonValue } from "./services/http.ts"
@@ -81,6 +82,22 @@ export interface Intake {
    */
   readonly opened: Effect.Effect<void>
   submit(message: Inbound): Effect.Effect<"cancelling" | "queued", unknown>
+  /**
+   * Reports that a gateway that listens has lost its platform for good, such
+   * as when the platform rejects a token that was regenerated. The host then
+   * shuts down as it does on a signal, but exits with a failure so the
+   * service manager restarts it. A report made during startup is acted on
+   * once shutdown is in place; one during a shutdown already underway
+   * changes nothing.
+   */
+  lost(error: Error): Effect.Effect<void>
+}
+
+/** What a gateway may take from the host when it is built. */
+export interface GatewayHost {
+  runtime: ModelRuntime
+  /** Language of replies. */
+  language: string
 }
 
 /** A gateway's endpoint at `POST /webhook/<name>`, for a platform that calls the host. */
@@ -104,8 +121,11 @@ export interface Gateway {
   /**
    * For a platform the host connects to. Opens that connection and returns
    * once it is listening, which can be before `intake.opened` succeeds; what
-   * arrives waits for that before anything acts on it. Closing the scope stops
-   * admission only: runs still drain through `channel` after it closes.
+   * arrives waits for that before anything acts on it. A connection lost for
+   * good before it is listening fails this; one lost later goes to
+   * `intake.lost`.
+   * Closing the scope stops admission only: runs still drain through
+   * `channel` after it closes.
    */
   listenEffect?(intake: Intake): Effect.Effect<void, unknown, Scope.Scope>
   /** Whether an accepted message may still run after a restart. */

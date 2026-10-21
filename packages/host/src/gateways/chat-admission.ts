@@ -1,29 +1,29 @@
-import {
-  ChannelType,
-  MessageType,
-  type APIChannel,
-  type APIUser,
-  type GatewayMessageCreateDispatchData,
-} from "@discordjs/core"
 import { Cause, Effect } from "effect"
 
-import { threadKey, type Intake, type ThreadRef } from "../../gateway.ts"
-import { errorKind, logEvent } from "../../log.ts"
-import { DiscordError, type DiscordClient } from "./client.ts"
-import type { DiscordConfig } from "./config.ts"
+import { threadKey, type Intake, type ThreadRef } from "../gateway.ts"
+import { errorKind, logEvent } from "../log.ts"
+import {
+  mentionsBot,
+  messageText,
+  threadName,
+  type ChatArrival,
+  type ChatChannel,
+  type ChatClient,
+  type ChatConfig,
+  type ChatError,
+  type ChatPlatform,
+} from "./chat.ts"
 import { TriageError, type Triage } from "./triage.ts"
 
-export const NAME = "discord"
-
 /** What recovery needs to check a message's sender again. */
-export interface DiscordSource {
+export interface ChatSource {
   guild: string
   /** The watched channel the thread hangs off. */
   parent: string
   author: string
 }
 
-export type Allowlist = Pick<DiscordConfig, "users" | "roles">
+export type Allowlist = Pick<ChatConfig, "users" | "roles">
 
 /** Either list admits a member. */
 export function allowed(
@@ -42,12 +42,12 @@ export function allowed(
  * not a no.
  */
 export function memberAllowedEffect(
-  discord: DiscordClient,
+  client: ChatClient,
   config: Allowlist,
   guild: string,
   author: string,
-): Effect.Effect<boolean, DiscordError> {
-  return discord
+): Effect.Effect<boolean, ChatError> {
+  return client
     .memberEffect(guild, author)
     .pipe(
       Effect.map(
@@ -58,12 +58,6 @@ export function memberAllowedEffect(
 }
 
 type Place = { kind: "channel" } | { kind: "thread"; parent: string }
-
-const THREAD_TYPES: ReadonlySet<ChannelType> = new Set([
-  ChannelType.PublicThread,
-  ChannelType.PrivateThread,
-  ChannelType.AnnouncementThread,
-])
 
 /** Enough for every thread a homelab guild sees for a long while. */
 const MAX_KNOWN_THREADS = 2_000
@@ -78,21 +72,21 @@ export class Places {
   private readonly threads = new Map<string, string | null>()
 
   constructor(
-    private readonly discord: DiscordClient,
+    private readonly client: ChatClient,
     private readonly watched: ReadonlySet<string>,
     private readonly botId: string,
   ) {}
 
+  /** Without `inThread`, only a lookup tells a thread from a channel. */
   placeEffect(
     channelId: string,
-    channelType: ChannelType | undefined,
-  ): Effect.Effect<Place | undefined, DiscordError> {
+    inThread: boolean | undefined,
+  ): Effect.Effect<Place | undefined, ChatError> {
     if (this.watched.has(channelId)) return Effect.succeed({ kind: "channel" })
-    if (channelType !== undefined && !THREAD_TYPES.has(channelType))
-      return Effect.succeed(undefined)
+    if (inThread === false) return Effect.succeed(undefined)
     const known = this.threads.get(channelId)
     if (known !== undefined) return Effect.succeed(threadPlace(known))
-    return this.discord.channelEffect(channelId).pipe(
+    return this.client.channelEffect(channelId).pipe(
       Effect.map((channel) => {
         const parent = this.botThreadParent(channel) ?? null
         this.remember(channelId, parent)
@@ -108,15 +102,10 @@ export class Places {
     this.threads.set(threadId, parent)
   }
 
-  private botThreadParent(channel: APIChannel): string | undefined {
-    if (
-      channel.type !== ChannelType.PublicThread &&
-      channel.type !== ChannelType.PrivateThread &&
-      channel.type !== ChannelType.AnnouncementThread
-    )
-      return undefined
-    if (channel.owner_id !== this.botId || !channel.parent_id) return undefined
-    return this.watched.has(channel.parent_id) ? channel.parent_id : undefined
+  private botThreadParent(channel: ChatChannel): string | undefined {
+    if (!channel.thread) return undefined
+    if (channel.ownerId !== this.botId || !channel.parentId) return undefined
+    return this.watched.has(channel.parentId) ? channel.parentId : undefined
   }
 }
 
@@ -125,8 +114,9 @@ function threadPlace(parent: string | null): Place | undefined {
 }
 
 export interface AdmissionDeps {
-  config: DiscordConfig
-  discord: DiscordClient
+  platform: ChatPlatform
+  config: ChatConfig
+  client: ChatClient
   places: Places
   triage: Triage
   intake: Intake
@@ -136,48 +126,47 @@ export interface AdmissionDeps {
 }
 
 /**
- * One Discord message, from arrival to a submitted event, a denial, or
- * nothing. The sender is checked before triage, so a stranger costs no model
- * call. Triage only decides; what the bot posts is the run's reply or the
- * fixed denial line.
+ * One chat message, from arrival to a submitted event, a denial, or nothing.
+ * The sender is checked before triage, so a stranger costs no model call.
+ * Triage only decides; what the bot posts is the run's reply or the fixed
+ * denial line.
  */
 export function admitEffect(
-  message: GatewayMessageCreateDispatchData,
+  message: ChatArrival,
   deps: AdmissionDeps,
 ): Effect.Effect<void> {
+  const name = deps.platform.name
   return Effect.gen(function* () {
     // The socket opens before recovery. Until the host is ready, a message
     // only waits here, where closing the listener can still interrupt it.
     yield* deps.intake.opened
-    if (message.author.bot || message.webhook_id !== undefined) return
-    if (
-      message.type !== MessageType.Default &&
-      message.type !== MessageType.Reply
-    )
-      return
-    const guild = message.guild_id
+    if (message.author.bot || message.webhook) return
+    if (message.kind !== "default" && message.kind !== "reply") return
+    const guild = message.guildId
     if (guild === undefined) return
     const place = yield* deps.places.placeEffect(
-      message.channel_id,
-      message.channel_type,
+      message.channelId,
+      message.inThread,
     )
     if (place === undefined) return
-    // A thread started from a message shares that message's id. Discord can
-    // echo the starter into the thread; it is not a follow-up.
-    if (place.kind === "thread" && message.id === message.channel_id) return
+    // A thread started from a message shares that message's id. The
+    // platform can echo the starter into the thread; it is not a follow-up.
+    if (place.kind === "thread" && message.id === message.channelId) return
 
     const mentioned = mentionsBot(message.content, deps.botId)
-    if (
-      !message.member ||
-      !allowed(deps.config, message.author.id, message.member.roles)
-    ) {
+    // The roles the event carries decide. Both platforms attach the author's
+    // member to a guild message in their documented shape; a message without
+    // one is refused and logged as `no_member`. A live lookup here would cost
+    // a REST call for every stranger's chatter in a watched channel. The
+    // roles are as old as the event, which a resumed socket may replay late.
+    // Past admission the checks are live: recovery asks again, and a run's
+    // context keeps only current members' text, so a member who lost the
+    // role since reaches a run only through the message that started it.
+    const refusal = refusalOf(message, deps.config)
+    if (refusal !== undefined) {
       // Unlisted chatter in a watched channel is the normal case, not news.
       if (mentioned || place.kind === "thread")
-        logEvent(
-          "discord.denied",
-          { reason: "not_allowed", in: place.kind },
-          "warn",
-        )
+        logEvent(`${name}.denied`, { reason: refusal, in: place.kind }, "warn")
       return
     }
     const text = messageText(message.content, message.mentions, deps.botId)
@@ -185,7 +174,7 @@ export function admitEffect(
 
     if (place.kind === "thread") {
       yield* deps.intake.submit({
-        thread: { gateway: NAME, id: message.channel_id },
+        thread: { gateway: name, id: message.channelId },
         type: "MESSAGE_CREATE",
         reply: true,
         title: undefined,
@@ -200,6 +189,7 @@ export function admitEffect(
       ? verdict.label === "stack"
       : verdict.stack >= deps.config.triageThreshold
     logEvent("triage.decided", {
+      gateway: name,
       label: verdict.label,
       stack: Math.round(verdict.stack * 100) / 100,
       mentioned,
@@ -209,18 +199,16 @@ export function admitEffect(
       yield* openEffect(message, text, guild, deps)
       return
     }
+    // Fluxer has no `fail_if_not_exists`: a mention deleted since fails the
+    // reply with a 404, and the denial then has nothing left to answer.
     if (mentioned)
-      yield* deps.discord.postEffect(
-        message.channel_id,
-        deps.denial,
-        message.id,
-      )
+      yield* deps.client.postEffect(message.channelId, deps.denial, message.id)
   }).pipe(
     Effect.catchCause((cause) => {
       if (Cause.hasInterrupts(cause)) return Effect.interrupt
       logEvent(
-        "discord.admission_failed",
-        failureFields(Cause.squash(cause)),
+        `${name}.admission_failed`,
+        failureFields(deps.platform, Cause.squash(cause)),
         "warn",
       )
       return Effect.void
@@ -228,12 +216,22 @@ export function admitEffect(
   )
 }
 
-/** Kinds and codes only: provider and Discord messages can echo the text. */
-function failureFields(error: unknown) {
+/** Why the event's own member refuses its author, or nothing if it admits them. */
+function refusalOf(
+  message: ChatArrival,
+  config: Allowlist,
+): "no_member" | "not_allowed" | undefined {
+  if (!message.member) return "no_member"
+  if (allowed(config, message.author.id, message.member.roles)) return undefined
+  return "not_allowed"
+}
+
+/** Kinds and codes only: provider and platform messages can echo the text. */
+function failureFields(platform: ChatPlatform, error: unknown) {
   if (error instanceof TriageError)
     return { error: "triage", reason: error.reason }
-  if (error instanceof DiscordError)
-    return { error: "discord", status: error.status, code: error.code }
+  if (platform.isError(error))
+    return { error: platform.name, status: error.status, code: error.code }
   return { error: errorKind(error) }
 }
 
@@ -242,20 +240,20 @@ function failureFields(error: unknown) {
  * listening waits for both, so no thread is left without its run.
  */
 function openEffect(
-  message: GatewayMessageCreateDispatchData,
+  message: ChatArrival,
   text: string,
   guild: string,
   deps: AdmissionDeps,
 ) {
   return Effect.gen(function* () {
     const name = threadName(text)
-    const opened = yield* deps.discord.startThreadEffect(
-      message.channel_id,
+    const opened = yield* deps.client.startThreadEffect(
+      message.channelId,
       message.id,
       name,
     )
-    deps.places.remember(opened.id, message.channel_id)
-    const thread: ThreadRef = { gateway: NAME, id: opened.id }
+    deps.places.remember(opened.id, message.channelId)
+    const thread: ThreadRef = { gateway: deps.platform.name, id: opened.id }
     const result = yield* deps.intake.submit({
       thread,
       type: "MESSAGE_CREATE",
@@ -264,45 +262,13 @@ function openEffect(
       text,
       source: {
         guild,
-        parent: message.channel_id,
+        parent: message.channelId,
         author: message.author.id,
       },
     })
-    logEvent("discord.thread_opened", { thread: threadKey(thread), result })
-  }).pipe(Effect.uninterruptible)
-}
-
-function mentionsBot(content: string, botId: string): boolean {
-  return content.includes(`<@${botId}>`) || content.includes(`<@!${botId}>`)
-}
-
-/** The message as the model reads it: the bot's mention gone, others named. */
-export function messageText(
-  content: string,
-  mentions: readonly Pick<APIUser, "id" | "username" | "global_name">[],
-  botId: string | undefined,
-): string {
-  const names = new Map(
-    mentions.map((user) => [user.id, user.global_name ?? user.username]),
-  )
-  return content
-    .replace(/<@!?(\d+)>/g, (token, id: string) => {
-      if (id === botId) return ""
-      const name = names.get(id)
-      return name === undefined ? token : `@${name}`
+    logEvent(`${deps.platform.name}.thread_opened`, {
+      thread: threadKey(thread),
+      result,
     })
-    .trim()
-}
-
-const MAX_THREAD_NAME = 80
-
-function threadName(text: string): string {
-  const plain = text
-    .replace(/<(?:@[!&]?|#)\d+>/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-  if (!plain) return "blitzcrank"
-  return plain.length <= MAX_THREAD_NAME
-    ? plain
-    : `${plain.slice(0, MAX_THREAD_NAME - 1).trimEnd()}…`
+  }).pipe(Effect.uninterruptible)
 }
