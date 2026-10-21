@@ -10,7 +10,15 @@ import {
   type GatewayMessageCreateDispatchData,
 } from "@discordjs/core"
 import { WebSocketManager, WebSocketShardEvents } from "@discordjs/ws"
-import { Cause, Effect, FiberSet, Latch, Option, type Scope } from "effect"
+import {
+  Cause,
+  Deferred,
+  Effect,
+  FiberSet,
+  Latch,
+  Option,
+  type Scope,
+} from "effect"
 
 import { outOfScopeMessage } from "../../agent/notices.ts"
 import type { Gateway, GatewayHost } from "../../gateway.ts"
@@ -144,23 +152,26 @@ function listenEffect(
     // after that is dropped.
     const handlers = yield* FiberSet.make()
     const run = yield* FiberSet.runtime(handlers)()
-    // Opens once connecting succeeds. A fatal close before then leaves the
-    // shard waiting for READY, so startup fails at READY_TIMEOUT.
+    // Opens once connecting succeeds.
     const listening = yield* Latch.make(false)
+    // A fatal close leaves the shard waiting for READY, so connecting races
+    // this rather than running into READY_TIMEOUT.
+    const closed = yield* Deferred.make<never, Error>()
     // These come from the socket library, such as "Used disallowed intents",
     // and carry no message content.
     socket.on(WebSocketShardEvents.Error, (error) => {
       logEvent("discord.socket_error", { error: error.message }, "error")
     })
     // After a fatal close the host would stay up and hear nothing, so one
-    // after listening stops it. One while connecting waits here until the
-    // failed startup closes the scope, which interrupts it. The close event
-    // carries only its code.
+    // while connecting fails startup and one after listening stops the host.
+    // The listening wait of one while connecting ends when the failed
+    // startup closes the scope. The close event carries only its code.
     socket.on(WebSocketShardEvents.Closed, (code) => {
       const reason = FATAL_CLOSES.get(code)
       if (reason === undefined) return
       logEvent("discord.socket_dead", { code }, "error")
       const error = new Error(`${reason} (close code ${code})`)
+      Deferred.doneUnsafe(closed, Effect.fail(error))
       run(listening.whenOpen(deps.intake.lost(error)))
     })
     const client = new Client({ rest: discord.rest, gateway: socket })
@@ -168,7 +179,7 @@ function listenEffect(
     client.on(GatewayDispatchEvents.MessageCreate, (event) => {
       run(admitEffect(chatArrival(event.data), admission))
     })
-    yield* connectEffect(socket)
+    yield* Effect.raceFirst(connectEffect(socket), Deferred.await(closed))
     yield* listening.open
     logEvent("discord.listening", { channels: config.channels.size })
   })
@@ -218,9 +229,7 @@ function connectEffect(socket: WebSocketManager) {
       Option.match({
         onNone: () =>
           Effect.fail(
-            new Error(
-              `Discord gateway was not ready within ${READY_TIMEOUT}. Check that the bot's Message Content intent is enabled.`,
-            ),
+            new Error(`Discord gateway was not ready within ${READY_TIMEOUT}`),
           ),
         onSome: () => Effect.void,
       }),
