@@ -20,17 +20,17 @@ import type {
 import { errorKind, logEvent } from "../../log.ts"
 import type { JsonValue } from "../../services/http.ts"
 import { toText } from "../../tools/common.ts"
+import { fit, messageText } from "../chat.ts"
+import { createTriage, type Triage } from "../triage.ts"
 import {
   admitEffect,
   memberAllowedEffect,
-  messageText,
   NAME,
   Places,
   type DiscordSource,
 } from "./admission.ts"
 import { DiscordClient, type DiscordError } from "./client.ts"
 import type { DiscordConfig } from "./config.ts"
-import { createTriage, type Triage } from "./triage.ts"
 
 const BRIEF =
   "Each conversation is one Discord thread the bot opened from a member's message in a homelab help channel. " +
@@ -70,7 +70,10 @@ export function createDiscordGateway(
   host: DiscordHost,
 ): Gateway {
   const discord = new DiscordClient(config.token)
-  const triage = createTriage(host.runtime, config.triageModel)
+  const triage = createTriage(host.runtime, config.triageModel, {
+    setting: "DISCORD_TRIAGE_MODEL",
+    platform: "Discord",
+  })
   const denial = outOfScopeMessage(host.language)
 
   const channel = (threadId: string): Channel => ({
@@ -350,16 +353,4 @@ function contextEntry(message: APIMessage) {
 function messageContent(notice: Notice): string {
   const footer = `\n\n-# ${notice.signature}`
   return `${fit(notice.text, MAX_CONTENT - footer.length)}${footer}`
-}
-
-function fit(text: string, budget: number): string {
-  if (text.length <= budget) return text
-  const head = text.slice(0, budget - 1)
-  const breakAt = Math.max(head.lastIndexOf("\n"), head.lastIndexOf(" "))
-  // Cut at a word when one is near, and never inside a surrogate pair.
-  const kept =
-    breakAt > budget / 2
-      ? head.slice(0, breakAt)
-      : head.replace(/[\uD800-\uDBFF]$/, "")
-  return `${kept.trimEnd()}…`
 }

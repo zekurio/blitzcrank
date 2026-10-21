@@ -22,6 +22,8 @@ import { loadConfig, type Config } from "./config.ts"
 import { Gateways, type Gateway, type Intake } from "./gateway.ts"
 import { loadDiscordConfig } from "./gateways/discord/config.ts"
 import { createDiscordGateway } from "./gateways/discord/gateway.ts"
+import { loadFluxerConfig } from "./gateways/fluxer/config.ts"
+import { createFluxerGateway } from "./gateways/fluxer/gateway.ts"
 import { loadSeerrConfig } from "./gateways/seerr/config.ts"
 import { createSeerrGateway } from "./gateways/seerr/gateway.ts"
 import { JobStore } from "./jobs.ts"
@@ -63,6 +65,13 @@ const GATEWAYS = new Map<string, () => BuildGateway>([
     () => {
       const settings = loadDiscordConfig()
       return (host) => createDiscordGateway(settings, host)
+    },
+  ],
+  [
+    "fluxer",
+    () => {
+      const settings = loadFluxerConfig()
+      return (host) => createFluxerGateway(settings, host)
     },
   ],
 ])

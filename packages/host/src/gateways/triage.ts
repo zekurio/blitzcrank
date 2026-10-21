@@ -27,30 +27,31 @@ const TIMEOUT = "15 seconds"
 
 // `chat` exists because a media channel talks about media: "did you see the
 // new season?" is on topic for the room and still asks the bot for nothing.
-const TOPIC: ClassifierChoiceQuestion = {
-  type: "choice",
-  instructions:
-    "A member posted this message in a Discord channel where people can ask a bot for help with their private media server. Decide what the message is.",
-  criteria: {
-    stack:
-      "Asks for help with the media server or reports a problem with it: requesting a movie or show, downloads, playback, streaming, subtitles, audio tracks, quality, missing episodes or files, Seerr, Sonarr, Radarr, SABnzbd, or Jellyfin.",
-    chat: "Talks about movies, shows, or music, or chats with other members, without asking the server or the bot for anything.",
-    other: "Anything else.",
-  },
+const CRITERIA: Record<Label, string> = {
+  stack:
+    "Asks for help with the media server or reports a problem with it: requesting a movie or show, downloads, playback, streaming, subtitles, audio tracks, quality, missing episodes or files, Seerr, Sonarr, Radarr, SABnzbd, or Jellyfin.",
+  chat: "Talks about movies, shows, or music, or chats with other members, without asking the server or the bot for anything.",
+  other: "Anything else.",
 }
 
 /**
- * The classifier that decides whether a message opens a thread. It answers
- * with labels and probabilities and writes no text, so nothing it returns can
- * reach Discord. Resolving the model at startup turns a typo or a missing key
- * into a failed boot instead of a bot that ignores everyone.
+ * The classifier that decides whether a chat message opens a thread. It
+ * answers with labels and probabilities and writes no text, so nothing it
+ * returns can reach the chat. Resolving the model at startup turns a typo or a
+ * missing key into a failed boot instead of a bot that ignores everyone.
+ *
+ * `naming.setting` is the env var that holds `spec`, named in those startup
+ * errors. `naming.platform` is the chat platform the question says the
+ * message was posted on.
  */
-export function createTriage(runtime: ModelRuntime, spec: string): Triage {
+export function createTriage(
+  runtime: ModelRuntime,
+  spec: string,
+  naming: { setting: string; platform: string },
+): Triage {
   const slash = spec.indexOf("/")
   if (slash <= 0 || slash === spec.length - 1) {
-    throw new Error(
-      `DISCORD_TRIAGE_MODEL must be provider/model, got "${spec}"`,
-    )
+    throw new Error(`${naming.setting} must be provider/model, got "${spec}"`)
   }
   const provider = spec.slice(0, slash)
   const id = spec.slice(slash + 1)
@@ -58,14 +59,19 @@ export function createTriage(runtime: ModelRuntime, spec: string): Triage {
   if (!model) {
     throw new Error(
       runtime.getModel(provider, id)
-        ? `DISCORD_TRIAGE_MODEL ${spec} is a chat model; triage needs a classifier such as opencode/jev-1.13`
+        ? `${naming.setting} ${spec} is a chat model; triage needs a classifier such as opencode/jev-1.13`
         : `Unknown classifier model: ${spec}`,
     )
   }
   if (!runtime.getProviderAuthStatus(provider).configured) {
     throw new Error(
-      `DISCORD_TRIAGE_MODEL ${spec} has no credentials; set the ${provider} API key or log in`,
+      `${naming.setting} ${spec} has no credentials; set the ${provider} API key or log in`,
     )
+  }
+  const topic: ClassifierChoiceQuestion = {
+    type: "choice",
+    instructions: `A member posted this message in a ${naming.platform} channel where people can ask a bot for help with their private media server. Decide what the message is.`,
+    criteria: CRITERIA,
   }
   return (message) =>
     Effect.tryPromise({
@@ -74,7 +80,7 @@ export function createTriage(runtime: ModelRuntime, spec: string): Triage {
           model,
           {
             state: { message: message.slice(0, MAX_MESSAGE_CHARS) },
-            questions: { topic: TOPIC },
+            questions: { topic },
           },
           { signal },
         ),

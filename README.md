@@ -1,17 +1,17 @@
 # blitzcrank
 
 An agentic gateway for a private media homelab. Jellyseerr issues and Discord
-messages start durable investigations across Seerr, Sonarr, Radarr, SABnzbd,
-and Jellyfin.
+or Fluxer messages start durable investigations across Seerr, Sonarr, Radarr,
+SABnzbd, and Jellyfin.
 
 It runs as two processes:
 
 - The host (`packages/host`, command `blitzcrank`) takes Seerr webhooks and,
-  when enabled, Discord messages, runs the agent, and posts its final message
-  as the issue comment or in the Discord thread. Resolving an issue is left to
-  its reporter. The host holds the model credentials and what its gateways
-  post with: the Seerr key and the Discord bot token. The agent loop only sees
-  threads, never the gateway behind them.
+  when enabled, Discord and Fluxer messages, runs the agent, and posts its
+  final message as the issue comment or in the chat thread. Resolving an issue
+  is left to its reporter. The host holds the model credentials and what its
+  gateways post with: the Seerr key and the Discord and Fluxer bot tokens. The
+  agent loop only sees threads, never the gateway behind them.
 - The MCP server (`packages/mcp`, command `blitzcrank-mcp`) holds the service
   API keys and the media mounts. Every read and write the agent makes goes
   through it, one tool per operation.
@@ -214,6 +214,60 @@ permissions in the watched channels: View Channel, Send Messages, Send Messages
 in Threads, Create Public Threads, and Read Message History. The host connects
 to Discord itself and needs no inbound port for it. Messages sent while the
 host is down are not picked up later.
+
+## Connect Fluxer
+
+[Fluxer](https://fluxer.app) is an open-source chat platform shaped like
+Discord, hosted at fluxer.app or on your own server. The Fluxer gateway is off
+by default. Enable it with `BLITZCRANK_GATEWAYS=seerr,fluxer`, or
+`services.blitzcrank.gateways` on NixOS. Leave out `seerr` to run Fluxer alone.
+
+Set `FLUXER_INSTANCE_URL` to the instance origin, such as `https://fluxer.app`
+or `https://chat.example.com`. The host reads the instance's API and gateway
+addresses from `/.well-known/fluxer` there, so the origin is the only address
+you set.
+
+The bot watches the channels in `FLUXER_CHANNELS` and nothing else, DMs
+included. Only members listed by user id in `FLUXER_ALLOWED_USERS` or holding a
+role in `FLUXER_ALLOWED_ROLES` get an answer. Their messages go to a
+classifier first, as on Discord:
+
+- A message that triage judges a homelab request opens a thread, and the agent
+  answers there. Without a mention, triage must be at least
+  `FLUXER_TRIAGE_THRESHOLD` sure (0.8 by default). With one, the most likely
+  label decides.
+- An off-topic message gets a fixed denial line if it mentions the bot, and
+  nothing otherwise.
+- Later messages in a bot thread are follow-ups. They need no mention and skip
+  triage.
+
+`FLUXER_TRIAGE_MODEL` is required and names a classifier model. The models
+listed under [Connect Discord](#connect-discord) work here too. The host
+refuses to start if the model is unknown or its provider has no key.
+
+In the Fluxer web client, open **User Settings → Applications** and create an
+application. Fluxer creates the bot account with it and shows the bot token
+once. Copy the token, which looks like `<application id>.<secret>`, into
+`FLUXER_BOT_TOKEN`. **Regenerate bot token** replaces it and disconnects the
+running bot. Your account must be claimed, with a password or an SSO link,
+before it can create an application. For a homelab, leave **Public bot** and
+**Require OAuth2 code grant** off and add no redirect URIs.
+
+Install the bot with the application's **Bot invite** URL builder, or open
+`/oauth2/authorize?client_id=<application id>&scope=bot&permissions=309237713920`
+on your instance's web app. It asks for View Channel, Send Messages, Read
+Message History, Create Public Threads, and Send Messages in Threads. Whoever
+installs the bot needs Administrator in the guild, or Manage Guild plus every
+permission they grant. Consent creates a role named after the application with
+exactly those permissions and gives it to the bot. Fluxer feature-gates the two thread permissions, so the
+role may come without them. If it does, grant them on the role in the guild
+settings. At startup the host checks its permissions in each watched channel
+and refuses to start if one is missing, if a watched channel is in no guild it
+can see, or if no guild state arrives within 30 seconds of connecting.
+
+Fluxer has no gateway intents, so message content always arrives. The host
+connects to the instance itself and needs no inbound port for it. Messages sent
+while the host is down are not picked up later.
 
 ## Optional features
 

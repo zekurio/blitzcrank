@@ -2,16 +2,16 @@ import {
   ChannelType,
   MessageType,
   type APIChannel,
-  type APIUser,
   type GatewayMessageCreateDispatchData,
 } from "@discordjs/core"
 import { Cause, Effect } from "effect"
 
 import { threadKey, type Intake, type ThreadRef } from "../../gateway.ts"
 import { errorKind, logEvent } from "../../log.ts"
+import { mentionsBot, messageText, threadName } from "../chat.ts"
+import { TriageError, type Triage } from "../triage.ts"
 import { DiscordError, type DiscordClient } from "./client.ts"
 import type { DiscordConfig } from "./config.ts"
-import { TriageError, type Triage } from "./triage.ts"
 
 export const NAME = "discord"
 
@@ -200,6 +200,7 @@ export function admitEffect(
       ? verdict.label === "stack"
       : verdict.stack >= deps.config.triageThreshold
     logEvent("triage.decided", {
+      gateway: NAME,
       label: verdict.label,
       stack: Math.round(verdict.stack * 100) / 100,
       mentioned,
@@ -270,39 +271,4 @@ function openEffect(
     })
     logEvent("discord.thread_opened", { thread: threadKey(thread), result })
   }).pipe(Effect.uninterruptible)
-}
-
-function mentionsBot(content: string, botId: string): boolean {
-  return content.includes(`<@${botId}>`) || content.includes(`<@!${botId}>`)
-}
-
-/** The message as the model reads it: the bot's mention gone, others named. */
-export function messageText(
-  content: string,
-  mentions: readonly Pick<APIUser, "id" | "username" | "global_name">[],
-  botId: string | undefined,
-): string {
-  const names = new Map(
-    mentions.map((user) => [user.id, user.global_name ?? user.username]),
-  )
-  return content
-    .replace(/<@!?(\d+)>/g, (token, id: string) => {
-      if (id === botId) return ""
-      const name = names.get(id)
-      return name === undefined ? token : `@${name}`
-    })
-    .trim()
-}
-
-const MAX_THREAD_NAME = 80
-
-function threadName(text: string): string {
-  const plain = text
-    .replace(/<(?:@[!&]?|#)\d+>/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-  if (!plain) return "blitzcrank"
-  return plain.length <= MAX_THREAD_NAME
-    ? plain
-    : `${plain.slice(0, MAX_THREAD_NAME - 1).trimEnd()}…`
 }
