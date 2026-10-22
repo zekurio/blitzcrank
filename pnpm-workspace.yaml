@@ -4,6 +4,8 @@ packages:
 overrides:
   # oxfmt 0.59.0 pins a worker pool affected by GHSA-85c8-ppgw-ccpr.
   "oxfmt@0.59.0>tinypool": 2.1.2
+  # express-rate-limit 8.7.1 pulls ip-address 10.7.3, affected by GHSA-rxp7-6hxx-x8q5.
+  "express-rate-limit@8.7.1>ip-address": 10.7.4
 
 allowBuilds:
   esbuild: true
