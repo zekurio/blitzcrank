@@ -160,11 +160,11 @@ pnpm exec tsx --env-file=.env src/cli.ts auth login openai
 pnpm exec tsx watch --env-file=.env src/cli.ts
 ```
 
-Skip login if using an API key. Nothing automatically activates the shell or
-loads `.env`. The root scripts `pnpm dev`, `pnpm dev:mcp`, `pnpm start`,
-`pnpm start:mcp`, and `pnpm auth` use the caller's exported environment. With
-exported configuration, `pnpm auth login openai` is the local shortcut. Auth
-and host commands must use the same data directory/auth path.
+Skip login if using an API key. With direnv, `direnv allow` activates the shell
+on `cd`; nothing loads `.env`. The root scripts `pnpm dev`, `pnpm dev:mcp`,
+`pnpm start`, `pnpm start:mcp`, and `pnpm auth` use the caller's exported
+environment. With exported configuration, `pnpm auth login openai` is the local
+shortcut. Auth and host commands must use the same data directory/auth path.
 
 Without devenv, supply Node >= 24, pnpm 11, and ffmpeg/ffprobe yourself.
 For compiled local runs, use `pnpm build` at the root, then
