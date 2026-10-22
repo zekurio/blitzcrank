@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/blitzcrank.png" alt="blitzcrank" width="128"></p>
+
 # blitzcrank
 
 An agentic gateway for a private media homelab. Jellyseerr issues and Discord
