@@ -192,6 +192,21 @@ export class FluxerClient {
     )
   }
 
+  /**
+   * Fluxer makes only a thread's creator a member, so whoever wrote the
+   * message it hangs off would have to join it to follow it. Adding them
+   * posts a system line in the thread; adding someone already in it does
+   * nothing.
+   */
+  addThreadMemberEffect(
+    threadId: string,
+    userId: string,
+  ): Effect.Effect<void, FluxerError> {
+    return this.callEffect(["channels", threadId, "thread-members", userId], {
+      method: "PUT",
+    }).pipe(Effect.asVoid)
+  }
+
   /** A reply to a message that is gone fails with `UNKNOWN_MESSAGE`. */
   postEffect(
     channelId: string,

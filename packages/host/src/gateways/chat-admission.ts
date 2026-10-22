@@ -1,11 +1,12 @@
 import { Cause, Effect } from "effect"
 
 import { threadKey, type Intake, type ThreadRef } from "../gateway.ts"
+import type { Helper } from "../helper.ts"
 import { errorKind, logEvent } from "../log.ts"
+import { threadNameEffect } from "./chat-title.ts"
 import {
   mentionsBot,
   messageText,
-  threadName,
   type ChatArrival,
   type ChatChannel,
   type ChatClient,
@@ -119,6 +120,8 @@ export interface AdmissionDeps {
   client: ChatClient
   places: Places
   triage: Triage
+  /** Names the threads admission opens. */
+  helper: Helper
   intake: Intake
   botId: string
   /** The fixed line a turned-away mention gets. */
@@ -128,8 +131,9 @@ export interface AdmissionDeps {
 /**
  * One chat message, from arrival to a submitted event, a denial, or nothing.
  * The sender is checked before triage, so a stranger costs no model call.
- * Triage only decides; what the bot posts is the run's reply or the fixed
- * denial line.
+ * Triage only decides, and the helper only names the thread an accepted
+ * message opens; what the bot posts is the run's reply or the fixed denial
+ * line.
  */
 export function admitEffect(
   message: ChatArrival,
@@ -196,7 +200,8 @@ export function admitEffect(
       accepted,
     })
     if (accepted) {
-      yield* openEffect(message, text, guild, deps)
+      const name = yield* threadNameEffect(deps.helper, deps.platform, text)
+      yield* openEffect(message, text, name, guild, deps)
       return
     }
     // Fluxer has no `fail_if_not_exists`: a mention deleted since fails the
@@ -242,11 +247,11 @@ function failureFields(platform: ChatPlatform, error: unknown) {
 function openEffect(
   message: ChatArrival,
   text: string,
+  name: string,
   guild: string,
   deps: AdmissionDeps,
 ) {
   return Effect.gen(function* () {
-    const name = threadName(text)
     const opened = yield* deps.client.startThreadEffect(
       message.channelId,
       message.id,
@@ -270,5 +275,21 @@ function openEffect(
       thread: threadKey(thread),
       result,
     })
+    // So the thread shows in the member's list without them joining it. The
+    // run is queued already and answers whether or not this lands.
+    yield* deps.client.addThreadMemberEffect(opened.id, message.author.id).pipe(
+      Effect.catch((error) =>
+        Effect.sync(() => {
+          logEvent(
+            `${deps.platform.name}.member_add_failed`,
+            {
+              thread: threadKey(thread),
+              ...failureFields(deps.platform, error),
+            },
+            "warn",
+          )
+        }),
+      ),
+    )
   }).pipe(Effect.uninterruptible)
 }

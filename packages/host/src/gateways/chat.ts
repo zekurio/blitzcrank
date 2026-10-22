@@ -103,6 +103,11 @@ export interface PlatformClient<Message, Channel> {
     messageId: string,
     name: string,
   ): Effect.Effect<{ id: string }, ChatError>
+  /** Someone who is a member already stays one. */
+  addThreadMemberEffect(
+    threadId: string,
+    userId: string,
+  ): Effect.Effect<void, ChatError>
   postEffect(
     channelId: string,
     content: string,
@@ -139,6 +144,8 @@ export function chatClient<Message, Channel>(
         .pipe(Effect.map((messages) => messages.map(toMessage))),
     startThreadEffect: (channelId, messageId, name) =>
       client.startThreadEffect(channelId, messageId, name),
+    addThreadMemberEffect: (threadId, userId) =>
+      client.addThreadMemberEffect(threadId, userId),
     postEffect: (channelId, content, replyTo) =>
       client.postEffect(channelId, content, replyTo),
     editEffect: (channelId, messageId, content) =>
@@ -169,20 +176,6 @@ export function messageText(
       return name === undefined ? token : `@${name}`
     })
     .trim()
-}
-
-const MAX_THREAD_NAME = 80
-
-/** A thread's name from the message that opens it, mentions and all removed. */
-export function threadName(text: string): string {
-  const plain = text
-    .replace(/<(?:@[!&]?|#)\d+>/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-  if (!plain) return "blitzcrank"
-  return plain.length <= MAX_THREAD_NAME
-    ? plain
-    : `${plain.slice(0, MAX_THREAD_NAME - 1).trimEnd()}…`
 }
 
 /** The text cut to `budget` characters, an ellipsis included. */

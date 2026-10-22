@@ -40,7 +40,8 @@ the runner's tool allowlist, or which server tools a run gets.
   uncertain unsafe call.
 - The reply is the run's final message, read from that submission's answer ID,
   never from the last assistant entry in history. The host posts it, and no
-  other model output reaches a thread. One run shows at most one message, and
+  other model output reaches a thread, except the name the helper model gives
+  a chat thread when it opens. One run shows at most one message, and
   neither the agent nor the host closes a thread.
 - Only `packages/host/src/index.ts` imports from a gateway. The runner reaches
   a thread through its `Channel`, and only `Channel.brief` describes a gateway

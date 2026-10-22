@@ -3,6 +3,7 @@ import path from "node:path"
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent"
 import { Effect, type Scope } from "effect"
 
+import type { Helper } from "./helper.ts"
 import type { JsonValue } from "./services/http.ts"
 
 /**
@@ -98,6 +99,8 @@ export interface GatewayHost {
   runtime: ModelRuntime
   /** Language of replies. */
   language: string
+  /** The helper model, when `BLITZCRANK_HELPER_MODEL` names one. */
+  helper: Helper | undefined
 }
 
 /** A gateway's endpoint at `POST /webhook/<name>`, for a platform that calls the host. */
