@@ -130,6 +130,13 @@ across ordinary rebuilds.
 **Choose a model explicitly.** `BLITZCRANK_MODEL` is required and has no default.
 Use `provider/model[:thinking]`, for example `openai/gpt-6-astra:medium`.
 
+`BLITZCRANK_HELPER_MODEL` names a second chat model, in the same form, for small
+jobs outside a run. It names the threads the Discord and Fluxer gateways open,
+so either gateway requires it. It gets one instruction and the member's message,
+with no tools. Pick a small, fast model. Thinking defaults to medium as for
+`BLITZCRANK_MODEL`, so add `:off`, for example `openai/gpt-5.4-mini:off`. The
+host refuses to start if the model is unknown or its provider has no key.
+
 ## Develop locally
 
 The standalone [devenv](https://devenv.sh) environment supplies Node, pnpm 11,
@@ -198,6 +205,10 @@ classifier first:
   answers there. Without a mention, triage must be at least
   `DISCORD_TRIAGE_THRESHOLD` sure (0.8 by default). With one, the most likely
   label decides.
+- The thread is named `blitzcrank: <title>`, with a title the
+  [helper model](#authentication-and-models) writes from the message. If the
+  helper fails, the message itself stands in. The bot adds the member to the
+  thread, so it shows in their channel list.
 - An off-topic message gets a fixed denial line if it mentions the bot, and
   nothing otherwise.
 - Later messages in a bot thread are follow-ups. They need no mention and skip
@@ -240,6 +251,9 @@ classifier first, as on Discord:
   answers there. Without a mention, triage must be at least
   `FLUXER_TRIAGE_THRESHOLD` sure (0.8 by default). With one, the most likely
   label decides.
+- The thread is named as on Discord. Fluxer makes only the bot a member of a
+  thread it opens, so the bot adds the member, and Fluxer posts a line saying
+  so.
 - An off-topic message gets a fixed denial line if it mentions the bot, and
   nothing otherwise.
 - Later messages in a bot thread are follow-ups. They need no mention and skip

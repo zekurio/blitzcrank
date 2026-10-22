@@ -154,6 +154,19 @@ in
       '';
     };
 
+    helperModel = lib.mkOption {
+      type = lib.types.nullOr lib.types.nonEmptyStr;
+      default = null;
+      example = "openai/gpt-5.4-mini:off";
+      description = ''
+        Chat model for small jobs outside a run, such as naming a Discord or
+        Fluxer thread, as provider/model with an optional thinking suffix.
+        Thinking defaults to medium; ":off" suits these jobs. Required with
+        the "discord" or "fluxer" gateway. It authenticates like
+        {option}`model`.
+      '';
+    };
+
     language = lib.mkOption {
       type = lib.types.str;
       default = "German";
@@ -174,15 +187,16 @@ in
         gateway without them stops the service at startup. Pending work for
         a gateway that is no longer listed also stops it.
 
-        "discord" needs DISCORD_BOT_TOKEN in {option}`environmentFile`, the
-        triage provider's API key there or in the auth file, and
-        DISCORD_CHANNELS, DISCORD_ALLOWED_USERS or DISCORD_ALLOWED_ROLES, and
-        DISCORD_TRIAGE_MODEL in {option}`settings`.
+        "discord" needs {option}`helperModel`, DISCORD_BOT_TOKEN in
+        {option}`environmentFile`, the triage provider's API key there or in
+        the auth file, and DISCORD_CHANNELS, DISCORD_ALLOWED_USERS or
+        DISCORD_ALLOWED_ROLES, and DISCORD_TRIAGE_MODEL in {option}`settings`.
 
-        "fluxer" needs FLUXER_BOT_TOKEN in {option}`environmentFile`, the
-        triage provider's API key there or in the auth file, and
-        FLUXER_INSTANCE_URL, FLUXER_CHANNELS, FLUXER_ALLOWED_USERS or
-        FLUXER_ALLOWED_ROLES, and FLUXER_TRIAGE_MODEL in {option}`settings`.
+        "fluxer" needs {option}`helperModel`, FLUXER_BOT_TOKEN in
+        {option}`environmentFile`, the triage provider's API key there or in
+        the auth file, and FLUXER_INSTANCE_URL, FLUXER_CHANNELS,
+        FLUXER_ALLOWED_USERS or FLUXER_ALLOWED_ROLES, and FLUXER_TRIAGE_MODEL
+        in {option}`settings`.
       '';
     };
 
@@ -301,6 +315,9 @@ in
         BLITZCRANK_AUTH_PATH = cfg.authFile;
         BLITZCRANK_WEB_PROVIDER = cfg.webProvider;
         BLITZCRANK_MCP_URL = cfg.mcpUrl;
+      }
+      // lib.optionalAttrs (cfg.helperModel != null) {
+        BLITZCRANK_HELPER_MODEL = cfg.helperModel;
       }
       // cfg.settings;
 

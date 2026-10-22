@@ -32,6 +32,7 @@ import { loadFluxerConfig } from "./gateways/fluxer/config.ts"
 import { createFluxerGateway } from "./gateways/fluxer/gateway.ts"
 import { loadSeerrConfig } from "./gateways/seerr/config.ts"
 import { createSeerrGateway } from "./gateways/seerr/gateway.ts"
+import { createHelper } from "./helper.ts"
 import { JobStore } from "./jobs.ts"
 import { connectMcpEffect } from "./mcp/client.ts"
 import { createApp } from "./server.ts"
@@ -96,7 +97,14 @@ export function startServerEffect(): Effect.Effect<void, unknown> {
       ModelRuntime.create(modelRuntimeOptions(config)),
     )
     resolveModel(runtime, config.model)
-    const host: GatewayHost = { runtime, language: config.language }
+    const host: GatewayHost = {
+      runtime,
+      language: config.language,
+      helper:
+        config.helperModel === undefined
+          ? undefined
+          : createHelper(runtime, config.helperModel),
+    }
     const gateways = new Gateways(
       config.dataDir,
       builds.map((build) => build(host)),

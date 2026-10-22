@@ -25,6 +25,7 @@ import type { Gateway, GatewayHost } from "../../gateway.ts"
 import { errorKind, logEvent } from "../../log.ts"
 import { admitEffect, Places, type AdmissionDeps } from "../chat-admission.ts"
 import { createChatGateway } from "../chat-gateway.ts"
+import { chatHelper } from "../chat-title.ts"
 import {
   chatClient,
   type ChatArrival,
@@ -107,16 +108,20 @@ export function createDiscordGateway(
     setting: "DISCORD_TRIAGE_MODEL",
     platform: PLATFORM.title,
   })
+  const helper = chatHelper(host, PLATFORM)
   const denial = outOfScopeMessage(host.language)
   return createChatGateway(PLATFORM, config, Effect.succeed(client), (intake) =>
-    listenEffect(config, discord, { client, triage, denial, intake }),
+    listenEffect(config, discord, { client, triage, helper, denial, intake }),
   )
 }
 
 function listenEffect(
   config: DiscordConfig,
   discord: DiscordClient,
-  deps: Pick<AdmissionDeps, "client" | "triage" | "denial" | "intake">,
+  deps: Pick<
+    AdmissionDeps,
+    "client" | "triage" | "helper" | "denial" | "intake"
+  >,
 ): Effect.Effect<void, unknown, Scope.Scope> {
   return Effect.gen(function* () {
     // Also checks the token before the socket opens.

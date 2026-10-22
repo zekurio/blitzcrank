@@ -5,6 +5,7 @@ import type { Gateway, GatewayHost } from "../../gateway.ts"
 import { logEvent } from "../../log.ts"
 import { admitEffect, Places, type AdmissionDeps } from "../chat-admission.ts"
 import { createChatGateway } from "../chat-gateway.ts"
+import { chatHelper } from "../chat-title.ts"
 import {
   chatClient,
   type ChatArrival,
@@ -79,18 +80,19 @@ export function createFluxerGateway(
     setting: "FLUXER_TRIAGE_MODEL",
     platform: PLATFORM.title,
   })
+  const helper = chatHelper(host, PLATFORM)
   const denial = outOfScopeMessage(host.language)
   // Listening completes this once discovery and the token check pass.
   const client = Deferred.makeUnsafe<ChatClient>()
   return createChatGateway(PLATFORM, config, Deferred.await(client), (intake) =>
-    listenEffect(config, client, { triage, denial, intake }),
+    listenEffect(config, client, { triage, helper, denial, intake }),
   )
 }
 
 function listenEffect(
   config: FluxerConfig,
   client: Deferred.Deferred<ChatClient>,
-  deps: Pick<AdmissionDeps, "triage" | "denial" | "intake">,
+  deps: Pick<AdmissionDeps, "triage" | "helper" | "denial" | "intake">,
 ): Effect.Effect<void, unknown, Scope.Scope> {
   return Effect.gen(function* () {
     const endpoints = yield* discoverEffect(config.instance).pipe(

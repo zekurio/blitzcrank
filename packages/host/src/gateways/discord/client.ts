@@ -83,6 +83,16 @@ export class DiscordClient {
     )
   }
 
+  /** Discord answers the same for someone who is a member already. */
+  addThreadMemberEffect(
+    threadId: string,
+    userId: string,
+  ): Effect.Effect<void, DiscordError> {
+    return call((signal) =>
+      this.api.threads.addMember(threadId, userId, { signal }),
+    )
+  }
+
   postEffect(
     channelId: string,
     content: string,

@@ -27,6 +27,12 @@ export interface Config {
    */
   model: string
   /**
+   * Chat model for small text jobs outside a run, such as naming a chat
+   * thread, as provider/model[:thinking]. Unset means no helper; whatever
+   * needs one refuses to start without it.
+   */
+  helperModel: string | undefined
+  /**
    * Explicit auth file holding API keys and OAuth credentials.
    * Must be writable: OAuth tokens auto-refresh and are persisted back.
    * Blitzcrank's own auth lives at `<dataDir>/auth.json`
@@ -158,6 +164,7 @@ export function loadConfig(): Config {
     maxParallelRuns: maxParallelRuns(),
     dataDir: process.env.BLITZCRANK_DATA_DIR ?? "data",
     model: requiredModel(),
+    helperModel: process.env.BLITZCRANK_HELPER_MODEL?.trim() || undefined,
     authPath: process.env.BLITZCRANK_AUTH_PATH,
     modelsPath: process.env.BLITZCRANK_MODELS_PATH,
     language: process.env.BLITZCRANK_LANGUAGE ?? "German",
