@@ -204,13 +204,13 @@ classifier first:
 - A message that triage judges a homelab request opens a thread, and the agent
   answers there. Without a mention, triage must be at least
   `DISCORD_TRIAGE_THRESHOLD` sure (0.8 by default). With one, the most likely
-  label decides.
+  label decides, and a message triage cannot judge opens a thread anyway.
 - The thread is named `blitzcrank: <title>`, with a title the
   [helper model](#authentication-and-models) writes from the message. If the
   helper fails, the message itself stands in. The bot adds the member to the
   thread, so it shows in their channel list.
 - An off-topic message gets a fixed denial line if it mentions the bot, and
-  nothing otherwise.
+  nothing otherwise. A reply to one of the bot's messages counts as a mention.
 - Later messages in a bot thread are follow-ups. They need no mention and skip
   triage.
 
@@ -250,12 +250,12 @@ classifier first, as on Discord:
 - A message that triage judges a homelab request opens a thread, and the agent
   answers there. Without a mention, triage must be at least
   `FLUXER_TRIAGE_THRESHOLD` sure (0.8 by default). With one, the most likely
-  label decides.
+  label decides, and a message triage cannot judge opens a thread anyway.
 - The thread is named as on Discord. Fluxer makes only the bot a member of a
   thread it opens, so the bot adds the member, and Fluxer posts a line saying
   so.
 - An off-topic message gets a fixed denial line if it mentions the bot, and
-  nothing otherwise.
+  nothing otherwise. A reply to one of the bot's messages counts as a mention.
 - Later messages in a bot thread are follow-ups. They need no mention and skip
   triage.
 
