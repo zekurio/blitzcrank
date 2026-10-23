@@ -14,7 +14,7 @@ import {
   type ChatError,
   type ChatPlatform,
 } from "./chat.ts"
-import { TriageError, type Triage } from "./triage.ts"
+import type { Triage } from "./triage.ts"
 
 /** What recovery needs to check a message's sender again. */
 export interface ChatSource {
@@ -157,7 +157,11 @@ export function admitEffect(
     // platform can echo the starter into the thread; it is not a follow-up.
     if (place.kind === "thread" && message.id === message.channelId) return
 
-    const mentioned = mentionsBot(message.content, deps.botId)
+    // A reply to the bot, such as to its denial, carries no mention in its
+    // text and still addresses the bot.
+    const mentioned =
+      mentionsBot(message.content, deps.botId) ||
+      message.referenced?.author.id === deps.botId
     // The roles the event carries decide. Both platforms attach the author's
     // member to a guild message in their documented shape; a message without
     // one is refused and logged as `no_member`. A live lookup here would cost
@@ -174,7 +178,16 @@ export function admitEffect(
       return
     }
     const text = messageText(message.content, message.mentions, deps.botId)
-    if (!text) return
+    // A bare mention or an image alone leaves nothing to triage or answer.
+    if (!text) {
+      logEvent(`${name}.message_skipped`, {
+        reason: "no_text",
+        message: message.id,
+        in: place.kind,
+        mentioned,
+      })
+      return
+    }
 
     if (place.kind === "thread") {
       yield* deps.intake.submit({
@@ -188,17 +201,7 @@ export function admitEffect(
       return
     }
 
-    const verdict = yield* deps.triage(text)
-    const accepted = mentioned
-      ? verdict.label === "stack"
-      : verdict.stack >= deps.config.triageThreshold
-    logEvent("triage.decided", {
-      gateway: name,
-      label: verdict.label,
-      stack: Math.round(verdict.stack * 100) / 100,
-      mentioned,
-      accepted,
-    })
+    const accepted = yield* acceptedEffect(message, text, mentioned, deps)
     if (accepted) {
       const name = yield* threadNameEffect(deps.helper, deps.platform, text)
       yield* openEffect(message, text, name, guild, deps)
@@ -221,6 +224,58 @@ export function admitEffect(
   )
 }
 
+/**
+ * Whether triage lets a channel message open a thread. A mention asks for the
+ * bot, so a mentioned message triage cannot judge opens one anyway; an
+ * unmentioned one stays quiet. The log carries the message id, so a reported
+ * miss can be found in the channel and its scores read here.
+ */
+function acceptedEffect(
+  message: ChatArrival,
+  text: string,
+  mentioned: boolean,
+  deps: AdmissionDeps,
+): Effect.Effect<boolean> {
+  const fields = {
+    gateway: deps.platform.name,
+    message: message.id,
+    kind: message.kind,
+    chars: text.length,
+    mentioned,
+  }
+  return deps.triage(text).pipe(
+    Effect.map((verdict) => {
+      const accepted = mentioned
+        ? verdict.label === "stack"
+        : verdict.stack >= deps.config.triageThreshold
+      logEvent("triage.decided", {
+        ...fields,
+        label: verdict.label,
+        stack: rounded(verdict.stack),
+        chat: rounded(verdict.chat),
+        other: rounded(verdict.other),
+        confidence: rounded(verdict.confidence),
+        accepted,
+      })
+      return accepted
+    }),
+    Effect.catch((error) =>
+      Effect.sync(() => {
+        logEvent(
+          "triage.failed",
+          { ...fields, reason: error.reason, accepted: mentioned },
+          "warn",
+        )
+        return mentioned
+      }),
+    ),
+  )
+}
+
+function rounded(value: number | undefined): number | undefined {
+  return value === undefined ? undefined : Math.round(value * 100) / 100
+}
+
 /** Why the event's own member refuses its author, or nothing if it admits them. */
 function refusalOf(
   message: ChatArrival,
@@ -233,8 +288,6 @@ function refusalOf(
 
 /** Kinds and codes only: provider and platform messages can echo the text. */
 function failureFields(platform: ChatPlatform, error: unknown) {
-  if (error instanceof TriageError)
-    return { error: "triage", reason: error.reason }
   if (platform.isError(error))
     return { error: platform.name, status: error.status, code: error.code }
   return { error: errorKind(error) }

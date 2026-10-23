@@ -18,6 +18,10 @@ export interface Verdict {
   label: Label
   /** How likely the message asks about the media server, from 0 to 1. */
   stack: number
+  /** The other labels' probabilities and the model's confidence, for the log only. */
+  chat: number | undefined
+  other: number | undefined
+  confidence: number
 }
 
 export type Triage = (message: string) => Effect.Effect<Verdict, TriageError>
@@ -27,10 +31,13 @@ const TIMEOUT = "15 seconds"
 
 // `chat` exists because a media channel talks about media: "did you see the
 // new season?" is on topic for the room and still asks the bot for nothing.
+// An unmentioned message rarely asks outright, so `stack` takes a remark or
+// complaint as readily as a question, and `chat` keeps other services,
+// cinemas, and thanks from reading as one.
 const CRITERIA: Record<Label, string> = {
   stack:
-    "Asks for help with the media server or reports a problem with it: requesting a movie or show, downloads, playback, streaming, subtitles, audio tracks, quality, missing episodes or files, Seerr, Sonarr, Radarr, SABnzbd, or Jellyfin.",
-  chat: "Talks about movies, shows, or music, or chats with other members, without asking the server or the bot for anything.",
+    "Wants something from this media server or says something is wrong with it, even as a short remark, complaint, or question: a movie or show they want added, whether or when a title or episode is on the server, an earlier request that has not shown up, something that will not play, buffers, stutters, or looks bad, wrong or missing subtitles or audio, a stuck or failed download, or Seerr, Sonarr, Radarr, SABnzbd, or Jellyfin misbehaving.",
+  chat: "Talks about movies, shows, or music, recommends or reviews them, or chats with other members, without wanting anything from the server or saying anything is wrong with it. Questions about cinemas, release dates, or other streaming services, thanks, and reports that something works again are chat.",
   other: "Anything else.",
 }
 
@@ -70,7 +77,7 @@ export function createTriage(
   }
   const topic: ClassifierChoiceQuestion = {
     type: "choice",
-    instructions: `A member posted this message in a ${naming.platform} channel where people can ask a bot for help with their private media server. Decide what the message is.`,
+    instructions: `A member posted this message in a ${naming.platform} channel where people can ask a bot for help with their private media server. Members write casually, in any language, often in lowercase, with typos, and without tagging the bot or asking a direct question. Decide what the message is.`,
     criteria: CRITERIA,
   }
   return (message) =>
@@ -119,5 +126,11 @@ function verdictEffect(
   ) {
     return Effect.fail(new TriageError({ reason: "malformed" }))
   }
-  return Effect.succeed({ label, stack })
+  return Effect.succeed({
+    label,
+    stack,
+    chat: answer.probabilities.chat,
+    other: answer.probabilities.other,
+    confidence: answer.confidence,
+  })
 }
