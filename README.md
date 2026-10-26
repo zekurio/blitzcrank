@@ -209,6 +209,10 @@ classifier first:
   [helper model](#authentication-and-models) writes from the message. If the
   helper fails, the message itself stands in. The bot adds the member to the
   thread, so it shows in their channel list.
+- While the agent works, the bot's one message in the thread shows the step it
+  is on, such as `🔍 Blitzcrank is checking Sonarr…`, at most one edit every
+  3 seconds. The host picks the line from the tool's name alone, never from
+  what the model passed to it. The reply then replaces the line.
 - An off-topic message gets a fixed denial line if it mentions the bot, and
   nothing otherwise. A reply to one of the bot's messages counts as a mention.
 - Later messages in a bot thread are follow-ups. They need no mention and skip
@@ -254,6 +258,7 @@ classifier first, as on Discord:
 - The thread is named as on Discord. Fluxer makes only the bot a member of a
   thread it opens, so the bot adds the member, and Fluxer posts a line saying
   so.
+- The bot's message shows the agent's current step, as on Discord.
 - An off-topic message gets a fixed denial line if it mentions the bot, and
   nothing otherwise. A reply to one of the bot's messages counts as a mention.
 - Later messages in a bot thread are follow-ups. They need no mention and skip

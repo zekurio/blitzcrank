@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises"
 
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent"
-import { Cause, Effect } from "effect"
+import { Cause, Effect, Fiber, Queue } from "effect"
 
 import type { Config } from "../config.ts"
 import {
@@ -20,7 +20,7 @@ import { storageIO } from "../storage.ts"
 import { buildRunTools, type SessionFileRef } from "../tools/index.ts"
 import { buildWebProvider } from "../web/index.ts"
 import { SdkError } from "./effect.ts"
-import { queuedMessage, workingMessage } from "./notices.ts"
+import { queuedMessage, stepMessage, workingMessage } from "./notices.ts"
 import { buildMessagePrompt, buildSystemPrompt } from "./prompt.ts"
 import {
   modelAnchor,
@@ -56,6 +56,7 @@ export class ThreadRunner {
     return showEffect(this.threads.channel(thread), marker, {
       text: queuedMessage(this.config.language, runsAhead),
       signature: this.anchor,
+      kind: "status",
     })
   }
 
@@ -78,9 +79,21 @@ export class ThreadRunner {
           showEffect(channel, status, {
             text: workingMessage(this.config.language),
             signature: this.anchor,
+            kind: "status",
           }),
         )
         status.id = shown.id
+        // The line then follows the run's tool calls. A recovered run may
+        // have begun publishing, and its line may carry the reply already.
+        const steps = yield* Queue.sliding<string>(1)
+        const replied = this.jobs
+          .actions(runId)
+          .some((action) => action.key === "publish-reply")
+        const following = yield* (
+          replied
+            ? Effect.void
+            : followStepsEffect(channel, status, steps, runId)
+        ).pipe(Effect.forkScoped)
         const context = yield* channel.contextEffect()
         const sessionFileRef: SessionFileRef = { current: undefined }
         const storageFile = this.threads.sessionFile(thread)
@@ -125,7 +138,15 @@ export class ThreadRunner {
           storageFile,
           requestId: runId,
           sessionFileRef,
+          onToolStep: (step) => {
+            const text = stepMessage(this.config.language, step)
+            if (text !== undefined) Queue.offerUnsafe(steps, text)
+          },
         })
+        // Waits out a step edit in flight, so none lands over the reply. A run
+        // that fails before this stops it when the scope closes, before the
+        // line is retracted.
+        yield* Fiber.interrupt(following)
         logEvent(
           "run.answer",
           {
@@ -162,6 +183,7 @@ export class ThreadRunner {
               ? {
                   text: reply,
                   signature: usageAnchor(this.modelSpec, turn.usage),
+                  kind: "reply",
                 }
               : undefined,
           ).pipe(Effect.as({ reply: reply || null })),
@@ -269,6 +291,44 @@ function showEffect(channel: Channel, marker: Marker, notice: Notice) {
     Effect.map((): Marker => ({ id: marker.id })),
     Effect.uninterruptible,
   )
+}
+
+/** The least time between two step edits, to stay clear of rate limits. */
+const STEP_GAP = "3 seconds"
+
+/**
+ * Rewrites the status line with the latest step, one edit per `STEP_GAP` at
+ * most. An edit in flight finishes before an interruption lands, so stopping
+ * this waits for it. A failed edit is logged and never fails the run.
+ */
+function followStepsEffect(
+  channel: Channel,
+  marker: Marker,
+  steps: Queue.Dequeue<string>,
+  runId: string,
+): Effect.Effect<void> {
+  return Effect.gen(function* () {
+    if (channel.progressEffect === undefined) return
+    const shown = { text: "" }
+    for (;;) {
+      const text = yield* Queue.take(steps)
+      if (text === shown.text) continue
+      shown.text = text
+      yield* channel.progressEffect(marker, text).pipe(
+        Effect.catchCause((cause) =>
+          Effect.sync(() => {
+            logEvent(
+              "status.step_failed",
+              { runId, error: errorKind(Cause.squash(cause)) },
+              "warn",
+            )
+          }),
+        ),
+        Effect.uninterruptible,
+      )
+      yield* Effect.sleep(STEP_GAP)
+    }
+  })
 }
 
 /**

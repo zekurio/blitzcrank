@@ -46,6 +46,12 @@ export function usageAnchor(spec: string, usage: ThreadUsage): string {
     usage.costUsd === undefined ? "" : ` · ${formatCost(usage.costUsd)}`
   return `${prefix} · ${formatTokens(usage.inputTokens)} in · ${formatTokens(usage.outputTokens)} out${cost}]`
 }
+/** A tool call a run starts, for the thread's live status line. */
+export interface ToolStep {
+  tool: string
+  /** Whether the call may write: true unless the tool is safe to replay. */
+  write: boolean
+}
 export interface AgentTurnOptions {
   modelRuntime: ModelRuntime
   modelSpec: string
@@ -62,6 +68,11 @@ export interface AgentTurnOptions {
   sessionFileRef: { current: string | undefined } | undefined
   builtinRead?: boolean
   signal?: AbortSignal | undefined
+  /**
+   * Hears each tool call before it starts, never one replayed from the
+   * journal. It runs inside tool execution, so it must return at once.
+   */
+  onToolStep?: ((step: ToolStep) => void) | undefined
 }
 export interface DurableTurnFailure {
   kind: "unsafe-interrupted" | "policy-changed" | "unanswered"

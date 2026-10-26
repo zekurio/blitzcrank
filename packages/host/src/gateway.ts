@@ -53,6 +53,8 @@ export interface Notice {
   text: string
   /** Host-written footer naming the model. A gateway decides how to show it. */
   signature: string
+  /** A status line the reply later replaces, or the reply itself. */
+  kind: "status" | "reply"
 }
 
 /**
@@ -69,6 +71,13 @@ export interface Channel {
   contextEffect(): Effect.Effect<string, unknown>
   /** Posts the run's one visible message, or rewrites it in place. */
   showEffect(marker: Marker, notice: Notice): Effect.Effect<void, unknown>
+  /**
+   * Rewrites the status line with the step a run is taking, from host text
+   * alone. It never posts: without a shown message it does nothing. The host
+   * stops calling it before the reply or a retraction. A gateway without it
+   * shows no live status.
+   */
+  progressEffect?(marker: Marker, text: string): Effect.Effect<void, unknown>
   /** Removes that message, if there is one. */
   retractEffect(marker: Marker): Effect.Effect<void, unknown>
 }

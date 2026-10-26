@@ -186,6 +186,9 @@ export async function runDurableTurn(
     if (prior?.unsafe)
       throw new Error("Uncertain prior write requires operator review")
     if (stopping) throw new Error("Run stopped")
+    // Before the start is journaled: a listener that throws stops the call
+    // with nothing recorded, so it can never leave a write uncertain.
+    opts.onToolStep?.({ tool: tool.name, write: tool.replay !== "safe" })
     active += 1
     const started = performance.now()
     try {

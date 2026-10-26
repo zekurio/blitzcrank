@@ -60,6 +60,16 @@ export function createChatGateway(
             showEffect(platform, chat, threadId, marker, notice),
           ),
         ),
+      progressEffect: (marker, text) => {
+        const id = marker.id
+        if (typeof id !== "string") return Effect.void
+        return client.pipe(
+          Effect.flatMap((chat) =>
+            chat.editEffect(threadId, id, fit(text, platform.maxContent)),
+          ),
+          Effect.asVoid,
+        )
+      },
       retractEffect: (marker) => {
         const id = marker.id
         if (typeof id !== "string") return Effect.void
@@ -224,8 +234,13 @@ function contextEntry(message: ChatMessage) {
   }
 }
 
-/** The reply and its signature, cut to fit one message. */
+/**
+ * The text cut to fit one message. Only a reply carries the model footer: a
+ * status line is short and soon replaced, and chat tells the bot's own
+ * messages apart by author, not by footer.
+ */
 function messageContent(platform: ChatPlatform, notice: Notice): string {
+  if (notice.kind === "status") return fit(notice.text, platform.maxContent)
   const footer = `\n\n-# ${notice.signature}`
   return `${fit(notice.text, platform.maxContent - footer.length)}${footer}`
 }

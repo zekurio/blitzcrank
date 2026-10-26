@@ -1,8 +1,11 @@
 /**
  * The host's own lines on a thread: the queue notice, the working line a run
- * shows until its reply replaces it, and the line a gateway posts when it
- * turns a request away. The model writes none of them.
+ * shows until its reply replaces it, the step lines that rewrite it while the
+ * run calls tools, and the line a gateway posts when it turns a request away.
+ * The model writes none of them.
  */
+
+import type { ToolStep } from "./session.ts"
 
 export function queuedMessage(language: string, runsAhead: number): string {
   if (isGerman(language)) {
@@ -22,7 +25,30 @@ export function queuedMessage(language: string, runsAhead: number): string {
 export function workingMessage(language: string): string {
   return isGerman(language)
     ? `⚙️ Blitzcrank ${pick(WORKING_DE)} …`
-    : `⚙️ Blitzcrank is ${pick(WORKING_EN)} …`
+    : `⚙️ Blitzcrank is ${pick(WORKING_EN)}…`
+}
+
+/**
+ * The status line for a tool call a run starts, or undefined for a call not
+ * worth one. Only the tool's name and whether it may write choose the line,
+ * so nothing the model put into the call reaches the thread.
+ */
+export function stepMessage(
+  language: string,
+  step: ToolStep,
+): string | undefined {
+  const german = isGerman(language)
+  const fixed = (german ? STEPS_DE : STEPS_EN).get(step.tool)
+  if (fixed !== undefined) return fixed
+  const service = SERVICES.get(step.tool.split("_", 1)[0] ?? "")
+  if (service === undefined) return undefined
+  if (german)
+    return step.write
+      ? `✏️ Blitzcrank ändert etwas in ${service} …`
+      : `🔍 Blitzcrank schaut in ${service} nach …`
+  return step.write
+    ? `✏️ Blitzcrank is changing something in ${service}…`
+    : `🔍 Blitzcrank is checking ${service}…`
 }
 
 /** For a request outside the homelab. It starts no run. */
@@ -129,3 +155,35 @@ const QUEUED_EN: Lines = [
   "Blitzcrank is still busy elsewhere.",
   "Blitzcrank will be with you shortly.",
 ]
+
+// A server tool's name starts with the service it reaches.
+const SERVICES = new Map([
+  ["seerr", "Seerr"],
+  ["sonarr", "Sonarr"],
+  ["radarr", "Radarr"],
+  ["sabnzbd", "SABnzbd"],
+  ["jellyfin", "Jellyfin"],
+])
+
+// Tools that reach no service, by name. A renamed tool loses its line until
+// it is renamed here too. `tool_search` only loads tools and has none.
+const STEPS_DE = new Map([
+  ["media_probe", "🎞️ Blitzcrank untersucht die Datei …"],
+  ["media_frames", "🎞️ Blitzcrank sieht sich Standbilder an …"],
+  ["web_search", "🌐 Blitzcrank sucht im Web …"],
+  ["web_extract", "🌐 Blitzcrank liest eine Webseite …"],
+  ["thread_history_search", "📖 Blitzcrank durchsucht frühere Gespräche …"],
+  ["read", "📖 Blitzcrank schlägt im Handbuch nach …"],
+])
+
+const STEPS_EN = new Map([
+  ["media_probe", "🎞️ Blitzcrank is inspecting the file…"],
+  ["media_frames", "🎞️ Blitzcrank is looking at still frames…"],
+  ["web_search", "🌐 Blitzcrank is searching the web…"],
+  ["web_extract", "🌐 Blitzcrank is reading a web page…"],
+  [
+    "thread_history_search",
+    "📖 Blitzcrank is searching earlier conversations…",
+  ],
+  ["read", "📖 Blitzcrank is checking its handbook…"],
+])
