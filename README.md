@@ -349,7 +349,11 @@ service refuses to start on a directory that holds such a run.
   ffmpeg on the server and an image-capable model.
 - **Web** stays on the host. `BLITZCRANK_WEB_PROVIDER=firecrawl` plus
   `FIRECRAWL_API_KEY` enables read-only search/extraction through hosted
-  Firecrawl. Off by default.
+  Firecrawl. Off by default. `FIRECRAWL_URL` points the tools at another
+  Firecrawl-compatible endpoint, such as a fake one in tests. Firecrawl
+  fetches pages itself, so blitzcrank can't check which address it reaches.
+  A self-hosted instance inside your network would let a URL from any message
+  reach internal services.
 
 Both processes answer an unauthenticated `GET /healthz`.
 

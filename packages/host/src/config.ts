@@ -6,7 +6,12 @@ export interface McpConfig {
 }
 
 export type WebConfig =
-  | { provider: "firecrawl"; apiKey: string }
+  | {
+      provider: "firecrawl"
+      apiKey: string
+      /** The hosted API unless the operator names another endpoint. */
+      url: string
+    }
   | { provider: "none" }
 
 /**
@@ -112,18 +117,16 @@ function mcp(): McpConfig {
   return { url, token }
 }
 
+const FIRECRAWL_HOSTED_URL = "https://api.firecrawl.dev"
+
 /**
  * Web access is explicit opt-in: an unset provider means no external web
- * tools, even if a stray FIRECRAWL_API_KEY exists in the environment (the
- * same variable name is used by other tools, so its presence is not consent).
+ * tools, even if a stray FIRECRAWL_API_KEY or FIRECRAWL_URL exists in the
+ * environment (other tools use the same names, so their presence is not
+ * consent). `buildFirecrawlTools` says why another endpoint is a risk.
  */
 function web(): WebConfig {
   const provider = process.env.BLITZCRANK_WEB_PROVIDER ?? "none"
-  if (process.env.FIRECRAWL_URL) {
-    throw new Error(
-      "FIRECRAWL_URL is not supported; web tools use the hosted Firecrawl API",
-    )
-  }
   if (provider === "none") return { provider }
   if (provider !== "firecrawl") {
     throw new Error(
@@ -136,7 +139,11 @@ function web(): WebConfig {
       "BLITZCRANK_WEB_PROVIDER=firecrawl requires FIRECRAWL_API_KEY",
     )
   }
-  return { provider, apiKey }
+  const url = process.env.FIRECRAWL_URL?.trim() || FIRECRAWL_HOSTED_URL
+  if (!URL.canParse(url) || !/^https?:$/.test(new URL(url).protocol)) {
+    throw new Error(`FIRECRAWL_URL must be an http(s) URL, got "${url}"`)
+  }
+  return { provider, apiKey, url }
 }
 
 /**
