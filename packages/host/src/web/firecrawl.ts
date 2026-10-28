@@ -8,8 +8,6 @@ import { MAX_RESULT_CHARS, textResult, toolCheck } from "../tools/common.js"
 
 type FirecrawlConfig = Extract<WebConfig, { provider: "firecrawl" }>
 
-const FIRECRAWL_URL = "https://api.firecrawl.dev"
-
 interface FirecrawlSearchResult {
   title?: string
   description?: string
@@ -44,8 +42,12 @@ interface FirecrawlScrapeResponse {
 
 /**
  * Firecrawl web_search + web_extract. Firecrawl fetches remotely, so
- * Blitzcrank cannot validate the resolved address or redirect chain. Custom
- * Firecrawl endpoints are therefore unsupported: only the hosted API is used.
+ * Blitzcrank cannot validate the resolved address or redirect chain. A
+ * self-hosted instance inside the network would let a URL from an untrusted
+ * message reach internal services, so the hosted API is the default.
+ * `FIRECRAWL_URL` may name another endpoint, for tests against a fake or for
+ * an operator who accepts that risk. Only the operator's environment sets
+ * it, never the model.
  *
  * Firecrawl's lockdown mode is deliberately not requested: it serves only
  * previously cached pages and errors on a cache miss, which defeats
@@ -94,7 +96,7 @@ function buildSearchTool(config: FirecrawlConfig): ToolRegistration {
             return params.recency ? recencyValue(params.recency) : undefined
           })
           const response = yield* jsonRequestEffect<FirecrawlSearchResponse>(
-            FIRECRAWL_URL,
+            config.url,
             "/v2/search",
             {
               method: "POST",
@@ -168,7 +170,7 @@ function buildExtractTool(config: FirecrawlConfig): ToolRegistration {
         Effect.gen(function* () {
           const url = yield* toolCheck(() => httpUrl(params.url))
           const response = yield* jsonRequestEffect<FirecrawlScrapeResponse>(
-            FIRECRAWL_URL,
+            config.url,
             "/v2/scrape",
             {
               method: "POST",

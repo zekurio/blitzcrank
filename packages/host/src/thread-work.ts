@@ -93,6 +93,40 @@ export class ThreadWork {
     )
   }
 
+  /**
+   * Runs one event to its end through the same admission, journal, and queue
+   * as the service, for a host that answers a single event and exits.
+   * `started` hears the run's ID before the run can show anything. Nothing
+   * is recovered: a thread holding work an earlier process left unfinished is
+   * refused, since that work may have left a write uncertain.
+   */
+  runOnceEffect(
+    event: Inbound,
+    started: (runId: string) => Effect.Effect<void>,
+  ): Effect.Effect<Job, unknown> {
+    return Effect.gen({ self: this }, function* () {
+      const key = threadKey(event.thread)
+      const left = this.unfinished().find(
+        (job) => threadKey(job.payload.event.thread) === key,
+      )
+      if (left !== undefined)
+        return yield* Effect.fail(
+          new Error(
+            `${key} holds run ${left.id}, which an earlier process left unfinished and which may have left a write uncertain; use another thread`,
+          ),
+        )
+      const job = this.jobs.create<ThreadJob>({ event, runsAhead: 0 })
+      yield* started(job.id)
+      this.admit(job)
+      this.queue.close()
+      yield* this.queue.drainEffect()
+      const ended = this.jobs.get(job.id)
+      if (ended === undefined)
+        return yield* Effect.fail(new Error(`Run ${job.id} left the journal`))
+      return ended
+    })
+  }
+
   private admit(job: Job<ThreadJob>): void {
     if (job.status !== "queued" && job.status !== "running") return
     if ([...this.pending].some((pending) => pending.job.id === job.id)) return

@@ -6,6 +6,17 @@ overrides:
   "oxfmt@0.59.0>tinypool": 2.1.2
   # express-rate-limit 8.7.1 pulls ip-address 10.7.3, affected by GHSA-rxp7-6hxx-x8q5.
   "express-rate-limit@8.7.1>ip-address": 10.7.4
+  # pi-coding-agent 1.1.0 pins undici 8.10.2, which openai shares as a peer.
+  # Below 8.12.2 it has eight advisories, GHSA-xjj6-f33q-929c among them.
+  "undici@8.10.2": 8.12.3
+  # Pulled by the Anthropic, OpenAI, and MCP SDKs; GHSA-mrhx-c7xc-m3w5.
+  "zod@4.4.3": 4.6.7
+  # Pulled by the MCP SDK's express; GHSA-27r3-jxmh-p828.
+  "body-parser@2.3.0": 2.4.0
+  # Pulled by express and body-parser; GHSA-6pq8-jhm2-2vcw.
+  "qs@6.16.0": 6.16.1
+  # Pulled by ajv; GHSA-w74x-v6f9-j3xg and three more.
+  "fast-uri@3.1.8": 3.1.9
 
 allowBuilds:
   esbuild: true
@@ -24,4 +35,3 @@ minimumReleaseAgeExclude:
   - "@earendil-works/pi-mcp@1.1.0"
   - "@earendil-works/pi-durable@1.1.0"
   - "@modelcontextprotocol/sdk@1.32.1"
-  - "zod@4.3.6"

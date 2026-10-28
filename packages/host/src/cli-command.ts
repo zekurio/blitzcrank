@@ -4,11 +4,13 @@ export type AuthCommand =
 
 export type Command =
   | { kind: "server" }
+  | { kind: "run" }
   | { kind: "help" }
   | { kind: "auth"; command: AuthCommand }
 
 export const CLI_HELP = `Usage:
   blitzcrank                         Start the webhook service
+  blitzcrank run                     Answer one JSON event from stdin
   blitzcrank auth login <provider>   Log in with OAuth
   blitzcrank auth logout <provider>  Remove stored credentials
   blitzcrank auth status             List stored credential types
@@ -19,10 +21,18 @@ API keys use provider environment variables; no login is needed.
 
 Auth uses BLITZCRANK_AUTH_PATH or <BLITZCRANK_DATA_DIR or data>/auth.json.
 Auth commands do not require service credentials or BLITZCRANK_MODEL.
+
+run reads {"thread":"<id>","text":"<message>"} on stdin and writes the run
+as JSON lines on stdout: run.started, a step per tool call, reply, usage,
+and run.finished. Host logs go to stderr, and a failed run exits non-zero.
+Run it again with the same thread and data directory to continue the
+conversation. It uses the service's environment, but not its data directory
+while the service runs.
 `
 
 export function parseCommand(args: string[]): Command {
   if (args.length === 0) return { kind: "server" }
+  if (args.length === 1 && args[0] === "run") return { kind: "run" }
   const help = (arg: string | undefined) =>
     arg === "--help" || arg === "-h" || arg === "help"
   if (
