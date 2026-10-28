@@ -3,6 +3,7 @@ import path from "node:path"
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent"
 import { Effect, type Scope } from "effect"
 
+import type { ThreadUsage, ToolStep } from "./agent/session.ts"
 import type { Helper } from "./helper.ts"
 import type { JsonValue } from "./services/http.ts"
 
@@ -49,12 +50,19 @@ export interface Marker {
   id: string | number | undefined
 }
 
-export interface Notice {
+/** A status line the reply later replaces, or the reply itself. */
+export type Notice =
+  | (NoticeText & { kind: "status" })
+  | (NoticeText & {
+      kind: "reply"
+      /** The thread's totals the signature sums up, for a gateway that shows them itself. */
+      usage: ThreadUsage
+    })
+
+interface NoticeText {
   text: string
   /** Host-written footer naming the model. A gateway decides how to show it. */
   signature: string
-  /** A status line the reply later replaces, or the reply itself. */
-  kind: "status" | "reply"
 }
 
 /**
@@ -78,6 +86,13 @@ export interface Channel {
    * shows no live status.
    */
   progressEffect?(marker: Marker, text: string): Effect.Effect<void, unknown>
+  /**
+   * Hears every tool call a run starts, never one replayed from the journal,
+   * by the tool's name and whether it may write: nothing the model passed to
+   * it. It runs inside the call, so it must return at once. A gateway
+   * without it hears none.
+   */
+  readonly onToolStep?: (step: ToolStep) => void
   /** Removes that message, if there is one. */
   retractEffect(marker: Marker): Effect.Effect<void, unknown>
 }

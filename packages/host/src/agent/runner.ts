@@ -139,6 +139,7 @@ export class ThreadRunner {
           requestId: runId,
           sessionFileRef,
           onToolStep: (step) => {
+            channel.onToolStep?.(step)
             const text = stepMessage(this.config.language, step)
             if (text !== undefined) Queue.offerUnsafe(steps, text)
           },
@@ -184,6 +185,7 @@ export class ThreadRunner {
                   text: reply,
                   signature: usageAnchor(this.modelSpec, turn.usage),
                   kind: "reply",
+                  usage: turn.usage,
                 }
               : undefined,
           ).pipe(Effect.as({ reply: reply || null })),

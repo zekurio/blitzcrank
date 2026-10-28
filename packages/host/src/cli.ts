@@ -16,6 +16,11 @@ const command = Effect.try({
         Effect.flatMap((server) => server.startServerEffect()),
       )
     }
+    if (command.kind === "run") {
+      return Effect.promise(() => import("./index.ts")).pipe(
+        Effect.flatMap((host) => host.runEventEffect()),
+      )
+    }
     return Effect.promise(() => import("./auth.ts")).pipe(
       Effect.flatMap((auth) => auth.runAuthEffect(command.command)),
     )

@@ -1,3 +1,4 @@
+import { Console } from "node:console"
 import { mkdir } from "node:fs/promises"
 import { createServer, type Server } from "node:http"
 import path from "node:path"
@@ -26,6 +27,11 @@ import {
   type GatewayHost,
   type Intake,
 } from "./gateway.ts"
+import {
+  createCliGateway,
+  readMessageEffect,
+  writeEvent,
+} from "./gateways/cli/gateway.ts"
 import { loadDiscordConfig } from "./gateways/discord/config.ts"
 import { createDiscordGateway } from "./gateways/discord/gateway.ts"
 import { loadFluxerConfig } from "./gateways/fluxer/config.ts"
@@ -160,6 +166,62 @@ export function startServerEffect(): Effect.Effect<void, unknown> {
     const error = yield* Deferred.await(gatewayLost)
     yield* shutdown(`gateway lost (${error.message})`, 1)
   })
+}
+
+/**
+ * The `run` command: answers the one event on stdin through the cli gateway
+ * and the same journal, queue, and runner as the service, writes the run's
+ * events to stdout as JSON lines, and fails when the run does. The service
+ * cannot share the data directory while it runs: the journal admits one
+ * owner.
+ */
+export function runEventEffect(): Effect.Effect<void, unknown> {
+  return Effect.gen(function* () {
+    // Stdout carries the run's events and nothing else. The host's log lines,
+    // and anything a dependency prints, go to stderr.
+    yield* Effect.sync(() => {
+      globalThis.console = new Console(process.stderr)
+    })
+    const config = loadConfig()
+    const gateways = new Gateways(config.dataDir, [createCliGateway()])
+    const event = yield* readMessageEffect(gateways)
+    const runtime = yield* Effect.tryPromise(() =>
+      ModelRuntime.create(modelRuntimeOptions(config)),
+    )
+    resolveModel(runtime, config.model)
+    yield* storageIO(() => mkdir(config.dataDir, { recursive: true }))
+    const jobs = yield* Effect.acquireRelease(
+      Effect.try({
+        try: () => new JobStore(path.join(config.dataDir, "jobs.sqlite")),
+        catch: (cause) =>
+          new Error(
+            `Cannot open the journal in ${config.dataDir} (${cause instanceof Error ? cause.message : String(cause)}); one host process, the service included, may use a data directory at a time`,
+            { cause },
+          ),
+      }),
+      (store) => Effect.sync(() => store.close()),
+    )
+    const work = new ThreadWork(
+      new ThreadRunner(config, runtime, config.model, jobs, gateways),
+      gateways,
+      jobs,
+      1,
+    )
+    const job = yield* work.runOnceEffect(event, (runId) =>
+      Effect.sync(() =>
+        writeEvent({ type: "run.started", runId, thread: event.thread.id }),
+      ),
+    )
+    const completed = job.status === "completed"
+    writeEvent({
+      type: "run.finished",
+      runId: job.id,
+      status: completed ? "completed" : "failed",
+      ...(completed ? {} : { error: job.error ?? job.status }),
+    })
+    if (!completed)
+      return yield* Effect.fail(new Error(`Run ${job.id} ${job.status}`))
+  }).pipe(Effect.scoped)
 }
 
 /** Startup waits this long for a server that is still coming up. */

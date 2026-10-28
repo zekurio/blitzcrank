@@ -3,7 +3,8 @@
 blitzcrank is an agent for a private media homelab. A Seerr issue webhook or a
 Discord or Fluxer message starts a Pi Durable run that investigates across
 Seerr, Sonarr, Radarr, SABnzbd, and Jellyfin, applies narrow verified fixes,
-and replies on the issue or in the thread.
+and replies on the issue or in the thread. `blitzcrank run` answers one event
+from stdin the same way, for debugging and benchmarks.
 
 Safety comes first, then reliability. Enforce rules in code, not in the prompt.
 Do not reintroduce removed runtimes, plan/apply writes, per-run tool subsets,

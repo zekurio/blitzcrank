@@ -295,6 +295,52 @@ closes that connection for good, such as after the token is regenerated, the
 host stops with a failure and systemd restarts it. Messages sent while the host
 is down are not picked up later.
 
+## Run one event from a terminal
+
+`blitzcrank run` answers one message without a chat platform, for debugging or
+a test harness. It reads one JSON object on stdin and writes the run to stdout,
+one JSON object per line:
+
+```sh
+echo '{"thread":"t1","text":"Crystal Lake ist ab Episode 6 falsch"}' |
+  BLITZCRANK_DATA_DIR=/tmp/blitzcrank-debug blitzcrank run
+```
+
+```jsonl
+{"type":"run.started","runId":"36cef7c0-…","thread":"t1"}
+{"type":"step","tool":"tool_search","write":false}
+{"type":"step","tool":"sonarr_episodes","write":false}
+{"type":"reply","text":"…"}
+{"type":"usage","inputTokens":21400,"outputTokens":800,"costUsd":0.08}
+{"type":"run.finished","runId":"36cef7c0-…","status":"completed"}
+```
+
+- `thread` is 1 to 64 letters, digits, `_`, or `-`. Run the command again with
+  the same thread and data directory to continue the conversation, one
+  invocation per message.
+- A `step` line names each tool call as it starts and says whether the tool
+  may write. It never shows the arguments. The full trace stays in
+  `sessions/cli/<thread>.sqlite`.
+- `usage` covers every run of the thread so far, like the reply footer on
+  the other gateways. `costUsd` is null unless the provider bills per token.
+- A run that ends without a message prints no `reply`. A failed run ends with
+  `"status":"failed"` and its error, and the command exits 1. Bad input fails
+  before `run.started`.
+- Host logs go to stderr.
+
+The command needs the host's environment: the model, its credentials, and the
+MCP URL and token. It reads no gateway settings. Runs go through the same
+journal, runner, and tools as the service. The model's brief matches the chat
+gateways' without the platform name, so a run here behaves like one in a
+Discord or Fluxer thread. Whoever runs the command already holds every
+credential the run uses, so it checks no sender.
+
+Give the command a data directory of its own. The journal admits one process
+at a time, so the command fails while the service holds the directory. A run
+killed partway, by Ctrl-C or a timeout, stays unfinished in the journal
+because a write may be uncertain. Its thread takes no further runs, and the
+service refuses to start on a directory that holds such a run.
+
 ## Optional features
 
 - **Media inspection** is configured on the server. `BLITZCRANK_MEDIA_ROOTS`
