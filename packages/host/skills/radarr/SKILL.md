@@ -95,7 +95,8 @@ further write.
 For missing movies, inspect monitoring, minimum availability, files, queue,
 history, and SAB handoff. Respect monitoring and availability. Call
 `radarr_auto_search` with the `movieId` once, only when the movie is missing,
-after clearing a failed release, or for an explicit replacement/fix request.
+after clearing a failed release that started no search, or for an explicit
+replacement/fix request.
 Never duplicate progressing work.
 
 Let Radarr choose the release. When this thread already read the movie's
@@ -153,8 +154,12 @@ selection, and originating release. File deletion removes the only disk copy.
    replacement itself, read from Radarr's own redownload settings: a `search`
    effect when it does, a warning when it does not or cannot tell. Add
    `radarr_auto_search` only when no search starts. Usenet blocklisting
-   matches one posting, so a re-post of the same title stays grabbable; check
-   `radarr_releases` with `titleContains` for re-posts first.
+   matches one posting, so a re-post of the same title stays grabbable, and
+   the search Radarr starts may grab it; check `radarr_releases` with
+   `titleContains` for re-posts first. When the fix is one specific other
+   release, drop and blocklist the running attempt with
+   `radarr_remove_queue_item` and `skipRedownload: true` right before
+   `radarr_grab_release`, so no search queues a second download.
 4. Verify the blocklist and a different queued release. Stop if none appears.
    After import, verify edition, audio, and the original playback symptom.
 
@@ -188,6 +193,11 @@ exists. The verification shows the command just after submission; read
 state. Command completion is not import; import is not Jellyfin playback.
 
 If cleanup is warranted instead, call `radarr_remove_queue_item` with
-`queueId`, `removeFromClient`, and `blocklist`. `removeFromClient: true`
-removes the download and its data. `removeFromClient: false` with
-`blocklist: true` drops only the queue entry and blocklists the release.
+`queueId`, `removeFromClient`, `blocklist`, and `skipRedownload`.
+`removeFromClient: true` removes the download and its data.
+`removeFromClient: false` with `blocklist: true` drops only the queue entry
+and blocklists the release. Blocklisting a download marks it failed, as
+`radarr_mark_history_failed` does, so Radarr may search a replacement itself.
+To drop and blocklist an attempt right before grabbing one specific other
+release, pass `skipRedownload: true`. Otherwise read the result's `search`
+effect or warning, and add `radarr_auto_search` only when no search starts.

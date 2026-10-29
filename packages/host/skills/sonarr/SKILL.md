@@ -142,10 +142,13 @@ Its result says whether Sonarr then searches a replacement itself, read from
 Sonarr's own redownload settings: a `search` effect when it does, a warning
 when it does not or cannot tell. Add `sonarr_auto_search` only when no search
 starts. Usenet blocklisting matches one posting, so a re-post of the same
-title stays grabbable; check `sonarr_releases` with `titleContains` for
-re-posts first. Verify the blocklist and a different replacement. Call
-`sonarr_delete_blocklist_entry` with the `blocklistId` only with a clear
-identity match.
+title stays grabbable, and the search Sonarr starts may grab it; check
+`sonarr_releases` with `titleContains` for re-posts first. When the fix is one
+specific other release, drop and blocklist the running attempt with
+`sonarr_remove_queue_item` and `skipRedownload: true` right before
+`sonarr_grab_release`, so no search queues a second download. Verify the
+blocklist and a different replacement. Call `sonarr_delete_blocklist_entry`
+with the `blocklistId` only with a clear identity match.
 
 For missing tracks, search only if a different release is plausible. If streams
 exist, investigate Jellyfin/client selection.
@@ -197,6 +200,11 @@ queue, episode, and file state. Search is not acquisition; SAB completion is
 not import. After import, verify Jellyfin streams and the reported symptom.
 
 If cleanup is warranted instead, call `sonarr_remove_queue_item` with
-`queueId`, `removeFromClient`, and `blocklist`. `removeFromClient: true`
-removes the download and its data. `removeFromClient: false` with
-`blocklist: true` drops only the queue entry and blocklists the release.
+`queueId`, `removeFromClient`, `blocklist`, and `skipRedownload`.
+`removeFromClient: true` removes the download and its data.
+`removeFromClient: false` with `blocklist: true` drops only the queue entry
+and blocklists the release. Blocklisting a download marks it failed, as
+`sonarr_mark_history_failed` does, so Sonarr may search a replacement itself.
+To drop and blocklist an attempt right before grabbing one specific other
+release, pass `skipRedownload: true`. Otherwise read the result's `search`
+effect or warning, and add `sonarr_auto_search` only when no search starts.

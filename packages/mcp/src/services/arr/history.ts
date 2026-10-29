@@ -192,3 +192,35 @@ export function findHistoryRecord(
     )
   })
 }
+
+/**
+ * A download's newest `grabbed` record, the one the Arr's failed download
+ * handling fails. An Arr that ignores the filters returns its newest history
+ * instead, so the page is matched again here. Undefined when it holds none.
+ */
+export function findGrabRecord(
+  arr: Arr,
+  downloadId: string,
+  signal: Signal,
+): Effect.Effect<JsonObject | undefined, ToolFailure> {
+  return arrPage(
+    arr,
+    "/api/v3/history",
+    {
+      page: 1,
+      pageSize: HISTORY_SCAN_PAGE_SIZE,
+      sortKey: "date",
+      sortDirection: "descending",
+      eventType: arr.eventTypes.grabbed,
+      downloadId,
+    },
+    signal,
+  ).pipe(
+    Effect.map((page) =>
+      page.records.find(
+        (record) =>
+          record.eventType === "grabbed" && record.downloadId === downloadId,
+      ),
+    ),
+  )
+}
