@@ -145,7 +145,8 @@ export function radarrReads(arr: Arr) {
       description:
         "Indexer search for one movie. Grabs nothing. " +
         `One search answers every read of the same movie for ${RELEASE_REUSE_MINUTES} minutes, whatever the filters; searchAgeSeconds is its age. ` +
-        "Counts cover every hit; the listing is filtered and capped",
+        "Counts cover every hit; the listing is filtered and capped. " +
+        "With no release for the movie it also reads Radarr's health on every call: warnings name each indexer problem, or say health could not be read, and then the list proves nothing about what was published",
       params: Type.Object({ movieId: movieIdParam, ...releaseFilterParams() }),
       run: (params, signal) =>
         readReleases(

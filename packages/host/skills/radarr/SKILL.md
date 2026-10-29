@@ -61,6 +61,14 @@ a release is absent. One search answers every read of the same movie for ten
 minutes, whatever the filters, and `searchAgeSeconds` is its age; a write drops
 it. Do not read again only to re-check a listing this thread already has.
 
+When it lists no release for the movie, `radarr_releases` also reads Radarr's
+health on every call. Its `warnings` then name each indexer problem Radarr
+reports, such as indexers failing or in backoff or none able to search, or they
+say health could not be read. Either way the empty list proves nothing about
+what was published: do not report the release as not out yet. Name the indexer
+problem as the blocker. No tool repairs an indexer, and a search command would
+ask the same indexers, so the operator has to fix them first.
+
 An empty tracking list does not mean unreleased. Dates and candidate rejections
 prove neither watchability nor global source absence.
 

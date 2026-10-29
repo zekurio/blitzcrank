@@ -9,11 +9,16 @@ import {
   stringList,
   type JsonObject,
 } from "../../json.ts"
-import { toolCheck, type ToolFailure } from "../../tools/errors.ts"
+import {
+  failureMessage,
+  toolCheck,
+  type ToolFailure,
+} from "../../tools/errors.ts"
 import { keptRead } from "../../tools/kept-reads.ts"
 import { fittingCount } from "../../tools/results.ts"
 import { arrList, type Arr } from "./client.ts"
 import { qualityName } from "./compact.ts"
+import { MAX_MESSAGE_CHARS, readHealth } from "./diagnostics.ts"
 
 /** Release searches wait on every indexer; the default 30s is too short. */
 const RELEASE_TIMEOUT_MS = 120_000
@@ -24,8 +29,26 @@ const RELEASE_TIMEOUT_MS = 120_000
  */
 export const RELEASE_REUSE_MINUTES = 10
 
+/** Short enough that a search near its own timeout still answers in time. */
+const HEALTH_TIMEOUT_MS = 15_000
+
 const DEFAULT_RELEASE_LIMIT = 20
 const MAX_REJECTION_GROUPS = 8
+const MAX_HEALTH_WARNINGS = 8
+
+/**
+ * The health checks that change what a search lists: indexers in backoff for
+ * under or over six hours, no indexer enabled or available for search, and a
+ * Jackett `/all` indexer, which the Arr disables whole when one of its
+ * trackers fails. `IndexerRssCheck` is about RSS sync and
+ * `IndexerDownloadClientCheck` about grabs, so neither empties a search.
+ */
+const SEARCH_HEALTH_CHECKS: ReadonlySet<string> = new Set([
+  "IndexerStatusCheck",
+  "IndexerLongTermStatusCheck",
+  "IndexerSearchCheck",
+  "IndexerJackettAllCheck",
+])
 
 export interface ReleaseFilters {
   publishedAfter?: string | undefined
@@ -78,6 +101,10 @@ export const releaseFilterParams = () => ({
  * The search asks every indexer, so its raw hits are kept and later reads of
  * the same target are filtered from that copy. Approvals in a kept search are
  * as old as `searchAgeSeconds` says.
+ *
+ * A search with no release for the target looks the same whether nothing was
+ * published or no indexer answered, so that result carries the Arr's indexer
+ * health checks as warnings.
  */
 export function readReleases(
   arr: Arr,
@@ -103,6 +130,8 @@ export function readReleases(
         ...compactRelease(release),
         ...target.describe?.(release),
       }))
+    const warnings =
+      forTarget.length === 0 ? yield* indexerWarnings(arr, signal) : []
     const summary: JsonObject = {
       searchAgeSeconds: Math.round(search.ageMs / 1000),
       total: releases.length,
@@ -116,9 +145,41 @@ export function readReleases(
         count: elsewhere.length,
         examples: elsewhere.slice(0, 5).map((release) => release.title ?? null),
       },
+      ...(warnings.length > 0 ? { warnings } : {}),
     }
     return yield* toolCheck(() => fitListing(summary, listed))
   })
+}
+
+/**
+ * The Arr's indexer health checks, read fresh on every call: health kept with
+ * the search would hide an outage or a recovery. A health read that fails
+ * still answers, since the release read itself succeeded.
+ */
+function indexerWarnings(arr: Arr, signal: Signal): Effect.Effect<string[]> {
+  const unproven = "this list proves nothing about what was published"
+  return readHealth(arr, { signal, timeoutMs: HEALTH_TIMEOUT_MS }).pipe(
+    Effect.map((checks) => {
+      const problems = checks
+        .filter(
+          (check) =>
+            isString(check.source) && SEARCH_HEALTH_CHECKS.has(check.source),
+        )
+        .slice(0, MAX_HEALTH_WARNINGS)
+        .map((check) => `${check.source} ${check.type}: ${check.message}`)
+      return problems.length === 0
+        ? []
+        : [
+            `${arr.service} reports indexer problems, so ${unproven}`,
+            ...problems,
+          ]
+    }),
+    Effect.catch((error) =>
+      Effect.succeed([
+        `${arr.service} indexer health could not be read, so ${unproven}: ${failureMessage(error).slice(0, MAX_MESSAGE_CHARS)}`,
+      ]),
+    ),
+  )
 }
 
 /**

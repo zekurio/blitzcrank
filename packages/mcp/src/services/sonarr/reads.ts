@@ -180,7 +180,8 @@ export function sonarrReads(arr: Arr) {
       description:
         "Indexer search for one episode (episodeId) or one season (seriesId with seasonNumber). Grabs nothing. " +
         `One search answers every read of the same target for ${RELEASE_REUSE_MINUTES} minutes, whatever the filters; searchAgeSeconds is its age. ` +
-        "Counts cover every hit; the listing is filtered and capped",
+        "Counts cover every hit; the listing is filtered and capped. " +
+        "With no release for the target it also reads Sonarr's health on every call: warnings name each indexer problem, or say health could not be read, and then the list proves nothing about what was published",
       params: Type.Object({
         episodeId: Type.Optional(
           Type.Integer({
