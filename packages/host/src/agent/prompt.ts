@@ -22,8 +22,9 @@ const CAPABILITY_LINES: ReadonlyArray<readonly [string, string]> = [
   [
     "media_probe",
     `- Load media-probe and call \`media_probe\` before claiming a track is
-  absent, lost in conversion, or present in a replacement. Include pre-import
-  files.`,
+  absent, lost in conversion, or present in a replacement, and before judging
+  a file's resolution or quality; quality names come from release names.
+  Include pre-import files.`,
   ],
   [
     "thread_history_search",
