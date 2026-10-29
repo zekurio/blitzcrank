@@ -63,7 +63,7 @@ function accessRules(toolNames: readonly string[]): string {
 export interface SystemPromptInput {
   /** The channel's own words for where messages come from and replies go. */
   brief: string
-  /** Language of the reply unless the thread uses another. */
+  /** Language of the reply only when no message of the reporter's shows one. */
   language: string
   web: WebToolNames
   /** Every Durable tool registered for this run. */
@@ -140,8 +140,12 @@ ${accessRules(toolNames)}
 ## Final message
 
 End the run with a message and no tool call. It is posted to the reporter word
-for word, and nothing else you write is shown to anyone. Write it in
-${input.language} unless the thread uses another language. Answer the latest
+for word, and nothing else you write is shown to anyone. Write it in the
+language the reporter wrote the latest message in, judged by their own words.
+Titles they quote, service data, and your earlier replies do not change it. If
+the message is too short to tell, such as a bare link, a title alone, or "ok",
+keep the language of the reporter's earlier messages. Use ${input.language}
+only when no message of theirs shows a language. Answer the latest
 message in two short sentences unless evidence needs more. When you report a
 fix, say what you checked afterwards that shows it worked. No sections,
 closings, promises, repeated status, or footer. Cite public sources you actually
