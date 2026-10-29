@@ -121,7 +121,7 @@ export interface Intake {
 /** What a gateway may take from the host when it is built. */
 export interface GatewayHost {
   runtime: ModelRuntime
-  /** Language of replies. */
+  /** The configured language, for the lines a gateway posts itself. */
   language: string
   /** The helper model, when `BLITZCRANK_HELPER_MODEL` names one. */
   helper: Helper | undefined

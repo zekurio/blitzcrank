@@ -49,7 +49,11 @@ export interface Config {
    * loaded; unset loads no models file rather than discovering one.
    */
   modelsPath: string | undefined
-  /** Language of replies (default German, matching the deployment). */
+  /**
+   * Fallback language of replies, for when no message of the reporter's shows
+   * one, and the language of the host's own notices (default German, matching
+   * the deployment).
+   */
   language: string
   /** External web search/extract for runs. */
   web: WebConfig

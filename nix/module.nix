@@ -170,7 +170,7 @@ in
     language = lib.mkOption {
       type = lib.types.str;
       default = "German";
-      description = "Language for public comments.";
+      description = "Fallback language for replies when no message of the reporter's shows one, and the language of the host's own notices.";
     };
 
     gateways = lib.mkOption {
