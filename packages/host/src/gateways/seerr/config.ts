@@ -1,7 +1,7 @@
 /** Everything the Seerr gateway reads from the environment. */
 export interface SeerrConfig {
   url: string
-  /** Host-side Seerr access only: comments, the issue read, the comment gate. */
+  /** Host-side Seerr access only: comments, the issue read, the sender check. */
   apiKey: string
   /** Seerr user id sent as X-Api-User so bot comments are attributed correctly. */
   botUserId: string | undefined

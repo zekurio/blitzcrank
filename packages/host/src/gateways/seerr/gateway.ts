@@ -1,13 +1,19 @@
 import { Effect, Semaphore } from "effect"
 
-import type { Channel, Gateway, Intake, ThreadRef } from "../../gateway.ts"
+import type {
+  Access,
+  Channel,
+  Gateway,
+  Intake,
+  ThreadRef,
+} from "../../gateway.ts"
 import type { JsonValue } from "../../services/http.ts"
 import { toText } from "../../tools/common.ts"
 import { SeerrClient } from "./client.ts"
-import { createCommentGateEffect } from "./comment-gate.ts"
 import type { SeerrConfig } from "./config.ts"
 import { issueContext } from "./context.ts"
 import { isBotComment } from "./loop-guard.ts"
+import { createSenderCheckEffect } from "./sender.ts"
 import {
   isIssueEvent,
   issueIdOf,
@@ -30,7 +36,7 @@ const BRIEF =
  */
 export function createSeerrGateway(config: SeerrConfig): Gateway {
   const seerr = new SeerrClient(config)
-  const allowComment = createCommentGateEffect(seerr)
+  const checkSender = createSenderCheckEffect(seerr)
   // `postComment` infers the new comment's id from the issue's comment list,
   // so two posts in flight together could return the same id. One run would
   // then rewrite or delete the other's comment.
@@ -77,17 +83,15 @@ export function createSeerrGateway(config: SeerrConfig): Gateway {
       handleEffect: (body, intake) =>
         // SAFETY: Webhook fields stay optional and are sanitized before use.
         webhookEffect(body as SeerrWebhookPayload, intake, {
-          allowComment,
+          checkSender,
           botUsername: config.botUsername,
         }),
     },
     // A queued comment is checked again: its author may have lost the right
-    // to drive the agent while the host was down.
+    // to drive the agent, or ADMIN, while the host was down.
     authorizeEffect: (message) =>
-      message.reply
-        ? // SAFETY: `source` is the webhook payload this gateway stored.
-          allowComment(message.source as unknown as SeerrWebhookPayload)
-        : Effect.succeed(true),
+      // SAFETY: `source` is the webhook payload this gateway stored.
+      checkSender(message.source as unknown as SeerrWebhookPayload),
     channel,
   }
 }
@@ -96,7 +100,7 @@ function webhookEffect(
   payload: SeerrWebhookPayload,
   intake: Intake,
   deps: {
-    allowComment: (payload: SeerrWebhookPayload) => Effect.Effect<boolean>
+    checkSender: (payload: SeerrWebhookPayload) => Effect.Effect<Access>
     botUsername: string | undefined
   },
 ): Effect.Effect<Record<string, JsonValue>, unknown> {
@@ -121,13 +125,13 @@ function webhookEffect(
       return { ok: true, ignored: "issue resolved" }
     }
     const comment = payload.notification_type === "ISSUE_COMMENT"
-    if (comment) {
-      if (isBotComment(payload, deps.botUsername)) {
-        return { ok: true, ignored: "own comment" }
-      }
-      if (!(yield* deps.allowComment(payload))) {
-        return { ok: true, ignored: "comment author not authorized" }
-      }
+    if (comment && isBotComment(payload, deps.botUsername)) {
+      return { ok: true, ignored: "own comment" }
+    }
+    // Only a comment is checked. A new or reopened issue is a member's.
+    const access = yield* deps.checkSender(payload)
+    if (access === "denied") {
+      return { ok: true, ignored: "comment author not authorized" }
     }
 
     const result = yield* intake.submit({
@@ -139,6 +143,7 @@ function webhookEffect(
       text: webhookText(
         comment ? payload.comment?.comment_message : payload.message,
       ),
+      admin: access === "admin",
       // SAFETY: The payload was parsed from JSON.
       source: payload as unknown as JsonValue,
     })

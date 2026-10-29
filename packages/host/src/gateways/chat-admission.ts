@@ -1,6 +1,11 @@
 import { Cause, Effect } from "effect"
 
-import { threadKey, type Intake, type ThreadRef } from "../gateway.ts"
+import {
+  threadKey,
+  type Access,
+  type Intake,
+  type ThreadRef,
+} from "../gateway.ts"
 import type { Helper } from "../helper.ts"
 import { errorKind, logEvent } from "../log.ts"
 import { threadNameEffect } from "./chat-title.ts"
@@ -24,36 +29,53 @@ export interface ChatSource {
   author: string
 }
 
-export type Allowlist = Pick<ChatConfig, "users" | "roles">
+export type Allowlist = Pick<
+  ChatConfig,
+  "users" | "roles" | "adminUsers" | "adminRoles"
+>
 
-/** Either list admits a member. */
-export function allowed(
+/**
+ * Either admin list makes an admin, who needs no other list. Either of the
+ * others admits a member.
+ */
+export function accessOf(
   config: Allowlist,
   author: string,
   roles: readonly string[],
+): Access {
+  if (listed(config.adminUsers, config.adminRoles, author, roles))
+    return "admin"
+  if (listed(config.users, config.roles, author, roles)) return "member"
+  return "denied"
+}
+
+function listed(
+  users: ReadonlySet<string>,
+  roles: ReadonlySet<string>,
+  author: string,
+  memberRoles: readonly string[],
 ): boolean {
-  return (
-    config.users.has(author) || roles.some((role) => config.roles.has(role))
-  )
+  return users.has(author) || memberRoles.some((role) => roles.has(role))
 }
 
 /**
- * Whether someone may use the bot now, by a live member lookup. A user id
+ * What someone may do with the bot now, by a live member lookup. A user id
  * admits only a current member, as a role does. A failed lookup is an error,
- * not a no.
+ * not a denial.
  */
-export function memberAllowedEffect(
+export function memberAccessEffect(
   client: ChatClient,
   config: Allowlist,
   guild: string,
   author: string,
-): Effect.Effect<boolean, ChatError> {
+): Effect.Effect<Access, ChatError> {
   return client
     .memberEffect(guild, author)
     .pipe(
-      Effect.map(
-        (member) =>
-          member !== undefined && allowed(config, author, member.roles),
+      Effect.map((member) =>
+        member === undefined
+          ? "denied"
+          : accessOf(config, author, member.roles),
       ),
     )
 }
@@ -162,21 +184,27 @@ export function admitEffect(
     const mentioned =
       mentionsBot(message.content, deps.botId) ||
       message.referenced?.author.id === deps.botId
-    // The roles the event carries decide. Both platforms attach the author's
-    // member to a guild message in their documented shape; a message without
-    // one is refused and logged as `no_member`. A live lookup here would cost
-    // a REST call for every stranger's chatter in a watched channel. The
-    // roles are as old as the event, which a resumed socket may replay late.
-    // Past admission the checks are live: recovery asks again, and a run's
-    // context keeps only current members' text, so a member who lost the
-    // role since reaches a run only through the message that started it.
-    const refusal = refusalOf(message, deps.config)
-    if (refusal !== undefined) {
+    // The roles the event carries decide, admin status included. Both
+    // platforms attach the author's member to a guild message in their
+    // documented shape; a message without one is refused and logged as
+    // `no_member`. A live lookup here would cost a REST call for every
+    // stranger's chatter in a watched channel. The roles are as old as the
+    // event, which a resumed socket may replay late. Past admission the
+    // checks are live: recovery asks again, and a run's context keeps only
+    // current members' text, so a member who lost the role since reaches a
+    // run only through the message that started it.
+    const admission = admissionOf(message, deps.config)
+    if (admission === "no_member" || admission === "not_allowed") {
       // Unlisted chatter in a watched channel is the normal case, not news.
       if (mentioned || place.kind === "thread")
-        logEvent(`${name}.denied`, { reason: refusal, in: place.kind }, "warn")
+        logEvent(
+          `${name}.denied`,
+          { reason: admission, in: place.kind },
+          "warn",
+        )
       return
     }
+    const admin = admission === "admin"
     const text = messageText(message.content, message.mentions, deps.botId)
     // A bare mention or an image alone leaves nothing to triage or answer.
     if (!text) {
@@ -196,6 +224,7 @@ export function admitEffect(
         reply: true,
         title: undefined,
         text,
+        admin,
         source: { guild, parent: place.parent, author: message.author.id },
       })
       return
@@ -204,7 +233,7 @@ export function admitEffect(
     const accepted = yield* acceptedEffect(message, text, mentioned, deps)
     if (accepted) {
       const name = yield* threadNameEffect(deps.helper, deps.platform, text)
-      yield* openEffect(message, text, name, guild, deps)
+      yield* openEffect(message, text, name, guild, admin, deps)
       return
     }
     // Fluxer has no `fail_if_not_exists`: a mention deleted since fails the
@@ -276,14 +305,14 @@ function rounded(value: number | undefined): number | undefined {
   return value === undefined ? undefined : Math.round(value * 100) / 100
 }
 
-/** Why the event's own member refuses its author, or nothing if it admits them. */
-function refusalOf(
+/** What the event's own member makes its author, or why it refuses them. */
+function admissionOf(
   message: ChatArrival,
   config: Allowlist,
-): "no_member" | "not_allowed" | undefined {
+): "no_member" | "not_allowed" | "member" | "admin" {
   if (!message.member) return "no_member"
-  if (allowed(config, message.author.id, message.member.roles)) return undefined
-  return "not_allowed"
+  const access = accessOf(config, message.author.id, message.member.roles)
+  return access === "denied" ? "not_allowed" : access
 }
 
 /** Kinds and codes only: provider and platform messages can echo the text. */
@@ -302,6 +331,7 @@ function openEffect(
   text: string,
   name: string,
   guild: string,
+  admin: boolean,
   deps: AdmissionDeps,
 ) {
   return Effect.gen(function* () {
@@ -318,6 +348,7 @@ function openEffect(
       reply: false,
       title: name,
       text,
+      admin,
       source: {
         guild,
         parent: message.channelId,

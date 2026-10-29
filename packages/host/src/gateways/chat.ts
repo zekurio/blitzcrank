@@ -28,6 +28,10 @@ export interface ChatConfig {
   users: ReadonlySet<string>
   /** Members who may use the bot, by role id. Either list admits a member. */
   roles: ReadonlySet<string>
+  /** Admins by user id. An admin may use the bot without another list. */
+  adminUsers: ReadonlySet<string>
+  /** Admins by role id. Either admin list makes a member an admin. */
+  adminRoles: ReadonlySet<string>
   /** How sure triage must be before an unmentioned message opens a thread. */
   triageThreshold: number
 }

@@ -109,8 +109,9 @@ forgets a search after about 30 minutes and then rejects the grab; call
 `radarr_auto_search` then, or when no candidates were read.
 
 Change monitoring only when the report asks for it or a wrong flag blocks the
-requested movie. `radarr_set_movie_monitoring` takes `movieId` and `monitored`
-and keeps every other movie field.
+requested movie. Unmonitoring a movie that plays fine needs an admin's request,
+as under Replacement. `radarr_set_movie_monitoring` takes `movieId` and
+`monitored` and keeps every other movie field.
 
 For stalls, diagnose mapping, permissions, space, locks, category, naming, and
 recognized-video failures. Read `radarr_download_clients` for the category
@@ -136,6 +137,12 @@ Also check language, edition, and naming. Correct the rule/parser cause before
 searching.
 
 ## Replacement
+
+A movie that plays fine needs no replacement. Deleting its file or
+unmonitoring it needs an admin's request, and the turn says whether the event
+message's sender is an admin. When they are not, say that an admin decides
+this and change nothing. For an admin, read `radarr_movie_files` for exactly
+the movie named, then name the file count and size in your final message.
 
 Require reporter details plus item-specific probe, Jellyfin-stream, or Radarr
 `mediaInfo` anomaly evidence. Confirm the exact movie/file, multi-version

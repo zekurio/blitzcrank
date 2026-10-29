@@ -190,6 +190,14 @@ Set `SEERR_BOT_USER_ID` and `SEERR_BOT_USERNAME` for the bot's Seerr identity.
 Only the reporter or a Seerr user with `ADMIN`/`MANAGE_ISSUES` may drive an issue
 through comments.
 
+The agent removes or unmonitors media that plays fine only when an admin asks.
+On Seerr, only a comment can carry that request: it counts as an admin's when
+exactly one Seerr account matches its author and that account has `ADMIN`. A
+new or reopened issue is always a member's request, even when an admin filed
+it, because Seerr lets a `MANAGE_ISSUES` holder file or reopen an issue in
+another user's name and records nothing about who did. An admin who wants
+media that plays fine removed comments on the issue.
+
 ## Connect Discord
 
 The Discord gateway is off by default. Enable it with
@@ -217,6 +225,12 @@ classifier first:
   nothing otherwise. A reply to one of the bot's messages counts as a mention.
 - Later messages in a bot thread are follow-ups. They need no mention and skip
   triage.
+
+Members listed by user id in `DISCORD_ADMIN_USERS` or holding a role in
+`DISCORD_ADMIN_ROLES` are admins. They get answers without an entry in the
+allowed lists, and only their requests can have media that plays fine removed
+or unmonitored. Each message counts for its own sender: an admin's earlier
+message in a thread does not cover a later member's request.
 
 `DISCORD_TRIAGE_MODEL` is required and names a classifier model, not a chat
 model. TypeSafe's Jev is one: `opencode/jev-1.13` or `opencode/jev-1.13-free`
@@ -263,6 +277,8 @@ classifier first, as on Discord:
   nothing otherwise. A reply to one of the bot's messages counts as a mention.
 - Later messages in a bot thread are follow-ups. They need no mention and skip
   triage.
+
+`FLUXER_ADMIN_USERS` and `FLUXER_ADMIN_ROLES` name admins as on Discord.
 
 `FLUXER_TRIAGE_MODEL` is required and names a classifier model. The models
 listed under [Connect Discord](#connect-discord) work here too. The host
@@ -318,6 +334,10 @@ echo '{"thread":"t1","text":"Crystal Lake ist ab Episode 6 falsch"}' |
 - `thread` is 1 to 64 letters, digits, `_`, or `-`. Run the command again with
   the same thread and data directory to continue the conversation, one
   invocation per message.
+- `"admin": true` makes the message an admin's, so the agent may remove or
+  unmonitor media that plays fine. Without it, the message is a member's, and
+  the agent leaves that decision to an admin. Each invocation sets it for its
+  own message only.
 - A `step` line names each tool call as it starts and says whether the tool
   may write. It never shows the arguments. The full trace stays in
   `sessions/cli/<thread>.sqlite`.

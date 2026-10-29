@@ -12,7 +12,9 @@ const NAME = "cli"
 const THREAD_ID = /^[A-Za-z0-9_-]{1,64}$/
 
 const USAGE =
-  'stdin must hold one JSON event: {"thread":"<id>","text":"<message>"}'
+  'stdin must hold one JSON event: {"thread":"<id>","text":"<message>"}, with "admin":true for an admin\'s message'
+
+const FIELDS: ReadonlySet<string> = new Set(["thread", "text", "admin"])
 
 // Worded like the chat gateways' brief without their platform, so a run here
 // behaves as it would in a Discord or Fluxer thread.
@@ -50,14 +52,16 @@ export function writeEvent(event: CliEvent): void {
  * One event read from stdin, written straight back to stdout: the operator's
  * terminal, or a harness standing in for a chat thread. The sender is the
  * local operator, who already holds the data directory and every credential
- * the run uses, so the sender check passes by construction. It shows no
- * status line: each tool call is a `step` line instead, and the reply is the
- * one message a run shows.
+ * the run uses, so the sender check passes by construction. The event stands
+ * for a member's message unless it says `"admin": true`. It shows no status
+ * line: each tool call is a `step` line instead, and the reply is the one
+ * message a run shows.
  */
 export function createCliGateway(): Gateway {
   return {
     name: NAME,
-    authorizeEffect: () => Effect.succeed(true),
+    // Stdin is gone once the run starts, so nothing can find an admin again.
+    authorizeEffect: () => Effect.succeed("member"),
     channel: () => ({
       brief: BRIEF,
       contextEffect: () => Effect.succeed(""),
@@ -95,9 +99,7 @@ export function readMessageEffect(
     })
     if (value === null || typeof value !== "object" || Array.isArray(value))
       return yield* Effect.fail(new Error(USAGE))
-    const unknown = Object.keys(value).filter(
-      (key) => key !== "thread" && key !== "text",
-    )
+    const unknown = Object.keys(value).filter((key) => !FIELDS.has(key))
     if (unknown.length > 0)
       return yield* Effect.fail(
         new Error(`Unknown event field ${unknown.join(", ")}; ${USAGE}`),
@@ -112,6 +114,9 @@ export function readMessageEffect(
     const message = "text" in value ? value.text : undefined
     if (typeof message !== "string" || message.trim() === "")
       return yield* Effect.fail(new Error("text must be a non-empty string"))
+    const admin = "admin" in value ? value.admin : false
+    if (typeof admin !== "boolean")
+      return yield* Effect.fail(new Error("admin must be true or false"))
     const thread = { gateway: NAME, id }
     const reply = yield* storageIO(() =>
       stat(threads.sessionFile(thread)),
@@ -125,6 +130,7 @@ export function readMessageEffect(
       reply,
       title: undefined,
       text: message.trim(),
+      admin,
       source: null,
     }
   })

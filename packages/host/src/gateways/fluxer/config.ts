@@ -26,11 +26,18 @@ export function loadFluxerConfig(): FluxerConfig {
   }
   const users = ids("FLUXER_ALLOWED_USERS", "Fluxer")
   const roles = ids("FLUXER_ALLOWED_ROLES", "Fluxer")
+  const adminUsers = ids("FLUXER_ADMIN_USERS", "Fluxer")
+  const adminRoles = ids("FLUXER_ADMIN_ROLES", "Fluxer")
   // An empty allowlist would make the bot answer nobody, or tempt an
-  // allow-all switch. Neither exists.
-  if (users.size === 0 && roles.size === 0) {
+  // allow-all switch. Neither exists. An admin list admits its members too.
+  if (
+    users.size === 0 &&
+    roles.size === 0 &&
+    adminUsers.size === 0 &&
+    adminRoles.size === 0
+  ) {
     throw new Error(
-      "FLUXER_ALLOWED_USERS or FLUXER_ALLOWED_ROLES must list at least one id",
+      "FLUXER_ALLOWED_USERS, FLUXER_ALLOWED_ROLES, FLUXER_ADMIN_USERS, or FLUXER_ADMIN_ROLES must list at least one id",
     )
   }
   const triageModel = process.env.FLUXER_TRIAGE_MODEL?.trim()
@@ -46,6 +53,8 @@ export function loadFluxerConfig(): FluxerConfig {
     channels,
     users,
     roles,
+    adminUsers,
+    adminRoles,
     triageModel,
     triageThreshold: threshold("FLUXER_TRIAGE_THRESHOLD"),
   }

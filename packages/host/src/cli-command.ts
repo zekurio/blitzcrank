@@ -22,9 +22,9 @@ API keys use provider environment variables; no login is needed.
 Auth uses BLITZCRANK_AUTH_PATH or <BLITZCRANK_DATA_DIR or data>/auth.json.
 Auth commands do not require service credentials or BLITZCRANK_MODEL.
 
-run reads {"thread":"<id>","text":"<message>"} on stdin and writes the run
-as JSON lines on stdout: run.started, a step per tool call, reply, usage,
-and run.finished. Host logs go to stderr, and a failed run exits non-zero.
+run reads {"thread":"<id>","text":"<message>"} on stdin, with "admin":true
+for an admin's message, and writes the run as JSON lines on stdout:
+run.started, a step per tool call, reply, usage, and run.finished. Host logs go to stderr, and a failed run exits non-zero.
 Run it again with the same thread and data directory to continue the
 conversation. It uses the service's environment, but not its data directory
 while the service runs.
