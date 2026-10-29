@@ -1,6 +1,6 @@
 ---
 name: media-probe
-description: Inspect streams and frames for wrong content, missing tracks, or codec problems. Load before language-based replacement.
+description: Inspect streams and frames for wrong content, missing tracks, low resolution or bitrate, or codec problems. Load before language- or quality-based replacement.
 ---
 
 # Media inspection
@@ -22,8 +22,10 @@ rejected.
 ## Streams
 
 `media_probe` takes a `path` to a file or a release directory, where it picks
-the largest media file. It returns the ffprobe summary: duration, streams, and
-audio and subtitle languages.
+the largest media file. It returns the ffprobe summary: duration, overall
+bitrate, streams, and audio and subtitle languages. A video stream adds its
+resolution, bitrate, frame rate, bit depth, dynamic range, and codec profile
+when the file declares them.
 
 Use Arr file paths, the queue item's output path, the completed SAB job's
 storage path, or Jellyfin media-source paths. Check duration; the selected file
@@ -49,6 +51,34 @@ Compare source and imported files:
   preferences.
 
 Name unchecked stages. Never present Arr language fields as a probe.
+
+## Video quality
+
+Quality names like `Bluray-1080p` come from release names, like Arr
+`languages`. The probe reads resolution, bitrate, bit depth, and HDR from the
+file itself. A quality complaint is either a bad file or a playback problem,
+and they need opposite actions, so probe before you answer one. Compare
+siblings from the same season or release.
+
+- A resolution far below the quality name, such as 640x360 named 1080p, or a
+  bitrate a fraction of its siblings', is file evidence of a bad release. The
+  remedy is another release, not playback settings.
+- If resolution and bitrate match the name and the siblings, the file is fine.
+  Look at playback instead, such as Jellyfin transcoding, the client, or the
+  network.
+
+A bitrate with `bitrateFrom: "BPS tag"` is a muxing statistic, and a re-encode
+can carry its source's tag over. Check it against `overallBitrateKbps` and the
+file size. `bpsTagAboveFileKbps` is a tag that exceeds the whole file's
+bitrate, so it is not this stream's. Either it came from another encode or the
+file is cut short. Compare `sizeBytes` with the size the Arr or the release
+reports before you call it a re-encode.
+
+`dynamicRange` comes from the stream's transfer tag. `PQ` is HDR10 and the
+formats built on it, `HLG` is broadcast HDR, and `SDR` is neither. Absent means
+untagged. `dolbyVisionProfile` shows only when the container declares Dolby
+Vision, so its absence does not rule it out. A stream with `coverArt` is an
+embedded image, not the video.
 
 ## Frames
 
