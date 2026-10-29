@@ -1,14 +1,14 @@
 import { Effect } from "effect"
 import { Type } from "typebox"
 
-import type { JsonValue } from "../../http.ts"
+import type { JsonValue, Signal } from "../../http.ts"
 import {
   isJsonObject,
   isString,
   objectField,
   type JsonObject,
 } from "../../json.ts"
-import { toolFail } from "../../tools/errors.ts"
+import { toolFail, type ToolFailure } from "../../tools/errors.ts"
 import { action, type WriteEffect } from "../../tools/writes.ts"
 import {
   arrObject,
@@ -20,7 +20,7 @@ import {
   type Arr,
 } from "./client.ts"
 import { compactBlocklistItem, compactQueueItem } from "./compact.ts"
-import { findHistoryRecord } from "./history.ts"
+import { findGrabRecord, findHistoryRecord } from "./history.ts"
 import { itemIdOf, withItemId } from "./params.ts"
 import { compactRelease } from "./releases.ts"
 
@@ -28,15 +28,31 @@ import { compactRelease } from "./releases.ts"
 const GRAB_TIMEOUT_MS = 60_000
 
 /**
+ * Queue statuses of a pending release: one the Arr holds back, for a delay
+ * profile or an unavailable client, before any download client has it.
+ */
+const PENDING_STATUSES = new Set([
+  "delay",
+  "downloadclientunavailable",
+  "fallback",
+])
+
+interface Redownload {
+  searches: boolean | undefined
+  detail: string
+}
+
+/**
  * Whether the Arr starts a replacement search itself once a release is marked
  * failed. It reads its own settings for that: redownload must be on, and for
  * a release that was grabbed from an interactive search, on for those too.
  * The record that is marked failed is the one whose release source counts.
+ * Without that record the source is unknown.
  */
 function redownloadAfterFailure(
   handling: JsonObject,
-  record: JsonObject,
-): { searches: boolean | undefined; detail: string } {
+  record: JsonObject | undefined,
+): Redownload {
   const enabled = handling.autoRedownloadFailed
   if (typeof enabled !== "boolean") {
     return {
@@ -50,6 +66,13 @@ function redownloadAfterFailure(
       searches: false,
       detail:
         "autoRedownloadFailed is off: the Arr starts no replacement search itself",
+    }
+  }
+  if (!record) {
+    return {
+      searches: undefined,
+      detail:
+        "autoRedownloadFailed is on, but no grabbed history record of this download was found, so its release source and whether the Arr searches a replacement itself are unknown; read the queue afterwards",
     }
   }
   if (objectField(record, "data")?.releaseSource !== "InteractiveSearch") {
@@ -79,11 +102,50 @@ function redownloadAfterFailure(
       }
 }
 
+/**
+ * Whether blocklisting a queue item starts a replacement search. The Arr
+ * blocklists a pending release directly. A download goes through its failed
+ * download handling, which fails the download's newest grab as a history mark
+ * does, and searches unless the removal skips it.
+ */
+function redownloadAfterRemoval(
+  arr: Arr,
+  item: JsonObject,
+  skipRedownload: boolean,
+  signal: Signal,
+): Effect.Effect<Redownload, ToolFailure> {
+  return Effect.gen(function* () {
+    const downloadId = item.downloadId
+    if (
+      !isString(downloadId) &&
+      PENDING_STATUSES.has(String(item.status).toLowerCase())
+    ) {
+      return {
+        searches: false,
+        detail:
+          "this is a pending release no download client has yet: the Arr blocklists it directly and starts no replacement search",
+      }
+    }
+    if (skipRedownload) {
+      return {
+        searches: false,
+        detail:
+          "skipRedownload is set: the Arr starts no replacement search itself",
+      }
+    }
+    const handling = yield* readDownloadHandling(arr, signal)
+    const grab = isString(downloadId)
+      ? yield* findGrabRecord(arr, downloadId, signal)
+      : undefined
+    return redownloadAfterFailure(handling, grab)
+  })
+}
+
 /** The writes both Arrs serve from the same endpoints. */
 export function arrSharedActions(arr: Arr) {
   return {
     remove_queue_item: action({
-      description: "Remove one item from the download queue",
+      description: `Remove one item from the download queue. Blocklisting a download marks it failed, as ${arr.service}_mark_history_failed does, which can start a replacement search. The result says whether the Arr then searches a replacement itself, from its own redownload settings`,
       params: Type.Object({
         queueId: Type.Integer({ minimum: 1 }),
         removeFromClient: Type.Boolean({
@@ -91,7 +153,12 @@ export function arrSharedActions(arr: Arr) {
             "true also removes the download and its data from the download client",
         }),
         blocklist: Type.Boolean({
-          description: "Blocklist the release so it is not grabbed again",
+          description:
+            "Blocklist the release so it is not grabbed again. For a download this marks it failed, which can start a replacement search",
+        }),
+        skipRedownload: Type.Boolean({
+          description:
+            "With blocklist: true, true stops the Arr from searching a replacement itself. It does nothing without blocklisting",
         }),
       }),
       resolve: (params, signal) =>
@@ -117,6 +184,14 @@ export function arrSharedActions(arr: Arr) {
               entry.downloadId === item.downloadId,
           )
           const title = String(item.title ?? "untitled")
+          const redownload = params.blocklist
+            ? yield* redownloadAfterRemoval(
+                arr,
+                item,
+                params.skipRedownload,
+                signal,
+              )
+            : undefined
           const effect: WriteEffect = {
             kind: "remove",
             target: `queue item ${params.queueId}: ${title}`,
@@ -132,8 +207,21 @@ export function arrSharedActions(arr: Arr) {
           return {
             state: { item, siblings },
             summary: `Remove queue item ${params.queueId} (${title})${params.removeFromClient ? " and delete its download" : ""}${params.blocklist ? ", blocklisting the release" : ""}`,
-            effects: [effect],
+            effects:
+              redownload?.searches === true
+                ? [
+                    effect,
+                    {
+                      kind: "search",
+                      target: `a replacement for ${title}`,
+                      detail: redownload.detail,
+                    },
+                  ]
+                : [effect],
             warnings: [
+              ...(redownload && redownload.searches !== true
+                ? [redownload.detail]
+                : []),
               ...(params.removeFromClient
                 ? ["the downloaded data is deleted and cannot be recovered"]
                 : []),
@@ -151,6 +239,9 @@ export function arrSharedActions(arr: Arr) {
           query: {
             removeFromClient: params.removeFromClient,
             blocklist: params.blocklist,
+            ...(params.blocklist
+              ? { skipRedownload: params.skipRedownload }
+              : {}),
           },
         }),
       verify: (params) =>
