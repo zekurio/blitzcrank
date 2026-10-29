@@ -1,15 +1,17 @@
 import { Effect } from "effect"
 
-import type { JsonValue } from "../../http.ts"
+import type { JsonRequestOptions, JsonValue } from "../../http.ts"
 import { isJsonObject, isString, type JsonObject } from "../../json.ts"
-import { ToolError, type ToolFailure } from "../../tools/errors.ts"
+import { toolCheck, ToolError, type ToolFailure } from "../../tools/errors.ts"
 import {
   largestFitting,
   MAX_LIST_ITEMS,
   MAX_RESULT_CHARS,
 } from "../../tools/results.ts"
-import type { Arr } from "./client.ts"
+import { arrList, type Arr } from "./client.ts"
 import { scalar, scalars } from "./compact.ts"
+
+export const MAX_MESSAGE_CHARS = 500
 
 /** A URL with user info, or a query that names a key, token, or password. */
 const CREDENTIAL_SHAPED =
@@ -92,6 +94,30 @@ export function diagnosticRecord(
     )
   }
   return record
+}
+
+/**
+ * The Arr's own health checks, each with its source, level, wiki link, and a
+ * bounded message. `source` is the check's class name, such as
+ * `IndexerStatusCheck`.
+ */
+export function readHealth(
+  arr: Arr,
+  opts: JsonRequestOptions,
+): Effect.Effect<JsonObject[], ToolFailure> {
+  return arrList(arr, "/api/v3/health", opts).pipe(
+    Effect.flatMap((checks) =>
+      toolCheck(() =>
+        checks.map((check) => ({
+          ...scalars(
+            diagnosticRecord(arr, "health check", check, ["type", "message"]),
+            ["source", "type", "wikiUrl"],
+          ),
+          message: scalar(check.message, MAX_MESSAGE_CHARS),
+        })),
+      ),
+    ),
+  )
 }
 
 interface DownloadClientReads {

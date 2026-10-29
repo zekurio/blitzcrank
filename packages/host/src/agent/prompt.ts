@@ -31,11 +31,11 @@ const CAPABILITY_LINES: ReadonlyArray<readonly [string, string]> = [
   ],
   [
     "sonarr_releases",
-    "- Read TV release candidates with `sonarr_releases`; narrow its filters before calling a release absent.",
+    "- Read TV release candidates with `sonarr_releases`; narrow its filters before calling a release absent, and never call one absent when its `warnings` say the list proves nothing.",
   ],
   [
     "radarr_releases",
-    "- Read movie release candidates with `radarr_releases`; narrow its filters before calling a release absent.",
+    "- Read movie release candidates with `radarr_releases`; narrow its filters before calling a release absent, and never call one absent when its `warnings` say the list proves nothing.",
   ],
 ]
 

@@ -18,13 +18,13 @@ import {
   compactBlocklistItem,
   compactQualityProfile,
   compactQueueItem,
-  scalar,
   scalars,
 } from "./compact.ts"
 import {
   component,
   diagnosticRecord,
   downloadClientsResult,
+  readHealth,
 } from "./diagnostics.ts"
 import { historyRead } from "./history.ts"
 import {
@@ -33,8 +33,6 @@ import {
   readCandidates,
 } from "./manual-import.ts"
 import { itemIdOf, offsetParam, withItemId } from "./params.ts"
-
-const MAX_MESSAGE_CHARS = 500
 
 /** The reads both Arrs serve from the same endpoints. */
 export function arrSharedReads(arr: Arr) {
@@ -158,23 +156,8 @@ export function arrSharedReads(arr: Arr) {
         "The Arr's own health checks, each with its source, level, and message. An empty list is no reported problem, not proof that every dependency works",
       params: Type.Object({}),
       run: (_params, signal) =>
-        arrList(arr, "/api/v3/health", { signal }).pipe(
-          Effect.flatMap((checks) =>
-            toolCheck(() =>
-              listResult(
-                checks.map((check) => ({
-                  ...scalars(
-                    diagnosticRecord(arr, "health check", check, [
-                      "type",
-                      "message",
-                    ]),
-                    ["source", "type", "wikiUrl"],
-                  ),
-                  message: scalar(check.message, MAX_MESSAGE_CHARS),
-                })),
-              ),
-            ),
-          ),
+        readHealth(arr, { signal }).pipe(
+          Effect.flatMap((checks) => toolCheck(() => listResult(checks))),
         ),
     }),
     disk_space: resource({
