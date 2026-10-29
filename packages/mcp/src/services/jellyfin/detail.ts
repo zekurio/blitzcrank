@@ -45,6 +45,7 @@ const DETAIL_SCALARS = [
   "Status",
   "AirTime",
   "OfficialRating",
+  "CustomRating",
   "CommunityRating",
   "CriticRating",
   "RunTimeTicks",

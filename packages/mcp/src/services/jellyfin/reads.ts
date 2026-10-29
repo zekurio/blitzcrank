@@ -44,11 +44,12 @@ import {
   remoteSearch,
   type SearchSeed,
 } from "./rematch.ts"
+import { compactUser } from "./users.ts"
 
 const LIST_FIELDS = "Path,ProviderIds"
 /** What `item_detail` asks for beyond the fields Jellyfin always sends. */
 const DETAIL_FIELDS =
-  "People,Overview,Taglines,Genres,Tags,Studios,ProviderIds,Path,ParentId,OriginalTitle,SortName,DateCreated,DateLastMediaAdded,Settings"
+  "People,Overview,Taglines,Genres,Tags,Studios,ProviderIds,Path,ParentId,OriginalTitle,SortName,DateCreated,DateLastMediaAdded,Settings,CustomRating"
 
 /** A remote search asks every metadata provider of the item's library. */
 const SEARCH_TIMEOUT_MS = 60_000
@@ -313,30 +314,14 @@ export function jellyfinReads(cfg: ServiceConfig) {
     }),
     users: resource({
       description:
-        "Users with their library access and audio and subtitle preferences",
+        "Users with their library access, parental controls, and audio and subtitle preferences. " +
+        "Parental controls are the policy's rating limit, blocked unrated item types, blocked and allowed tags, and access schedules. " +
+        "A policy without MaxParentalRating sets no rating limit",
       params: Type.Object({}),
       run: (_params, signal) =>
         jellyfinRequest(cfg, "/Users", { signal }).pipe(
-          Effect.map((response) =>
-            listResult(
-              objectList(response).map((user) => ({
-                ...pick(user, ["Id", "Name", "LastActivityDate"]),
-                Policy: pick(objectField(user, "Policy"), [
-                  "IsAdministrator",
-                  "IsDisabled",
-                  "EnableAllFolders",
-                  "EnabledFolders",
-                  "EnableMediaPlayback",
-                  "EnableVideoPlaybackTranscoding",
-                ]),
-                Configuration: pick(objectField(user, "Configuration"), [
-                  "AudioLanguagePreference",
-                  "PlayDefaultAudioTrack",
-                  "SubtitleLanguagePreference",
-                  "SubtitleMode",
-                ]),
-              })),
-            ),
+          Effect.flatMap((response) =>
+            toolCheck(() => listResult(objectList(response).map(compactUser))),
           ),
         ),
     }),

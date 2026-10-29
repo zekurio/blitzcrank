@@ -34,7 +34,9 @@ independent reads in one response. To reach one episode, walk series → season
   or `Imdb`), `id`, and `itemType`.
 - Server: `jellyfin_server_info` for the version and the restart, shutdown,
   and update flags.
-- Users and sessions: `jellyfin_users`, `jellyfin_sessions`.
+- Users: `jellyfin_users` for each account's library access, parental
+  controls, and track preferences. See Parental controls.
+- Sessions: `jellyfin_sessions`.
 - Match candidates: `jellyfin_remote_search`. See Writes.
 
 A `null` field is one Jellyfin did not send. It is not evidence that the
@@ -67,6 +69,42 @@ from `jellyfin_users`. Never pick a user by display name.
   and parental rules are the usual causes, but the answer names none, and an
   item or user that changed between those reads looks the same. Read the
   user's `Policy` in `jellyfin_users` and read again before naming a cause.
+
+## Parental controls
+
+`Policy` in `jellyfin_users` carries each account's parental controls:
+
+- `MaxParentalRating` is Jellyfin's numeric rating score, not a rating name.
+  An item whose rating scores above it is hidden. `MaxParentalSubRating`,
+  sent by Jellyfin 10.11 and later, also hides an item that scores exactly
+  the limit with a higher sub-score. A policy without `MaxParentalRating`
+  sets no rating limit.
+- `BlockUnratedItems` lists item types, such as `Movie` or `Series`, that are
+  hidden when they have no rating or one Jellyfin does not recognize.
+  `Series` covers a series and its episodes.
+- `BlockedTags` hides an item when it, a parent such as its series, or its
+  library carries one of those tags.
+- `AllowedTags`, when it lists any, hides an item unless it, a parent, or its
+  library carries one of them. Tags match regardless of case.
+- `AccessSchedules` limits when the account works at all. Each entry is a
+  `DayOfWeek` with `StartHour` and `EndHour` in the server's local time, and
+  outside every entry Jellyfin refuses the account's requests, whatever the
+  item. An empty list sets no limit. Reads with `userId` use the server's key,
+  so they are never refused and do not show a schedule.
+
+Jellyfin judges an item by its `CustomRating` when one is set, else by its
+`OfficialRating`, and an episode or season without either by its series'.
+`jellyfin_item_detail` returns both, and `jellyfin_items` returns neither.
+The `Tags` in `jellyfin_item_detail` are the item's own, so for an episode
+read the series too.
+
+No tool reads the server's rating scale. A name's score depends on the
+server's metadata country and Jellyfin version, so never state one as read.
+To tie a 404 to the limit, compare: an account without the limit gets the
+item, the limited account still gets items rated lower, and another item
+with the same rating is hidden from it too. One with the same rating that
+the account does get rules the limit out. Report the limit and rating you
+read. Only an admin can change a policy, and no tool writes one.
 
 ## Writes
 
