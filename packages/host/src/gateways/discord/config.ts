@@ -18,11 +18,18 @@ export function loadDiscordConfig(): DiscordConfig {
   }
   const users = ids("DISCORD_ALLOWED_USERS", "Discord")
   const roles = ids("DISCORD_ALLOWED_ROLES", "Discord")
+  const adminUsers = ids("DISCORD_ADMIN_USERS", "Discord")
+  const adminRoles = ids("DISCORD_ADMIN_ROLES", "Discord")
   // An empty allowlist would make the bot answer nobody, or tempt an
-  // allow-all switch. Neither exists.
-  if (users.size === 0 && roles.size === 0) {
+  // allow-all switch. Neither exists. An admin list admits its members too.
+  if (
+    users.size === 0 &&
+    roles.size === 0 &&
+    adminUsers.size === 0 &&
+    adminRoles.size === 0
+  ) {
     throw new Error(
-      "DISCORD_ALLOWED_USERS or DISCORD_ALLOWED_ROLES must list at least one id",
+      "DISCORD_ALLOWED_USERS, DISCORD_ALLOWED_ROLES, DISCORD_ADMIN_USERS, or DISCORD_ADMIN_ROLES must list at least one id",
     )
   }
   const triageModel = process.env.DISCORD_TRIAGE_MODEL?.trim()
@@ -37,6 +44,8 @@ export function loadDiscordConfig(): DiscordConfig {
     channels,
     users,
     roles,
+    adminUsers,
+    adminRoles,
     triageModel,
     triageThreshold: threshold("DISCORD_TRIAGE_THRESHOLD"),
   }

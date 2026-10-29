@@ -20,6 +20,9 @@ export interface SeerrIssue {
   [key: string]: unknown
 }
 
+/** The most users one listing returns. A full listing may leave some out. */
+export const USER_PAGE = 200
+
 /** The gateway's own Seerr access: the issue read, its users, and comments. */
 export class SeerrClient {
   constructor(
@@ -48,7 +51,7 @@ export class SeerrClient {
   listUsersEffect(): Effect.Effect<SeerrUser[], JsonRequestError> {
     return jsonRequestEffect<{ results?: SeerrUser[] }>(
       this.cfg.url,
-      "/api/v1/user?take=200",
+      `/api/v1/user?take=${USER_PAGE}`,
       { headers: this.headers() },
     ).pipe(Effect.map((response) => response.results ?? []))
   }

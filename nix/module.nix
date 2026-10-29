@@ -189,14 +189,15 @@ in
 
         "discord" needs {option}`helperModel`, DISCORD_BOT_TOKEN in
         {option}`environmentFile`, the triage provider's API key there or in
-        the auth file, and DISCORD_CHANNELS, DISCORD_ALLOWED_USERS or
-        DISCORD_ALLOWED_ROLES, and DISCORD_TRIAGE_MODEL in {option}`settings`.
+        the auth file, and DISCORD_CHANNELS, at least one of
+        DISCORD_ALLOWED_USERS, DISCORD_ALLOWED_ROLES, DISCORD_ADMIN_USERS, or
+        DISCORD_ADMIN_ROLES, and DISCORD_TRIAGE_MODEL in {option}`settings`.
 
         "fluxer" needs {option}`helperModel`, FLUXER_BOT_TOKEN in
         {option}`environmentFile`, the triage provider's API key there or in
-        the auth file, and FLUXER_INSTANCE_URL, FLUXER_CHANNELS,
-        FLUXER_ALLOWED_USERS or FLUXER_ALLOWED_ROLES, and FLUXER_TRIAGE_MODEL
-        in {option}`settings`.
+        the auth file, and FLUXER_INSTANCE_URL, FLUXER_CHANNELS, at least one
+        of FLUXER_ALLOWED_USERS, FLUXER_ALLOWED_ROLES, FLUXER_ADMIN_USERS, or
+        FLUXER_ADMIN_ROLES, and FLUXER_TRIAGE_MODEL in {option}`settings`.
       '';
     };
 

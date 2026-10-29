@@ -50,6 +50,9 @@ the runner's tool allowlist, or which server tools a run gets.
 - A gateway checks the sender before admission and before any model sees the
   message, and again when recovery resumes it. The check fails closed when the
   gateway's platform is unreachable and has no opt-out.
+- Admin status comes only from a gateway's own check of a message's sender,
+  never from model input. It covers that message alone. Recovery resumes an
+  admin's run only when the check finds an admin again.
 - The host holds no media mounts and no service credential beyond what a
   gateway needs to reach its own platform. Never enable `bash`, `edit`, or
   `write` in the runner.

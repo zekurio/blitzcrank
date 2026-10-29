@@ -57,7 +57,20 @@ export class ThreadWork {
             continue
           }
           const event = job.payload.event
-          if (!(yield* this.gateways.of(event.thread).authorizeEffect(event))) {
+          const access = yield* this.gateways
+            .of(event.thread)
+            .authorizeEffect(event)
+          // The run's turn may already call its sender an admin, and recovery
+          // replays that turn as it was, so the run resumes only if the
+          // gateway finds them one again. A member's run stays a member's.
+          const unconfirmed = event.admin && access !== "admin"
+          if (unconfirmed && access !== "denied")
+            logEvent(
+              "run.admin_unconfirmed",
+              { runId: job.id, thread: threadKey(event.thread) },
+              "warn",
+            )
+          if (access === "denied" || unconfirmed) {
             this.jobs.requestCancel(job.id)
             yield* this.recoverCancellation(job)
             continue

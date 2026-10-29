@@ -1,10 +1,17 @@
 import { Cause, Effect, type Scope } from "effect"
 
-import type { Gateway, Inbound, Intake, Marker, Notice } from "../gateway.ts"
+import type {
+  Access,
+  Gateway,
+  Inbound,
+  Intake,
+  Marker,
+  Notice,
+} from "../gateway.ts"
 import { errorKind, logEvent } from "../log.ts"
 import type { JsonValue } from "../services/http.ts"
 import { toText } from "../tools/common.ts"
-import { memberAllowedEffect, type ChatSource } from "./chat-admission.ts"
+import { memberAccessEffect, type ChatSource } from "./chat-admission.ts"
 import {
   fit,
   messageText,
@@ -43,7 +50,8 @@ export function createChatGateway(
     name: platform.name,
     listenEffect,
     // Allowlists and watched channels may have changed while the host was
-    // down, and a member may have left or lost the role that admitted them.
+    // down, and a member may have left or lost the role that admitted them
+    // or made them an admin.
     authorizeEffect: (message) =>
       authorizeEffect(platform, config, client, message),
     channel: (threadId) => ({
@@ -86,20 +94,21 @@ function authorizeEffect(
   config: ChatConfig,
   client: Effect.Effect<ChatClient>,
   message: Inbound,
-): Effect.Effect<boolean> {
+): Effect.Effect<Access> {
   const denied = `${platform.name}.denied`
   const source = sourceOf(message.source)
   if (source === undefined || !config.channels.has(source.parent)) {
     logEvent(denied, { reason: "channel_not_watched" }, "warn")
-    return Effect.succeed(false)
+    return Effect.succeed("denied")
   }
   return client.pipe(
     Effect.flatMap((chat) =>
-      memberAllowedEffect(chat, config, source.guild, source.author),
+      memberAccessEffect(chat, config, source.guild, source.author),
     ),
-    Effect.tap((ok) =>
+    Effect.tap((access) =>
       Effect.sync(() => {
-        if (!ok) logEvent(denied, { reason: "not_allowed" }, "warn")
+        if (access === "denied")
+          logEvent(denied, { reason: "not_allowed" }, "warn")
       }),
     ),
     Effect.catchCause((cause) => {
@@ -112,7 +121,7 @@ function authorizeEffect(
         },
         "warn",
       )
-      return Effect.succeed(false)
+      return Effect.succeed<Access>("denied")
     }),
   )
 }
@@ -183,7 +192,10 @@ function contextEffect(
     const permitted = new Set(
       yield* Effect.filter(
         authors,
-        (author) => memberAllowedEffect(chat, config, guild, author),
+        (author) =>
+          memberAccessEffect(chat, config, guild, author).pipe(
+            Effect.map((access) => access !== "denied"),
+          ),
         { concurrency: CONTEXT_LOOKUPS },
       ),
     )

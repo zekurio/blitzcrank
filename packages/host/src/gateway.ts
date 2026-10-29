@@ -30,9 +30,21 @@ export interface Inbound {
   reply: boolean
   title: string | undefined
   text: string | undefined
+  /**
+   * Whether the gateway's sender check found this message's sender an admin,
+   * who may have media removed that plays fine. It holds for this message
+   * alone. Recovery keeps it only if the gateway finds them one again.
+   */
+  admin: boolean
   /** For the gateway alone, to authorize the message again after a restart. */
   source: JsonValue
 }
+
+/**
+ * What a gateway's sender check makes of a message's sender. An admin is a
+ * member too.
+ */
+export type Access = "denied" | "member" | "admin"
 
 /**
  * Every signature the host writes starts with this, so a gateway can tell
@@ -155,8 +167,11 @@ export interface Gateway {
    * `channel` after it closes.
    */
   listenEffect?(intake: Intake): Effect.Effect<void, unknown, Scope.Scope>
-  /** Whether an accepted message may still run after a restart. */
-  authorizeEffect(message: Inbound): Effect.Effect<boolean, unknown>
+  /**
+   * Checks an accepted message's sender again after a restart, as admission
+   * did. A check that cannot run never finds an admin.
+   */
+  authorizeEffect(message: Inbound): Effect.Effect<Access, unknown>
   channel(threadId: string): Channel
 }
 
