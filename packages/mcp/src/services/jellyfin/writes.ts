@@ -5,7 +5,7 @@ import type { ServiceConfig } from "../../config.ts"
 import type { JsonValue } from "../../http.ts"
 import { toolCheck } from "../../tools/errors.ts"
 import { action, type WriteEffect } from "../../tools/writes.ts"
-import { itemKey, jellyfinRequest, readItem } from "./client.ts"
+import { itemKey, jellyfinRequest, MEDIA_FIELDS, readItem } from "./client.ts"
 import { itemLabel, providerIdsOf } from "./compact.ts"
 import { itemIdParam, providerIdParam, providerParam } from "./params.ts"
 import {
@@ -98,7 +98,7 @@ export function jellyfinActions(cfg: ServiceConfig) {
           ),
         ),
       verify: (params) =>
-        readItem(cfg, params.itemId, undefined).pipe(
+        readItem(cfg, params.itemId, undefined, { fields: MEDIA_FIELDS }).pipe(
           Effect.flatMap((item) => toolCheck(() => readBackItem(item))),
         ),
     }),
@@ -197,7 +197,7 @@ export function jellyfinActions(cfg: ServiceConfig) {
           },
         ).pipe(Effect.map((): JsonValue => ({ applied: "rematch accepted" }))),
       verify: (params, _result, state) =>
-        readItem(cfg, params.itemId, undefined).pipe(
+        readItem(cfg, params.itemId, undefined, { fields: MEDIA_FIELDS }).pipe(
           Effect.flatMap((item) =>
             toolCheck(() => rematchReadBack(item, state.candidate.ProviderIds)),
           ),

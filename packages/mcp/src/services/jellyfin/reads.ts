@@ -20,9 +20,10 @@ import {
   MAX_LIST_ITEMS,
 } from "../../tools/results.ts"
 import {
-  ITEM_FIELDS,
   itemKey,
   jellyfinRequest,
+  LIST_FIELDS,
+  MEDIA_FIELDS,
   queryItems,
   readItem,
   readItems,
@@ -46,7 +47,6 @@ import {
 } from "./rematch.ts"
 import { compactUser } from "./users.ts"
 
-const LIST_FIELDS = "Path,ProviderIds"
 /** What `item_detail` asks for beyond the fields Jellyfin always sends. */
 const DETAIL_FIELDS =
   "People,Overview,Taglines,Genres,Tags,Studios,ProviderIds,Path,ParentId,OriginalTitle,SortName,DateCreated,DateLastMediaAdded,Settings,CustomRating"
@@ -114,7 +114,7 @@ export function jellyfinReads(cfg: ServiceConfig) {
       run: (params, signal) =>
         Effect.gen(function* () {
           const start = yield* toolCheck(() => mediaStart(params))
-          const found = yield* readItems(cfg, params.ids, ITEM_FIELDS, signal)
+          const found = yield* readItems(cfg, params.ids, MEDIA_FIELDS, signal)
           return yield* toolCheck(() => itemsResult(params.ids, found, start))
         }),
     }),
@@ -135,18 +135,19 @@ export function jellyfinReads(cfg: ServiceConfig) {
       }),
       run: (params, signal) =>
         Effect.gen(function* () {
-          // Read without a user first: only that proves the item exists.
-          const item = yield* readItem(cfg, params.itemId, signal, {
-            fields: DETAIL_FIELDS,
-          })
           const userId = params.userId
-          const userView =
-            userId === undefined
-              ? undefined
-              : userViewOf(
-                  userId,
-                  yield* readUserItem(cfg, params.itemId, userId, signal),
-                )
+          // Only the read without a user proves the item exists.
+          const [item, userView] = yield* Effect.all(
+            [
+              readItem(cfg, params.itemId, signal, { fields: DETAIL_FIELDS }),
+              userId === undefined
+                ? Effect.succeed(undefined)
+                : readUserItem(cfg, params.itemId, userId, signal).pipe(
+                    Effect.map((seen) => userViewOf(userId, seen)),
+                  ),
+            ],
+            { concurrency: "unbounded" },
+          )
           return yield* toolCheck(() =>
             itemDetail(item, params.peopleStartIndex ?? 0, userView),
           )
@@ -269,7 +270,7 @@ export function jellyfinReads(cfg: ServiceConfig) {
               Recursive: true,
               IncludeItemTypes: params.itemType,
               AnyProviderIdEquals: `${params.provider}.${params.id}`,
-              Fields: ITEM_FIELDS,
+              Fields: LIST_FIELDS,
               Limit: 200,
             },
             signal,

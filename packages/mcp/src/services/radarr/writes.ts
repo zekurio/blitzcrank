@@ -6,7 +6,12 @@ import { isJsonObject, isNumber, objectField } from "../../json.ts"
 import { toolFail } from "../../tools/errors.ts"
 import { action, type WriteEffect } from "../../tools/writes.ts"
 import { arrObject, arrRequest, type Arr } from "../arr/client.ts"
-import { postCommand, verifyCommand, verifyDeleted } from "../arr/commands.ts"
+import {
+  postCommand,
+  runCommandAction,
+  verifyCommand,
+  verifyDeleted,
+} from "../arr/commands.ts"
 import { qualityName, sizeText } from "../arr/compact.ts"
 import {
   candidateFile,
@@ -21,7 +26,13 @@ import {
   type MonitoringUpdate,
 } from "../arr/monitoring.ts"
 import { arrSharedActions } from "../arr/writes.ts"
-import { compactMovie, movieIdParam, movieLabel, readMovie } from "./movie.ts"
+import {
+  compactMovie,
+  MOVIE_ID_HELP,
+  movieIdParam,
+  movieLabel,
+  readMovie,
+} from "./movie.ts"
 
 const manualImportFile = Type.Object(
   {
@@ -34,12 +45,6 @@ const manualImportFile = Type.Object(
   },
   { additionalProperties: false },
 )
-
-const COMMANDS = [
-  "RefreshMovie",
-  "RescanMovie",
-  "RefreshMonitoredDownloads",
-] as const
 
 function movieMonitoringUpdate(movieId: number): MonitoringUpdate {
   return {
@@ -118,7 +123,7 @@ export function radarrActions(arr: Arr) {
             detail: `${String(record.monitored)} -> ${params.monitored}`,
           }
           return {
-            state: { record },
+            state: { body: { ...record, monitored: params.monitored } },
             summary: `Set monitored=${params.monitored} on ${movieLabel(record)}`,
             effects: [effect],
             warnings: [],
@@ -127,7 +132,7 @@ export function radarrActions(arr: Arr) {
       write: (params, state) =>
         arrRequest(arr, `/api/v3/movie/${params.movieId}`, {
           method: "PUT",
-          body: { ...state.record, monitored: params.monitored },
+          body: state.body,
         }).pipe(
           Effect.map((written) =>
             isJsonObject(written) ? compactMovie(written) : written,
@@ -140,11 +145,7 @@ export function radarrActions(arr: Arr) {
             yield* readMovie(arr, params.movieId, undefined),
             update,
           )
-          return monitoringReadBack(
-            after,
-            { ...state.record, monitored: params.monitored },
-            update,
-          )
+          return monitoringReadBack(after, state.body, update)
         }),
     }),
     delete_movie_file: action({
@@ -218,10 +219,13 @@ export function radarrActions(arr: Arr) {
             ...new Set(params.files.map((file) => file.movieId)),
           ]
           const movies = new Map(
-            yield* Effect.forEach(movieIds, (movieId) =>
-              readMovie(arr, movieId, signal).pipe(
-                Effect.map((movie) => [movieId, movie] as const),
-              ),
+            yield* Effect.forEach(
+              movieIds,
+              (movieId) =>
+                readMovie(arr, movieId, signal).pipe(
+                  Effect.map((movie) => [movieId, movie] as const),
+                ),
+              { concurrency: 4 },
             ),
           )
           const effects = params.files.map((file): WriteEffect => {
@@ -260,59 +264,15 @@ export function radarrActions(arr: Arr) {
     scan_import_folder: folderScanAction(arr, (candidate) =>
       String(objectField(candidate, "movie")?.title ?? "no movie"),
     ),
-    run_command: action({
+    run_command: runCommandAction(arr, {
       description:
         "Make Radarr re-read disk or downloader state. RefreshMovie and RescanMovie need movieId; RefreshMonitoredDownloads covers every download and takes none",
-      params: Type.Object({
-        name: Type.Enum(COMMANDS),
-        movieId: Type.Optional(movieIdParam),
-      }),
-      resolve: (params, signal) =>
-        Effect.gen(function* () {
-          if (params.name === "RefreshMonitoredDownloads") {
-            if (params.movieId !== undefined) {
-              return yield* toolFail(
-                "RefreshMonitoredDownloads covers every download and takes no movieId",
-              )
-            }
-            const effect: WriteEffect = {
-              kind: "command",
-              target: "download clients",
-              detail: "RefreshMonitoredDownloads",
-            }
-            return {
-              state: null,
-              summary:
-                "Re-check every monitored download in the download clients",
-              effects: [effect],
-              warnings: [],
-            }
-          }
-          if (params.movieId === undefined) {
-            return yield* toolFail(`${params.name} needs movieId`)
-          }
-          const movie = yield* readMovie(arr, params.movieId, signal)
-          const effect: WriteEffect = {
-            kind: "command",
-            target: `movie ${params.movieId}: ${movieLabel(movie)}`,
-            detail: `${params.name} over ${String(movie.path ?? "its folder")}`,
-          }
-          return {
-            state: null,
-            summary: `${params.name} for ${movieLabel(movie)}`,
-            effects: [effect],
-            warnings: [],
-          }
-        }),
-      write: (params) =>
-        postCommand(arr, {
-          name: params.name,
-          ...(params.name === "RefreshMovie" && isNumber(params.movieId)
-            ? { movieIds: [params.movieId] }
-            : {}),
-          ...(params.name === "RescanMovie" ? { movieId: params.movieId } : {}),
-        }),
-      verify: (_params, result) => verifyCommand(arr, result),
+      names: ["RefreshMovie", "RescanMovie"],
+      idHelp: MOVIE_ID_HELP,
+      read: (id, signal) => readMovie(arr, id, signal),
+      label: movieLabel,
+      body: (name, id) =>
+        name === "RefreshMovie" ? { movieIds: [id] } : { movieId: id },
     }),
   }
 }

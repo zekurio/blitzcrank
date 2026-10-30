@@ -85,38 +85,41 @@ export interface AgentTurnResult {
   usage: ThreadUsage
   failure?: DurableTurnFailure
 }
+const SKILLS_DIR = path.join(
+  fileURLToPath(new URL("../..", import.meta.url)),
+  "skills",
+)
+
+/**
+ * The deployment's skills, as the system prompt lists them. They ship with
+ * the package and cannot change while the host runs, so they are read once.
+ */
+const SKILLS_PROMPT = formatSkillsForPrompt(
+  loadSkillsFromDir({ dir: SKILLS_DIR, source: "deployment" }).skills.map(
+    (skill) => ({
+      ...skill,
+      // Nix store paths change on rebuild. Skill locations are relative to
+      // the read tool's fixed deployment root.
+      filePath: path.relative(SKILLS_DIR, skill.filePath),
+    }),
+  ),
+)
+
 /** Coding-agent supplies auth and discovery, never execution. */
 export function runAgentTurnEffect(
   opts: AgentTurnOptions,
 ): Effect.Effect<AgentTurnResult, SdkError> {
-  const skillsDir = path.join(
-    fileURLToPath(new URL("../..", import.meta.url)),
-    "skills",
-  )
   return Effect.callback<AgentTurnResult, SdkError>((resume, interruption) => {
     const signal = opts.signal
       ? AbortSignal.any([opts.signal, interruption])
       : interruption
-    const completion = (async () => {
-      const skills = loadSkillsFromDir({ dir: skillsDir, source: "deployment" })
-      const skillsPrompt =
-        opts.builtinRead === false
-          ? ""
-          : formatSkillsForPrompt(
-              skills.skills.map((skill) => ({
-                ...skill,
-                // Nix store paths change on rebuild. Skill locations are
-                // relative to the read tool's fixed deployment root.
-                filePath: path.relative(skillsDir, skill.filePath),
-              })),
-            )
-      return runDurableTurn({
-        ...opts,
-        signal,
-        systemPrompt: `${opts.systemPrompt}\n${skillsPrompt}`,
-        skillsDir,
-      })
-    })().then(
+    const skills = opts.builtinRead === false ? "" : SKILLS_PROMPT
+    const completion = runDurableTurn({
+      ...opts,
+      signal,
+      systemPrompt: `${opts.systemPrompt}\n${skills}`,
+      skillsDir: SKILLS_DIR,
+    }).then(
       (result) => resume(Effect.succeed(result)),
       (cause: unknown) =>
         resume(

@@ -4,7 +4,6 @@ import { DatabaseSync } from "node:sqlite"
 import { Cause, Effect } from "effect"
 
 import { errorKind, logEvent } from "./log.ts"
-import type { Lane } from "./queue.ts"
 
 export type JobStatus =
   | "queued"
@@ -41,7 +40,6 @@ function json(value: unknown): string {
 export class JobStore {
   private readonly db: DatabaseSync
   private readonly owner: DatabaseSync
-  private readonly scheduled = new Set<string>()
 
   constructor(path: string) {
     this.owner = new DatabaseSync(`${path}.owner`)
@@ -59,6 +57,10 @@ export class JobStore {
         jobId TEXT NOT NULL REFERENCES jobs(id), key TEXT NOT NULL,
         result TEXT, PRIMARY KEY(jobId, key)
       );
+      -- Finished jobs stay for review, so without this every lookup of the
+      -- unfinished ones would read the whole history.
+      CREATE INDEX IF NOT EXISTS jobs_unfinished ON jobs(sequence)
+        WHERE status IN ('queued', 'running', 'cancelling');
     `)
   }
 
@@ -113,36 +115,32 @@ export class JobStore {
     if (changed.changes > 0) logEvent("job.cancelled", { runId: id })
   }
 
-  enqueue(
-    queue: Lane,
-    job: Job,
+  /**
+   * Runs a job's task while the job is unfinished and records how it ended.
+   * A job that ended already, such as one admitted twice, does not run again.
+   */
+  runEffect(
+    id: string,
     task: () => Effect.Effect<void, unknown>,
-  ): void {
-    if (queue.closed) throw new Error("queue is closed")
-    if (this.scheduled.has(job.id)) return
-    if (!this.pending().some((pending) => pending.id === job.id)) return
-    this.scheduled.add(job.id)
-    queue.enqueueEffect(() =>
-      Effect.suspend(() => {
-        const current = this.get(job.id)
-        if (
-          current?.status !== "queued" &&
-          current?.status !== "running" &&
-          current?.status !== "cancelling"
-        )
-          return Effect.void
-        this.markRunning(job.id)
-        return Effect.suspend(task)
-      }).pipe(
-        Effect.tap(() => Effect.sync(() => this.markCompleted(job.id))),
+  ): Effect.Effect<void, unknown> {
+    return Effect.suspend(() => {
+      const status = this.get(id)?.status
+      if (
+        status !== "queued" &&
+        status !== "running" &&
+        status !== "cancelling"
+      )
+        return Effect.void
+      this.markRunning(id)
+      return Effect.suspend(task).pipe(
+        Effect.tap(() => Effect.sync(() => this.markCompleted(id))),
         Effect.catchCause((cause) =>
-          Effect.sync(() => this.markFailed(job.id, Cause.squash(cause))).pipe(
-            Effect.flatMap(() => Effect.failCause(cause)),
+          Effect.sync(() => this.markFailed(id, Cause.squash(cause))).pipe(
+            Effect.andThen(Effect.failCause(cause)),
           ),
         ),
-        Effect.ensuring(Effect.sync(() => this.scheduled.delete(job.id))),
-      ),
-    )
+      )
+    })
   }
 
   actionEffect<T, E>(

@@ -2,9 +2,9 @@ import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable"
 import { Effect } from "effect"
 import { Type } from "typebox"
 
-import type { WebConfig } from "../config.js"
-import { jsonRequestEffect, type JsonValue } from "../services/http.js"
-import { MAX_RESULT_CHARS, textResult, toolCheck } from "../tools/common.js"
+import type { WebConfig } from "../config.ts"
+import { jsonRequestEffect, type JsonValue } from "../services/http.ts"
+import { MAX_RESULT_CHARS, textResult, toolCheck } from "../tools/common.ts"
 
 type FirecrawlConfig = Extract<WebConfig, { provider: "firecrawl" }>
 

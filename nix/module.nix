@@ -155,15 +155,13 @@ in
     };
 
     helperModel = lib.mkOption {
-      type = lib.types.nullOr lib.types.nonEmptyStr;
-      default = null;
+      type = lib.types.nonEmptyStr;
       example = "openai/gpt-5.4-mini:off";
       description = ''
-        Chat model for small jobs outside a run, such as naming a Discord or
-        Fluxer thread, as provider/model with an optional thinking suffix.
-        Thinking defaults to medium; ":off" suits these jobs. Required with
-        the "discord" or "fluxer" gateway. It authenticates like
-        {option}`model`.
+        Required chat model for small jobs outside a run, such as naming a
+        Discord or Fluxer thread, as provider/model with an optional thinking
+        suffix. There is no default. Thinking defaults to medium; ":off"
+        suits these jobs. It authenticates like {option}`model`.
       '';
     };
 
@@ -187,16 +185,16 @@ in
         gateway without them stops the service at startup. Pending work for
         a gateway that is no longer listed also stops it.
 
-        "discord" needs {option}`helperModel`, DISCORD_BOT_TOKEN in
-        {option}`environmentFile`, the triage provider's API key there or in
-        the auth file, and DISCORD_CHANNELS, at least one of
-        DISCORD_ALLOWED_USERS, DISCORD_ALLOWED_ROLES, DISCORD_ADMIN_USERS, or
-        DISCORD_ADMIN_ROLES, and DISCORD_TRIAGE_MODEL in {option}`settings`.
+        "discord" needs DISCORD_BOT_TOKEN in {option}`environmentFile`, the
+        triage provider's API key there or in the auth file, and
+        DISCORD_CHANNELS, at least one of DISCORD_ALLOWED_USERS,
+        DISCORD_ALLOWED_ROLES, DISCORD_ADMIN_USERS, or DISCORD_ADMIN_ROLES,
+        and DISCORD_TRIAGE_MODEL in {option}`settings`.
 
-        "fluxer" needs {option}`helperModel`, FLUXER_BOT_TOKEN in
-        {option}`environmentFile`, the triage provider's API key there or in
-        the auth file, and FLUXER_INSTANCE_URL, FLUXER_CHANNELS, at least one
-        of FLUXER_ALLOWED_USERS, FLUXER_ALLOWED_ROLES, FLUXER_ADMIN_USERS, or
+        "fluxer" needs FLUXER_BOT_TOKEN in {option}`environmentFile`, the
+        triage provider's API key there or in the auth file, and
+        FLUXER_INSTANCE_URL, FLUXER_CHANNELS, at least one of
+        FLUXER_ALLOWED_USERS, FLUXER_ALLOWED_ROLES, FLUXER_ADMIN_USERS, or
         FLUXER_ADMIN_ROLES, and FLUXER_TRIAGE_MODEL in {option}`settings`.
       '';
     };
@@ -311,15 +309,13 @@ in
       environment = {
         BLITZCRANK_PORT = toString cfg.port;
         BLITZCRANK_MODEL = cfg.model;
+        BLITZCRANK_HELPER_MODEL = cfg.helperModel;
         BLITZCRANK_LANGUAGE = cfg.language;
         BLITZCRANK_GATEWAYS = lib.concatStringsSep "," cfg.gateways;
         BLITZCRANK_DATA_DIR = stateDir;
         BLITZCRANK_AUTH_PATH = cfg.authFile;
         BLITZCRANK_WEB_PROVIDER = cfg.webProvider;
         BLITZCRANK_MCP_URL = cfg.mcpUrl;
-      }
-      // lib.optionalAttrs (cfg.helperModel != null) {
-        BLITZCRANK_HELPER_MODEL = cfg.helperModel;
       }
       // cfg.settings;
 

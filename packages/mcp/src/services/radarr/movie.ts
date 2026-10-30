@@ -5,9 +5,10 @@ import { names, objectField, pick, type JsonObject } from "../../json.ts"
 import { arrObject, type Arr } from "../arr/client.ts"
 import { qualityName, scalars } from "../arr/compact.ts"
 
+export const MOVIE_ID_HELP = "Internal Radarr movie id (not tmdbId)"
 export const movieIdParam = Type.Integer({
   minimum: 1,
-  description: "Internal Radarr movie id (not tmdbId)",
+  description: MOVIE_ID_HELP,
 })
 
 export function readMovie(arr: Arr, movieId: number, signal: Signal) {

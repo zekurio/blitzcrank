@@ -32,11 +32,10 @@ export interface Config {
    */
   model: string
   /**
-   * Chat model for small text jobs outside a run, such as naming a chat
-   * thread, as provider/model[:thinking]. Unset means no helper; whatever
-   * needs one refuses to start without it.
+   * Required chat model for small text jobs outside a run, such as naming a
+   * chat thread, as provider/model[:thinking]. No default, as for `model`.
    */
-  helperModel: string | undefined
+  helperModel: string
   /**
    * Explicit auth file holding API keys and OAuth credentials.
    * Must be writable: OAuth tokens auto-refresh and are persisted back.
@@ -91,15 +90,13 @@ function maxParallelRuns(): number {
 }
 
 /**
- * The operator's base model choice is mandatory: a built-in default would let
+ * The operator's model choices are mandatory: a built-in default would let
  * an upgrade silently change which model runs the deployment.
  */
-function requiredModel(): string {
-  const value = process.env.BLITZCRANK_MODEL
-  if (value === undefined || value.trim() === "") {
-    throw new Error(
-      "BLITZCRANK_MODEL must name a model, e.g. provider/model[:thinking]",
-    )
+function requiredModel(name: string): string {
+  const value = process.env[name]?.trim()
+  if (!value) {
+    throw new Error(`${name} must name a model, e.g. provider/model[:thinking]`)
   }
   return value
 }
@@ -174,8 +171,8 @@ export function loadConfig(): Config {
     gateways: gateways(),
     maxParallelRuns: maxParallelRuns(),
     dataDir: process.env.BLITZCRANK_DATA_DIR ?? "data",
-    model: requiredModel(),
-    helperModel: process.env.BLITZCRANK_HELPER_MODEL?.trim() || undefined,
+    model: requiredModel("BLITZCRANK_MODEL"),
+    helperModel: requiredModel("BLITZCRANK_HELPER_MODEL"),
     authPath: process.env.BLITZCRANK_AUTH_PATH,
     modelsPath: process.env.BLITZCRANK_MODELS_PATH,
     language: process.env.BLITZCRANK_LANGUAGE ?? "German",

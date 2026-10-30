@@ -93,7 +93,7 @@ export function fsEffect<A>(
   })
 }
 
-export interface MediaFile {
+interface MediaFile {
   path: string
   size: number
 }

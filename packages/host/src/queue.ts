@@ -2,12 +2,6 @@ import { Cause, Effect, Fiber, Latch } from "effect"
 
 import { errorKind, logEvent } from "./log.ts"
 
-/** Where a task for one thread is put. */
-export interface Lane {
-  readonly closed: boolean
-  enqueueEffect(task: () => Effect.Effect<void, unknown>): void
-}
-
 /**
  * Runs a thread's tasks one at a time and up to `limit` threads at once. A
  * thread's conversation and visible message each assume one writer, so a
@@ -46,16 +40,6 @@ export class ThreadQueue {
       own,
       this.waiting.length + this.running.size - this.limit + 1,
     )
-  }
-
-  lane(key: string): Lane {
-    const closed = () => this.closed
-    return {
-      get closed() {
-        return closed()
-      },
-      enqueueEffect: (task) => this.enqueueEffect(key, task),
-    }
   }
 
   enqueueEffect(key: string, task: () => Effect.Effect<void, unknown>): void {

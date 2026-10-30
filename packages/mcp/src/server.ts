@@ -24,10 +24,15 @@ class RequestRejected extends Data.TaggedError("RequestRejected")<{
   message: string
 }> {}
 
-export interface ServerOptions {
+interface ServerOptions {
   token: string
   version: string
   tools: readonly ServerTool[]
+}
+
+interface Registry {
+  tools: Map<string, ServerTool>
+  listed: { tools: Omit<ServerTool, "execute">[] }
 }
 
 /**
@@ -36,7 +41,18 @@ export interface ServerOptions {
  * stateless transport cannot be reused.
  */
 export function createHttpServer(options: ServerOptions): http.Server {
-  const registry = new Map(options.tools.map((tool) => [tool.name, tool]))
+  const registry: Registry = {
+    tools: new Map(options.tools.map((tool) => [tool.name, tool])),
+    // The tool list never changes, so every tools/list gets the same answer.
+    listed: {
+      tools: options.tools.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        annotations: tool.annotations,
+      })),
+    },
+  }
   const expected = digest(options.token)
   return http.createServer((req, res) => {
     // An event emitter cannot await its listener, so failures end here.
@@ -57,7 +73,7 @@ export function createHttpServer(options: ServerOptions): http.Server {
 function handleRequest(
   req: http.IncomingMessage,
   res: http.ServerResponse,
-  registry: Map<string, ServerTool>,
+  registry: Registry,
   expected: Buffer,
   version: string,
 ): Effect.Effect<void> {
@@ -114,7 +130,7 @@ function handleRequest(
 }
 
 function mcpServer(
-  registry: Map<string, ServerTool>,
+  registry: Registry,
   version: string,
   run: { runId: string | undefined; thread: string | undefined },
 ): Server {
@@ -122,16 +138,9 @@ function mcpServer(
     { name: "blitzcrank-mcp", version },
     { capabilities: { tools: {} } },
   )
-  server.setRequestHandler(ListToolsRequestSchema, () => ({
-    tools: [...registry.values()].map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      inputSchema: tool.inputSchema,
-      annotations: tool.annotations,
-    })),
-  }))
+  server.setRequestHandler(ListToolsRequestSchema, () => registry.listed)
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
-    const tool = registry.get(request.params.name)
+    const tool = registry.tools.get(request.params.name)
     if (!tool) {
       throw new McpError(
         ErrorCode.InvalidParams,

@@ -133,10 +133,15 @@ function redownloadAfterRemoval(
           "skipRedownload is set: the Arr starts no replacement search itself",
       }
     }
-    const handling = yield* readDownloadHandling(arr, signal)
-    const grab = isString(downloadId)
-      ? yield* findGrabRecord(arr, downloadId, signal)
-      : undefined
+    const [handling, grab] = yield* Effect.all(
+      [
+        readDownloadHandling(arr, signal),
+        isString(downloadId)
+          ? findGrabRecord(arr, downloadId, signal)
+          : Effect.succeed(undefined),
+      ],
+      { concurrency: "unbounded" },
+    )
     return redownloadAfterFailure(handling, grab)
   })
 }
@@ -286,17 +291,17 @@ export function arrSharedActions(arr: Arr) {
             itemIdOf(arr, params),
             signal,
           )
-          const queue = yield* readQueue(arr, signal)
+          const [queue, handling] = yield* Effect.all(
+            [readQueue(arr, signal), readDownloadHandling(arr, signal)],
+            { concurrency: "unbounded" },
+          )
           const active = queue.records.filter(
             (entry) =>
               isString(record.downloadId) &&
               entry.downloadId === record.downloadId,
           )
           const title = String(record.sourceTitle ?? "untitled")
-          const redownload = redownloadAfterFailure(
-            yield* readDownloadHandling(arr, signal),
-            record,
-          )
+          const redownload = redownloadAfterFailure(handling, record)
           const effect: WriteEffect = {
             kind: "blocklist",
             target: `history record ${params.historyId}: ${title}`,
@@ -365,7 +370,9 @@ export function arrSharedActions(arr: Arr) {
       params: Type.Object({ blocklistId: Type.Integer({ minimum: 1 }) }),
       resolve: (params, signal) =>
         Effect.gen(function* () {
-          const blocklist = yield* readBlocklist(arr, signal)
+          const blocklist = yield* readBlocklist(arr, signal, {
+            until: (candidate) => candidate.id === params.blocklistId,
+          })
           const entry = blocklist.records.find(
             (candidate) => candidate.id === params.blocklistId,
           )

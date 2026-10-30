@@ -1,10 +1,9 @@
-import { stat } from "node:fs/promises"
 import { text } from "node:stream/consumers"
 
 import { Effect } from "effect"
 
 import type { Gateway, Inbound, Threads } from "../../gateway.ts"
-import { storageIO } from "../../storage.ts"
+import { isFileEffect, storageIO } from "../../storage.ts"
 
 const NAME = "cli"
 
@@ -118,16 +117,10 @@ export function readMessageEffect(
     if (typeof admin !== "boolean")
       return yield* Effect.fail(new Error("admin must be true or false"))
     const thread = { gateway: NAME, id }
-    const reply = yield* storageIO(() =>
-      stat(threads.sessionFile(thread)),
-    ).pipe(
-      Effect.map((file) => file.isFile()),
-      Effect.catch(() => Effect.succeed(false)),
-    )
     return {
       thread,
       type: "MESSAGE",
-      reply,
+      reply: yield* isFileEffect(threads.sessionFile(thread)),
       title: undefined,
       text: message.trim(),
       admin,

@@ -19,8 +19,16 @@ import {
   type JsonRequestOptions,
   type JsonValue,
 } from "../../services/http.ts"
+import type {
+  ChatChannel,
+  ChatClient,
+  ChatMember,
+  ChatMessage,
+  MessageKind,
+} from "../chat.ts"
 import {
   Channel,
+  ChannelType,
   CurrentApplication,
   decode,
   Discovery,
@@ -30,6 +38,7 @@ import {
   GuildMember,
   Hello,
   Message,
+  MessageType,
   Opcode,
   RateLimitBody,
   Ready,
@@ -116,6 +125,18 @@ const RETRY_AFTER_CAP_SECONDS = 10
 
 const Messages = Type.Array(Message)
 
+export const THREAD_TYPES: ReadonlySet<number> = new Set([
+  ChannelType.AnnouncementThread,
+  ChannelType.PublicThread,
+  ChannelType.PrivateThread,
+])
+
+const MESSAGE_KINDS: ReadonlyMap<number, MessageKind> = new Map([
+  [MessageType.Default, "default"],
+  [MessageType.Reply, "reply"],
+  [MessageType.ThreadStarterMessage, "thread_starter"],
+])
+
 /**
  * What the host keeps of a write: the new message's or thread's id. Reading
  * no more keeps a write that landed from being reported as failed over a
@@ -130,7 +151,7 @@ type Written = Static<typeof Written>
  * Nothing is retried: repeating a post after a timeout can post it twice, and
  * Fluxer bans an address that keeps sending a rejected token.
  */
-export class FluxerClient {
+export class FluxerClient implements ChatClient {
   private readonly base: string
   private readonly authorization: string
 
@@ -144,15 +165,16 @@ export class FluxerClient {
     return this.requestEffect(CurrentApplication, ["applications", "@me"])
   }
 
-  channelEffect(channelId: string): Effect.Effect<Channel, FluxerError> {
-    return this.requestEffect(Channel, ["channels", channelId])
+  channelEffect(channelId: string): Effect.Effect<ChatChannel, FluxerError> {
+    return this.requestEffect(Channel, ["channels", channelId]).pipe(
+      Effect.map(chatChannel),
+    )
   }
 
-  /** The member, or `undefined` once they have left the guild. */
   memberEffect(
     guildId: string,
     userId: string,
-  ): Effect.Effect<GuildMember | undefined, FluxerError> {
+  ): Effect.Effect<ChatMember | undefined, FluxerError> {
     return this.requestEffect(GuildMember, [
       "guilds",
       guildId,
@@ -166,14 +188,13 @@ export class FluxerClient {
     )
   }
 
-  /** Newest first, as Fluxer returns them. */
   recentMessagesEffect(
     channelId: string,
     limit: number,
-  ): Effect.Effect<Message[], FluxerError> {
+  ): Effect.Effect<ChatMessage[], FluxerError> {
     return this.requestEffect(Messages, ["channels", channelId, "messages"], {
       query: { limit },
-    })
+    }).pipe(Effect.map((messages) => messages.map(chatMessage)))
   }
 
   /** The thread takes the message's id. */
@@ -229,15 +250,14 @@ export class FluxerClient {
     channelId: string,
     messageId: string,
     content: string,
-  ): Effect.Effect<Written, FluxerError> {
+  ): Effect.Effect<void, FluxerError> {
     return this.requestEffect(
       Written,
       ["channels", channelId, "messages", messageId],
       { method: "PATCH", body: { content, allowed_mentions: NO_PINGS } },
-    )
+    ).pipe(Effect.asVoid)
   }
 
-  /** A message that is already gone counts as deleted. */
   deleteEffect(
     channelId: string,
     messageId: string,
@@ -303,6 +323,31 @@ export class FluxerClient {
           ),
       ),
     )
+  }
+}
+
+export function chatMessage(message: Message): ChatMessage {
+  return {
+    id: message.id,
+    author: message.author,
+    // Null on the starter message Fluxer builds for a thread.
+    webhook: typeof message.webhook_id === "string",
+    kind: MESSAGE_KINDS.get(message.type) ?? "other",
+    content: message.content,
+    mentions: message.mentions,
+    timestamp: message.timestamp,
+    referenced: message.referenced_message
+      ? chatMessage(message.referenced_message)
+      : undefined,
+  }
+}
+
+function chatChannel(channel: Channel): ChatChannel {
+  return {
+    thread: THREAD_TYPES.has(channel.type),
+    guildId: channel.guild_id,
+    parentId: channel.parent_id ?? undefined,
+    ownerId: channel.owner_id ?? undefined,
   }
 }
 

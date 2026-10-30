@@ -1,18 +1,15 @@
-import { execFile } from "node:child_process"
 import { stat } from "node:fs/promises"
-import { promisify } from "node:util"
 
 import { Effect } from "effect"
 import { Type } from "typebox"
 
-import { toolCheck, ToolError } from "../tools/errors.ts"
+import { ToolError } from "../tools/errors.ts"
 import { checkArgs } from "../tools/params.ts"
 import type { ContentBlock } from "../tools/results.ts"
 import type { ServerTool } from "../tools/tool.ts"
-import { MEDIA_INPUT_ARGS } from "./exec.ts"
+import { execFileEffect, MEDIA_INPUT_ARGS } from "./exec.ts"
 import { fsEffect, resolveMediaPathEffect } from "./paths.ts"
 
-const ffmpeg = promisify(execFile)
 const MAX_FRAMES = 6
 const MAX_FRAME_BYTES = 512 * 1024
 const EXTRACTION_TIMEOUT_MS = 30_000
@@ -45,20 +42,8 @@ export function buildMediaFramesTool(roots: readonly string[]): ServerTool {
     annotations: { readOnlyHint: true },
     execute: (args, signal) =>
       Effect.gen(function* () {
+        // The schema bounds the timestamps: one to six, distinct, nonnegative.
         const params = yield* checkArgs("media_frames", FRAMES_INPUT, args)
-        const times = params.timestampsSeconds
-        yield* toolCheck(() => {
-          if (
-            times.length < 1 ||
-            times.length > MAX_FRAMES ||
-            new Set(times).size !== times.length ||
-            times.some((time) => !Number.isFinite(time) || time < 0)
-          ) {
-            throw new Error(
-              `request one to ${MAX_FRAMES} distinct, finite, nonnegative timestamps`,
-            )
-          }
-        })
         const target = yield* resolveMediaPathEffect(params.path, roots)
         const info = yield* fsEffect(() => stat(target))
         if (!info.isFile()) {
@@ -66,7 +51,7 @@ export function buildMediaFramesTool(roots: readonly string[]): ServerTool {
             new ToolError({ message: "media_frames requires a regular file" }),
           )
         }
-        const frames = yield* Effect.forEach(times, (time) =>
+        const frames = yield* Effect.forEach(params.timestampsSeconds, (time) =>
           extractFrame(target, time, signal),
         ).pipe(
           Effect.timeoutOrElse({
@@ -102,63 +87,55 @@ function extractFrame(
   time: number,
   signal: AbortSignal,
 ): Effect.Effect<{ time: number; data: string }, ToolError> {
-  return Effect.gen(function* () {
-    const frame = yield* Effect.tryPromise({
-      try: (fiberSignal) =>
-        ffmpeg(
-          "ffmpeg",
-          [
-            "-nostdin",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            ...MEDIA_INPUT_ARGS,
-            "-threads",
-            "1",
-            "-ss",
-            String(time),
-            "-i",
-            target,
-            "-map",
-            "0:V:0",
-            "-frames:v",
-            "1",
-            "-an",
-            "-sn",
-            "-dn",
-            "-vf",
-            "scale=w='min(960,iw)':h='min(960,ih)':force_original_aspect_ratio=decrease,setsar=1",
-            "-threads",
-            "1",
-            "-filter_threads",
-            "1",
-            "-c:v",
-            "mjpeg",
-            "-pix_fmt",
-            "yuvj420p",
-            "-q:v",
-            "5",
-            "-f",
-            "image2pipe",
-            "pipe:1",
-          ],
-          {
-            encoding: "buffer",
-            maxBuffer: MAX_FRAME_BYTES,
-            timeout: EXTRACTION_TIMEOUT_MS,
-            signal: AbortSignal.any([fiberSignal, signal]),
-          },
-        ),
-      catch: (error) =>
-        new ToolError({
-          message: error instanceof Error ? error.message : String(error),
-        }),
-    })
-    if (frame.stdout.length === 0) {
-      return yield* Effect.fail(
-        new ToolError({ message: `no video frame at ${time} seconds` }),
-      )
-    }
-    return { time, data: frame.stdout.toString("base64") }
-  })
+  return execFileEffect(
+    "ffmpeg",
+    [
+      "-nostdin",
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      ...MEDIA_INPUT_ARGS,
+      "-threads",
+      "1",
+      "-ss",
+      String(time),
+      "-i",
+      target,
+      "-map",
+      "0:V:0",
+      "-frames:v",
+      "1",
+      "-an",
+      "-sn",
+      "-dn",
+      "-vf",
+      "scale=w='min(960,iw)':h='min(960,ih)':force_original_aspect_ratio=decrease,setsar=1",
+      "-threads",
+      "1",
+      "-filter_threads",
+      "1",
+      "-c:v",
+      "mjpeg",
+      "-pix_fmt",
+      "yuvj420p",
+      "-q:v",
+      "5",
+      "-f",
+      "image2pipe",
+      "pipe:1",
+    ],
+    {
+      signal,
+      timeoutMs: EXTRACTION_TIMEOUT_MS,
+      maxBufferBytes: MAX_FRAME_BYTES,
+    },
+  ).pipe(
+    Effect.flatMap((frame) =>
+      frame.length === 0
+        ? Effect.fail(
+            new ToolError({ message: `no video frame at ${time} seconds` }),
+          )
+        : Effect.succeed({ time, data: frame.toString("base64") }),
+    ),
+  )
 }

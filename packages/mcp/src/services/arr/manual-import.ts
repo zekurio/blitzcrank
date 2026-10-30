@@ -87,7 +87,7 @@ export function compactCandidate(candidate: JsonObject): JsonObject {
  * list of reasons that can be read. An empty list is the only answer that
  * means it rejects nothing.
  */
-export function rejectionReasons(candidate: JsonObject): string[] | undefined {
+function rejectionReasons(candidate: JsonObject): string[] | undefined {
   const rejections = candidate.rejections
   if (!Array.isArray(rejections)) return undefined
   const reasons = rejections.flatMap((rejection) =>
@@ -116,7 +116,7 @@ function requireKnownRejections(
       )
 }
 
-export interface CandidateMatch {
+interface CandidateMatch {
   path: string
   candidate: JsonObject
 }
@@ -202,7 +202,7 @@ export function candidateFile(
  * What a downloaded-files scan of `path` would consider. Fails when the Arr
  * sees nothing importable there, which is also how a wrong path shows up.
  */
-export function scanCandidates(
+function scanCandidates(
   arr: Arr,
   path: string,
   signal: Signal,

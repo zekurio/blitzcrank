@@ -135,8 +135,8 @@ export interface GatewayHost {
   runtime: ModelRuntime
   /** The configured language, for the lines a gateway posts itself. */
   language: string
-  /** The helper model, when `BLITZCRANK_HELPER_MODEL` names one. */
-  helper: Helper | undefined
+  /** The helper model, for small text jobs such as naming a thread. */
+  helper: Helper
 }
 
 /** A gateway's endpoint at `POST /webhook/<name>`, for a platform that calls the host. */

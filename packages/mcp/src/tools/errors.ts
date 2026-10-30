@@ -1,6 +1,11 @@
 import { Data, Effect } from "effect"
 
-import { HttpRequestError, type JsonRequestError } from "../http.ts"
+import {
+  HttpRequestError,
+  type JsonRequestError,
+  type JsonValue,
+} from "../http.ts"
+import { isJsonObject, type JsonObject } from "../json.ts"
 
 export class ToolError extends Data.TaggedError("ToolError")<{
   message: string
@@ -20,6 +25,28 @@ export type ToolFailure = ToolError | JsonRequestError
 
 export function toolFail(message: string): Effect.Effect<never, ToolError> {
   return Effect.fail(new ToolError({ message }))
+}
+
+/** One record by path. A 404 is the service saying the id does not exist. */
+export function requireRecord(
+  service: string,
+  what: string,
+  request: Effect.Effect<JsonValue | undefined, JsonRequestError>,
+): Effect.Effect<JsonObject, ToolFailure> {
+  return request.pipe(
+    Effect.catchTag(
+      "HttpError",
+      (error): Effect.Effect<never, ToolFailure> =>
+        error.status === 404
+          ? toolFail(`${service} has no ${what}`)
+          : Effect.fail(error),
+    ),
+    Effect.flatMap((value) =>
+      isJsonObject(value)
+        ? Effect.succeed(value)
+        : toolFail(`${service} returned no record for ${what}`),
+    ),
+  )
 }
 
 /** Keeps a synchronous guard that throws in the typed failure channel. */

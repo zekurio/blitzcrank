@@ -8,6 +8,7 @@ import {
 } from "../gateway.ts"
 import type { Helper } from "../helper.ts"
 import { errorKind, logEvent } from "../log.ts"
+import type { ChatConfig } from "./chat-config.ts"
 import { threadNameEffect } from "./chat-title.ts"
 import {
   mentionsBot,
@@ -15,7 +16,6 @@ import {
   type ChatArrival,
   type ChatChannel,
   type ChatClient,
-  type ChatConfig,
   type ChatError,
   type ChatPlatform,
 } from "./chat.ts"
@@ -232,8 +232,8 @@ export function admitEffect(
 
     const accepted = yield* acceptedEffect(message, text, mentioned, deps)
     if (accepted) {
-      const name = yield* threadNameEffect(deps.helper, deps.platform, text)
-      yield* openEffect(message, text, name, guild, admin, deps)
+      const title = yield* threadNameEffect(deps.helper, deps.platform, text)
+      yield* openEffect(message, text, title, guild, admin, deps)
       return
     }
     // Fluxer has no `fail_if_not_exists`: a mention deleted since fails the
@@ -329,7 +329,7 @@ function failureFields(platform: ChatPlatform, error: unknown) {
 function openEffect(
   message: ChatArrival,
   text: string,
-  name: string,
+  title: string,
   guild: string,
   admin: boolean,
   deps: AdmissionDeps,
@@ -338,7 +338,7 @@ function openEffect(
     const opened = yield* deps.client.startThreadEffect(
       message.channelId,
       message.id,
-      name,
+      title,
     )
     deps.places.remember(opened.id, message.channelId)
     const thread: ThreadRef = { gateway: deps.platform.name, id: opened.id }
@@ -346,7 +346,7 @@ function openEffect(
       thread,
       type: "MESSAGE_CREATE",
       reply: false,
-      title: name,
+      title,
       text,
       admin,
       source: {

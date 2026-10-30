@@ -1,39 +1,26 @@
 import { Deferred, Effect, FiberSet, type Scope } from "effect"
 
-import { outOfScopeMessage } from "../../agent/notices.ts"
-import type { Gateway, GatewayHost } from "../../gateway.ts"
+import type { Gateway, GatewayHost, Intake } from "../../gateway.ts"
 import { logEvent } from "../../log.ts"
-import { admitEffect, Places, type AdmissionDeps } from "../chat-admission.ts"
-import { createChatGateway } from "../chat-gateway.ts"
-import { chatHelper } from "../chat-title.ts"
-import {
-  chatClient,
-  type ChatArrival,
-  type ChatChannel,
-  type ChatClient,
-  type ChatError,
-  type ChatMessage,
-  type ChatPlatform,
-  type MessageKind,
+import { loadChatConfig, type ChatConfig } from "../chat-config.ts"
+import { createChatGateway, type Admitter } from "../chat-gateway.ts"
+import type {
+  ChatArrival,
+  ChatClient,
+  ChatError,
+  ChatPlatform,
 } from "../chat.ts"
-import { createTriage } from "../triage.ts"
 import { StartupAudit } from "./audit.ts"
 import {
+  chatMessage,
   connectSocketEffect,
   discoverEffect,
   FluxerClient,
   FluxerError,
+  THREAD_TYPES,
   type Dispatch,
 } from "./client.ts"
-import type { FluxerConfig } from "./config.ts"
-import {
-  ChannelType,
-  decode,
-  MessageCreate,
-  MessageType,
-  type Channel,
-  type Message,
-} from "./types.ts"
+import { decode, MessageCreate } from "./types.ts"
 
 const PLATFORM: ChatPlatform = {
   name: "fluxer",
@@ -41,6 +28,46 @@ const PLATFORM: ChatPlatform = {
   /** What a bot may post in one Fluxer message, at the least. */
   maxContent: 4_000,
   isError: (error): error is ChatError => error instanceof FluxerError,
+}
+
+export interface FluxerConfig extends ChatConfig {
+  /**
+   * The instance's web origin, such as https://fluxer.app, with no trailing
+   * slash. Its discovery document names the API and gateway endpoints.
+   */
+  instance: string
+}
+
+export function loadFluxerConfig(): FluxerConfig {
+  return { instance: instanceOrigin(), ...loadChatConfig(PLATFORM) }
+}
+
+/**
+ * Only an origin: discovery lives at its root, and everything else comes
+ * from there. The value is not echoed, since a URL can carry a password.
+ */
+function instanceOrigin(): string {
+  const value = process.env.FLUXER_INSTANCE_URL?.trim()
+  if (!value) {
+    throw new Error(
+      "FLUXER_INSTANCE_URL is required, e.g. https://fluxer.app or https://chat.example.com",
+    )
+  }
+  const url = URL.parse(value)
+  if (
+    url === null ||
+    (url.protocol !== "https:" && url.protocol !== "http:") ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.pathname !== "/" ||
+    url.search !== "" ||
+    url.hash !== ""
+  ) {
+    throw new Error(
+      "FLUXER_INSTANCE_URL must be an http(s) origin with no path, query, or credentials, e.g. https://fluxer.app",
+    )
+  }
+  return url.origin
 }
 
 /** How long the guild burst after READY may take. */
@@ -51,18 +78,6 @@ const AUDIT_EVENTS: ReadonlySet<string> = new Set([
   "READY",
   "GUILD_CREATE",
   "GUILD_DELETE",
-])
-
-const THREAD_TYPES: ReadonlySet<number> = new Set([
-  ChannelType.AnnouncementThread,
-  ChannelType.PublicThread,
-  ChannelType.PrivateThread,
-])
-
-const MESSAGE_KINDS: ReadonlyMap<number, MessageKind> = new Map([
-  [MessageType.Default, "default"],
-  [MessageType.Reply, "reply"],
-  [MessageType.ThreadStarterMessage, "thread_starter"],
 ])
 
 /**
@@ -76,23 +91,22 @@ export function createFluxerGateway(
   config: FluxerConfig,
   host: GatewayHost,
 ): Gateway {
-  const triage = createTriage(host.runtime, config.triageModel, {
-    setting: "FLUXER_TRIAGE_MODEL",
-    platform: PLATFORM.title,
-  })
-  const helper = chatHelper(host, PLATFORM)
-  const denial = outOfScopeMessage(host.language)
   // Listening completes this once discovery and the token check pass.
   const client = Deferred.makeUnsafe<ChatClient>()
-  return createChatGateway(PLATFORM, config, Deferred.await(client), (intake) =>
-    listenEffect(config, client, { triage, helper, denial, intake }),
+  return createChatGateway(
+    PLATFORM,
+    config,
+    host,
+    Deferred.await(client),
+    (intake, admitter) => listenEffect(config, client, intake, admitter),
   )
 }
 
 function listenEffect(
   config: FluxerConfig,
   client: Deferred.Deferred<ChatClient>,
-  deps: Pick<AdmissionDeps, "triage" | "helper" | "denial" | "intake">,
+  intake: Intake,
+  admitter: Admitter,
 ): Effect.Effect<void, unknown, Scope.Scope> {
   return Effect.gen(function* () {
     const endpoints = yield* discoverEffect(config.instance).pipe(
@@ -118,17 +132,9 @@ function listenEffect(
             ),
         ),
       )
-    const chat = chatClient(fluxer, chatMessage, chatChannel)
-    yield* Deferred.succeed(client, chat)
+    yield* Deferred.succeed(client, fluxer)
     const botId = application.id
-    const admission: AdmissionDeps = {
-      ...deps,
-      platform: PLATFORM,
-      config,
-      client: chat,
-      botId,
-      places: new Places(chat, config.channels, botId),
-    }
+    const admit = admitter(fluxer, botId)
     // Made before the socket, so closing the scope stops the socket first
     // and then interrupts admissions in flight, except one that is opening a
     // thread, which finishes.
@@ -160,12 +166,12 @@ function listenEffect(
         )
         return
       }
-      run(admitEffect(chatArrival(message), admission))
+      run(admit(chatArrival(message)))
     }
     // Succeeds once READY reached the audit; the guild burst follows it. A
     // socket Fluxer closes for good after that stops the host.
     yield* connectSocketEffect(endpoints, config.token, onDispatch, (error) =>
-      deps.intake.lost(error),
+      intake.lost(error),
     )
     const guilds = yield* Deferred.await(audited).pipe(
       Effect.timeoutOrElse({
@@ -190,30 +196,5 @@ function chatArrival(message: MessageCreate): ChatArrival {
     inThread: THREAD_TYPES.has(message.channel_type),
     guildId: message.guild_id,
     member: message.member,
-  }
-}
-
-function chatMessage(message: Message): ChatMessage {
-  return {
-    id: message.id,
-    author: message.author,
-    // Null on the starter message Fluxer builds for a thread.
-    webhook: typeof message.webhook_id === "string",
-    kind: MESSAGE_KINDS.get(message.type) ?? "other",
-    content: message.content,
-    mentions: message.mentions,
-    timestamp: message.timestamp,
-    referenced: message.referenced_message
-      ? chatMessage(message.referenced_message)
-      : undefined,
-  }
-}
-
-function chatChannel(channel: Channel): ChatChannel {
-  return {
-    thread: THREAD_TYPES.has(channel.type),
-    guildId: channel.guild_id,
-    parentId: channel.parent_id ?? undefined,
-    ownerId: channel.owner_id ?? undefined,
   }
 }

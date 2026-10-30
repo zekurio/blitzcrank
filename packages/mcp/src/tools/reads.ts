@@ -15,7 +15,7 @@ import {
 /** The host gives one tool call 180 s, so a read has to answer first. */
 const READ_DEADLINE_MS = 150_000
 
-export interface ResourceSpec<P extends TObject> {
+interface ResourceSpec<P extends TObject> {
   description: string
   params: P
   run: (
@@ -24,7 +24,7 @@ export interface ResourceSpec<P extends TObject> {
   ) => Effect.Effect<JsonObject, ToolFailure>
 }
 
-export interface Resource {
+interface Resource {
   description: string
   params: TObject
   run: (

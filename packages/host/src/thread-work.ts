@@ -16,19 +16,10 @@ interface ThreadJob {
   runsAhead: number
 }
 
-interface PendingRun {
-  job: Job<ThreadJob>
-  key: string
-  status: Fiber.Fiber<Marker, unknown>
-}
-
 /** Admission, ordering, and recovery of runs, for every gateway's threads. */
 export class ThreadWork {
   readonly queue: ThreadQueue
 
-  /** The job each busy thread is running. A thread has one at most. */
-  private readonly active = new Map<string, string>()
-  private readonly pending = new Set<PendingRun>()
   private readonly transitions = Semaphore.makeUnsafe(1)
 
   constructor(
@@ -140,11 +131,15 @@ export class ThreadWork {
     })
   }
 
+  /**
+   * Queues a job on its thread. The journal starts it only while it is
+   * unfinished, so a job admitted twice still runs once.
+   */
   private admit(job: Job<ThreadJob>): void {
     if (job.status !== "queued" && job.status !== "running") return
-    if ([...this.pending].some((pending) => pending.job.id === job.id)) return
-    if ([...this.active.values()].includes(job.id)) return
-    const { event, runsAhead } = job.payload
+    const event = job.payload.event
+    const runsAhead = job.payload.runsAhead
+    // Posts while the run waits for its turn, which joins it first.
     const status = Effect.runFork(
       this.jobs.actionEffect(
         job.id,
@@ -161,46 +156,34 @@ export class ThreadWork {
       trigger: event.type,
       runsAhead,
     })
-    const pending: PendingRun = { job, key, status }
-    this.pending.add(pending)
-    this.jobs.enqueue(this.queue.lane(key), job, () =>
-      this.run(event, pending).pipe(
-        Effect.ensuring(Effect.sync(() => this.pending.delete(pending))),
-      ),
+    this.queue.enqueueEffect(key, () =>
+      this.jobs.runEffect(job.id, () => this.run(job, key, status)),
     )
   }
 
   private run(
-    event: Inbound,
-    pending: PendingRun,
+    job: Job<ThreadJob>,
+    key: string,
+    status: Fiber.Fiber<Marker, unknown>,
   ): Effect.Effect<void, unknown> {
     return Effect.gen({ self: this }, function* () {
       const started = performance.now()
       logEvent("run.started", {
-        runId: pending.job.id,
-        thread: pending.key,
-        queueMs: Date.now() - pending.job.createdAt,
+        runId: job.id,
+        thread: key,
+        queueMs: Date.now() - job.createdAt,
       })
       return yield* Effect.gen({ self: this }, function* () {
-        const status = yield* Fiber.join(pending.status)
-        this.pending.delete(pending)
-        this.active.set(pending.key, pending.job.id)
-        yield* this.runner.runEffect(event, status, pending.job.id).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (this.active.get(pending.key) === pending.job.id)
-                this.active.delete(pending.key)
-            }),
-          ),
-        )
+        const marker = yield* Fiber.join(status)
+        yield* this.runner.runEffect(job.payload.event, marker, job.id)
       }).pipe(
         Effect.onExit((exit) =>
           Effect.sync(() => {
             logEvent(
               "run.finished",
               {
-                runId: pending.job.id,
-                thread: pending.key,
+                runId: job.id,
+                thread: key,
                 status: Exit.isSuccess(exit) ? "completed" : "failed",
                 durationMs: Math.round(performance.now() - started),
                 ...(Exit.isFailure(exit)

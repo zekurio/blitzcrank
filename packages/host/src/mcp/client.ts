@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises"
+import { readFileSync } from "node:fs"
 
 import {
   McpAuthRequiredError,
@@ -18,6 +18,13 @@ import { errorKind, logEvent } from "../log.ts"
  * for review, so the server's own limits have to fire first.
  */
 const CALL_TIMEOUT_MS = 180_000
+
+/** The package root holds package.json next to dist/ and src/ alike. */
+const VERSION = (
+  JSON.parse(
+    readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
+  ) as { version: string }
+).version
 
 export class McpConnectError extends Data.TaggedError("McpConnectError")<{
   message: string
@@ -64,14 +71,7 @@ async function connect(
   run: { runId: string; thread: string } | undefined,
   signal: AbortSignal,
 ): Promise<McpConnection> {
-  // The package root holds package.json next to dist/ and src/ alike.
-  const manifest = JSON.parse(
-    await readFile(new URL("../../package.json", import.meta.url), "utf8"),
-  ) as { version: string }
-  const client = new McpClient({
-    name: "blitzcrank",
-    version: manifest.version,
-  })
+  const client = new McpClient({ name: "blitzcrank", version: VERSION })
   await client.connect(
     new StreamableHttpTransport({
       url: config.url,

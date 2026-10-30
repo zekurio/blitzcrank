@@ -8,7 +8,7 @@ const LIST_HEADROOM_CHARS = 2_000
 /** What one part of a write's outcome holds before it is cut. */
 export const MAX_OUTCOME_PART_CHARS = 12_000
 
-export function toText(data: JsonValue | undefined): string {
+function toText(data: JsonValue | undefined): string {
   const text = typeof data === "string" ? data : JSON.stringify(data)
   if (text === undefined) return "null"
   if (text.length <= MAX_RESULT_CHARS) return text

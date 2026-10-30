@@ -11,7 +11,7 @@ export class HttpError extends Data.TaggedError("HttpError")<{
   }
 }
 
-/** SABnzbd authenticates in the query string; never echo the key to the model. */
+/** A key in the query string never reaches the model or a log. */
 function redactUrl(url: string): string {
   return url.replace(/([?&](?:apikey|api_key|token)=)[^&]*/gi, "$1***")
 }
@@ -66,7 +66,7 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue | undefined }
 
-/** No retries: even GET can mutate state in SABnzbd. */
+/** No retries: a repeated write can post twice. */
 export function jsonRequestEffect<T = JsonValue>(
   baseUrl: string,
   path: string,

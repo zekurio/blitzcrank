@@ -1,5 +1,3 @@
-import { stat } from "node:fs/promises"
-
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent"
 import { Cause, Effect, Fiber, Queue } from "effect"
 
@@ -16,7 +14,7 @@ import {
 import { JobStore } from "../jobs.ts"
 import { errorKind, logEvent } from "../log.ts"
 import { connectMcpEffect } from "../mcp/client.ts"
-import { storageIO } from "../storage.ts"
+import { isFileEffect } from "../storage.ts"
 import { buildRunTools, type SessionFileRef } from "../tools/index.ts"
 import { buildWebProvider } from "../web/index.ts"
 import { SdkError } from "./effect.ts"
@@ -37,13 +35,12 @@ export class ThreadRunner {
   constructor(
     private readonly config: Config,
     private readonly modelRuntime: ModelRuntime,
-    private readonly modelSpec: string,
     private readonly jobs: JobStore,
     private readonly threads: Threads,
   ) {}
 
   get anchor(): string {
-    return modelAnchor(this.modelSpec)
+    return modelAnchor(this.config.model)
   }
 
   /**
@@ -97,10 +94,7 @@ export class ThreadRunner {
         const context = yield* channel.contextEffect()
         const sessionFileRef: SessionFileRef = { current: undefined }
         const storageFile = this.threads.sessionFile(thread)
-        const resuming = yield* storageIO(() => stat(storageFile)).pipe(
-          Effect.map((s) => s.isFile()),
-          Effect.catch(() => Effect.succeed(false)),
-        )
+        const resuming = yield* isFileEffect(storageFile)
 
         // One connection per run, closed with the scope below. A server that
         // is down fails the run here, before the model is ever asked.
@@ -110,7 +104,7 @@ export class ThreadRunner {
         })
         const web = buildWebProvider(this.config.web)
         const runTools = buildRunTools({
-          modelInput: resolveModel(this.modelRuntime, this.modelSpec).input,
+          modelInput: resolveModel(this.modelRuntime, this.config.model).input,
           mcp,
           history: this.threads.sessionsDir(thread),
           sessionFileRef,
@@ -125,7 +119,7 @@ export class ThreadRunner {
         )
         const turn = yield* runAgentTurnEffect({
           modelRuntime: this.modelRuntime,
-          modelSpec: this.modelSpec,
+          modelSpec: this.config.model,
           systemPrompt: buildSystemPrompt({
             brief: channel.brief,
             language: this.config.language,
@@ -183,7 +177,7 @@ export class ThreadRunner {
             reply
               ? {
                   text: reply,
-                  signature: usageAnchor(this.modelSpec, turn.usage),
+                  signature: usageAnchor(this.config.model, turn.usage),
                   kind: "reply",
                   usage: turn.usage,
                 }
@@ -245,16 +239,13 @@ export class ThreadRunner {
       const began = actions.some(
         (action) => action.key === "prompt" && action.completed,
       )
-      const exists = yield* storageIO(() => stat(storageFile)).pipe(
-        Effect.map((file) => file.isFile()),
-        Effect.catch(() => Effect.succeed(false)),
-      )
+      const exists = yield* isFileEffect(storageFile)
       // An aborted turn opens the conversation only to abort what this job
       // left pending, so the thread's next run does not find it.
       if (began && exists)
         yield* runAgentTurnEffect({
           modelRuntime: this.modelRuntime,
-          modelSpec: this.modelSpec,
+          modelSpec: this.config.model,
           storageFile,
           requestId,
           systemPrompt: "This host job was cancelled. Do not execute work.",

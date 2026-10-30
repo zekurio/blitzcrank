@@ -111,8 +111,10 @@ export const historyRead = (arr: Arr) => {
           )
         }
         if (itemId !== undefined) {
+          // This endpoint filters by event name. One that ignores the filter
+          // returns the whole history, so the records are matched again.
           const all = yield* arrList(arr, arr.itemHistoryPath, {
-            query: { [arr.itemKey]: itemId },
+            query: { [arr.itemKey]: itemId, eventType },
             signal,
           })
           const matching = all.filter(

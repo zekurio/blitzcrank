@@ -1,14 +1,22 @@
 import {
   API,
+  ChannelType,
+  MessageType,
   ThreadAutoArchiveDuration,
   type APIChannel,
-  type APIGuildMember,
   type APIMessage,
   type APIUser,
-  type RESTPostAPIChannelThreadsResult,
 } from "@discordjs/core"
 import { DiscordAPIError, HTTPError, REST } from "@discordjs/rest"
 import { Data, Effect } from "effect"
+
+import type {
+  ChatChannel,
+  ChatClient,
+  ChatMember,
+  ChatMessage,
+  MessageKind,
+} from "../chat.ts"
 
 export class DiscordError extends Data.TaggedError("DiscordError")<{
   /** HTTP status, when Discord answered. */
@@ -21,11 +29,23 @@ export class DiscordError extends Data.TaggedError("DiscordError")<{
 /** No post may ping anyone, whatever the text says. */
 const NO_PINGS = { parse: [], replied_user: false }
 
+export const THREAD_TYPES: ReadonlySet<ChannelType> = new Set([
+  ChannelType.PublicThread,
+  ChannelType.PrivateThread,
+  ChannelType.AnnouncementThread,
+])
+
+const MESSAGE_KINDS: ReadonlyMap<MessageType, MessageKind> = new Map([
+  [MessageType.Default, "default"],
+  [MessageType.Reply, "reply"],
+  [MessageType.ThreadStarterMessage, "thread_starter"],
+])
+
 /**
  * The gateway's REST access to Discord. It exists from startup, before the
  * socket opens and after it closes, so recovery and draining runs can use it.
  */
-export class DiscordClient {
+export class DiscordClient implements ChatClient {
   readonly rest: REST
   private readonly api: API
 
@@ -39,15 +59,16 @@ export class DiscordClient {
     return call((signal) => this.api.users.getCurrent({ signal }))
   }
 
-  channelEffect(channelId: string): Effect.Effect<APIChannel, DiscordError> {
-    return call((signal) => this.api.channels.get(channelId, { signal }))
+  channelEffect(channelId: string): Effect.Effect<ChatChannel, DiscordError> {
+    return call((signal) => this.api.channels.get(channelId, { signal })).pipe(
+      Effect.map(chatChannel),
+    )
   }
 
-  /** The member, or `undefined` once they have left the guild. */
   memberEffect(
     guildId: string,
     userId: string,
-  ): Effect.Effect<APIGuildMember | undefined, DiscordError> {
+  ): Effect.Effect<ChatMember | undefined, DiscordError> {
     return call((signal) =>
       this.api.guilds.getMember(guildId, userId, { signal }),
     ).pipe(
@@ -58,21 +79,20 @@ export class DiscordClient {
     )
   }
 
-  /** Newest first, as Discord returns them. */
   recentMessagesEffect(
     channelId: string,
     limit: number,
-  ): Effect.Effect<APIMessage[], DiscordError> {
+  ): Effect.Effect<ChatMessage[], DiscordError> {
     return call((signal) =>
       this.api.channels.getMessages(channelId, { limit }, { signal }),
-    )
+    ).pipe(Effect.map((messages) => messages.map(chatMessage)))
   }
 
   startThreadEffect(
     channelId: string,
     messageId: string,
     name: string,
-  ): Effect.Effect<RESTPostAPIChannelThreadsResult, DiscordError> {
+  ): Effect.Effect<{ id: string }, DiscordError> {
     return call((signal) =>
       this.api.channels.createThread(
         channelId,
@@ -83,7 +103,6 @@ export class DiscordClient {
     )
   }
 
-  /** Discord answers the same for someone who is a member already. */
   addThreadMemberEffect(
     threadId: string,
     userId: string,
@@ -97,7 +116,7 @@ export class DiscordClient {
     channelId: string,
     content: string,
     replyTo?: string,
-  ): Effect.Effect<APIMessage, DiscordError> {
+  ): Effect.Effect<{ id: string }, DiscordError> {
     return call((signal) =>
       this.api.channels.createMessage(
         channelId,
@@ -122,7 +141,7 @@ export class DiscordClient {
     channelId: string,
     messageId: string,
     content: string,
-  ): Effect.Effect<APIMessage, DiscordError> {
+  ): Effect.Effect<void, DiscordError> {
     return call((signal) =>
       this.api.channels.editMessage(
         channelId,
@@ -130,10 +149,9 @@ export class DiscordClient {
         { content, allowed_mentions: NO_PINGS },
         { signal },
       ),
-    )
+    ).pipe(Effect.asVoid)
   }
 
-  /** A message that is already gone counts as deleted. */
   deleteEffect(
     channelId: string,
     messageId: string,
@@ -146,6 +164,31 @@ export class DiscordClient {
         () => Effect.void,
       ),
     )
+  }
+}
+
+export function chatMessage(message: APIMessage): ChatMessage {
+  return {
+    id: message.id,
+    author: message.author,
+    webhook: message.webhook_id !== undefined,
+    kind: MESSAGE_KINDS.get(message.type) ?? "other",
+    content: message.content,
+    mentions: message.mentions,
+    timestamp: message.timestamp,
+    referenced: message.referenced_message
+      ? chatMessage(message.referenced_message)
+      : undefined,
+  }
+}
+
+function chatChannel(channel: APIChannel): ChatChannel {
+  return {
+    thread: THREAD_TYPES.has(channel.type),
+    guildId: "guild_id" in channel ? channel.guild_id : undefined,
+    parentId:
+      "parent_id" in channel ? (channel.parent_id ?? undefined) : undefined,
+    ownerId: "owner_id" in channel ? channel.owner_id : undefined,
   }
 }
 

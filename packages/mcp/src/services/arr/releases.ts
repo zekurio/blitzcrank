@@ -50,7 +50,7 @@ const SEARCH_HEALTH_CHECKS: ReadonlySet<string> = new Set([
   "IndexerJackettAllCheck",
 ])
 
-export interface ReleaseFilters {
+interface ReleaseFilters {
   publishedAfter?: string | undefined
   titleContains?: string | undefined
   approvedOnly?: boolean | undefined

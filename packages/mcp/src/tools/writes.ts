@@ -43,7 +43,7 @@ export interface Resolved<S> {
   warnings: string[]
 }
 
-export interface ActionSpec<P extends TObject, S> {
+interface ActionSpec<P extends TObject, S> {
   description: string
   params: P
   /** Per-service record key, derived from validated params without I/O. */
@@ -65,7 +65,7 @@ export interface ActionSpec<P extends TObject, S> {
   ) => Effect.Effect<JsonValue, ToolFailure>
 }
 
-export interface Action {
+interface Action {
   description: string
   params: TObject
   lock: (params: JsonObject) => string | undefined

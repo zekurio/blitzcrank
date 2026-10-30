@@ -13,9 +13,17 @@ import {
   isString,
   type JsonObject,
 } from "../../json.ts"
-import { toolCheck, toolFail, type ToolFailure } from "../../tools/errors.ts"
+import {
+  requireRecord,
+  toolCheck,
+  toolFail,
+  type ToolFailure,
+} from "../../tools/errors.ts"
 
-export const ITEM_FIELDS = "MediaSources,Path,ProviderIds"
+/** What identifies an item beyond the fields Jellyfin always sends. */
+export const LIST_FIELDS = "Path,ProviderIds"
+/** Identity plus every media source and stream, which cost the most. */
+export const MEDIA_FIELDS = "MediaSources,Path,ProviderIds"
 
 /**
  * Jellyfin 12 rejects the legacy X-Emby-Token header with HTTP 401 and
@@ -32,16 +40,21 @@ export function jellyfinRequest(
   })
 }
 
-/** An `/Items` query. Bare `GET /Items/{id}` answers 400 without a user. */
+/**
+ * An `/Items` query. Bare `GET /Items/{id}` answers 400 without a user. No
+ * tool shows image tags, so Jellyfin is spared looking them up.
+ */
 export function queryItems(
   cfg: ServiceConfig,
   query: NonNullable<JsonRequestOptions["query"]>,
   signal: Signal,
   timeoutMs?: number,
 ): Effect.Effect<{ items: JsonObject[]; total: number }, ToolFailure> {
-  return jellyfinRequest(cfg, "/Items", { query, signal, timeoutMs }).pipe(
-    Effect.flatMap((response) => toolCheck(() => itemPage(response))),
-  )
+  return jellyfinRequest(cfg, "/Items", {
+    query: { ...query, EnableImages: false },
+    signal,
+    timeoutMs,
+  }).pipe(Effect.flatMap((response) => toolCheck(() => itemPage(response))))
 }
 
 /**
@@ -100,7 +113,10 @@ export function readItems(
   )
 }
 
-/** One item, read without a user, so a miss is an item that does not exist. */
+/**
+ * One item, read without a user, so a miss is an item that does not exist.
+ * Its media sources only when `fields` asks for them.
+ */
 export function readItem(
   cfg: ServiceConfig,
   itemId: string,
@@ -110,7 +126,7 @@ export function readItem(
   return readItems(
     cfg,
     [itemId],
-    opts.fields ?? ITEM_FIELDS,
+    opts.fields ?? LIST_FIELDS,
     signal,
     opts.timeoutMs,
   ).pipe(
@@ -165,14 +181,9 @@ function requireUser(
   userId: string,
   signal: Signal,
 ): Effect.Effect<void, ToolFailure> {
-  return jellyfinRequest(cfg, `/Users/${itemKey(userId)}`, { signal }).pipe(
-    Effect.catchTag(
-      "HttpError",
-      (error): Effect.Effect<never, ToolFailure> =>
-        error.status === 404
-          ? toolFail(`jellyfin has no user ${userId}`)
-          : Effect.fail(error),
-    ),
-    Effect.asVoid,
-  )
+  return requireRecord(
+    "jellyfin",
+    `user ${userId}`,
+    jellyfinRequest(cfg, `/Users/${itemKey(userId)}`, { signal }),
+  ).pipe(Effect.asVoid)
 }

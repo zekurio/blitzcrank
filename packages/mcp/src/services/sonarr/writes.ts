@@ -6,7 +6,12 @@ import { isJsonObject, isNumber, objectField, objectList } from "../../json.ts"
 import { toolCheck, toolFail } from "../../tools/errors.ts"
 import { action, type WriteEffect } from "../../tools/writes.ts"
 import { arrList, arrObject, arrRequest, type Arr } from "../arr/client.ts"
-import { postCommand, verifyCommand, verifyDeleted } from "../arr/commands.ts"
+import {
+  postCommand,
+  runCommandAction,
+  verifyCommand,
+  verifyDeleted,
+} from "../arr/commands.ts"
 import { qualityName, sizeText } from "../arr/compact.ts"
 import {
   candidateFile,
@@ -27,9 +32,11 @@ import { searchCommand, searchParams, searchScope, unaired } from "./search.ts"
 import {
   compactSeries,
   episodeLabel,
+  readEpisodeList,
   readEpisodes,
   readEpisodesById,
   readSeries,
+  SERIES_ID_HELP,
   seriesIdParam,
 } from "./series.ts"
 
@@ -45,12 +52,6 @@ const manualImportFile = Type.Object(
   },
   { additionalProperties: false },
 )
-
-const COMMANDS = [
-  "RefreshSeries",
-  "RescanSeries",
-  "RefreshMonitoredDownloads",
-] as const
 
 export function sonarrActions(arr: Arr) {
   const shared = arrSharedActions(arr)
@@ -125,17 +126,15 @@ export function sonarrActions(arr: Arr) {
       lock: (params) => `series:${params.seriesId}`,
       resolve: (params, signal) =>
         Effect.gen(function* () {
-          const update = seriesMonitoringUpdate(params.seriesId)
           const record = yield* arrRecord(
             yield* readSeries(arr, params.seriesId, signal),
-            update,
+            seriesMonitoringUpdate(params.seriesId),
+          )
+          const body = yield* toolCheck(() =>
+            patchSeriesMonitoring(record, params),
           )
           const effects = yield* toolCheck(() =>
-            seriesMonitoringEffects(
-              params.seriesId,
-              record,
-              patchSeriesMonitoring(record, params),
-            ),
+            seriesMonitoringEffects(params.seriesId, record, body),
           )
           if (effects.length === 0) {
             return yield* toolFail(
@@ -143,7 +142,7 @@ export function sonarrActions(arr: Arr) {
             )
           }
           return {
-            state: { record },
+            state: { body },
             summary: `Change monitoring of ${String(record.title ?? `series ${params.seriesId}`)}: ${effects.length} field(s)`,
             effects,
             warnings: effects.some((effect) => effect.target.includes("season"))
@@ -154,17 +153,14 @@ export function sonarrActions(arr: Arr) {
           }
         }),
       write: (params, state) =>
-        Effect.gen(function* () {
-          const body = yield* toolCheck(() =>
-            patchSeriesMonitoring(state.record, params),
-          )
-          const written = yield* arrRequest(
-            arr,
-            `/api/v3/series/${params.seriesId}`,
-            { method: "PUT", body },
-          )
-          return isJsonObject(written) ? compactSeries(written) : written
-        }),
+        arrRequest(arr, `/api/v3/series/${params.seriesId}`, {
+          method: "PUT",
+          body: state.body,
+        }).pipe(
+          Effect.map((written) =>
+            isJsonObject(written) ? compactSeries(written) : written,
+          ),
+        ),
       verify: (params, _result, state) =>
         Effect.gen(function* () {
           const update = seriesMonitoringUpdate(params.seriesId)
@@ -173,11 +169,7 @@ export function sonarrActions(arr: Arr) {
             update,
           )
           return yield* toolCheck(() =>
-            monitoringReadBack(
-              after,
-              patchSeriesMonitoring(state.record, params),
-              update,
-            ),
+            monitoringReadBack(after, state.body, update),
           )
         }),
     }),
@@ -231,16 +223,20 @@ export function sonarrActions(arr: Arr) {
         }).pipe(
           Effect.map((): JsonValue => ({ updated: params.episodeIds.length })),
         ),
+      // The named episodes existed a moment ago, so one list read serves.
       verify: (params) =>
-        readEpisodesById(arr, params.episodeIds, undefined).pipe(
+        readEpisodeList(arr, params.episodeIds, undefined).pipe(
           Effect.map((episodes): JsonValue => {
-            const flags = episodes.map((episode) => ({
+            const wanted = new Set(params.episodeIds)
+            const named = episodes.filter(
+              (episode) => isNumber(episode.id) && wanted.has(episode.id),
+            )
+            const flags = named.map((episode) => ({
               id: episode.id ?? null,
               monitored: episode.monitored ?? null,
             }))
-            return episodes.every(
-              (episode) => episode.monitored === params.monitored,
-            )
+            return named.length === wanted.size &&
+              named.every((episode) => episode.monitored === params.monitored)
               ? { confirmed: "episode monitoring applied", episodes: flags }
               : {
                   warning: "read-back monitoring differs from the request",
@@ -255,16 +251,21 @@ export function sonarrActions(arr: Arr) {
       params: Type.Object({ episodeFileId: Type.Integer({ minimum: 1 }) }),
       resolve: (params, signal) =>
         Effect.gen(function* () {
-          const file = yield* arrObject(
-            arr,
-            `/api/v3/episodefile/${params.episodeFileId}`,
-            `episode file ${params.episodeFileId}`,
-            signal,
+          const [file, episodes] = yield* Effect.all(
+            [
+              arrObject(
+                arr,
+                `/api/v3/episodefile/${params.episodeFileId}`,
+                `episode file ${params.episodeFileId}`,
+                signal,
+              ),
+              arrList(arr, "/api/v3/episode", {
+                query: { episodeFileId: params.episodeFileId },
+                signal,
+              }),
+            ],
+            { concurrency: "unbounded" },
           )
-          const episodes = yield* arrList(arr, "/api/v3/episode", {
-            query: { episodeFileId: params.episodeFileId },
-            signal,
-          })
           const covered =
             episodes.length > 0
               ? episodes.map(episodeLabel).join(", ")
@@ -333,12 +334,17 @@ export function sonarrActions(arr: Arr) {
             ...new Set(params.files.map((file) => file.seriesId)),
           ]
           const targets = new Map(
-            yield* Effect.forEach(seriesIds, (seriesId) =>
-              Effect.gen(function* () {
-                const series = yield* readSeries(arr, seriesId, signal)
-                const episodes = yield* readEpisodes(arr, seriesId, signal)
-                return [seriesId, { series, episodes }] as const
-              }),
+            yield* Effect.forEach(
+              seriesIds,
+              (seriesId) =>
+                Effect.all(
+                  {
+                    series: readSeries(arr, seriesId, signal),
+                    episodes: readEpisodes(arr, seriesId, signal),
+                  },
+                  { concurrency: "unbounded" },
+                ).pipe(Effect.map((target) => [seriesId, target] as const)),
+              { concurrency: 2 },
             ),
           )
           const effects: WriteEffect[] = []
@@ -390,60 +396,14 @@ export function sonarrActions(arr: Arr) {
       (candidate) =>
         `${String(objectField(candidate, "series")?.title ?? "no series")} ${objectList(candidate.episodes).map(episodeLabel).join(", ") || "no episode"}`,
     ),
-    run_command: action({
+    run_command: runCommandAction(arr, {
       description:
         "Make Sonarr re-read disk or downloader state. RefreshSeries and RescanSeries need seriesId; RefreshMonitoredDownloads covers every download and takes none",
-      params: Type.Object({
-        name: Type.Enum(COMMANDS),
-        seriesId: Type.Optional(seriesIdParam),
-      }),
-      resolve: (params, signal) =>
-        Effect.gen(function* () {
-          if (params.name === "RefreshMonitoredDownloads") {
-            if (params.seriesId !== undefined) {
-              return yield* toolFail(
-                "RefreshMonitoredDownloads covers every download and takes no seriesId",
-              )
-            }
-            return {
-              state: null,
-              summary:
-                "Re-check every monitored download in the download clients",
-              effects: [
-                {
-                  kind: "command",
-                  target: "download clients",
-                  detail: "RefreshMonitoredDownloads",
-                },
-              ],
-              warnings: [],
-            }
-          }
-          if (params.seriesId === undefined) {
-            return yield* toolFail(`${params.name} needs seriesId`)
-          }
-          const series = yield* readSeries(arr, params.seriesId, signal)
-          return {
-            state: null,
-            summary: `${params.name} for ${String(series.title ?? `series ${params.seriesId}`)}`,
-            effects: [
-              {
-                kind: "command",
-                target: `series ${params.seriesId}: ${String(series.title ?? "")}`,
-                detail: `${params.name} over ${String(series.path ?? "its folder")}`,
-              },
-            ],
-            warnings: [],
-          }
-        }),
-      write: (params) =>
-        postCommand(arr, {
-          name: params.name,
-          ...(params.name === "RefreshSeries" || params.name === "RescanSeries"
-            ? { seriesId: params.seriesId }
-            : {}),
-        }),
-      verify: (_params, result) => verifyCommand(arr, result),
+      names: ["RefreshSeries", "RescanSeries"],
+      idHelp: SERIES_ID_HELP,
+      read: (id, signal) => readSeries(arr, id, signal),
+      label: (series) => String(series.title ?? `series ${String(series.id)}`),
+      body: (_name, id) => ({ seriesId: id }),
     }),
   }
 }

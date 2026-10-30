@@ -1,3 +1,5 @@
+import { stat } from "node:fs/promises"
+
 import { Data, Effect } from "effect"
 
 export class StorageError extends Data.TaggedError("StorageError")<{
@@ -24,4 +26,12 @@ export function storageIO<A>(
     try: operation,
     catch: (cause) => new StorageError({ cause }),
   })
+}
+
+/** Whether `file` is a regular file. Anything that stops the check is a no. */
+export function isFileEffect(file: string): Effect.Effect<boolean> {
+  return storageIO(() => stat(file)).pipe(
+    Effect.map((info) => info.isFile()),
+    Effect.orElseSucceed(() => false),
+  )
 }

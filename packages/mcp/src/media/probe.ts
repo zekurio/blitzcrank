@@ -9,7 +9,7 @@ import { toolCheck, ToolError } from "../tools/errors.ts"
 import { checkArgs } from "../tools/params.ts"
 import { jsonResult } from "../tools/results.ts"
 import type { ServerTool } from "../tools/tool.ts"
-import { execFileTextEffect, MEDIA_INPUT_ARGS } from "./exec.ts"
+import { execFileEffect, MEDIA_INPUT_ARGS } from "./exec.ts"
 import {
   fsEffect,
   largestMediaFileEffect,
@@ -73,7 +73,7 @@ export function buildMediaProbeTool(roots: readonly string[]): ServerTool {
         const file = info.isDirectory()
           ? yield* largestMediaFileEffect(target)
           : { path: target, size: info.size }
-        const stdout = yield* execFileTextEffect(
+        const output = yield* execFileEffect(
           FFPROBE,
           [
             "-v",
@@ -86,12 +86,8 @@ export function buildMediaProbeTool(roots: readonly string[]): ServerTool {
             file.path,
           ],
           { maxBufferBytes: 1024 * 1024, signal, timeoutMs: PROBE_TIMEOUT_MS },
-        ).pipe(
-          Effect.mapError(
-            (error) =>
-              new ToolError({ message: `ffprobe failed: ${error.message}` }),
-          ),
         )
+        const stdout = output.toString("utf8")
         const payload = yield* Effect.try({
           // SAFETY: JSON.parse returns only values covered by JsonValue.
           try: () => JSON.parse(stdout) as JsonValue,

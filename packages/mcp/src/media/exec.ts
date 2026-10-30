@@ -1,7 +1,9 @@
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 
-import { Data, Effect } from "effect"
+import { Effect } from "effect"
+
+import { ToolError } from "../tools/errors.ts"
 
 const MAX_ERROR_DETAIL_CHARS = 8_000
 const execFileAsync = promisify(execFile)
@@ -14,60 +16,38 @@ export const MEDIA_INPUT_ARGS = [
   "matroska,webm,mov,mp4,m4a,3gp,3g2,mj2,avi,mpegts,mpeg,asf,flv,ogg",
 ]
 
-/** Carries the helper's exit status alongside its error output. */
-export class ExecError extends Data.TaggedError("ExecError")<{
-  message: string
-  exitCode: number | undefined
-}> {
-  constructor(message: string, exitCode: number | undefined) {
-    super({ message, exitCode })
-  }
-}
-
-export interface ExecFileTextOptions {
-  signal?: AbortSignal | undefined
-  timeoutMs?: number | undefined
-  maxBufferBytes?: number | undefined
-}
-
 /**
- * Runs a local helper binary (ffprobe) and returns stdout.
- * Never uses a shell: arguments are passed as an array, so nothing in a path
- * or id can be interpreted as a command. Failures throw with the tool's own
- * stderr, which pi hands back to the model as a tool error.
+ * Runs a local helper binary (ffprobe, ffmpeg) and returns its stdout. Never
+ * uses a shell: arguments are passed as an array, so nothing in a path or id
+ * can be interpreted as a command. A failure carries the tail of the helper's
+ * own stderr, which the model gets back as the tool error.
  */
-export function execFileTextEffect(
+export function execFileEffect(
   file: string,
   args: string[],
-  opts: ExecFileTextOptions = {},
-): Effect.Effect<string, ExecError> {
+  opts: { signal: AbortSignal; timeoutMs: number; maxBufferBytes: number },
+): Effect.Effect<Buffer, ToolError> {
   return Effect.tryPromise({
     try: async (signal) => {
       const result = await execFileAsync(file, args, {
-        signal: opts.signal ? AbortSignal.any([signal, opts.signal]) : signal,
-        timeout: opts.timeoutMs ?? 10_000,
-        maxBuffer: opts.maxBufferBytes ?? 1024 * 1024,
+        encoding: "buffer",
+        signal: AbortSignal.any([signal, opts.signal]),
+        timeout: opts.timeoutMs,
+        maxBuffer: opts.maxBufferBytes,
       })
       return result.stdout
     },
     catch: (cause) => {
       // Node's promisified execFile adds captured output to its rejection.
-      const error = cause as Error & {
-        code?: number | string
-        stdout?: string
-        stderr?: string
-      }
-      const rawDetail = String(
-        error.stderr || error.stdout || error.message,
-      ).trim()
+      const error = cause as Error & { stderr?: Buffer }
+      const stderr = String(error.stderr ?? "").trim()
       const detail =
-        rawDetail.length <= MAX_ERROR_DETAIL_CHARS
-          ? rawDetail
-          : `... [omitted ${rawDetail.length - MAX_ERROR_DETAIL_CHARS} chars]\n${rawDetail.slice(-MAX_ERROR_DETAIL_CHARS)}`
-      return new ExecError(
-        detail || error.message,
-        typeof error.code === "number" ? error.code : undefined,
-      )
+        stderr.length <= MAX_ERROR_DETAIL_CHARS
+          ? stderr
+          : `... [omitted ${stderr.length - MAX_ERROR_DETAIL_CHARS} chars]\n${stderr.slice(-MAX_ERROR_DETAIL_CHARS)}`
+      return new ToolError({
+        message: `${file} failed: ${detail || error.message}`,
+      })
     },
   })
 }

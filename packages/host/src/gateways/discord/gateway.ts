@@ -1,12 +1,8 @@
 import {
-  ChannelType,
   Client,
   GatewayCloseCodes,
   GatewayDispatchEvents,
   GatewayIntentBits,
-  MessageType,
-  type APIChannel,
-  type APIMessage,
   type GatewayMessageCreateDispatchData,
 } from "@discordjs/core"
 import { WebSocketManager, WebSocketShardEvents } from "@discordjs/ws"
@@ -20,24 +16,17 @@ import {
   type Scope,
 } from "effect"
 
-import { outOfScopeMessage } from "../../agent/notices.ts"
 import type { Gateway, GatewayHost } from "../../gateway.ts"
 import { errorKind, logEvent } from "../../log.ts"
-import { admitEffect, Places, type AdmissionDeps } from "../chat-admission.ts"
-import { createChatGateway } from "../chat-gateway.ts"
-import { chatHelper } from "../chat-title.ts"
+import { loadChatConfig, type ChatConfig } from "../chat-config.ts"
+import { createChatGateway, type Admitter } from "../chat-gateway.ts"
+import type { ChatArrival, ChatError, ChatPlatform } from "../chat.ts"
 import {
-  chatClient,
-  type ChatArrival,
-  type ChatChannel,
-  type ChatError,
-  type ChatMessage,
-  type ChatPlatform,
-  type MessageKind,
-} from "../chat.ts"
-import { createTriage } from "../triage.ts"
-import { DiscordClient, DiscordError } from "./client.ts"
-import type { DiscordConfig } from "./config.ts"
+  chatMessage,
+  DiscordClient,
+  DiscordError,
+  THREAD_TYPES,
+} from "./client.ts"
 
 const PLATFORM: ChatPlatform = {
   name: "discord",
@@ -45,6 +34,10 @@ const PLATFORM: ChatPlatform = {
   /** Discord's limit for a message's content. */
   maxContent: 2_000,
   isError: (error): error is ChatError => error instanceof DiscordError,
+}
+
+export function loadDiscordConfig(): ChatConfig {
+  return loadChatConfig(PLATFORM)
 }
 
 /** Message content needs a privileged intent, set in the developer portal. */
@@ -80,18 +73,6 @@ const FATAL_CLOSES: ReadonlyMap<number, string> = new Map([
   ],
 ])
 
-const THREAD_TYPES: ReadonlySet<ChannelType> = new Set([
-  ChannelType.PublicThread,
-  ChannelType.PrivateThread,
-  ChannelType.AnnouncementThread,
-])
-
-const MESSAGE_KINDS: ReadonlyMap<MessageType, MessageKind> = new Map([
-  [MessageType.Default, "default"],
-  [MessageType.Reply, "reply"],
-  [MessageType.ThreadStarterMessage, "thread_starter"],
-])
-
 /**
  * Discord threads as threads. A member's message in a watched channel opens
  * one when triage accepts it, a later message in it is a follow-up, and the
@@ -99,29 +80,25 @@ const MESSAGE_KINDS: ReadonlyMap<MessageType, MessageKind> = new Map([
  * that brings new messages opens only when the host starts listening.
  */
 export function createDiscordGateway(
-  config: DiscordConfig,
+  config: ChatConfig,
   host: GatewayHost,
 ): Gateway {
   const discord = new DiscordClient(config.token)
-  const client = chatClient(discord, chatMessage, chatChannel)
-  const triage = createTriage(host.runtime, config.triageModel, {
-    setting: "DISCORD_TRIAGE_MODEL",
-    platform: PLATFORM.title,
-  })
-  const helper = chatHelper(host, PLATFORM)
-  const denial = outOfScopeMessage(host.language)
-  return createChatGateway(PLATFORM, config, Effect.succeed(client), (intake) =>
-    listenEffect(config, discord, { client, triage, helper, denial, intake }),
+  return createChatGateway(
+    PLATFORM,
+    config,
+    host,
+    Effect.succeed(discord),
+    (intake, admitter) =>
+      listenEffect(config, discord, (error) => intake.lost(error), admitter),
   )
 }
 
 function listenEffect(
-  config: DiscordConfig,
+  config: ChatConfig,
   discord: DiscordClient,
-  deps: Pick<
-    AdmissionDeps,
-    "client" | "triage" | "helper" | "denial" | "intake"
-  >,
+  lost: (error: Error) => Effect.Effect<void>,
+  admitter: Admitter,
 ): Effect.Effect<void, unknown, Scope.Scope> {
   return Effect.gen(function* () {
     // Also checks the token before the socket opens.
@@ -137,13 +114,7 @@ function listenEffect(
             ),
         ),
       )
-    const admission: AdmissionDeps = {
-      ...deps,
-      platform: PLATFORM,
-      config,
-      botId: me.id,
-      places: new Places(deps.client, config.channels, me.id),
-    }
+    const admit = admitter(discord, me.id)
     const socket = new WebSocketManager({
       token: config.token,
       intents: INTENTS,
@@ -177,12 +148,12 @@ function listenEffect(
       logEvent("discord.socket_dead", { code }, "error")
       const error = new Error(`${reason} (close code ${code})`)
       Deferred.doneUnsafe(closed, Effect.fail(error))
-      run(listening.whenOpen(deps.intake.lost(error)))
+      run(listening.whenOpen(lost(error)))
     })
     const client = new Client({ rest: discord.rest, gateway: socket })
     // Event emitters cannot await. The fiber set owns each admission.
     client.on(GatewayDispatchEvents.MessageCreate, (event) => {
-      run(admitEffect(chatArrival(event.data), admission))
+      run(admit(chatArrival(event.data)))
     })
     yield* Effect.raceFirst(connectEffect(socket), Deferred.await(closed))
     yield* listening.open
@@ -253,30 +224,5 @@ function chatArrival(message: GatewayMessageCreateDispatchData): ChatArrival {
         : THREAD_TYPES.has(message.channel_type),
     guildId: message.guild_id,
     member: message.member,
-  }
-}
-
-function chatMessage(message: APIMessage): ChatMessage {
-  return {
-    id: message.id,
-    author: message.author,
-    webhook: message.webhook_id !== undefined,
-    kind: MESSAGE_KINDS.get(message.type) ?? "other",
-    content: message.content,
-    mentions: message.mentions,
-    timestamp: message.timestamp,
-    referenced: message.referenced_message
-      ? chatMessage(message.referenced_message)
-      : undefined,
-  }
-}
-
-function chatChannel(channel: APIChannel): ChatChannel {
-  return {
-    thread: THREAD_TYPES.has(channel.type),
-    guildId: "guild_id" in channel ? channel.guild_id : undefined,
-    parentId:
-      "parent_id" in channel ? (channel.parent_id ?? undefined) : undefined,
-    ownerId: "owner_id" in channel ? channel.owner_id : undefined,
   }
 }

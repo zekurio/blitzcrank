@@ -153,8 +153,13 @@ export function sabnzbdActions(cfg: ServiceConfig) {
       }),
       resolve: (params, signal) =>
         Effect.gen(function* () {
-          const state = yield* requireJob(cfg, "queue", params.nzoId, signal)
-          const categories = yield* readCategories(cfg, signal)
+          const [state, categories] = yield* Effect.all(
+            [
+              requireJob(cfg, "queue", params.nzoId, signal),
+              readCategories(cfg, signal),
+            ],
+            { concurrency: "unbounded" },
+          )
           if (!categories.includes(params.category)) {
             return yield* toolFail(
               `sabnzbd has no category ${params.category}; it has ${categories.join(", ")}`,

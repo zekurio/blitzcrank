@@ -12,7 +12,7 @@ import {
 import { Effect } from "effect"
 import { Type } from "typebox"
 
-import { textResult, toolCheck } from "./common.js"
+import { textResult, toolCheck } from "./common.ts"
 
 type HistoryMatch = {
   score: number
@@ -23,6 +23,15 @@ type HistoryMatch = {
 const MAX_FILES = 1000
 const MAX_ENTRIES = 500
 const MAX_RECORD_BYTES = 64_000
+/** Transcripts whose modification times are read at once. */
+const STAT_CONCURRENCY = 16
+
+/**
+ * A term SQLite can find in a stored record as it is: printable ASCII, which
+ * its `lower` folds as JavaScript does, with nothing JSON escapes.
+ */
+const PLAIN_TERM = /^[\x21-\x7e]+$/
+const ESCAPED = /["\\]/
 
 /**
  * Exact host-owned locations only, with no recursive discovery. Last written
@@ -39,11 +48,14 @@ function listTranscripts(dir: string) {
       .map((entry) => /^([\w-]{1,64})\.sqlite$/.exec(entry.name)?.[1])
       .filter((id): id is string => id !== undefined)
       .map((id) => path.join(dir, `${id}.sqlite`))
-    const dated = yield* Effect.forEach(files, (file) =>
-      Effect.tryPromise(() => stat(file)).pipe(
-        Effect.map((info) => ({ file, modified: info.mtime })),
-        Effect.catch(() => Effect.succeed(undefined)),
-      ),
+    const dated = yield* Effect.forEach(
+      files,
+      (file) =>
+        Effect.tryPromise(() => stat(file)).pipe(
+          Effect.map((info) => ({ file, modified: info.mtime })),
+          Effect.catch(() => Effect.succeed(undefined)),
+        ),
+      { concurrency: STAT_CONCURRENCY },
     )
     return dated
       .filter((entry) => entry !== undefined)
@@ -69,7 +81,16 @@ function exactPath(file: string) {
   )
 }
 
-function transcriptText(file: string): string {
+/**
+ * The text of a transcript's latest entries that may hold one of `terms`.
+ * When every term is plain, SQLite drops the entries that hold none of them,
+ * so only candidates are parsed here; otherwise every entry is a candidate.
+ * Scoring still reads the text itself, so the filter never adds a match.
+ */
+function transcriptText(file: string, terms: readonly string[]): string {
+  const filtered = terms.every(
+    (term) => PLAIN_TERM.test(term) && !ESCAPED.test(term),
+  )
   // A deferred read transaction gives one committed WAL snapshot without
   // opening Harness, recovering tasks, changing schema, or checkpointing.
   const db = new DatabaseSync(file, { readOnly: true, timeout: 100 })
@@ -80,12 +101,16 @@ function transcriptText(file: string): string {
       .get()
     if (schema?.version !== 1)
       throw new Error("unsupported Durable history schema")
+    const candidates = filtered
+      ? `AND (${terms.map(() => "instr(lower(record), ?) > 0").join(" OR ")})`
+      : ""
     const rows = db
       .prepare(
         `SELECT record FROM entries
          WHERE conversation_id = ?
            AND length(CAST(record AS BLOB)) <= ?
            AND json_extract(record, '$.kind') IN (?, ?)
+           ${candidates}
          ORDER BY id DESC LIMIT ?`,
       )
       .all(
@@ -93,6 +118,7 @@ function transcriptText(file: string): string {
         MAX_RECORD_BYTES,
         UserEntry.kind,
         AssistantEntry.kind,
+        ...(filtered ? terms : []),
         MAX_ENTRIES,
       )
     const text: string[] = []
@@ -180,11 +206,14 @@ export function buildHistoryTool(
           const results: HistoryMatch[] = []
           let skipped = 0
           for (const entry of files.slice(0, MAX_FILES)) {
+            // Each read below blocks the process. Between two of them, the
+            // chat sockets and other runs get their turn.
+            yield* Effect.yieldNow
             const full = yield* exactPath(entry.file)
             if (full === undefined || full === currentReal) continue
-            const text = yield* Effect.try(() => transcriptText(full)).pipe(
-              Effect.catch(() => Effect.succeed(undefined)),
-            )
+            const text = yield* Effect.try(() =>
+              transcriptText(full, terms),
+            ).pipe(Effect.catch(() => Effect.succeed(undefined)))
             if (text === undefined) {
               skipped++
               continue

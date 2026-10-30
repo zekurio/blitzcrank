@@ -1,6 +1,7 @@
 import { Effect } from "effect"
+import { Type } from "typebox"
 
-import type { JsonRequestError, JsonValue } from "../../http.ts"
+import type { JsonRequestError, JsonValue, Signal } from "../../http.ts"
 import {
   isJsonObject,
   isNumber,
@@ -9,7 +10,9 @@ import {
   type JsonObject,
 } from "../../json.ts"
 import { toolFail, type ToolFailure } from "../../tools/errors.ts"
+import { action, type Resolved } from "../../tools/writes.ts"
 import { arrObject, arrRequest, type Arr } from "./client.ts"
+import { itemIdOf, withItemId } from "./params.ts"
 
 export function compactCommand(command: JsonObject): JsonObject {
   return {
@@ -84,4 +87,83 @@ export function verifyDeleted(
         : Effect.fail(error),
     ),
   )
+}
+
+const MONITORED_DOWNLOADS = "RefreshMonitoredDownloads"
+
+interface ItemCommands {
+  description: string
+  /** The item's refresh and rescan commands. */
+  names: readonly [string, string]
+  idHelp: string
+  read: (id: number, signal: Signal) => Effect.Effect<JsonObject, ToolFailure>
+  label: (item: JsonObject) => string
+  /** What a command for one item sends besides its name. */
+  body: (name: string, id: number) => JsonObject
+}
+
+/**
+ * The write that makes the Arr re-read one item's metadata or folder, or
+ * every monitored download. Its state is the item's id, when it names one.
+ */
+export function runCommandAction(arr: Arr, commands: ItemCommands) {
+  return action({
+    description: commands.description,
+    params: withItemId(
+      arr,
+      Type.Object({
+        name: Type.Enum([...commands.names, MONITORED_DOWNLOADS]),
+      }),
+      commands.idHelp,
+    ),
+    resolve: (
+      params,
+      signal,
+    ): Effect.Effect<Resolved<number | undefined>, ToolFailure> =>
+      Effect.gen(function* () {
+        const id = itemIdOf(arr, params)
+        if (params.name === MONITORED_DOWNLOADS) {
+          if (id !== undefined) {
+            return yield* toolFail(
+              `${MONITORED_DOWNLOADS} covers every download and takes no ${arr.itemKey}`,
+            )
+          }
+          return {
+            state: undefined,
+            summary:
+              "Re-check every monitored download in the download clients",
+            effects: [
+              {
+                kind: "command",
+                target: "download clients",
+                detail: MONITORED_DOWNLOADS,
+              },
+            ],
+            warnings: [],
+          }
+        }
+        if (id === undefined) {
+          return yield* toolFail(`${params.name} needs ${arr.itemKey}`)
+        }
+        const item = yield* commands.read(id, signal)
+        return {
+          state: id,
+          summary: `${params.name} for ${commands.label(item)}`,
+          effects: [
+            {
+              kind: "command",
+              target: `${arr.itemNoun} ${id}: ${commands.label(item)}`,
+              detail: `${params.name} over ${String(item.path ?? "its folder")}`,
+            },
+          ],
+          warnings: [],
+        }
+      }),
+    write: (params, id) =>
+      postCommand(arr, {
+        name: params.name,
+        ...(id === undefined ? {} : commands.body(params.name, id)),
+      }),
+    verify: (_params, result) => verifyCommand(arr, result),
+  })
 }

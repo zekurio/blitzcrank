@@ -1,8 +1,10 @@
 import { Cause, Effect, type Scope } from "effect"
 
+import { outOfScopeMessage } from "../agent/notices.ts"
 import type {
   Access,
   Gateway,
+  GatewayHost,
   Inbound,
   Intake,
   Marker,
@@ -11,16 +13,23 @@ import type {
 import { errorKind, logEvent } from "../log.ts"
 import type { JsonValue } from "../services/http.ts"
 import { toText } from "../tools/common.ts"
-import { memberAccessEffect, type ChatSource } from "./chat-admission.ts"
+import {
+  admitEffect,
+  memberAccessEffect,
+  Places,
+  type ChatSource,
+} from "./chat-admission.ts"
+import type { ChatConfig } from "./chat-config.ts"
 import {
   fit,
   messageText,
+  type ChatArrival,
   type ChatClient,
-  type ChatConfig,
   type ChatError,
   type ChatMessage,
   type ChatPlatform,
 } from "./chat.ts"
+import { createTriage } from "./triage.ts"
 
 const CONTEXT_SCAN = 50
 const MAX_CONTEXT_MESSAGES = 5
@@ -29,17 +38,35 @@ const MAX_CONTEXT_CHARS = 1_000
 const CONTEXT_LOOKUPS = 4
 
 /**
+ * Admission for one connection, once the platform's REST client and the
+ * bot's own id are known. The listener hands it every message it hears.
+ */
+export type Admitter = (
+  client: ChatClient,
+  botId: string,
+) => (message: ChatArrival) => Effect.Effect<void>
+
+/**
  * A chat platform's threads as threads, around the platform's own listener.
  * Recovery's sender check and a run's channel read and write over REST
  * alone, through `client`, so they work while runs drain after the socket
- * closes.
+ * closes. Triage is resolved here, at startup.
  */
 export function createChatGateway(
   platform: ChatPlatform,
   config: ChatConfig,
+  host: GatewayHost,
   client: Effect.Effect<ChatClient>,
-  listenEffect: (intake: Intake) => Effect.Effect<void, unknown, Scope.Scope>,
+  listen: (
+    intake: Intake,
+    admitter: Admitter,
+  ) => Effect.Effect<void, unknown, Scope.Scope>,
 ): Gateway {
+  const triage = createTriage(host.runtime, config.triageModel, {
+    setting: `${platform.name.toUpperCase()}_TRIAGE_MODEL`,
+    platform: platform.title,
+  })
+  const denial = outOfScopeMessage(host.language)
   const brief =
     `Each conversation is one ${platform.title} thread the bot opened from a member's message in a homelab help channel. ` +
     "Every event comes with the thread's opening message, when it is still in reach, and its latest messages from members allowed to use the bot. " +
@@ -48,7 +75,21 @@ export function createChatGateway(
     `A member is known only by their ${platform.title} name, which identifies no Seerr or Jellyfin account; never match one by name.`
   return {
     name: platform.name,
-    listenEffect,
+    listenEffect: (intake) =>
+      listen(intake, (chat, botId) => {
+        const deps = {
+          platform,
+          config,
+          client: chat,
+          places: new Places(chat, config.channels, botId),
+          triage,
+          helper: host.helper,
+          intake,
+          botId,
+          denial,
+        }
+        return (message) => admitEffect(message, deps)
+      }),
     // Allowlists and watched channels may have changed while the host was
     // down, and a member may have left or lost the role that admitted them
     // or made them an admin.
@@ -75,7 +116,6 @@ export function createChatGateway(
           Effect.flatMap((chat) =>
             chat.editEffect(threadId, id, fit(text, platform.maxContent)),
           ),
-          Effect.asVoid,
         )
       },
       retractEffect: (marker) => {
@@ -151,7 +191,7 @@ function showEffect(
 ): Effect.Effect<void, ChatError> {
   const content = messageContent(platform, notice)
   if (typeof marker.id === "string")
-    return chat.editEffect(threadId, marker.id, content).pipe(Effect.asVoid)
+    return chat.editEffect(threadId, marker.id, content)
   return chat.postEffect(threadId, content).pipe(
     Effect.tap((posted) =>
       Effect.sync(() => {

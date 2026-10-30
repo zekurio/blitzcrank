@@ -36,6 +36,7 @@ Add `github:zekurio/blitzcrank` as a flake input, then:
   services.blitzcrank = {
     enable = true;
     model = "openai/gpt-6-astra:medium"; # choose a model your account can use
+    helperModel = "openai/gpt-5.4-mini:off"; # a small, fast model for side jobs
     mcpUrl = "http://127.0.0.1:8485/mcp";
     environmentFile = "/run/secrets/blitzcrank.env";
   };
@@ -130,12 +131,13 @@ across ordinary rebuilds.
 **Choose a model explicitly.** `BLITZCRANK_MODEL` is required and has no default.
 Use `provider/model[:thinking]`, for example `openai/gpt-6-astra:medium`.
 
-`BLITZCRANK_HELPER_MODEL` names a second chat model, in the same form, for small
-jobs outside a run. It names the threads the Discord and Fluxer gateways open,
-so either gateway requires it. It gets one instruction and the member's message,
-with no tools. Pick a small, fast model. Thinking defaults to medium as for
-`BLITZCRANK_MODEL`, so add `:off`, for example `openai/gpt-5.4-mini:off`. The
-host refuses to start if the model is unknown or its provider has no key.
+`BLITZCRANK_HELPER_MODEL` is required too, also without a default. It names a
+second chat model, in the same form, for small jobs outside a run, such as
+naming the threads the Discord and Fluxer gateways open. Each job gets one
+instruction and one input, with no tools. Pick a small, fast model. Thinking
+defaults to medium as for `BLITZCRANK_MODEL`, so add `:off`, for example
+`openai/gpt-5.4-mini:off`. The host refuses to start if the model is unknown
+or its provider has no key.
 
 ## Develop locally
 
@@ -348,8 +350,8 @@ echo '{"thread":"t1","text":"Crystal Lake ist ab Episode 6 falsch"}' |
   before `run.started`.
 - Host logs go to stderr.
 
-The command needs the host's environment: the model, its credentials, and the
-MCP URL and token. It reads no gateway settings. Runs go through the same
+The command needs the host's environment: the model and the helper model,
+their credentials, and the MCP URL and token. It reads no gateway settings. Runs go through the same
 journal, runner, and tools as the service. The model's brief matches the chat
 gateways' without the platform name, so a run here behaves like one in a
 Discord or Fluxer thread. Whoever runs the command already holds every

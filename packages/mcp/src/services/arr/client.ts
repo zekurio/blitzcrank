@@ -9,7 +9,11 @@ import {
   type Signal,
 } from "../../http.ts"
 import { isJsonObject, isNumber, type JsonObject } from "../../json.ts"
-import { toolFail, type ToolFailure } from "../../tools/errors.ts"
+import {
+  requireRecord,
+  toolFail,
+  type ToolFailure,
+} from "../../tools/errors.ts"
 
 /** What differs between the two Arrs for the tools they share. */
 export interface Arr {
@@ -29,7 +33,8 @@ export interface Arr {
   scanCommand: "DownloadedEpisodesScan" | "DownloadedMoviesScan"
   /**
    * History event names as records carry them, mapped to the number the paged
-   * history endpoint filters by. It accepts no names.
+   * history endpoint filters by. It accepts no names; the per-item endpoint
+   * takes the names.
    */
   eventTypes: Record<string, number>
 }
@@ -49,27 +54,13 @@ export function arrRequest(
   })
 }
 
-/** One record by path. A 404 is the service saying the id does not exist. */
 export function arrObject(
   arr: Arr,
   path: string,
   what: string,
   signal: Signal,
 ): Effect.Effect<JsonObject, ToolFailure> {
-  return arrRequest(arr, path, { signal }).pipe(
-    Effect.catchTag(
-      "HttpError",
-      (error): Effect.Effect<never, ToolFailure> =>
-        error.status === 404
-          ? toolFail(`${arr.service} has no ${what}`)
-          : Effect.fail(error),
-    ),
-    Effect.flatMap((value) =>
-      isJsonObject(value)
-        ? Effect.succeed(value)
-        : toolFail(`${arr.service} returned no record for ${what}`),
-    ),
-  )
+  return requireRecord(arr.service, what, arrRequest(arr, path, { signal }))
 }
 
 /**
@@ -124,38 +115,63 @@ export function arrPage(
 }
 
 /**
- * The whole queue, unknown items included. There is no queue read by id and
- * no filter that every Arr version honours, so callers filter this.
+ * The queue, unknown items included, or one item's part of it. There is no
+ * queue read by id. An Arr that ignores the item filter answers with the
+ * whole queue, so callers match the item themselves.
  */
-export function readQueue(arr: Arr, signal: Signal) {
+export function readQueue(arr: Arr, signal: Signal, itemId?: number) {
   return arrPage(
     arr,
     "/api/v3/queue",
-    { page: 1, pageSize: PAGE_SIZE, [arr.unknownItemsParam]: true },
+    {
+      page: 1,
+      pageSize: PAGE_SIZE,
+      [arr.unknownItemsParam]: true,
+      [`${arr.itemKey}s`]: itemId,
+    },
     signal,
   )
 }
 
-/** Reads every blocklist page, newest first, up to the scan bound. */
-export function readBlocklist(arr: Arr, signal: Signal) {
+/** How many blocklist entries a lookup by id walks; there is no read by id. */
+export const BLOCKLIST_SCAN = MAX_SCAN_PAGES * PAGE_SIZE
+
+/**
+ * Blocklist entries newest first, up to `limit` or else the scan bound. With
+ * `itemId` only that item's, which callers still match, as for the queue.
+ * Paging stops after a page holding an entry `until` accepts.
+ */
+export function readBlocklist(
+  arr: Arr,
+  signal: Signal,
+  opts: {
+    limit?: number
+    itemId?: number
+    until?: (entry: JsonObject) => boolean
+  } = {},
+) {
+  const limit = opts.limit ?? BLOCKLIST_SCAN
+  const pageSize = Math.min(limit, PAGE_SIZE)
+  const until = opts.until ?? (() => false)
   return Effect.gen(function* () {
     const records: JsonObject[] = []
     let total = 0
-    for (let page = 1; page <= MAX_SCAN_PAGES; page++) {
+    for (let page = 1; records.length < limit; page++) {
       const result = yield* arrPage(
         arr,
         "/api/v3/blocklist",
         {
           page,
-          pageSize: PAGE_SIZE,
+          pageSize,
           sortKey: "date",
           sortDirection: "descending",
+          [`${arr.itemKey}s`]: opts.itemId,
         },
         signal,
       )
       records.push(...result.records)
       total = result.total
-      if (result.records.length < PAGE_SIZE) break
+      if (result.records.length < pageSize || result.records.some(until)) break
     }
     return { records, total }
   })

@@ -102,9 +102,14 @@ export function sonarrReads(arr: Arr) {
       }),
       run: (params, signal) =>
         Effect.gen(function* () {
-          const series = yield* readSeries(arr, params.seriesId, signal)
-          const episodes = yield* readEpisodes(arr, params.seriesId, signal)
-          const files = yield* readEpisodeFiles(arr, params.seriesId, signal)
+          const [series, episodes, files] = yield* Effect.all(
+            [
+              readSeries(arr, params.seriesId, signal),
+              readEpisodes(arr, params.seriesId, signal, params.seasonNumber),
+              readEpisodeFiles(arr, params.seriesId, signal),
+            ],
+            { concurrency: "unbounded" },
+          )
           const fileById = new Map(files.map((file) => [file.id, file]))
           const inScope = episodes.filter(
             (episode) =>

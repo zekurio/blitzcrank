@@ -8,7 +8,7 @@ import {
 } from "./errors.ts"
 import { errorResult, type ToolResult } from "./results.ts"
 
-export type ToolSchema = { type: "object"; [key: string]: unknown }
+type ToolSchema = { type: "object"; [key: string]: unknown }
 
 export interface ServerTool {
   name: string
@@ -22,7 +22,7 @@ export interface ServerTool {
   ) => Effect.Effect<ToolResult, ToolFailure | WriteOutcomeUnknown>
 }
 
-export type ToolOutcome =
+type ToolOutcome =
   | { status: "ok" | "error"; result: ToolResult }
   | { status: "unknown"; message: string }
 

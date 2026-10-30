@@ -70,7 +70,7 @@ src/
     kept-reads.ts the read cache every write drops
     results.ts    result shaping and caps
     params.ts     argument checks against a table entry's schema
-    errors.ts     ToolError, WriteOutcomeUnknown, failure messages
+    errors.ts     ToolError, WriteOutcomeUnknown, record reads, failures
     raw.ts        raw-path checks and secret redaction
   services/
     <service>/

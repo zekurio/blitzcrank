@@ -4,10 +4,11 @@ import { Type } from "typebox"
 import { pick } from "../../json.ts"
 import { toolCheck, toolFail } from "../../tools/errors.ts"
 import { resource } from "../../tools/reads.ts"
-import { listResult } from "../../tools/results.ts"
+import { listResult, MAX_LIST_ITEMS } from "../../tools/results.ts"
 import {
   arrList,
   arrObject,
+  BLOCKLIST_SCAN,
   readBlocklist,
   readDownloadHandling,
   readQueue,
@@ -43,20 +44,19 @@ export function arrSharedReads(arr: Arr) {
       params: withItemId(arr, Type.Object({ offset: offsetParam }), itemIdHelp),
       run: (params, signal) =>
         Effect.gen(function* () {
-          const queue = yield* readQueue(arr, signal)
           const wanted = itemIdOf(arr, params)
-          const offset = params.offset
-          if (wanted === undefined) {
-            return listResult(queue.records.map(compactQueueItem), {
-              total: queue.total,
-              offset,
-            })
-          }
+          const queue = yield* readQueue(arr, signal, wanted)
+          // The Arr's total is the whole queue's only when unfiltered.
           return listResult(
             queue.records
-              .filter((item) => item[arr.itemKey] === wanted)
+              .filter(
+                (item) => wanted === undefined || item[arr.itemKey] === wanted,
+              )
               .map(compactQueueItem),
-            { offset },
+            {
+              total: wanted === undefined ? queue.total : undefined,
+              offset: params.offset,
+            },
           )
         }),
     }),
@@ -66,9 +66,21 @@ export function arrSharedReads(arr: Arr) {
       params: withItemId(arr, Type.Object({ offset: offsetParam }), itemIdHelp),
       run: (params, signal) =>
         Effect.gen(function* () {
-          const blocklist = yield* readBlocklist(arr, signal)
           const wanted = itemIdOf(arr, params)
           const offset = params.offset
+          // Unfiltered, only the entries up to the end of this page are read.
+          const blocklist = yield* readBlocklist(
+            arr,
+            signal,
+            wanted === undefined
+              ? {
+                  limit: Math.min(
+                    (offset ?? 0) + MAX_LIST_ITEMS,
+                    BLOCKLIST_SCAN,
+                  ),
+                }
+              : { itemId: wanted },
+          )
           if (wanted === undefined) {
             return listResult(blocklist.records.map(compactBlocklistItem), {
               total: blocklist.total,
@@ -203,26 +215,30 @@ export function arrSharedReads(arr: Arr) {
         ),
       }),
       run: (params, signal) =>
-        Effect.gen(function* () {
-          const clients = yield* component(
-            arr,
-            "download clients",
-            arrList(arr, "/api/v3/downloadclient", { signal }),
-          )
-          const mappings = yield* component(
-            arr,
-            "remote path mappings",
-            arrList(arr, "/api/v3/remotepathmapping", { signal }),
-          )
-          const handling = yield* component(
-            arr,
-            "download handling settings",
-            readDownloadHandling(arr, signal),
-          )
-          return yield* toolCheck(() =>
-            downloadClientsResult(arr, { clients, mappings, handling }, params),
-          )
-        }),
+        Effect.all(
+          {
+            clients: component(
+              arr,
+              "download clients",
+              arrList(arr, "/api/v3/downloadclient", { signal }),
+            ),
+            mappings: component(
+              arr,
+              "remote path mappings",
+              arrList(arr, "/api/v3/remotepathmapping", { signal }),
+            ),
+            handling: component(
+              arr,
+              "download handling settings",
+              readDownloadHandling(arr, signal),
+            ),
+          },
+          { concurrency: "unbounded" },
+        ).pipe(
+          Effect.flatMap((read) =>
+            toolCheck(() => downloadClientsResult(arr, read, params)),
+          ),
+        ),
     }),
   }
 }

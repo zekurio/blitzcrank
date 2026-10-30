@@ -47,8 +47,13 @@ export function searchScope(
     if (params.episodeIds !== undefined && params.seasonNumber !== undefined) {
       return yield* toolFail("pass seasonNumber or episodeIds, not both")
     }
-    const series = yield* readSeries(arr, params.seriesId, signal)
-    const all = yield* readEpisodes(arr, params.seriesId, signal)
+    const [series, all] = yield* Effect.all(
+      [
+        readSeries(arr, params.seriesId, signal),
+        readEpisodes(arr, params.seriesId, signal, params.seasonNumber),
+      ],
+      { concurrency: "unbounded" },
+    )
     if (params.episodeIds !== undefined) {
       const wanted = [...new Set(params.episodeIds)]
       const unknown = wanted.filter(

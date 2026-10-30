@@ -84,16 +84,6 @@ export function jsonRequestEffect<T = JsonValue>(
     const timeoutMs = opts.timeoutMs ?? 30_000
     const prepared = yield* Effect.try({
       try: () => {
-        // Preserve the bounds previously enforced by AbortSignal.timeout.
-        if (
-          !Number.isInteger(timeoutMs) ||
-          timeoutMs < 0 ||
-          timeoutMs > 0xffffffff
-        ) {
-          throw new RangeError(
-            "timeoutMs must be an integer between 0 and 4294967295",
-          )
-        }
         const url = new URL(
           path.replace(/^\//, ""),
           baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`,

@@ -73,11 +73,24 @@ export function seerrActions(cfg: ServiceConfig) {
           if (params.mediaType === "movie" && params.seasons !== undefined) {
             return yield* toolFail("seasons applies to tv requests only")
           }
-          const details = yield* seerrObject(
-            cfg,
-            `/api/v1/${params.mediaType}/${params.mediaId}`,
-            `${params.mediaType} with TMDB id ${params.mediaId}`,
-            signal,
+          const [details, user] = yield* Effect.all(
+            [
+              seerrObject(
+                cfg,
+                `/api/v1/${params.mediaType}/${params.mediaId}`,
+                `${params.mediaType} with TMDB id ${params.mediaId}`,
+                signal,
+              ),
+              params.userId === undefined
+                ? Effect.succeed(undefined)
+                : seerrObject(
+                    cfg,
+                    `/api/v1/user/${params.userId}`,
+                    `user ${params.userId}`,
+                    signal,
+                  ),
+            ],
+            { concurrency: "unbounded" },
           )
           const known = seasonNumbers(details.seasons)
           const unknown = (params.seasons ?? []).filter(
@@ -88,15 +101,6 @@ export function seerrActions(cfg: ServiceConfig) {
               `that series has no season ${unknown.join(", ")}; it has ${known.join(", ")}`,
             )
           }
-          const user =
-            params.userId === undefined
-              ? undefined
-              : yield* seerrObject(
-                  cfg,
-                  `/api/v1/user/${params.userId}`,
-                  `user ${params.userId}`,
-                  signal,
-                )
           const title = `${String(details.title ?? details.name ?? "untitled")} (${String(year(details.releaseDate ?? details.firstAirDate) ?? "unknown year")})`
           const requests = existingRequests(details)
           const mediaStatus = objectField(details, "mediaInfo")?.status

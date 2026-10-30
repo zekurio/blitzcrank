@@ -1,4 +1,4 @@
-import { Effect } from "effect"
+import type { Effect } from "effect"
 
 /**
  * What the chat gateways share: a message and a channel as admission and the
@@ -18,22 +18,6 @@ export interface ChatPlatform {
   maxContent: number
   /** Whether a failure is the platform client's, safe to log by its codes. */
   isError(error: unknown): error is ChatError
-}
-
-/** The settings both chat gateways read the same way. */
-export interface ChatConfig {
-  /** Channels the bot watches. It answers nowhere else, DMs included. */
-  channels: ReadonlySet<string>
-  /** Members who may use the bot, by user id. */
-  users: ReadonlySet<string>
-  /** Members who may use the bot, by role id. Either list admits a member. */
-  roles: ReadonlySet<string>
-  /** Admins by user id. An admin may use the bot without another list. */
-  adminUsers: ReadonlySet<string>
-  /** Admins by role id. Either admin list makes a member an admin. */
-  adminRoles: ReadonlySet<string>
-  /** How sure triage must be before an unmentioned message opens a thread. */
-  triageThreshold: number
 }
 
 /** A message author or mention, as either platform sends one. */
@@ -87,11 +71,11 @@ export interface ChatError {
 }
 
 /**
- * The REST calls a chat gateway makes, in its platform's message and channel
- * shapes. `DiscordClient` and `FluxerClient` are each one.
+ * The REST calls a chat gateway makes, in the shapes above. `DiscordClient`
+ * and `FluxerClient` each implement it over their own wire types.
  */
-export interface PlatformClient<Message, Channel> {
-  channelEffect(channelId: string): Effect.Effect<Channel, ChatError>
+export interface ChatClient {
+  channelEffect(channelId: string): Effect.Effect<ChatChannel, ChatError>
   /** The member, or `undefined` once they have left the guild. */
   memberEffect(
     guildId: string,
@@ -101,7 +85,7 @@ export interface PlatformClient<Message, Channel> {
   recentMessagesEffect(
     channelId: string,
     limit: number,
-  ): Effect.Effect<readonly Message[], ChatError>
+  ): Effect.Effect<readonly ChatMessage[], ChatError>
   startThreadEffect(
     channelId: string,
     messageId: string,
@@ -121,42 +105,12 @@ export interface PlatformClient<Message, Channel> {
     channelId: string,
     messageId: string,
     content: string,
-  ): Effect.Effect<unknown, ChatError>
+  ): Effect.Effect<void, ChatError>
   /** A message that is already gone counts as deleted. */
   deleteEffect(
     channelId: string,
     messageId: string,
   ): Effect.Effect<void, ChatError>
-}
-
-/** A platform's REST calls as the shared code makes them. */
-export type ChatClient = PlatformClient<ChatMessage, ChatChannel>
-
-/** The platform's client, its messages and channels read as chat shapes. */
-export function chatClient<Message, Channel>(
-  client: PlatformClient<Message, Channel>,
-  toMessage: (message: Message) => ChatMessage,
-  toChannel: (channel: Channel) => ChatChannel,
-): ChatClient {
-  return {
-    channelEffect: (channelId) =>
-      client.channelEffect(channelId).pipe(Effect.map(toChannel)),
-    memberEffect: (guildId, userId) => client.memberEffect(guildId, userId),
-    recentMessagesEffect: (channelId, limit) =>
-      client
-        .recentMessagesEffect(channelId, limit)
-        .pipe(Effect.map((messages) => messages.map(toMessage))),
-    startThreadEffect: (channelId, messageId, name) =>
-      client.startThreadEffect(channelId, messageId, name),
-    addThreadMemberEffect: (threadId, userId) =>
-      client.addThreadMemberEffect(threadId, userId),
-    postEffect: (channelId, content, replyTo) =>
-      client.postEffect(channelId, content, replyTo),
-    editEffect: (channelId, messageId, content) =>
-      client.editEffect(channelId, messageId, content),
-    deleteEffect: (channelId, messageId) =>
-      client.deleteEffect(channelId, messageId),
-  }
 }
 
 /** Whether the message mentions the bot by user, in either mention form. */
