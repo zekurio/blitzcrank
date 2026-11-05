@@ -17,6 +17,8 @@ overrides:
   "qs@6.16.0": 6.16.1
   # Pulled by ajv; GHSA-w74x-v6f9-j3xg and three more.
   "fast-uri@3.1.8": 3.1.9
+  # pi-coding-agent 1.1.0 pins minimatch 10.2.6; GHSA-g3hv-75wg-m249.
+  "minimatch@10.2.6": 11.0.4
 
 allowBuilds:
   esbuild: true
