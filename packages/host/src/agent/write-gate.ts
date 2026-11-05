@@ -153,7 +153,20 @@ export function createWriteJudge(
           Option.match({
             onNone: () => Effect.fail(new JudgeError({ reason: "timeout" })),
             onSome: (message) =>
-              textEffect(message).pipe(
+              Effect.sync(() => {
+                logEvent("review.judged", {
+                  model: spec,
+                  status: message.stopReason,
+                  durationMs: message.durationMs,
+                  inputTokens: message.usage.input,
+                  outputTokens: message.usage.output,
+                  cacheReadTokens: message.usage.cacheRead,
+                  cacheWriteTokens: message.usage.cacheWrite,
+                  reasoningTokens: message.usage.reasoning,
+                  costUsd: message.usage.cost.total,
+                })
+              }).pipe(
+                Effect.andThen(textEffect(message)),
                 Effect.mapError(
                   (error) => new JudgeError({ reason: error.reason }),
                 ),

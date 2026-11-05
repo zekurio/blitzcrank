@@ -172,7 +172,9 @@ reviews it.
 - A review that fails, times out, or answers without a verdict holds the
   write.
 - `blitzcrank run` prints a `review` line per decision with the tool, whether
-  it was allowed, and the rule. Logs carry the same as `review.decided`.
+  it was allowed, and the rule. Logs carry the same as `review.decided`, and
+  each gate model request as `review.judged` with its tokens and cost, which
+  the reply footer does not include.
 
 ## Develop locally
 
