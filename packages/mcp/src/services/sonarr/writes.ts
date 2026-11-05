@@ -57,7 +57,6 @@ export function sonarrActions(arr: Arr) {
   const shared = arrSharedActions(arr)
   return {
     auto_search: action({
-      destructive: false,
       description:
         "Search indexers for the whole series, one season, or specific episodes. Sonarr picks and grabs the release",
       params: searchParams,

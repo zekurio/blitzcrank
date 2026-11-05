@@ -59,9 +59,10 @@ interface ReleaseFilters {
 
 /**
  * Releases a search listed, by service, indexer, and guid, so a grab can say
- * which release it sends and what the Arr mapped it to. A grab names only a
- * guid, and kept searches are dropped on every write. Titles and mappings do
- * not change, so these outlive the Arr's own half-hour release cache.
+ * which release it sends and what the Arr mapped it to, and refuse one no
+ * search listed. A grab names only a guid, and kept searches are dropped on
+ * every write. Titles and mappings do not change, so these outlive the Arr's
+ * own half-hour release cache. When full, the oldest listing goes first.
  */
 const listedReleases = new Map<string, { until: number; label: JsonObject }>()
 const LISTED_RELEASE_MINUTES = 60
@@ -81,23 +82,31 @@ function rememberReleases(
     if (kept.until <= now) listedReleases.delete(key)
   }
   for (const release of releases) {
-    if (listedReleases.size >= MAX_LISTED_RELEASES) return
-    listedReleases.set(
-      listedKey(arr, release.indexerId ?? null, release.guid ?? null),
-      {
-        until: now + LISTED_RELEASE_MINUTES * 60_000,
-        label: {
-          title: release.title ?? null,
-          quality: qualityName(release.quality),
-          sizeMb: isNumber(release.size)
-            ? Math.round(release.size / 1_000_000)
-            : null,
-          searchedFor: target.path,
-          mappedToSearchTarget: target.matches(release),
-          ...target.describe?.(release),
-        },
+    const key = listedKey(arr, release.indexerId ?? null, release.guid ?? null)
+    // Map order is insertion order, so a listing read again moves to the end.
+    listedReleases.delete(key)
+    const oldest = listedReleases.keys().next()
+    if (listedReleases.size >= MAX_LISTED_RELEASES && oldest.done !== true)
+      listedReleases.delete(oldest.value)
+    listedReleases.set(key, {
+      until: now + LISTED_RELEASE_MINUTES * 60_000,
+      label: {
+        title: release.title ?? null,
+        quality: qualityName(release.quality),
+        sizeMb: isNumber(release.size)
+          ? Math.round(release.size / 1_000_000)
+          : null,
+        searchedFor: target.path,
+        mappedToSearchTarget: target.matches(release),
+        ...(release.fullSeason === true
+          ? {
+              fullSeason: true,
+              seasonNumber: release.mappedSeasonNumber ?? null,
+            }
+          : {}),
+        ...target.describe?.(release),
       },
-    )
+    })
   }
 }
 

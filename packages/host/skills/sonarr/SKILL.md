@@ -115,7 +115,8 @@ Call `sonarr_auto_search` with `seriesId` plus `episodeIds` or `seasonNumber`.
 series or season search covers every monitored episode in scope, including
 ones that already have a file a grab may replace, so read `sonarr_episodes`
 and name `episodeIds` until the scope matches the report. Test hypotheses on
-one episode, never a season. Probe an existing file before replacing it on
+one unproven episode, never a season; a defect probes already verified
+across the set needs no trial. Probe an existing file before replacing it on
 language grounds; missing episodes need no probe.
 
 Let Sonarr choose the release. For one episode whose candidates this thread
@@ -126,7 +127,10 @@ release a search would grab, and no indexer is asked again. Take another
 listed release only when the fix is one specific release that a search will
 not pick. Sonarr forgets a search after about 30 minutes and then rejects the
 grab; call `sonarr_auto_search` then. Call it too when no candidates were
-read, and for a season or several episodes.
+read, and for a season or several episodes. A full-season pack downloads the whole
+season whichever episodes Sonarr then imports, so grab one only when the
+report covers that season. `sonarr_grab_release` sends only a release a
+`sonarr_releases` read listed in the last hour.
 
 Episodes that play fine and match the report need no repair. Deleting their
 files or unmonitoring them is an admin's decision, which the host's write
@@ -138,9 +142,13 @@ message.
 A file that fails the report is a repair target, for members too: broken,
 wrong content, or missing the language or subtitles the reporter needs. Probe
 it and inspect Jellyfin streams; once the evidence holds, replace it without
-asking again. Ask only if scope is unclear. A replacement that Sonarr scores
-below the current file is rejected at import as no upgrade: grab it first,
-and delete the old file once the grab is queued. Before `sonarr_delete_episode_file`, read `sonarr_episodes` and find every
+asking again. Ask only if scope is unclear. Once probes verify the defect
+across the set, such as sibling files of the same release group, replace the
+whole set at once, not one episode as a trial. Mark the bad grabs failed
+first: when the bad release scores higher, Sonarr upgrades back to it
+otherwise. A replacement that Sonarr scores below the current file is
+rejected at import as no upgrade: grab it first, and delete the old file once
+the grab is queued. A file that does not play at all may go first. Before `sonarr_delete_episode_file`, read `sonarr_episodes` and find every
 episode sharing that `episodeFileId`: one file may hold several, and deleting
 it removes them all. For a wrong season, establish and announce the full
 affected set, then replace all of it. Search only affected episodes.

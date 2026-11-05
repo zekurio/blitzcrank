@@ -26,14 +26,17 @@ concurrently. Locks apply within one MCP process. They do not cover other
 writers or writes still pending upstream after an unknown outcome.
 
 Every write is `readOnlyHint: false`. One that removes nothing and overrides
-no choice someone made, such as a search, a refresh, or a download retry,
+no choice someone made, such as a refresh or a download retry,
 also sets `destructiveHint: false`; every other write is destructive, and the
 host has its gate model review each call of one before it runs. An action in a
 `defineWrites` table is destructive unless it sets `destructive: false`.
-`write_preview` runs one write's resolve phase alone and returns the
-`summary`, `effects`, and `warnings` the write would report, with nothing
-written; the host's review reads it. `*_grab_release` previews name the
-release when this server listed it in the last hour.
+A search is destructive: one over a season, a series, or items that have
+files can replace them. `write_preview` runs one write's resolve phase alone
+and returns the `summary`, `effects`, and `warnings` the write would report,
+with nothing written; the host's review reads it. `*_grab_release` sends only
+a release a `*_releases` read of this server listed in the last hour, and
+names it and any full-season pack in its preview; any other guid fails with
+nothing written.
 
 On NixOS, import `nixosModules.blitzcrank-mcp` and enable
 `services.blitzcrank-mcp`. It uses the separate `blitzcrank-mcp` flake package

@@ -48,7 +48,8 @@ interface ActionSpec<P extends TObject, S> {
   params: P
   /**
    * `false` for a write that removes nothing and changes no choice someone
-   * made, such as a search or a refresh. The host reviews every other write
+   * made, such as a refresh. A search can replace files, so it is not one.
+   * The host reviews every other write
    * before it runs, so a write is destructive unless it says otherwise.
    */
   destructive?: false

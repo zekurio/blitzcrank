@@ -56,9 +56,13 @@ function mcpTool(
 ): ToolRegistration {
   const readOnly = tool.annotations?.readOnlyHint === true
   const reviewed = reviewsTool(tool)
+  // Every write takes a reason, so one given to a write the host does not
+  // review is dropped instead of failing the call. Only reviewed writes
+  // require it.
+  const reasoned = !readOnly
   const schema = tool.inputSchema
   const properties = isRecord(schema.properties) ? schema.properties : {}
-  if (reviewed && REASON_PARAM in properties)
+  if (reasoned && REASON_PARAM in properties)
     throw new Error(
       `${tool.name} has a ${REASON_PARAM} parameter, which the host's write review needs for itself`,
     )
@@ -71,7 +75,7 @@ function mcpTool(
     parameters: Type.Unsafe<Record<string, unknown>>({
       ...schema,
       type: "object",
-      properties: reviewed
+      properties: reasoned
         ? {
             ...properties,
             [REASON_PARAM]: {
@@ -95,7 +99,7 @@ function mcpTool(
     async execute(args, _api, context) {
       const result = await connection.callTool(
         tool.name,
-        reviewed
+        reasoned
           ? Object.fromEntries(
               Object.entries(args).filter(([key]) => key !== REASON_PARAM),
             )

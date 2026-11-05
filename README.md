@@ -152,8 +152,9 @@ before any write that can remove or change media runs, the gate model
 reviews it.
 
 - Reviewed writes are every server write not marked `destructiveHint: false`.
-  Searches, refreshes, rescans, and retrying, pausing, resuming, or
-  reprioritizing a download run unreviewed.
+  Refreshes, rescans, and retrying, pausing, resuming, or reprioritizing a
+  download run unreviewed. Searches are reviewed, since they can replace
+  files. A grab of a release the server never listed fails outright.
 - The gate model sees the prompt the run answers, earlier prompts and
   replies of the thread, the writes it decided earlier in the run, and for
   each pending write its arguments, the agent's one-sentence `reason`, and
@@ -163,8 +164,10 @@ reviews it.
 - It decides all writes of one model response in one request. It allows
   fixes on the reported media, such as replacing files that lack the
   reported subtitles, and holds writes nobody asked for, writes beyond the
-  report's scope, removing media with no defect for a sender who is not an
-  admin, and writes it cannot see the target of.
+  report's scope (a season pack for a few episodes counts), removing media
+  with no defect for a sender who is not an admin, writes whose target it
+  cannot see or the conversation leaves ambiguous, and deleting a file that
+  still plays before its replacement's grab was allowed.
 - A held write never runs and is never journaled, so it leaves nothing
   uncertain. The agent gets the reason as an error result and says in its
   reply what it left undone. After 3 held writes in a row or 10 in a run,

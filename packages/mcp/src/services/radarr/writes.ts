@@ -66,7 +66,6 @@ export function radarrActions(arr: Arr) {
   const shared = arrSharedActions(arr)
   return {
     auto_search: action({
-      destructive: false,
       description:
         "Search indexers for one movie. Radarr picks and grabs the release",
       params: Type.Object({ movieId: movieIdParam }),
