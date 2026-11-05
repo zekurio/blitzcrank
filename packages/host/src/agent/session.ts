@@ -52,6 +52,38 @@ export interface ToolStep {
   /** Whether the call may write: true unless the tool is safe to replay. */
   write: boolean
 }
+/** One tool call as the model sent it. */
+export interface PendingCall {
+  id: string
+  tool: string
+  arguments: Readonly<Record<string, unknown>>
+}
+/** An earlier turn of the conversation, as the transcript holds it. */
+export interface ConversationTurn {
+  /** `prompt` is a turn the host built around a message, `reply` a final answer. */
+  role: "prompt" | "reply"
+  text: string
+}
+export interface WriteReviewRequest {
+  call: PendingCall
+  /** Every call of the response `call` came in, itself included, in order. */
+  round: readonly PendingCall[]
+  /** The prompt this run answers, as the transcript holds it. */
+  prompt: string
+  /** Earlier prompts and replies, oldest first, cut from the oldest end. */
+  earlier: readonly ConversationTurn[]
+  signal: AbortSignal | undefined
+}
+/**
+ * Reviews a write before it starts. A call it blocks never runs, and its
+ * reason goes back to the model as an error result.
+ */
+export interface WriteReview {
+  /** Whether calls of this tool wait for `check`. */
+  reviews(tool: string): boolean
+  /** Undefined lets the call run; a string says why it may not. */
+  check(request: WriteReviewRequest): Promise<string | undefined>
+}
 export interface AgentTurnOptions {
   modelRuntime: ModelRuntime
   modelSpec: string
@@ -73,6 +105,11 @@ export interface AgentTurnOptions {
    * journal. It runs inside tool execution, so it must return at once.
    */
   onToolStep?: ((step: ToolStep) => void) | undefined
+  /**
+   * Reviews each call of the tools it names before it is journaled, so a
+   * call it holds up never leaves a write uncertain. Never a replayed call.
+   */
+  review?: WriteReview | undefined
 }
 export interface DurableTurnFailure {
   kind: "unsafe-interrupted" | "policy-changed" | "unanswered"

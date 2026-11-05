@@ -38,7 +38,8 @@ broad or destructive action.
 
 Read the owning Arr and Jellyfin before mutation. Follow exact Arr download
 IDs into SAB only for handoff problems. Replace through Arr only for verified
-wrong, damaged, or missing content.
+wrong, damaged, or missing content, or files missing the language or
+subtitles the reporter needs.
 
 Issue type guides investigation, not diagnosis:
 

@@ -165,6 +165,18 @@ in
       '';
     };
 
+    gateModel = lib.mkOption {
+      type = lib.types.nonEmptyStr;
+      example = "anthropic/claude-haiku-5-5:high";
+      description = ''
+        Required chat model that reviews each destructive write a run makes
+        before it runs, as provider/model with an optional thinking suffix.
+        There is no default. It sees the conversation, the pending writes,
+        and the server's preview of each, and holds any it cannot justify.
+        It authenticates like {option}`model`.
+      '';
+    };
+
     language = lib.mkOption {
       type = lib.types.str;
       default = "German";
@@ -310,6 +322,7 @@ in
         BLITZCRANK_PORT = toString cfg.port;
         BLITZCRANK_MODEL = cfg.model;
         BLITZCRANK_HELPER_MODEL = cfg.helperModel;
+        BLITZCRANK_GATE_MODEL = cfg.gateModel;
         BLITZCRANK_LANGUAGE = cfg.language;
         BLITZCRANK_GATEWAYS = lib.concatStringsSep "," cfg.gateways;
         BLITZCRANK_DATA_DIR = stateDir;

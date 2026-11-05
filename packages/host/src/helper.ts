@@ -34,26 +34,42 @@ const TIMEOUT = "15 seconds"
 const MAX_INPUT_CHARS = 4_000
 
 /**
- * Resolving the model at startup turns a typo or a missing key into a failed
- * boot instead of a failure on every call.
+ * A chat model the host calls outside a run, resolved at startup so a typo
+ * or a missing key fails the boot instead of every call. `variable` names
+ * the setting in errors.
  */
-export function createHelper(runtime: ModelRuntime, spec: string): Helper {
+export function resolveChatModel(
+  runtime: ModelRuntime,
+  spec: string,
+  variable: string,
+) {
   const parsed = parseModelSpec(spec)
   const model = runtime.getModel(parsed.provider, parsed.modelId)
   if (!model) {
     throw new Error(
       runtime.getModelOfType("classifier", parsed.provider, parsed.modelId)
-        ? `BLITZCRANK_HELPER_MODEL ${spec} is a classifier; the helper needs a chat model`
-        : `Unknown helper model: ${spec}`,
+        ? `${variable} ${spec} is a classifier; it needs a chat model`
+        : `Unknown model in ${variable}: ${spec}`,
     )
   }
   if (!runtime.getProviderAuthStatus(parsed.provider).configured) {
     throw new Error(
-      `BLITZCRANK_HELPER_MODEL ${spec} has no credentials; set the ${parsed.provider} API key or log in`,
+      `${variable} ${spec} has no credentials; set the ${parsed.provider} API key or log in`,
     )
   }
   const thinking =
     parsed.thinkingLevel === "off" ? {} : { reasoning: parsed.thinkingLevel }
+  return { model, thinking }
+}
+
+/**
+ * Resolving the model at startup turns a typo or a missing key into a failed
+ * boot instead of a failure on every call.
+ */
+export function createHelper(runtime: ModelRuntime, spec: string): Helper {
+  const resolved = resolveChatModel(runtime, spec, "BLITZCRANK_HELPER_MODEL")
+  const model = resolved.model
+  const thinking = resolved.thinking
   return {
     textEffect: (prompt) =>
       Effect.tryPromise({
@@ -86,7 +102,7 @@ export function createHelper(runtime: ModelRuntime, spec: string): Helper {
 }
 
 /** The answer's text, thinking left out. */
-function textEffect(
+export function textEffect(
   message: AssistantMessage,
 ): Effect.Effect<string, HelperError> {
   if (message.stopReason !== "stop") {

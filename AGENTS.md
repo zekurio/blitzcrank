@@ -57,6 +57,12 @@ the runner's tool allowlist, or which server tools a run gets.
   gateway needs to reach its own platform. Never enable `bash`, `edit`, or
   `write` in the runner.
 - Every run gets every server tool, unloaded until `tool_search` loads it.
+- The gate model reviews every server write not marked
+  `destructiveHint: false` before it is journaled. It sees the conversation,
+  the pending calls with the agent's `reason`, and `write_preview`, never
+  other tool results or the agent's reasoning. A review that fails or gives
+  no verdict holds the write. Admin status reaches it only from the
+  gateway's check.
 - A server write is one call that resolves its target against live state,
   writes, and reads the result back. A service rejection is an error result. A
   write whose outcome never came back is a JSON-RPC error, which stops the run

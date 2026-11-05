@@ -25,6 +25,16 @@ the service; read the current state before retrying. Different records run
 concurrently. Locks apply within one MCP process. They do not cover other
 writers or writes still pending upstream after an unknown outcome.
 
+Every write is `readOnlyHint: false`. One that removes nothing and overrides
+no choice someone made, such as a search, a refresh, or a download retry,
+also sets `destructiveHint: false`; every other write is destructive, and the
+host has its gate model review each call of one before it runs. An action in a
+`defineWrites` table is destructive unless it sets `destructive: false`.
+`write_preview` runs one write's resolve phase alone and returns the
+`summary`, `effects`, and `warnings` the write would report, with nothing
+written; the host's review reads it. `*_grab_release` previews name the
+release when this server listed it in the last hour.
+
 On NixOS, import `nixosModules.blitzcrank-mcp` and enable
 `services.blitzcrank-mcp`. It uses the separate `blitzcrank-mcp` flake package
 and requires no agent host on that machine. See the
@@ -67,6 +77,7 @@ src/
     tool.ts       ServerTool, runTool, read and write deadlines
     reads.ts      resource and defineReads
     writes.ts     action and defineWrites: resolve, write, read back, locks
+    preview.ts    write_preview: a write's resolve phase alone
     kept-reads.ts the read cache every write drops
     results.ts    result shaping and caps
     params.ts     argument checks against a table entry's schema

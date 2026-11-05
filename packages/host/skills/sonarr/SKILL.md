@@ -102,7 +102,7 @@ paths. Never search unaired/unmonitored episodes or duplicate progressing work.
 If nothing is grabbed, report concrete candidate rejections.
 
 Change monitoring only when the report asks for it or a wrong flag blocks the
-requested media. Unmonitoring episodes that play fine needs an admin's request,
+requested media. Unmonitoring episodes that play fine is an admin's decision,
 as below. `sonarr_set_series_monitoring` takes `seriesId` and any of
 `monitored`, `seasons`, and `monitorNewItems`. It keeps every other series
 field, and its `effects` show the field-level diff. Setting a season's flag
@@ -128,17 +128,19 @@ not pick. Sonarr forgets a search after about 30 minutes and then rejects the
 grab; call `sonarr_auto_search` then. Call it too when no candidates were
 read, and for a season or several episodes.
 
-Episodes that play fine need no repair. Deleting their files or unmonitoring
-them needs an admin's request, and the turn says whether the event message's
-sender is an admin. When they are not, say that an admin decides this and
-change nothing. For an admin, read `sonarr_episodes` and
+Episodes that play fine and match the report need no repair. Deleting their
+files or unmonitoring them is an admin's decision, which the host's write
+review enforces. For an admin's request, read `sonarr_episodes` and
 `sonarr_episode_files` for exactly the episodes named, and every other episode
 a file holds, then name the episode count and total size in your final
 message.
 
-Ask if scope is unclear. Probe corrupt/wrong-content files and inspect Jellyfin
-streams. Obtain reporter confirmation before deleting a verified wrong file.
-Before `sonarr_delete_episode_file`, read `sonarr_episodes` and find every
+A file that fails the report is a repair target, for members too: broken,
+wrong content, or missing the language or subtitles the reporter needs. Probe
+it and inspect Jellyfin streams; once the evidence holds, replace it without
+asking again. Ask only if scope is unclear. A replacement that Sonarr scores
+below the current file is rejected at import as no upgrade: grab it first,
+and delete the old file once the grab is queued. Before `sonarr_delete_episode_file`, read `sonarr_episodes` and find every
 episode sharing that `episodeFileId`: one file may hold several, and deleting
 it removes them all. For a wrong season, establish and announce the full
 affected set, then replace all of it. Search only affected episodes.

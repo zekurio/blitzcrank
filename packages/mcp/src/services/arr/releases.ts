@@ -57,6 +57,60 @@ interface ReleaseFilters {
   limit?: number | undefined
 }
 
+/**
+ * Releases a search listed, by service, indexer, and guid, so a grab can say
+ * which release it sends and what the Arr mapped it to. A grab names only a
+ * guid, and kept searches are dropped on every write. Titles and mappings do
+ * not change, so these outlive the Arr's own half-hour release cache.
+ */
+const listedReleases = new Map<string, { until: number; label: JsonObject }>()
+const LISTED_RELEASE_MINUTES = 60
+const MAX_LISTED_RELEASES = 5_000
+
+function listedKey(arr: Arr, indexerId: JsonValue, guid: JsonValue) {
+  return `${arr.service} ${String(indexerId)} ${String(guid)}`
+}
+
+function rememberReleases(
+  arr: Arr,
+  target: ReleaseTarget,
+  releases: readonly JsonObject[],
+) {
+  const now = Date.now()
+  for (const [key, kept] of listedReleases) {
+    if (kept.until <= now) listedReleases.delete(key)
+  }
+  for (const release of releases) {
+    if (listedReleases.size >= MAX_LISTED_RELEASES) return
+    listedReleases.set(
+      listedKey(arr, release.indexerId ?? null, release.guid ?? null),
+      {
+        until: now + LISTED_RELEASE_MINUTES * 60_000,
+        label: {
+          title: release.title ?? null,
+          quality: qualityName(release.quality),
+          sizeMb: isNumber(release.size)
+            ? Math.round(release.size / 1_000_000)
+            : null,
+          searchedFor: target.path,
+          mappedToSearchTarget: target.matches(release),
+          ...target.describe?.(release),
+        },
+      },
+    )
+  }
+}
+
+/** What a recent search listed for this release, if this server ran it. */
+export function listedRelease(
+  arr: Arr,
+  indexerId: number,
+  guid: string,
+): JsonObject | undefined {
+  const kept = listedReleases.get(listedKey(arr, indexerId, guid))
+  return kept && kept.until > Date.now() ? kept.label : undefined
+}
+
 export interface ReleaseTarget {
   path: string
   /** Whether the Arr mapped this release to the requested item. */
@@ -119,6 +173,7 @@ export function readReleases(
       arrList(arr, target.path, { timeoutMs: RELEASE_TIMEOUT_MS, signal }),
     )
     const releases = search.items
+    rememberReleases(arr, target, releases)
     const forTarget = releases.filter(target.matches)
     const elsewhere = releases.filter((release) => !target.matches(release))
     const matching = forTarget.filter((release) =>

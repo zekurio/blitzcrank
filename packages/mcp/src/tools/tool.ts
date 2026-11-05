@@ -1,5 +1,6 @@
 import { Cause, Effect, Exit } from "effect"
 
+import type { JsonObject } from "../json.ts"
 import {
   failureMessage,
   toolFail,
@@ -16,6 +17,14 @@ export interface ServerTool {
   inputSchema: ToolSchema
   /** The host decides replay safety from `readOnlyHint` alone. */
   annotations: { readOnlyHint: boolean; destructiveHint?: boolean }
+  /**
+   * A write's resolve phase alone: what the call would touch and change,
+   * read from live state, with nothing written.
+   */
+  preview?: (
+    args: unknown,
+    signal: AbortSignal,
+  ) => Effect.Effect<JsonObject, ToolFailure>
   execute: (
     args: unknown,
     signal: AbortSignal,

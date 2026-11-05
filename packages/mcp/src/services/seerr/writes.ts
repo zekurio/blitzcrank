@@ -169,6 +169,7 @@ export function seerrActions(cfg: ServiceConfig) {
       },
     }),
     retry_request: action({
+      destructive: false,
       description:
         "Re-send a failed request to its Arr, once the cause is fixed",
       params: Type.Object({ requestId: Type.Integer({ minimum: 1 }) }),

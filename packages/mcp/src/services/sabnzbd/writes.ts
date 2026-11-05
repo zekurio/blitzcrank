@@ -19,6 +19,7 @@ const nzoIdParam = Type.String({
 export function sabnzbdActions(cfg: ServiceConfig) {
   return {
     retry_job: action({
+      destructive: false,
       description: "Retry one failed job from history",
       params: Type.Object({ nzoId: nzoIdParam }),
       resolve: (params, signal) =>
@@ -45,6 +46,7 @@ export function sabnzbdActions(cfg: ServiceConfig) {
         ),
     }),
     pause_job: action({
+      destructive: false,
       description: "Pause one queued job",
       params: Type.Object({ nzoId: nzoIdParam }),
       resolve: (params, signal) =>
@@ -71,6 +73,7 @@ export function sabnzbdActions(cfg: ServiceConfig) {
         ),
     }),
     resume_job: action({
+      destructive: false,
       description: "Resume one paused job",
       params: Type.Object({ nzoId: nzoIdParam }),
       resolve: (params, signal) =>
@@ -99,6 +102,7 @@ export function sabnzbdActions(cfg: ServiceConfig) {
         ),
     }),
     set_priority: action({
+      destructive: false,
       description: "Change one queued job's priority",
       params: Type.Object({
         nzoId: nzoIdParam,

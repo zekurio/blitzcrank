@@ -37,6 +37,7 @@ const REFRESH_MODES = [
 export function jellyfinActions(cfg: ServiceConfig) {
   return {
     refresh_item: action({
+      destructive: false,
       description:
         "Refresh one item's metadata, images, and file probe. Runs in the background",
       params: Type.Object({

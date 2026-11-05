@@ -109,7 +109,7 @@ forgets a search after about 30 minutes and then rejects the grab; call
 `radarr_auto_search` then, or when no candidates were read.
 
 Change monitoring only when the report asks for it or a wrong flag blocks the
-requested movie. Unmonitoring a movie that plays fine needs an admin's request,
+requested movie. Unmonitoring a movie that plays fine is an admin's decision,
 as under Replacement. `radarr_set_movie_monitoring` takes `movieId` and
 `monitored` and keeps every other movie field.
 
@@ -138,21 +138,24 @@ searching.
 
 ## Replacement
 
-A movie that plays fine needs no replacement. Deleting its file or
-unmonitoring it needs an admin's request, and the turn says whether the event
-message's sender is an admin. When they are not, say that an admin decides
-this and change nothing. For an admin, read `radarr_movie_files` for exactly
-the movie named, then name the file count and size in your final message.
+A movie that plays fine and matches the report needs no replacement.
+Deleting its file or unmonitoring it is an admin's decision, which the host's
+write review enforces. For an admin's request, read `radarr_movie_files` for
+exactly the movie named, then name the file count and size in your final
+message.
 
+A file that fails the report is a repair target, for members too: broken,
+wrong content, or missing the language or subtitles the reporter needs.
 Require reporter details plus item-specific probe, Jellyfin-stream, or Radarr
 `mediaInfo` anomaly evidence. Confirm the exact movie/file, multi-version
 selection, and originating release. File deletion removes the only disk copy.
+Once the evidence holds, replace the file without asking again.
 
 1. Identify the bad release's finished `grabbed` history record. Blocklisting
    an active grab would discard it, so read `radarr_queue` for its download ID
    first.
 2. Read `radarr_movie_files`, confirm the path and size of the verified
-   corrupt/unusable file, and tell the reporter what goes. Then call
+   corrupt/unusable file, and name it in your final message. Then call
    `radarr_delete_movie_file` with its `movieFileId`. Its verification confirms
    the file is gone. An equal-quality release is not an upgrade while that file
    exists.

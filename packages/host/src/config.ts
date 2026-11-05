@@ -37,6 +37,11 @@ export interface Config {
    */
   helperModel: string
   /**
+   * Required chat model that reviews each destructive write before it runs,
+   * as provider/model[:thinking]. No default, as for `model`.
+   */
+  gateModel: string
+  /**
    * Explicit auth file holding API keys and OAuth credentials.
    * Must be writable: OAuth tokens auto-refresh and are persisted back.
    * Blitzcrank's own auth lives at `<dataDir>/auth.json`
@@ -173,6 +178,7 @@ export function loadConfig(): Config {
     dataDir: process.env.BLITZCRANK_DATA_DIR ?? "data",
     model: requiredModel("BLITZCRANK_MODEL"),
     helperModel: requiredModel("BLITZCRANK_HELPER_MODEL"),
+    gateModel: requiredModel("BLITZCRANK_GATE_MODEL"),
     authPath: process.env.BLITZCRANK_AUTH_PATH,
     modelsPath: process.env.BLITZCRANK_MODELS_PATH,
     language: process.env.BLITZCRANK_LANGUAGE ?? "German",

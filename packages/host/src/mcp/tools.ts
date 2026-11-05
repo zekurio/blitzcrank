@@ -14,6 +14,24 @@ import type { McpConnection } from "./client.ts"
 const MAX_IMAGES = 6
 
 /**
+ * The argument the host adds to every write it reviews, for the review
+ * alone. The server never sees it.
+ */
+export const REASON_PARAM = "reason"
+
+/**
+ * Whether the host reviews a server tool's calls before they run: every
+ * write unless the server marks it `destructiveHint: false`, as MCP defaults
+ * a write to destructive.
+ */
+export function reviewsTool(tool: Tool): boolean {
+  return (
+    tool.annotations?.readOnlyHint !== true &&
+    tool.annotations?.destructiveHint !== false
+  )
+}
+
+/**
  * One Durable tool per server tool. Sorted by name so the Durable policy
  * fingerprint does not depend on the order the server lists them in.
  */
@@ -37,6 +55,13 @@ function mcpTool(
   viewsImages: boolean,
 ): ToolRegistration {
   const readOnly = tool.annotations?.readOnlyHint === true
+  const reviewed = reviewsTool(tool)
+  const schema = tool.inputSchema
+  const properties = isRecord(schema.properties) ? schema.properties : {}
+  if (reviewed && REASON_PARAM in properties)
+    throw new Error(
+      `${tool.name} has a ${REASON_PARAM} parameter, which the host's write review needs for itself`,
+    )
   return defineTool({
     name: tool.name,
     description: tool.description ?? tool.name,
@@ -44,14 +69,37 @@ function mcpTool(
     // Providers require an object schema, and some reject one without
     // `properties`.
     parameters: Type.Unsafe<Record<string, unknown>>({
-      ...tool.inputSchema,
+      ...schema,
       type: "object",
-      properties: tool.inputSchema.properties ?? {},
+      properties: reviewed
+        ? {
+            ...properties,
+            [REASON_PARAM]: {
+              type: "string",
+              minLength: 1,
+              maxLength: 600,
+              description:
+                "One sentence for the host's write review: what the evidence shows and what this write fixes. The service never sees it.",
+            },
+          }
+        : properties,
+      ...(reviewed
+        ? {
+            required: [
+              ...(Array.isArray(schema.required) ? schema.required : []),
+              REASON_PARAM,
+            ],
+          }
+        : {}),
     }),
     async execute(args, _api, context) {
       const result = await connection.callTool(
         tool.name,
-        args,
+        reviewed
+          ? Object.fromEntries(
+              Object.entries(args).filter(([key]) => key !== REASON_PARAM),
+            )
+          : args,
         context.abortSignal,
       )
       return {
@@ -83,4 +131,8 @@ function modelContent(
         : `[${images.length} images omitted: this model cannot view images]`,
     },
   ]
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }

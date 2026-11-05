@@ -4,6 +4,7 @@ import type { ModelRuntime } from "@earendil-works/pi-coding-agent"
 import { Effect, type Scope } from "effect"
 
 import type { ThreadUsage, ToolStep } from "./agent/session.ts"
+import type { WriteVerdict } from "./agent/write-gate.ts"
 import type { Helper } from "./helper.ts"
 import type { JsonValue } from "./services/http.ts"
 
@@ -105,6 +106,12 @@ export interface Channel {
    * without it hears none.
    */
   readonly onToolStep?: (step: ToolStep) => void
+  /**
+   * Hears each decision of the host's write review, by the tool's name and
+   * the rule it applied: never the review's own words or the call's
+   * arguments. It must return at once. A gateway without it hears none.
+   */
+  readonly onWriteReview?: (verdict: WriteVerdict) => void
   /** Removes that message, if there is one. */
   retractEffect(marker: Marker): Effect.Effect<void, unknown>
 }

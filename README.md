@@ -37,6 +37,7 @@ Add `github:zekurio/blitzcrank` as a flake input, then:
     enable = true;
     model = "openai/gpt-6-astra:medium"; # choose a model your account can use
     helperModel = "openai/gpt-5.4-mini:off"; # a small, fast model for side jobs
+    gateModel = "anthropic/claude-haiku-5-5:high"; # reviews destructive writes
     mcpUrl = "http://127.0.0.1:8485/mcp";
     environmentFile = "/run/secrets/blitzcrank.env";
   };
@@ -138,6 +139,40 @@ instruction and one input, with no tools. Pick a small, fast model. Thinking
 defaults to medium as for `BLITZCRANK_MODEL`, so add `:off`, for example
 `openai/gpt-5.4-mini:off`. The host refuses to start if the model is unknown
 or its provider has no key.
+
+`BLITZCRANK_GATE_MODEL` is required as well. It names the chat model that
+reviews writes, for example `anthropic/claude-haiku-5-5:high`; see
+[Write review](#write-review).
+
+## Write review
+
+The agent applies the fix the evidence supports without asking first. The
+host decides what it may not do, in the manner of Claude Code's auto mode:
+before any write that can remove or change media runs, the gate model
+reviews it.
+
+- Reviewed writes are every server write not marked `destructiveHint: false`.
+  Searches, refreshes, rescans, and retrying, pausing, resuming, or
+  reprioritizing a download run unreviewed.
+- The gate model sees the prompt the run answers, earlier prompts and
+  replies of the thread, the writes it decided earlier in the run, and for
+  each pending write its arguments, the agent's one-sentence `reason`, and
+  the server's `write_preview` of what it would touch. It sees no other tool
+  result and none of the agent's reasoning, so content the agent read cannot
+  argue with it directly.
+- It decides all writes of one model response in one request. It allows
+  fixes on the reported media, such as replacing files that lack the
+  reported subtitles, and holds writes nobody asked for, writes beyond the
+  report's scope, removing media with no defect for a sender who is not an
+  admin, and writes it cannot see the target of.
+- A held write never runs and is never journaled, so it leaves nothing
+  uncertain. The agent gets the reason as an error result and says in its
+  reply what it left undone. After 3 held writes in a row or 10 in a run,
+  every further write of that run is held.
+- A review that fails, times out, or answers without a verdict holds the
+  write.
+- `blitzcrank run` prints a `review` line per decision with the tool, whether
+  it was allowed, and the rule. Logs carry the same as `review.decided`.
 
 ## Develop locally
 
@@ -350,8 +385,8 @@ echo '{"thread":"t1","text":"Crystal Lake ist ab Episode 6 falsch"}' |
   before `run.started`.
 - Host logs go to stderr.
 
-The command needs the host's environment: the model and the helper model,
-their credentials, and the MCP URL and token. It reads no gateway settings. Runs go through the same
+The command needs the host's environment: the model, the helper model, and
+the gate model, their credentials, and the MCP URL and token. It reads no gateway settings. Runs go through the same
 journal, runner, and tools as the service. The model's brief matches the chat
 gateways' without the platform name, so a run here behaves like one in a
 Discord or Fluxer thread. Whoever runs the command already holds every
