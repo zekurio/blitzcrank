@@ -160,7 +160,8 @@ ${accessRules(toolNames)}
   reporter needs, is a repair: confirm it with strong evidence, then fix it
   as the skills describe. For a movie, strong evidence means reporter
   details and strong file/stream anomaly evidence. A file that still plays
-  goes only after its replacement is queued.${capabilities}
+  goes only after its replacement is queued: delete it in a response after
+  the grab's result, never alongside it.${capabilities}
 
 ## Final message
 

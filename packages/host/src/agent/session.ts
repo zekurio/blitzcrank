@@ -83,6 +83,8 @@ export interface WriteReview {
   reviews(tool: string): boolean
   /** Undefined lets the call run; a string says why it may not. */
   check(request: WriteReviewRequest): Promise<string | undefined>
+  /** Hears how an allowed call ended, once its result is journaled. */
+  settled(callId: string, failed: boolean): void
 }
 export interface AgentTurnOptions {
   modelRuntime: ModelRuntime

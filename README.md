@@ -167,7 +167,9 @@ reviews it.
   report's scope (a season pack for a few episodes counts), removing media
   with no defect for a sender who is not an admin, writes whose target it
   cannot see or the conversation leaves ambiguous, and deleting a file that
-  still plays before its replacement's grab was allowed.
+  still plays before its replacement's grab has succeeded. The review hears
+  each allowed call's outcome, so a grab in the same response, or one that
+  failed, does not count.
 - A held write never runs and is never journaled, so it leaves nothing
   uncertain. The agent gets the reason as an error result and says in its
   reply what it left undone. After 3 held writes in a row or 10 in a run,

@@ -331,6 +331,8 @@ export async function runDurableTurn(
         )
         if (failure) run.failure = JSON.stringify(failure)
       }, context)
+      if (opts.review?.reviews(tool.name))
+        opts.review.settled(api.callId, result.isError === true)
       logEvent(
         "tool.completed",
         {
