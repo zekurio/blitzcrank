@@ -15,7 +15,11 @@ import {
   hook,
   MemoryStorage,
   ToolTask,
+  UserEntry,
+  type ConversationId,
+  type Cursor,
   type EntryId,
+  type EntryRecord,
   type HookApi,
   type ToolExecutionApi,
   type ToolExecutionResult,
@@ -37,11 +41,20 @@ import {
 import type {
   AgentTurnOptions,
   AgentTurnResult,
+  ConversationTurn,
   DurableTurnFailure,
+  PendingCall,
   ThreadUsage,
+  WriteReview,
 } from "./session.ts"
 
 const context = BACKGROUND_CONTEXT
+
+/** What the write review sees of the prompt a run answers. */
+const REVIEW_PROMPT_CHARS = 16_000
+/** What it sees of the turns before, newest kept first. */
+const REVIEW_EARLIER_CHARS = 16_000
+const REVIEW_SCAN_PAGE = 100
 
 /** Host documents are not registered as agent-writable tools. */
 export const DurableRunDoc = defineDocFamily({
@@ -152,6 +165,13 @@ export async function runDurableTurn(
       }
       return failure.message
     }
+    if ((await roundOf(api)) === undefined)
+      return "Missing tool-round authority"
+    return undefined
+  }
+
+  /** The assistant response a tool call came in. */
+  async function roundOf(api: HookApi | ToolExecutionApi) {
     const task = await harness!.getTask(api.taskId, context)
     const assistant =
       task &&
@@ -162,8 +182,60 @@ export async function runDurableTurn(
         ? await storage.entry(task.input.assistant as EntryId, context)
         : undefined
     const message = assistant?.entry.model?.[0]
-    if (message?.role !== "assistant") return "Missing tool-round authority"
-    return undefined
+    if (assistant === undefined || message?.role !== "assistant")
+      return undefined
+    return { entry: assistant.entry, message }
+  }
+
+  /**
+   * Asks the review about one call, with every call of its response and the
+   * conversation as the transcript has it. A review that fails holds the
+   * call: nothing unreviewed runs.
+   */
+  async function reviewCall(
+    review: WriteReview,
+    tool: string,
+    args: Parameters<ToolRegistration["execute"]>[0],
+    api: ToolExecutionApi,
+  ): Promise<string | undefined> {
+    const round = await roundOf(api)
+    if (round === undefined) return "Missing tool-round authority"
+    const calls = round.message.content.flatMap((block): PendingCall[] =>
+      block.type === "toolCall"
+        ? [{ id: block.id, tool: block.name, arguments: block.arguments }]
+        : [],
+    )
+    // SAFETY: Durable checked the arguments against the tool's object
+    // schema before it called this.
+    const call: PendingCall = {
+      id: api.callId,
+      tool,
+      arguments:
+        typeof args === "object" && args !== null && !Array.isArray(args)
+          ? (args as Record<string, unknown>)
+          : {},
+    }
+    const turns = await conversationTurns(
+      storage,
+      round.entry.conversationId,
+      round.entry.id,
+    )
+    return review
+      .check({
+        call,
+        round: calls.map((other) => (other.id === call.id ? call : other)),
+        prompt: turns.prompt,
+        earlier: turns.earlier,
+        signal: opts.signal,
+      })
+      .then(undefined, (cause: unknown) => {
+        logEvent(
+          "review.failed",
+          { runId: opts.requestId, tool, error: errorKind(cause) },
+          "error",
+        )
+        return "The host could not review this write, so it did not run. Nothing was written."
+      })
   }
 
   async function execute(
@@ -186,6 +258,20 @@ export async function runDurableTurn(
     if (prior?.unsafe)
       throw new Error("Uncertain prior write requires operator review")
     if (stopping) throw new Error("Run stopped")
+    // Before the start is journaled too: a held call never ran, so nothing
+    // about it is uncertain, and recovery reviews it again.
+    if (opts.review?.reviews(tool.name)) {
+      const held = await reviewCall(opts.review, tool.name, args, api)
+      if (held !== undefined) {
+        logEvent(
+          "tool.held",
+          { runId: opts.requestId, tool: tool.name, callId: api.callId },
+          "warn",
+        )
+        return errorResult(held)
+      }
+      if (stopping) throw new Error("Run stopped")
+    }
     // Before the start is journaled: a listener that throws stops the call
     // with nothing recorded, so it can never leave a write uncertain.
     opts.onToolStep?.({ tool: tool.name, write: tool.replay !== "safe" })
@@ -245,6 +331,8 @@ export async function runDurableTurn(
         )
         if (failure) run.failure = JSON.stringify(failure)
       }, context)
+      if (opts.review?.reviews(tool.name))
+        opts.review.settled(api.callId, result.isError === true)
       logEvent(
         "tool.completed",
         {
@@ -494,6 +582,81 @@ export async function runDurableTurn(
 
 function errorResult(text: string): ToolExecutionResult {
   return { content: [{ type: "text", text }], isError: true }
+}
+
+/**
+ * The prompt of the run a response belongs to, and the prompts and final
+ * replies before it, newest first until the budget runs out. Read from the
+ * transcript, which keeps every entry through compaction.
+ */
+async function conversationTurns(
+  storage: Awaited<ReturnType<typeof openDurableStorage>>,
+  conversationId: ConversationId,
+  upTo: EntryId,
+): Promise<{ prompt: string; earlier: ConversationTurn[] }> {
+  const newestFirst: ConversationTurn[] = []
+  const budget = { chars: REVIEW_EARLIER_CHARS }
+  const page = (cursor: Cursor | undefined) =>
+    storage.scanEntries(
+      { conversationId, maxEntryId: upTo, order: "descending" },
+      REVIEW_SCAN_PAGE,
+      cursor,
+      context,
+    )
+  const scan = async (cursor: Cursor | undefined): Promise<void> => {
+    const found = await page(cursor)
+    for (const entry of found.items) {
+      const turn = turnOf(entry)
+      if (turn === undefined) continue
+      // Only prompts count before this run's own prompt is found; its
+      // responses are the agent's, not the conversation's.
+      if (newestFirst.length === 0 && turn.role !== "prompt") continue
+      if (newestFirst.length > 0 && budget.chars <= 0) return
+      newestFirst.push(turn)
+      if (newestFirst.length > 1) budget.chars -= turn.text.length
+    }
+    if (found.next !== undefined) return scan(found.next)
+  }
+  await scan(undefined)
+  const prompt = newestFirst[0]?.text ?? ""
+  return {
+    prompt: clip(prompt, REVIEW_PROMPT_CHARS),
+    earlier: newestFirst
+      .slice(1)
+      .toReversed()
+      .map((turn) => ({
+        ...turn,
+        text: clip(turn.text, REVIEW_EARLIER_CHARS),
+      })),
+  }
+}
+
+/** A user entry's prompt, or an answer with no tool call in it. */
+function turnOf(entry: EntryRecord): ConversationTurn | undefined {
+  const message = entry.model?.[0]
+  if (UserEntry.is(entry) && message?.role === "user") {
+    const text =
+      typeof message.content === "string"
+        ? message.content
+        : message.content
+            .flatMap((block) => (block.type === "text" ? [block.text] : []))
+            .join("\n")
+    return text.trim() ? { role: "prompt", text } : undefined
+  }
+  if (!AssistantEntry.is(entry) || message?.role !== "assistant")
+    return undefined
+  if (message.content.some((block) => block.type === "toolCall"))
+    return undefined
+  const text = message.content
+    .flatMap((block) => (block.type === "text" ? [block.text] : []))
+    .join("")
+  return text.trim() ? { role: "reply", text } : undefined
+}
+
+function clip(text: string, chars: number): string {
+  return text.length <= chars
+    ? text
+    : `${text.slice(0, chars)} [cut ${text.length - chars} chars]`
 }
 
 /**

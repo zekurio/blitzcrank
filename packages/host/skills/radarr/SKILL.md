@@ -106,10 +106,11 @@ release in that listing, unfiltered or `approvedOnly`. That is the release a
 search would grab, and no indexer is asked again. Take another listed release
 only when the fix is one specific release that a search will not pick. Radarr
 forgets a search after about 30 minutes and then rejects the grab; call
-`radarr_auto_search` then, or when no candidates were read.
+`radarr_auto_search` then, or when no candidates were read. `radarr_grab_release` sends only a release a
+`radarr_releases` read listed in the last hour.
 
 Change monitoring only when the report asks for it or a wrong flag blocks the
-requested movie. Unmonitoring a movie that plays fine needs an admin's request,
+requested movie. Unmonitoring a movie that plays fine is an admin's decision,
 as under Replacement. `radarr_set_movie_monitoring` takes `movieId` and
 `monitored` and keeps every other movie field.
 
@@ -138,36 +139,45 @@ searching.
 
 ## Replacement
 
-A movie that plays fine needs no replacement. Deleting its file or
-unmonitoring it needs an admin's request, and the turn says whether the event
-message's sender is an admin. When they are not, say that an admin decides
-this and change nothing. For an admin, read `radarr_movie_files` for exactly
-the movie named, then name the file count and size in your final message.
+A movie that plays fine and matches the report needs no replacement.
+Deleting its file or unmonitoring it is an admin's decision, which the host's
+write review enforces. For an admin's request, read `radarr_movie_files` for
+exactly the movie named, then name the file count and size in your final
+message.
 
+A file that fails the report is a repair target, for members too: broken,
+wrong content, or missing the language or subtitles the reporter needs.
 Require reporter details plus item-specific probe, Jellyfin-stream, or Radarr
 `mediaInfo` anomaly evidence. Confirm the exact movie/file, multi-version
 selection, and originating release. File deletion removes the only disk copy.
+Once the evidence holds, replace the file without asking again.
 
 1. Identify the bad release's finished `grabbed` history record. Blocklisting
    an active grab would discard it, so read `radarr_queue` for its download ID
    first.
-2. Read `radarr_movie_files`, confirm the path and size of the verified
-   corrupt/unusable file, and tell the reporter what goes. Then call
-   `radarr_delete_movie_file` with its `movieFileId`. Its verification confirms
-   the file is gone. An equal-quality release is not an upgrade while that file
-   exists.
-3. Call `radarr_mark_history_failed` with the `historyId`. Do not search
-   before blocklisting. The result says whether Radarr then searches a
-   replacement itself, read from Radarr's own redownload settings: a `search`
-   effect when it does, a warning when it does not or cannot tell. Add
-   `radarr_auto_search` only when no search starts. Usenet blocklisting
+2. Call `radarr_mark_history_failed` with the `historyId` before any search or
+   grab, or Radarr upgrades back to the bad release when it scores higher.
+   The result says whether Radarr then searches a replacement itself, read
+   from Radarr's own redownload settings: a `search` effect when it does, a
+   warning when it does not or cannot tell. While the old file exists, that
+   search skips any release that is not an upgrade. Usenet blocklisting
    matches one posting, so a re-post of the same title stays grabbable, and
    the search Radarr starts may grab it; check `radarr_releases` with
-   `titleContains` for re-posts first. When the fix is one specific other
-   release, drop and blocklist the running attempt with
-   `radarr_remove_queue_item` and `skipRedownload: true` right before
-   `radarr_grab_release`, so no search queues a second download.
-4. Verify the blocklist and a different queued release. Stop if none appears.
+   `titleContains` for re-posts first.
+3. Queue the replacement before the old file goes: the first approved release
+   in `radarr_releases`, or the one specific release the fix needs, with
+   `radarr_grab_release`. It grabs even a release Radarr rejects as no
+   upgrade. When a running attempt is the wrong one, drop and blocklist it
+   with `radarr_remove_queue_item` and `skipRedownload: true` right before
+   the grab, so no search queues a second download. Add `radarr_auto_search`
+   only when no candidates were read and no search started.
+4. Once `radarr_queue` shows the replacement, read `radarr_movie_files`,
+   confirm the path and size of the verified file, name it in your final
+   message, and call `radarr_delete_movie_file` with its `movieFileId`. Radarr
+   rejects an equal or lower-scored import while that file exists. A file
+   that does not play at all may go first. Its verification confirms the
+   file is gone.
+5. Verify the blocklist and a different queued release. Stop if none appears.
    After import, verify edition, audio, and the original playback symptom.
 
 If files disappeared, read `radarr_history` with `pageSize: 100` filtered by

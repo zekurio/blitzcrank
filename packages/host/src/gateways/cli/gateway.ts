@@ -2,6 +2,7 @@ import { text } from "node:stream/consumers"
 
 import { Effect } from "effect"
 
+import type { ReviewRule } from "../../agent/write-gate.ts"
 import type { Gateway, Inbound, Threads } from "../../gateway.ts"
 import { isFileEffect, storageIO } from "../../storage.ts"
 
@@ -27,6 +28,7 @@ const BRIEF =
 export type CliEvent =
   | { type: "run.started"; runId: string; thread: string }
   | { type: "step"; tool: string; write: boolean }
+  | { type: "review"; tool: string; allowed: boolean; rule: ReviewRule }
   | { type: "reply"; text: string }
   | {
       type: "usage"
@@ -77,6 +79,13 @@ export function createCliGateway(): Gateway {
         }),
       onToolStep: (step) =>
         writeEvent({ type: "step", tool: step.tool, write: step.write }),
+      onWriteReview: (verdict) =>
+        writeEvent({
+          type: "review",
+          tool: verdict.tool,
+          allowed: verdict.allowed,
+          rule: verdict.rule,
+        }),
       retractEffect: () => Effect.void,
     }),
   }

@@ -109,6 +109,7 @@ interface ItemCommands {
 export function runCommandAction(arr: Arr, commands: ItemCommands) {
   return action({
     description: commands.description,
+    destructive: false,
     params: withItemId(
       arr,
       Type.Object({

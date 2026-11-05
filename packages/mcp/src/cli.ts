@@ -11,10 +11,20 @@ import { buildRadarrTools } from "./services/radarr/index.ts"
 import { buildSabnzbdTools } from "./services/sabnzbd/index.ts"
 import { buildSeerrTools } from "./services/seerr/index.ts"
 import { buildSonarrTools } from "./services/sonarr/index.ts"
+import { buildWritePreviewTool } from "./tools/preview.ts"
 import type { ServerTool } from "./tools/tool.ts"
 
-/** Tools for the configured services only; the rest are never declared. */
+/**
+ * Tools for the configured services only; the rest are never declared.
+ * `write_preview` covers every write among them.
+ */
 function buildTools(config: Config): ServerTool[] {
+  const tools = serviceTools(config)
+  const preview = buildWritePreviewTool(tools)
+  return preview === undefined ? tools : [...tools, preview]
+}
+
+function serviceTools(config: Config): ServerTool[] {
   return [
     ...(config.seerr ? buildSeerrTools(config.seerr) : []),
     ...(config.sonarr ? buildSonarrTools(config.sonarr) : []),

@@ -19,6 +19,7 @@ import {
 
 import { ThreadRunner } from "./agent/runner.ts"
 import { resolveModel } from "./agent/session.ts"
+import { createWriteJudge } from "./agent/write-gate.ts"
 import { modelRuntimeOptions } from "./auth.ts"
 import { loadConfig, type Config } from "./config.ts"
 import {
@@ -99,13 +100,22 @@ function loadGateways(names: readonly string[]): BuildGateway[] {
   })
 }
 
-/** The model runtime, with the run model resolved so a typo stops startup. */
+/**
+ * The model runtime, with the run model and the write review's model
+ * resolved so a typo stops startup.
+ */
 function modelRuntimeEffect(config: Config) {
   return Effect.tryPromise(() =>
     ModelRuntime.create(modelRuntimeOptions(config)),
   ).pipe(
-    Effect.tap((runtime) =>
-      Effect.sync(() => resolveModel(runtime, config.model)),
+    Effect.flatMap((runtime) =>
+      Effect.sync(() => {
+        resolveModel(runtime, config.model)
+        return {
+          runtime,
+          judge: createWriteJudge(runtime, config.gateModel),
+        }
+      }),
     ),
   )
 }
@@ -114,7 +124,9 @@ export function startServerEffect(): Effect.Effect<void, unknown> {
   return Effect.gen(function* () {
     const config = loadConfig()
     const builds = loadGateways(config.gateways)
-    const runtime = yield* modelRuntimeEffect(config)
+    const models = yield* modelRuntimeEffect(config)
+    const runtime = models.runtime
+    const judge = models.judge
     const host: GatewayHost = {
       runtime,
       language: config.language,
@@ -128,7 +140,7 @@ export function startServerEffect(): Effect.Effect<void, unknown> {
     yield* storageIO(() => mkdir(config.dataDir, { recursive: true }))
     const jobs = new JobStore(path.join(config.dataDir, "jobs.sqlite"))
     const work = new ThreadWork(
-      new ThreadRunner(config, runtime, jobs, gateways),
+      new ThreadRunner(config, runtime, judge, jobs, gateways),
       gateways,
       jobs,
       config.maxParallelRuns,
@@ -194,7 +206,9 @@ export function runEventEffect(): Effect.Effect<void, unknown> {
     const config = loadConfig()
     const gateways = new Gateways(config.dataDir, [createCliGateway()])
     const event = yield* readMessageEffect(gateways)
-    const runtime = yield* modelRuntimeEffect(config)
+    const models = yield* modelRuntimeEffect(config)
+    const runtime = models.runtime
+    const judge = models.judge
     yield* storageIO(() => mkdir(config.dataDir, { recursive: true }))
     const jobs = yield* Effect.acquireRelease(
       Effect.try({
@@ -208,7 +222,7 @@ export function runEventEffect(): Effect.Effect<void, unknown> {
       (store) => Effect.sync(() => store.close()),
     )
     const work = new ThreadWork(
-      new ThreadRunner(config, runtime, jobs, gateways),
+      new ThreadRunner(config, runtime, judge, jobs, gateways),
       gateways,
       jobs,
       1,

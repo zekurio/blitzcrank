@@ -22,7 +22,7 @@ import {
 import { compactBlocklistItem, compactQueueItem } from "./compact.ts"
 import { findGrabRecord, findHistoryRecord } from "./history.ts"
 import { itemIdOf, withItemId } from "./params.ts"
-import { compactRelease } from "./releases.ts"
+import { compactRelease, listedRelease } from "./releases.ts"
 
 /** Grabbing fetches the release from its indexer and hands it to a client. */
 const GRAB_TIMEOUT_MS = 60_000
@@ -442,16 +442,31 @@ export function arrSharedActions(arr: Arr) {
             `indexer ${params.indexerId}`,
             signal,
           )
+          const listed = listedRelease(arr, params.indexerId, params.guid)
+          // What a release holds is only known from a listing, so a guid
+          // from anywhere else is never sent.
+          if (listed === undefined)
+            return yield* toolFail(
+              `no ${arr.service}_releases read in the last hour listed release ${params.guid} from indexer ${params.indexerId}, so what it holds is unknown and nothing was grabbed. List it with ${arr.service}_releases first`,
+            )
+          const title = isString(listed.title) ? listed.title : params.guid
           const effect: WriteEffect = {
             kind: "grab",
-            target: `release ${params.guid}`,
-            detail: `from indexer ${String(indexer.name ?? params.indexerId)}; sent to the download client`,
+            target: `release ${title}`,
+            detail: `from indexer ${String(indexer.name ?? params.indexerId)}; sent to the download client; as listed: ${JSON.stringify(listed)}`,
           }
           return {
             state: null,
-            summary: `Grab release ${params.guid} from indexer ${String(indexer.name ?? params.indexerId)}`,
+            summary: `Grab release ${title} from indexer ${String(indexer.name ?? params.indexerId)}`,
             effects: [effect],
-            warnings: ["the release is grabbed even if the Arr rejected it"],
+            warnings: [
+              "the release is grabbed even if the Arr rejected it",
+              ...(listed.fullSeason === true
+                ? [
+                    `a full-season pack: it downloads every episode of season ${String(listed.seasonNumber ?? "?")}, whichever of them the Arr then imports`,
+                  ]
+                : []),
+            ],
           }
         }),
       write: (params) =>

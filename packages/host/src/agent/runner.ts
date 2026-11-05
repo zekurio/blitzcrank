@@ -26,6 +26,7 @@ import {
   runAgentTurnEffect,
   usageAnchor,
 } from "./session.ts"
+import { createWriteGate, type WriteJudge } from "./write-gate.ts"
 
 /**
  * Runs one event of one thread. It reaches the outside only through the
@@ -35,6 +36,7 @@ export class ThreadRunner {
   constructor(
     private readonly config: Config,
     private readonly modelRuntime: ModelRuntime,
+    private readonly judge: WriteJudge,
     private readonly jobs: JobStore,
     private readonly threads: Threads,
   ) {}
@@ -137,6 +139,14 @@ export class ThreadRunner {
             const text = stepMessage(this.config.language, step)
             if (text !== undefined) Queue.offerUnsafe(steps, text)
           },
+          review: createWriteGate({
+            judge: this.judge,
+            mcp,
+            admin: event.admin,
+            runId,
+            thread: key,
+            onVerdict: channel.onWriteReview,
+          }),
         })
         // Waits out a step edit in flight, so none lands over the reply. A run
         // that fails before this stops it when the scope closes, before the

@@ -102,7 +102,7 @@ paths. Never search unaired/unmonitored episodes or duplicate progressing work.
 If nothing is grabbed, report concrete candidate rejections.
 
 Change monitoring only when the report asks for it or a wrong flag blocks the
-requested media. Unmonitoring episodes that play fine needs an admin's request,
+requested media. Unmonitoring episodes that play fine is an admin's decision,
 as below. `sonarr_set_series_monitoring` takes `seriesId` and any of
 `monitored`, `seasons`, and `monitorNewItems`. It keeps every other series
 field, and its `effects` show the field-level diff. Setting a season's flag
@@ -115,7 +115,8 @@ Call `sonarr_auto_search` with `seriesId` plus `episodeIds` or `seasonNumber`.
 series or season search covers every monitored episode in scope, including
 ones that already have a file a grab may replace, so read `sonarr_episodes`
 and name `episodeIds` until the scope matches the report. Test hypotheses on
-one episode, never a season. Probe an existing file before replacing it on
+one unproven episode, never a season; a defect probes already verified
+across the set needs no trial. Probe an existing file before replacing it on
 language grounds; missing episodes need no probe.
 
 Let Sonarr choose the release. For one episode whose candidates this thread
@@ -126,19 +127,28 @@ release a search would grab, and no indexer is asked again. Take another
 listed release only when the fix is one specific release that a search will
 not pick. Sonarr forgets a search after about 30 minutes and then rejects the
 grab; call `sonarr_auto_search` then. Call it too when no candidates were
-read, and for a season or several episodes.
+read, and for a season or several episodes. A full-season pack downloads the whole
+season whichever episodes Sonarr then imports, so grab one only when the
+report covers that season. `sonarr_grab_release` sends only a release a
+`sonarr_releases` read listed in the last hour.
 
-Episodes that play fine need no repair. Deleting their files or unmonitoring
-them needs an admin's request, and the turn says whether the event message's
-sender is an admin. When they are not, say that an admin decides this and
-change nothing. For an admin, read `sonarr_episodes` and
+Episodes that play fine and match the report need no repair. Deleting their
+files or unmonitoring them is an admin's decision, which the host's write
+review enforces. For an admin's request, read `sonarr_episodes` and
 `sonarr_episode_files` for exactly the episodes named, and every other episode
 a file holds, then name the episode count and total size in your final
 message.
 
-Ask if scope is unclear. Probe corrupt/wrong-content files and inspect Jellyfin
-streams. Obtain reporter confirmation before deleting a verified wrong file.
-Before `sonarr_delete_episode_file`, read `sonarr_episodes` and find every
+A file that fails the report is a repair target, for members too: broken,
+wrong content, or missing the language or subtitles the reporter needs. Probe
+it and inspect Jellyfin streams; once the evidence holds, replace it without
+asking again. Ask only if scope is unclear. Once probes verify the defect
+across the set, such as sibling files of the same release group, replace the
+whole set at once, not one episode as a trial. Mark the bad grabs failed
+first: when the bad release scores higher, Sonarr upgrades back to it
+otherwise. A replacement that Sonarr scores below the current file is
+rejected at import as no upgrade: grab it first, and delete the old file once
+the grab is queued. A file that does not play at all may go first. Before `sonarr_delete_episode_file`, read `sonarr_episodes` and find every
 episode sharing that `episodeFileId`: one file may hold several, and deleting
 it removes them all. For a wrong season, establish and announce the full
 affected set, then replace all of it. Search only affected episodes.

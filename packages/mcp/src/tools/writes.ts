@@ -46,6 +46,13 @@ export interface Resolved<S> {
 interface ActionSpec<P extends TObject, S> {
   description: string
   params: P
+  /**
+   * `false` for a write that removes nothing and changes no choice someone
+   * made, such as a refresh. A search can replace files, so it is not one.
+   * The host reviews every other write
+   * before it runs, so a write is destructive unless it says otherwise.
+   */
+  destructive?: false
   /** Per-service record key, derived from validated params without I/O. */
   lock?: (params: Static<P>) => string
   /** Reads the target. A target that does not exist fails here, unwritten. */
@@ -68,6 +75,7 @@ interface ActionSpec<P extends TObject, S> {
 interface Action {
   description: string
   params: TObject
+  destructive: boolean
   lock: (params: JsonObject) => string | undefined
   resolve: (
     params: JsonObject,
@@ -90,6 +98,7 @@ export function action<P extends TObject, S>(spec: ActionSpec<P, S>): Action {
   return {
     description: spec.description,
     params: spec.params,
+    destructive: spec.destructive !== false,
     lock: (params) => spec.lock?.(params as Static<P>),
     resolve: (params, signal) => spec.resolve(params as Static<P>, signal),
     write: (params, state) => spec.write(params as Static<P>, state as S),
@@ -100,7 +109,8 @@ export function action<P extends TObject, S>(spec: ActionSpec<P, S>): Action {
 
 /**
  * One write tool per table entry, named `<service>_<entry>`. A call resolves
- * its target against live state, writes, and reads the result back.
+ * its target against live state, writes, and reads the result back. Its
+ * `preview` runs the resolve alone, for `write_preview`.
  */
 export function defineWrites(
   service: Service,
@@ -115,7 +125,20 @@ export function defineWrites(
         `${service.label} write. ${sentence(spec.description)} ` +
         "Returns what it changed, its warnings, and a read-back.",
       inputSchema: { ...schema, type: "object" },
-      annotations: { readOnlyHint: false, destructiveHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: spec.destructive },
+      preview: (args, signal) =>
+        checkParams(name, schema, args).pipe(
+          Effect.flatMap((params) => spec.resolve(params, signal)),
+          withDeadline(name, RESOLVE_TIMEOUT_MS),
+          Effect.map(
+            (resolved): JsonObject => ({
+              tool: name,
+              summary: resolved.summary,
+              effects: resolved.effects,
+              warnings: resolved.warnings,
+            }),
+          ),
+        ),
       execute: (args, signal) =>
         Effect.gen(function* () {
           const params = yield* checkParams(name, schema, args)
