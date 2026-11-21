@@ -19,6 +19,10 @@ overrides:
   "fast-uri@3.1.8": 3.1.9
   # pi-coding-agent 1.1.0 pins minimatch 10.2.6; GHSA-g3hv-75wg-m249.
   "minimatch@10.2.6": 11.0.4
+  # Pulled by the MCP SDK; GHSA-4m76-xfj5-7975 and four more.
+  "hono@4.13.13": 4.13.16
+  # Pulled by the MCP SDK; GHSA-qv5m-9pm6-hqp3 and GHSA-jpvv-r467-5p4w.
+  "@hono/node-server@2.1.4": 2.1.6
 
 allowBuilds:
   esbuild: true
