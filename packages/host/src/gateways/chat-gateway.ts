@@ -72,7 +72,7 @@ export function createChatGateway(
     "Every event comes with the thread's opening message, when it is still in reach, and its latest messages from members allowed to use the bot. " +
     "Other people's and bots' messages are omitted; your prior replies are in this conversation. Your final message is posted in the thread. " +
     "Keep it under 1,500 characters; longer replies are cut. Members answer by writing in the thread. " +
-    `A member is known only by their ${platform.title} name, which identifies no Seerr or Jellyfin account; never match one by name.`
+    `A member is known only by their ${platform.title} name, which identifies no Matinee account; never match one by name.`
   return {
     name: platform.name,
     listenEffect: (intake) =>

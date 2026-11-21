@@ -34,7 +34,7 @@ const OUTSIDE_ROOTS =
  * root. Symlinks are resolved *before* the containment check, so a link inside
  * a root cannot be used to read outside it.
  *
- * Failures outside the roots are reported with one generic message: issue text
+ * Failures outside the roots are reported with one generic message: message text
  * is untrusted, and distinguishing "does not exist" from "exists but is not
  * yours" would turn the tool into an existence oracle for the whole host.
  */

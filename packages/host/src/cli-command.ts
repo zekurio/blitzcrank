@@ -9,7 +9,7 @@ export type Command =
   | { kind: "auth"; command: AuthCommand }
 
 export const CLI_HELP = `Usage:
-  blitzcrank                         Start the webhook service
+  blitzcrank                         Start the service and its chat gateways
   blitzcrank run                     Answer one JSON event from stdin
   blitzcrank auth login <provider>   Log in with OAuth
   blitzcrank auth logout <provider>  Remove stored credentials

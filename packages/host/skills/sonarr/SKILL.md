@@ -7,7 +7,8 @@ description: Check TV availability and air dates. Diagnose and safely repair mis
 
 ## Reads and identity
 
-Resolve the exact series and Seerr's `tvdbId` to Sonarr's series ID. Never
+Resolve the exact series and its `tvdbId`, from Matinee or the report, to
+Sonarr's series ID. Never
 substitute IMDb or anime metadata. Keep TVDB, series, episode, episode-file,
 queue, history, blocklist, and download IDs distinct. One file may cover several
 episodes. Correlate SAB jobs by download ID.
@@ -79,7 +80,7 @@ acceptance, not global absence.
 
 For stream/playback reports, load `media-probe`. Probe the paths the services
 report: the episode file's path, the queue item's output path, or the completed
-SAB job's storage path. Inspect Jellyfin streams. Arr `languages` parse release
+SAB job's storage path. Inspect Matinee's tracks. Arr `languages` parse release
 names. `MULTi`, `DL`, and `GERMAN` do not prove stream contents or justify
 replacement.
 
@@ -141,7 +142,7 @@ message.
 
 A file that fails the report is a repair target, for members too: broken,
 wrong content, or missing the language or subtitles the reporter needs. Probe
-it and inspect Jellyfin streams; once the evidence holds, replace it without
+it and inspect Matinee's tracks; once the evidence holds, replace it without
 asking again. Ask only if scope is unclear. Once probes verify the defect
 across the set, such as sibling files of the same release group, replace the
 whole set at once, not one episode as a trial. Mark the bad grabs failed
@@ -170,7 +171,7 @@ blocklist and a different replacement. Call `sonarr_delete_blocklist_entry`
 with the `blocklistId` only with a clear identity match.
 
 For missing tracks, search only if a different release is plausible. If streams
-exist, investigate Jellyfin/client selection.
+exist, investigate Matinee/client selection.
 
 For stalls, diagnose category, mapping, permissions, space, locks, naming, and
 usable video. Read `sonarr_download_clients` for the category Sonarr hands the
@@ -216,7 +217,7 @@ group unchanged; a path Sonarr does not offer fails with nothing written. No
 generic force import exists. The verification shows the command just after
 submission; read `sonarr_command_status` until it finishes, then re-read
 queue, episode, and file state. Search is not acquisition; SAB completion is
-not import. After import, verify Jellyfin streams and the reported symptom.
+not import. After import, verify Matinee's tracks and the reported symptom.
 
 If cleanup is warranted instead, call `sonarr_remove_queue_item` with
 `queueId`, `removeFromClient`, `blocklist`, and `skipRedownload`.

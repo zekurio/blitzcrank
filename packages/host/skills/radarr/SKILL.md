@@ -7,7 +7,8 @@ description: Check movie availability and release dates. Diagnose and safely rep
 
 ## Reads and identity
 
-Resolve title/year and Seerr's `tmdbId` to Radarr's movie ID. Keep TMDB, movie,
+Resolve title/year and the `tmdbId`, from Matinee or the report, to Radarr's
+movie ID. Keep TMDB, movie,
 movie-file, queue, history, blocklist, and download IDs distinct. Correlate
 SAB jobs by download ID.
 
@@ -75,7 +76,7 @@ prove neither watchability nor global source absence.
 For stream/playback reports, load `media-probe`. Probe the paths the services
 report: the movie file's path, the queue item's output path, the completed SAB
 job's storage path, or a history record's dropped or imported path. Inspect
-Jellyfin streams. Arr `languages` parse release names, not actual streams.
+Matinee's tracks. Arr `languages` parse release names, not actual streams.
 `MULTi`, `DL`, and `GERMAN` do not justify searches or deletions.
 
 ## Writes
@@ -147,7 +148,7 @@ message.
 
 A file that fails the report is a repair target, for members too: broken,
 wrong content, or missing the language or subtitles the reporter needs.
-Require reporter details plus item-specific probe, Jellyfin-stream, or Radarr
+Require reporter details plus item-specific probe, Matinee-track, or Radarr
 `mediaInfo` anomaly evidence. Confirm the exact movie/file, multi-version
 selection, and originating release. File deletion removes the only disk copy.
 Once the evidence holds, replace the file without asking again.
@@ -207,7 +208,7 @@ candidates and sends their quality, languages, and release group unchanged; a
 path Radarr does not offer fails with nothing written. No generic force import
 exists. The verification shows the command just after submission; read
 `radarr_command_status` until it finishes, then re-read queue and movie-file
-state. Command completion is not import; import is not Jellyfin playback.
+state. Command completion is not import; import is not Matinee playback.
 
 If cleanup is warranted instead, call `radarr_remove_queue_item` with
 `queueId`, `removeFromClient`, `blocklist`, and `skipRedownload`.

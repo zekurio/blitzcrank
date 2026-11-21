@@ -158,11 +158,10 @@ const QUEUED_EN: Lines = [
 
 // A server tool's name starts with the service it reaches.
 const SERVICES = new Map([
-  ["seerr", "Seerr"],
+  ["matinee", "Matinee"],
   ["sonarr", "Sonarr"],
   ["radarr", "Radarr"],
   ["sabnzbd", "SABnzbd"],
-  ["jellyfin", "Jellyfin"],
 ])
 
 // Tools that reach no service, by name. A renamed tool loses its line until

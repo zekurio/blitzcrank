@@ -69,9 +69,9 @@ stdenv.mkDerivation (finalAttrs: {
   meta = {
     description =
       if isHost then
-        "Agentic webhook gateway for the Seerr/Arr/Jellyfin homelab stack"
+        "Agentic chat helper for the Matinee/Arr homelab stack"
       else
-        "MCP server for the Seerr/Arr/Jellyfin homelab stack";
+        "MCP server for the Matinee/Arr homelab stack";
     license = lib.licenses.mit;
     mainProgram = pname;
     platforms = lib.platforms.linux;

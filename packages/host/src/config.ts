@@ -20,8 +20,6 @@ export type WebConfig =
  */
 export interface Config {
   port: number
-  /** The gateways to run, by name. Each reads its own settings. */
-  gateways: readonly string[]
   /** How many threads may run at once. A thread never runs twice at once. */
   maxParallelRuns: number
   /** Persistent state (session transcripts) lives here. */
@@ -107,7 +105,7 @@ function requiredModel(name: string): string {
 }
 
 /**
- * The agent reaches Sonarr, Radarr, SABnzbd, Jellyfin, Seerr, and media files
+ * The agent reaches Matinee, Sonarr, Radarr, SABnzbd, and media files
  * only through the MCP server, which also holds their credentials. Without it
  * every run could only fail, so both values are mandatory.
  */
@@ -153,18 +151,20 @@ function web(): WebConfig {
 }
 
 /**
- * A deployment runs only the gateways it lists, so it needs no settings for
- * the others. Seerr alone unless the operator lists more.
+ * The gateways the service runs, by name. Each reads its own settings, so a
+ * deployment needs none for the others. There is no default: a service that
+ * listens to nothing would answer no one. Only the service reads this; the
+ * `run` command answers stdin and names no gateway.
  */
-function gateways(): readonly string[] {
-  const value = process.env.BLITZCRANK_GATEWAYS?.trim() || "seerr"
+export function gatewayNames(): readonly string[] {
+  const value = process.env.BLITZCRANK_GATEWAYS?.trim() ?? ""
   const names = value
     .split(",")
     .map((name) => name.trim())
     .filter((name) => name !== "")
   if (names.length === 0) {
     throw new Error(
-      `BLITZCRANK_GATEWAYS must name at least one gateway, got "${value}"`,
+      "BLITZCRANK_GATEWAYS must name at least one gateway, such as discord or fluxer",
     )
   }
   return [...new Set(names)]
@@ -173,7 +173,6 @@ function gateways(): readonly string[] {
 export function loadConfig(): Config {
   return {
     port: number("BLITZCRANK_PORT", process.env.BLITZCRANK_PORT, 8484),
-    gateways: gateways(),
     maxParallelRuns: maxParallelRuns(),
     dataDir: process.env.BLITZCRANK_DATA_DIR ?? "data",
     model: requiredModel("BLITZCRANK_MODEL"),

@@ -22,7 +22,7 @@ const BRIEF =
   "Each conversation is one chat thread with a member allowed to use the bot. " +
   "Every event is that member's latest message and comes with nothing else; earlier messages and your prior replies are in this conversation. " +
   "Your final message is posted in the thread. Keep it under 1,500 characters. The member answers by writing in the thread. " +
-  "The member's name is not given, and no name identifies a Seerr or Jellyfin account; never match one by name."
+  "The member's name is not given, and no name identifies a Matinee account; never match one by name."
 
 /** One line the `run` command writes to stdout. */
 export type CliEvent =

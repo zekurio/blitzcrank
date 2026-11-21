@@ -1,5 +1,5 @@
 {
-  description = "blitzcrank - agentic webhook gateway for the Seerr/Arr/Jellyfin homelab stack";
+  description = "blitzcrank - agentic chat helper for the Matinee/Arr homelab stack";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";

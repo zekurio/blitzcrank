@@ -6,10 +6,9 @@ import { loadConfig, type Config } from "./config.ts"
 import { buildMediaFramesTool } from "./media/frames.ts"
 import { buildMediaProbeTool } from "./media/probe.ts"
 import { createHttpServer } from "./server.ts"
-import { buildJellyfinTools } from "./services/jellyfin/index.ts"
+import { buildMatineeTools } from "./services/matinee/index.ts"
 import { buildRadarrTools } from "./services/radarr/index.ts"
 import { buildSabnzbdTools } from "./services/sabnzbd/index.ts"
-import { buildSeerrTools } from "./services/seerr/index.ts"
 import { buildSonarrTools } from "./services/sonarr/index.ts"
 import { buildWritePreviewTool } from "./tools/preview.ts"
 import type { ServerTool } from "./tools/tool.ts"
@@ -26,11 +25,10 @@ function buildTools(config: Config): ServerTool[] {
 
 function serviceTools(config: Config): ServerTool[] {
   return [
-    ...(config.seerr ? buildSeerrTools(config.seerr) : []),
+    ...(config.matinee ? buildMatineeTools(config.matinee) : []),
     ...(config.sonarr ? buildSonarrTools(config.sonarr) : []),
     ...(config.radarr ? buildRadarrTools(config.radarr) : []),
     ...(config.sabnzbd ? buildSabnzbdTools(config.sabnzbd) : []),
-    ...(config.jellyfin ? buildJellyfinTools(config.jellyfin) : []),
     ...(config.mediaRoots.length > 0
       ? [
           buildMediaProbeTool(config.mediaRoots),

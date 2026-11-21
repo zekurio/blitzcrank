@@ -36,7 +36,7 @@ const TIMEOUT = "15 seconds"
 // cinemas, and thanks from reading as one.
 const CRITERIA: Record<Label, string> = {
   stack:
-    "Wants something from this media server or says something is wrong with it, even as a short remark, complaint, or question: a movie or show they want added, whether or when a title or episode is on the server, an earlier request that has not shown up, something that will not play, buffers, stutters, or looks bad, wrong or missing subtitles or audio, a stuck or failed download, or Seerr, Sonarr, Radarr, SABnzbd, or Jellyfin misbehaving.",
+    "Wants something from this media server or says something is wrong with it, even as a short remark, complaint, or question: a movie or show they want added, whether or when a title or episode is on the server, an earlier request that has not shown up, something that will not play, buffers, stutters, or looks bad, wrong or missing subtitles or audio, a stuck or failed download, or Matinee, Sonarr, Radarr, or SABnzbd misbehaving.",
   chat: "Talks about movies, shows, or music, recommends or reviews them, or chats with other members, without wanting anything from the server or saying anything is wrong with it. Questions about cinemas, release dates, or other streaming services, thanks, and reports that something works again are chat.",
   other: "Anything else.",
 }

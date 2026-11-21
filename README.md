@@ -2,18 +2,17 @@
 
 # blitzcrank
 
-An agentic gateway for a private media homelab. Jellyseerr issues and Discord
-or Fluxer messages start durable investigations across Seerr, Sonarr, Radarr,
-SABnzbd, and Jellyfin.
+An agent for a private media homelab. Discord and Fluxer messages start
+durable investigations across Matinee, the media server people watch on and
+request titles from, and Sonarr, Radarr, and SABnzbd behind it.
 
 It runs as two processes:
 
-- The host (`packages/host`, command `blitzcrank`) takes Seerr webhooks and,
-  when enabled, Discord and Fluxer messages, runs the agent, and posts its
-  final message as the issue comment or in the chat thread. Resolving an issue
-  is left to its reporter. The host holds the model credentials and what its
-  gateways post with: the Seerr key and the Discord and Fluxer bot tokens. The
-  agent loop only sees threads, never the gateway behind them.
+- The host (`packages/host`, command `blitzcrank`) takes Discord and Fluxer
+  messages, runs the agent, and posts its final message in the chat thread.
+  The host holds the model credentials and what its gateways post with: the
+  Discord and Fluxer bot tokens. The agent loop only sees threads, never the
+  gateway behind them.
 - The MCP server (`packages/mcp`, command `blitzcrank-mcp`) holds the service
   API keys and the media mounts. Every read and write the agent makes goes
   through it, one tool per operation.
@@ -39,6 +38,13 @@ Add `github:zekurio/blitzcrank` as a flake input, then:
     helperModel = "openai/gpt-5.4-mini:off"; # a small, fast model for side jobs
     gateModel = "anthropic/claude-haiku-5-5:high"; # reviews destructive writes
     mcpUrl = "http://127.0.0.1:8485/mcp";
+    gateways = [ "fluxer" ];
+    settings = {
+      FLUXER_INSTANCE_URL = "https://chat.example.com";
+      FLUXER_CHANNELS = "1234567890";
+      FLUXER_ALLOWED_ROLES = "2345678901";
+      FLUXER_TRIAGE_MODEL = "opencode/jev-1.13";
+    };
     environmentFile = "/run/secrets/blitzcrank.env";
   };
   services.blitzcrank-mcp = {
@@ -54,11 +60,12 @@ The two services are enabled independently and use separate packages:
 package contains its own command and runtime dependencies. The default package
 is the host. Each service has its own `package` option and environment:
 
-- The host's environment file holds `SEERR_URL`, `SEERR_API_KEY`,
-  `BLITZCRANK_WEBHOOK_SECRET`, and `BLITZCRANK_MCP_TOKEN`.
+- The host's environment file holds the bot tokens of its gateways, such as
+  `FLUXER_BOT_TOKEN`, and `BLITZCRANK_MCP_TOKEN`.
   [`packages/host/.env.example`](packages/host/.env.example) documents all host
   settings.
-- The server's environment file holds the service URLs and API keys and the
+- The server's environment file holds the service URLs and API keys, the two
+  Matinee tokens among them (see [Connect Matinee](#connect-matinee)), and the
   same `BLITZCRANK_MCP_TOKEN`. `services.blitzcrank-mcp.mediaRoots` sets the
   media roots and adds ffmpeg to the server's path. The server runs as a
   dynamic user: `services.blitzcrank-mcp.supplementaryGroups` gives it group
@@ -152,9 +159,11 @@ before any write that can remove or change media runs, the gate model
 reviews it.
 
 - Reviewed writes are every server write not marked `destructiveHint: false`.
-  Refreshes, rescans, and retrying, pausing, resuming, or reprioritizing a
-  download run unreviewed. Searches are reviewed, since they can replace
-  files. A grab of a release the server never listed fails outright.
+  Arr refreshes and rescans, a Matinee library scan, and retrying, pausing,
+  resuming, or reprioritizing a download run unreviewed. Searches are
+  reviewed, since they can replace files, and so are Matinee title refreshes,
+  match fixes, request retries, and new requests. A grab of a release the
+  server never listed fails outright.
 - The gate model sees the prompt the run answers, earlier prompts and
   replies of the thread, the writes it decided earlier in the run, and for
   each pending write its arguments, the agent's one-sentence `reason`, and
@@ -205,8 +214,9 @@ pnpm exec tsx watch --env-file=.env src/cli.ts
 devenv shell
 cd packages/host
 cp .env.example .env
-# Fill in BLITZCRANK_MODEL, SEERR_URL, SEERR_API_KEY, the same
-# BLITZCRANK_MCP_TOKEN, and BLITZCRANK_MCP_URL=http://127.0.0.1:8485/mcp.
+# Fill in the three models, BLITZCRANK_GATEWAYS and that gateway's settings,
+# the same BLITZCRANK_MCP_TOKEN, and BLITZCRANK_MCP_URL=http://127.0.0.1:8485/mcp.
+# `blitzcrank run` needs no gateway settings.
 pnpm exec tsx --env-file=.env src/cli.ts auth login openai
 pnpm exec tsx watch --env-file=.env src/cli.ts
 ```
@@ -221,32 +231,35 @@ Without devenv, supply Node >= 24, pnpm 11, and ffmpeg/ffprobe yourself.
 For compiled local runs, use `pnpm build` at the root, then
 `node --env-file=.env dist/cli.js` in each package.
 
-## Connect Jellyseerr
+## Connect Matinee
 
-Under **Settings → Notifications → Webhook**, set:
+The MCP server reaches [Matinee](https://github.com/zekurio/matinee) through
+its REST API under `/api/v1`, with two API tokens of Matinee accounts in its
+environment:
 
-- URL: `http://<blitzcrank-host>:8484/webhook/seerr`
-- Authorization: the value of `BLITZCRANK_WEBHOOK_SECRET`
-- Payload: the default template
-- Notifications: Issue events
+- `MATINEE_URL` and `MATINEE_API_KEY`, a token of an admin account. The agent
+  reads titles, files, tracks, libraries, jobs, and the request queue with it,
+  and scans libraries, refreshes and fixes matches, and retries failed
+  requests.
+- `MATINEE_REQUEST_API_KEY`, optional, a token of an ordinary account. Only it
+  requests titles. Put the account in a Matinee group whose access sets what
+  may be requested, whether requests wait for an admin's approval, and the
+  quota: that group is the policy for every request the agent makes, for
+  whoever asks in a chat. Without the token the agent cannot request titles
+  and sends people to Matinee's own request page.
 
-Set `SEERR_BOT_USER_ID` and `SEERR_BOT_USERNAME` for the bot's Seerr identity.
-Only the reporter or a Seerr user with `ADMIN`/`MANAGE_ISSUES` may drive an issue
-through comments.
+Matinee sends approved requests to Radarr and Sonarr itself, and its file
+watcher picks up their imports, so it needs no webhook from them. No Arr tool
+adds a title: a Matinee request is the only way the agent adds media, and
+Matinee's connection rules choose the quality profile and folder.
 
-The agent removes or unmonitors media that plays fine only when an admin asks.
-On Seerr, only a comment can carry that request: it counts as an admin's when
-exactly one Seerr account matches its author and that account has `ADMIN`. A
-new or reopened issue is always a member's request, even when an admin filed
-it, because Seerr lets a `MANAGE_ISSUES` holder file or reopen an issue in
-another user's name and records nothing about who did. An admin who wants
-media that plays fine removed comments on the issue.
+The agent never sees Matinee's live sessions, users, or groups.
 
 ## Connect Discord
 
-The Discord gateway is off by default. Enable it with
-`BLITZCRANK_GATEWAYS=seerr,discord`, or `services.blitzcrank.gateways` on NixOS.
-Leave out `seerr` to run Discord alone.
+The service runs the gateways `BLITZCRANK_GATEWAYS` lists, or
+`services.blitzcrank.gateways` on NixOS, and refuses to start without one.
+List `discord` to run this gateway, alone or with `fluxer`.
 
 The bot watches the channels in `DISCORD_CHANNELS` and nothing else, DMs
 included. Only members listed by user id in `DISCORD_ALLOWED_USERS` or holding a
@@ -296,8 +309,8 @@ restarts it. Messages sent while the host is down are not picked up later.
 
 [Fluxer](https://fluxer.app) is an open-source chat platform shaped like
 Discord, hosted at fluxer.app or on your own server. The Fluxer gateway is off
-by default. Enable it with `BLITZCRANK_GATEWAYS=seerr,fluxer`, or
-`services.blitzcrank.gateways` on NixOS. Leave out `seerr` to run Fluxer alone.
+when `BLITZCRANK_GATEWAYS` or `services.blitzcrank.gateways` lists `fluxer`,
+alone or with `discord`.
 
 Set `FLUXER_INSTANCE_URL` to the instance origin, such as `https://fluxer.app`
 or `https://chat.example.com`. The host reads the instance's API and gateway
@@ -419,7 +432,31 @@ service refuses to start on a directory that holds such a run.
   A self-hosted instance inside your network would let a URL from any message
   reach internal services.
 
-Both processes answer an unauthenticated `GET /healthz`.
+Both processes answer an unauthenticated `GET /healthz`. It is the host's only
+HTTP endpoint: its gateways connect to their platforms themselves.
+
+## Moving from Seerr and Jellyfin
+
+Earlier versions took Seerr issue webhooks and read Jellyfin and Seerr. This
+one has neither: the Seerr gateway and the `jellyfin_*` and `seerr_*` tools are
+gone, and `BLITZCRANK_GATEWAYS` has no default.
+
+At startup the host recovers every unfinished job and checks its sender again
+through the job's own gateway. A job of the removed Seerr gateway has no
+gateway to check it, so the new host refuses to start while one is
+unfinished. To switch:
+
+1. Stop new admission on the old version: turn off Seerr's webhook to
+   blitzcrank, and stop the chat gateways if you want them quiet too.
+2. Let the runs in flight finish on the old version, so `jobs.sqlite` holds no
+   unfinished job.
+3. Switch both processes: the host with `BLITZCRANK_GATEWAYS` set and the
+   `SEERR_*` and `BLITZCRANK_WEBHOOK_SECRET` settings removed, and the server
+   with `MATINEE_URL` and its tokens in place of the `JELLYFIN_*` and `SEERR_*`
+   pairs.
+
+Finished Seerr threads stay in the journal and under `sessions/seerr/`; nothing
+reads them again.
 
 ## Logs and journals
 
@@ -427,7 +464,7 @@ The host writes JSON lifecycle records to stdout/stderr, captured by journald
 on NixOS. They include job admission and recovery, queue time, run duration,
 model requests and token/cache/reasoning counts, tool starts and outcomes, and
 reply publication. Filter by `runId` to follow a run across both processes.
-`run.admitted` maps that ID to its `thread`, such as `seerr:21`.
+`run.admitted` maps that ID to its `thread`, such as `fluxer:1234567890`.
 
 ```sh
 sudo journalctl -u blitzcrank -u blitzcrank-mcp --since today -o cat

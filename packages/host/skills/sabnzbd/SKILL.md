@@ -16,7 +16,7 @@ server adds the credentials and JSON output; never pass either.
 
 Arr owns release suitability, blocklisting, replacement, import, and rename.
 Prefer Arr remediation for tracked releases. SAB completion proves neither
-Arr import nor Jellyfin playback.
+Arr import nor Matinee playback.
 
 ## Diagnosis
 
@@ -64,4 +64,4 @@ means the write ran and only the read-back failed.
 
 While repair, unpack, or post-processing progresses, wait. Do not force/manual
 import, remove, blocklist, retry, search, or refresh. After completion, verify
-Arr import and Jellyfin availability.
+Arr import and that Matinee lists the file.

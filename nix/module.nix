@@ -128,7 +128,7 @@ let
 in
 {
   options.services.blitzcrank = {
-    enable = lib.mkEnableOption "blitzcrank, the agentic Seerr issue gateway";
+    enable = lib.mkEnableOption "blitzcrank, the agentic homelab helper for Discord and Fluxer";
 
     package = lib.mkOption {
       type = lib.types.package;
@@ -138,14 +138,14 @@ in
     port = lib.mkOption {
       type = lib.types.port;
       default = 8484;
-      description = "Listen port for the webhook/API server.";
+      description = "Listen port for the health endpoint, GET /healthz.";
     };
 
     model = lib.mkOption {
       type = lib.types.nonEmptyStr;
       example = "openai/gpt-6-astra:high";
       description = ''
-        Required model for issue runs as provider/model with an optional thinking suffix.
+        Required model for runs as provider/model with an optional thinking suffix.
         There is no built-in model choice.
         API-key providers (anthropic, openai, ...) authenticate via environment
         variables from {option}`environmentFile`. OAuth providers
@@ -186,14 +186,13 @@ in
     gateways = lib.mkOption {
       type = lib.types.nonEmptyListOf (
         lib.types.enum [
-          "seerr"
           "discord"
           "fluxer"
         ]
       );
-      default = [ "seerr" ];
+      example = [ "fluxer" ];
       description = ''
-        Gateways the host runs. Each reads its own settings, and a listed
+        Required gateways the host runs; there is no default. Each reads its own settings, and a listed
         gateway without them stops the service at startup. Pending work for
         a gateway that is no longer listed also stops it.
 
@@ -218,7 +217,7 @@ in
       ];
       default = "none";
       description = ''
-        External web provider for issue runs.
+        External web provider for runs.
         "firecrawl" grants the read-only web_search and web_extract tools
         through Firecrawl's hosted API and needs FIRECRAWL_API_KEY in
         {option}`environmentFile`. FIRECRAWL_URL there can name another
@@ -262,16 +261,15 @@ in
       default = null;
       example = "/run/secrets/blitzcrank.env";
       description = ''
-        Environment file with the host's secrets: SEERR_URL/SEERR_API_KEY
-        (required for the seerr gateway; the host comments on issues itself),
+        Environment file with the host's secrets:
         DISCORD_BOT_TOKEN (required for the discord gateway),
         FLUXER_BOT_TOKEN (required for the fluxer gateway),
         BLITZCRANK_MCP_TOKEN (required; must be the same token as in
-        the MCP server's environment file), BLITZCRANK_WEBHOOK_SECRET,
+        the MCP server's environment file),
         FIRECRAWL_API_KEY when {option}`webProvider` is "firecrawl", and
         provider API keys such as ANTHROPIC_API_KEY when not using OAuth.
 
-        Sonarr, Radarr, SABnzbd, and Jellyfin credentials do not belong here:
+        Matinee, Sonarr, Radarr, and SABnzbd credentials do not belong here:
         only the MCP server holds them.
       '';
     };
@@ -280,7 +278,7 @@ in
       type = lib.types.attrsOf lib.types.str;
       default = { };
       example = {
-        SEERR_BOT_USERNAME = "blitzcrank";
+        FLUXER_TRIAGE_THRESHOLD = "0.8";
       };
       description = "Extra non-secret environment variables.";
     };
@@ -308,7 +306,7 @@ in
     ];
 
     systemd.services.blitzcrank = {
-      description = "blitzcrank agentic Seerr issue gateway";
+      description = "blitzcrank agentic homelab helper";
       wantedBy = [ "multi-user.target" ];
       # The host checks the server at startup and gives up after about 20
       # seconds, less than the server's unit may wait for its media mounts.

@@ -28,12 +28,13 @@ resolution, bitrate, frame rate, bit depth, dynamic range, and codec profile
 when the file declares them.
 
 Use Arr file paths, the queue item's output path, the completed SAB job's
-storage path, or Jellyfin media-source paths. Check duration; the selected file
+storage path, or a Matinee library folder joined with a file's `relativePath`
+when that folder sits under a media root. Check duration; the selected file
 may be a sample or extra. Start season claims with one representative episode.
 Expand if ambiguous. Probe the source and the imported file in one response to
 compare them.
 
-Prefer the actual probe, then Jellyfin `MediaSources`, then Arr `mediaInfo`.
+Prefer the actual probe, then Matinee's tracks, then Arr `mediaInfo`.
 Arr data may be stale after re-encoding. Release-name `languages` and
 `customFormats` prove no track contents. File tags can also be wrong.
 
@@ -47,7 +48,7 @@ Compare source and imported files:
   release is plausible. No source means an availability limit, not a repair.
 - Present before import but absent after: investigate post-processing and
   import history, not another grab.
-- Present throughout: inspect Jellyfin refresh, stream selection, and client
+- Present throughout: inspect Matinee's tracks, stream selection, and client
   preferences.
 
 Name unchecked stages. Never present Arr language fields as a probe.
@@ -64,7 +65,7 @@ siblings from the same season or release.
   bitrate a fraction of its siblings', is file evidence of a bad release. The
   remedy is another release, not playback settings.
 - If resolution and bitrate match the name and the siblings, the file is fine.
-  Look at playback instead, such as Jellyfin transcoding, the client, or the
+  Look at playback instead, such as Matinee transcoding, the client, or the
   network.
 
 A bitrate with `bitrateFrom: "BPS tag"` is a muxing statistic, and a re-encode

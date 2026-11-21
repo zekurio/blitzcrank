@@ -60,8 +60,8 @@ const Verdicts = Type.Object({
 })
 
 const INSTRUCTIONS = `You review writes before they run. An agent repairs a private media homelab
-(Sonarr for TV, Radarr for movies, SABnzbd for downloads, Jellyfin for
-playback, Seerr for requests and issues) for the people who use it. Each
+(Sonarr for TV, Radarr for movies, SABnzbd for downloads, Matinee for
+playback and requests) for the people who use it. Each
 pending write comes with the server's preview of what it would touch and
 change, read from live state. Decide every pending write: allow or block.
 

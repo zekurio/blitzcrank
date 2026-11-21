@@ -21,7 +21,7 @@ import { ThreadRunner } from "./agent/runner.ts"
 import { resolveModel } from "./agent/session.ts"
 import { createWriteJudge } from "./agent/write-gate.ts"
 import { modelRuntimeOptions } from "./auth.ts"
-import { loadConfig, type Config } from "./config.ts"
+import { gatewayNames, loadConfig, type Config } from "./config.ts"
 import {
   Gateways,
   type Gateway,
@@ -41,8 +41,6 @@ import {
   createFluxerGateway,
   loadFluxerConfig,
 } from "./gateways/fluxer/gateway.ts"
-import { loadSeerrConfig } from "./gateways/seerr/config.ts"
-import { createSeerrGateway } from "./gateways/seerr/gateway.ts"
 import { createHelper } from "./helper.ts"
 import { JobStore } from "./jobs.ts"
 import { connectMcpEffect } from "./mcp/client.ts"
@@ -65,13 +63,6 @@ type BuildGateway = (host: GatewayHost) => Gateway
  * runtime exists. A new gateway is one more entry here.
  */
 const GATEWAYS = new Map<string, () => BuildGateway>([
-  [
-    "seerr",
-    () => {
-      const settings = loadSeerrConfig()
-      return () => createSeerrGateway(settings)
-    },
-  ],
   [
     "discord",
     () => {
@@ -123,7 +114,7 @@ function modelRuntimeEffect(config: Config) {
 export function startServerEffect(): Effect.Effect<void, unknown> {
   return Effect.gen(function* () {
     const config = loadConfig()
-    const builds = loadGateways(config.gateways)
+    const builds = loadGateways(gatewayNames())
     const models = yield* modelRuntimeEffect(config)
     const runtime = models.runtime
     const judge = models.judge
@@ -167,11 +158,7 @@ export function startServerEffect(): Effect.Effect<void, unknown> {
       yield* gateways.listenEffect(intake).pipe(Scope.provide(listening))
       yield* work.restoreEffect()
       const server = createServer(
-        createApp({
-          gateways,
-          intake,
-          stats: () => ({ queued: work.queue.size }),
-        }),
+        createApp({ stats: () => ({ queued: work.queue.size }) }),
       )
       server.listen(config.port)
       const stop = installShutdown(server, listening, work, jobs)

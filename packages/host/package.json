@@ -2,7 +2,7 @@
   "name": "blitzcrank",
   "version": "0.1.0",
   "private": true,
-  "description": "Blitzcrank host: Seerr webhook gateway and Pi Durable agent loop",
+  "description": "Blitzcrank host: Discord and Fluxer gateways and the Pi Durable agent loop",
   "license": "MIT",
   "bin": {
     "blitzcrank": "./dist/cli.js"
