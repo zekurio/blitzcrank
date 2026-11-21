@@ -16,8 +16,8 @@ const USAGE =
 
 const FIELDS: ReadonlySet<string> = new Set(["thread", "text", "admin"])
 
-// Worded like the chat gateways' brief without their platform, so a run here
-// behaves as it would in a Discord or Fluxer thread.
+// Worded like the Fluxer gateway's brief without the platform, so a run here
+// behaves as it would in a Fluxer thread.
 const BRIEF =
   "Each conversation is one chat thread with a member allowed to use the bot. " +
   "Every event is that member's latest message and comes with nothing else; earlier messages and your prior replies are in this conversation. " +

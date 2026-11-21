@@ -2,17 +2,16 @@
 
 # blitzcrank
 
-An agent for a private media homelab. Discord and Fluxer messages start
-durable investigations across Matinee, the media server people watch on and
+An agent for a private media homelab. Fluxer messages start durable
+investigations across Matinee, the media server people watch on and
 request titles from, and Sonarr, Radarr, and SABnzbd behind it.
 
 It runs as two processes:
 
-- The host (`packages/host`, command `blitzcrank`) takes Discord and Fluxer
-  messages, runs the agent, and posts its final message in the chat thread.
-  The host holds the model credentials and what its gateways post with: the
-  Discord and Fluxer bot tokens. The agent loop only sees threads, never the
-  gateway behind them.
+- The host (`packages/host`, command `blitzcrank`) takes Fluxer messages, runs
+  the agent, and posts its final message in the chat thread. The host holds
+  the model credentials and the Fluxer bot token. The agent loop only sees
+  threads, never the gateway behind them.
 - The MCP server (`packages/mcp`, command `blitzcrank-mcp`) holds the service
   API keys and the media mounts. Every read and write the agent makes goes
   through it, one tool per operation.
@@ -38,11 +37,10 @@ Add `github:zekurio/blitzcrank` as a flake input, then:
     helperModel = "openai/gpt-5.4-mini:off"; # a small, fast model for side jobs
     gateModel = "anthropic/claude-haiku-5-5:high"; # reviews destructive writes
     mcpUrl = "http://127.0.0.1:8485/mcp";
-    gateways = [ "fluxer" ];
     settings = {
       FLUXER_INSTANCE_URL = "https://chat.example.com";
-      FLUXER_CHANNELS = "1234567890";
-      FLUXER_ALLOWED_ROLES = "2345678901";
+      FLUXER_CHANNELS = "12345678901234567";
+      FLUXER_ALLOWED_ROLES = "23456789012345678";
       FLUXER_TRIAGE_MODEL = "opencode/jev-1.13";
     };
     environmentFile = "/run/secrets/blitzcrank.env";
@@ -60,8 +58,8 @@ The two services are enabled independently and use separate packages:
 package contains its own command and runtime dependencies. The default package
 is the host. Each service has its own `package` option and environment:
 
-- The host's environment file holds the bot tokens of its gateways, such as
-  `FLUXER_BOT_TOKEN`, and `BLITZCRANK_MCP_TOKEN`.
+- The host's environment file holds `FLUXER_BOT_TOKEN` and
+  `BLITZCRANK_MCP_TOKEN`.
   [`packages/host/.env.example`](packages/host/.env.example) documents all host
   settings.
 - The server's environment file holds the service URLs and API keys, the two
@@ -141,8 +139,8 @@ Use `provider/model[:thinking]`, for example `openai/gpt-6-astra:medium`.
 
 `BLITZCRANK_HELPER_MODEL` is required too, also without a default. It names a
 second chat model, in the same form, for small jobs outside a run, such as
-naming the threads the Discord and Fluxer gateways open. Each job gets one
-instruction and one input, with no tools. Pick a small, fast model. Thinking
+naming the threads the Fluxer gateway opens. Each job gets one instruction
+and one input, with no tools. Pick a small, fast model. Thinking
 defaults to medium as for `BLITZCRANK_MODEL`, so add `:off`, for example
 `openai/gpt-5.4-mini:off`. The host refuses to start if the model is unknown
 or its provider has no key.
@@ -214,9 +212,9 @@ pnpm exec tsx watch --env-file=.env src/cli.ts
 devenv shell
 cd packages/host
 cp .env.example .env
-# Fill in the three models, BLITZCRANK_GATEWAYS and that gateway's settings,
-# the same BLITZCRANK_MCP_TOKEN, and BLITZCRANK_MCP_URL=http://127.0.0.1:8485/mcp.
-# `blitzcrank run` needs no gateway settings.
+# Fill in the three models, the FLUXER_* settings, the same
+# BLITZCRANK_MCP_TOKEN, and BLITZCRANK_MCP_URL=http://127.0.0.1:8485/mcp.
+# `blitzcrank run` needs no FLUXER_* settings.
 pnpm exec tsx --env-file=.env src/cli.ts auth login openai
 pnpm exec tsx watch --env-file=.env src/cli.ts
 ```
@@ -255,62 +253,11 @@ Matinee's connection rules choose the quality profile and folder.
 
 The agent never sees Matinee's live sessions, users, or groups.
 
-## Connect Discord
-
-The service runs the gateways `BLITZCRANK_GATEWAYS` lists, or
-`services.blitzcrank.gateways` on NixOS, and refuses to start without one.
-List `discord` to run this gateway, alone or with `fluxer`.
-
-The bot watches the channels in `DISCORD_CHANNELS` and nothing else, DMs
-included. Only members listed by user id in `DISCORD_ALLOWED_USERS` or holding a
-role in `DISCORD_ALLOWED_ROLES` get an answer. Their messages go to a
-classifier first:
-
-- A message that triage judges a homelab request opens a thread, and the agent
-  answers there. Without a mention, triage must be at least
-  `DISCORD_TRIAGE_THRESHOLD` sure (0.8 by default). With one, the most likely
-  label decides, and a message triage cannot judge opens a thread anyway.
-- The thread is named `blitzcrank: <title>`, with a title the
-  [helper model](#authentication-and-models) writes from the message. If the
-  helper fails, the message itself stands in. The bot adds the member to the
-  thread, so it shows in their channel list.
-- While the agent works, the bot's one message in the thread shows the step it
-  is on, such as `🔍 Blitzcrank is checking Sonarr…`, at most one edit every
-  3 seconds. The host picks the line from the tool's name alone, never from
-  what the model passed to it. The reply then replaces the line.
-- An off-topic message gets a fixed denial line if it mentions the bot, and
-  nothing otherwise. A reply to one of the bot's messages counts as a mention.
-- Later messages in a bot thread are follow-ups. They need no mention and skip
-  triage.
-
-Members listed by user id in `DISCORD_ADMIN_USERS` or holding a role in
-`DISCORD_ADMIN_ROLES` are admins. They get answers without an entry in the
-allowed lists, and only their requests can have media that plays fine removed
-or unmonitored. Each message counts for its own sender: an admin's earlier
-message in a thread does not cover a later member's request.
-
-`DISCORD_TRIAGE_MODEL` is required and names a classifier model, not a chat
-model. TypeSafe's Jev is one: `opencode/jev-1.13` or `opencode/jev-1.13-free`
-with `OPENCODE_API_KEY`, `openrouter/~typesafe/jev-latest` with
-`OPENROUTER_API_KEY`, or `typesafe/jev-latest` with `TYPESAFE_API_KEY`. The
-host refuses to start if the model is unknown or its provider has no key.
-
-In the [developer portal](https://discord.com/developers/applications), create
-an application with a bot, copy its token into `DISCORD_BOT_TOKEN`, and turn on
-the **Message Content** intent. Invite the bot with the `bot` scope and these
-permissions in the watched channels: View Channel, Send Messages, Send Messages
-in Threads, Create Public Threads, and Read Message History. The host connects
-to Discord itself and needs no inbound port for it. If Discord closes that
-connection for good, such as after the token is regenerated or the Message
-Content intent is turned off, the host stops with a failure and systemd
-restarts it. Messages sent while the host is down are not picked up later.
-
 ## Connect Fluxer
 
-[Fluxer](https://fluxer.app) is an open-source chat platform shaped like
-Discord, hosted at fluxer.app or on your own server. The Fluxer gateway is off
-when `BLITZCRANK_GATEWAYS` or `services.blitzcrank.gateways` lists `fluxer`,
-alone or with `discord`.
+[Fluxer](https://fluxer.app) is an open-source chat platform, hosted at
+fluxer.app or on your own server. It is the one chat platform the service
+listens to.
 
 Set `FLUXER_INSTANCE_URL` to the instance origin, such as `https://fluxer.app`
 or `https://chat.example.com`. The host reads the instance's API and gateway
@@ -320,26 +267,37 @@ you set.
 The bot watches the channels in `FLUXER_CHANNELS` and nothing else, DMs
 included. Only members listed by user id in `FLUXER_ALLOWED_USERS` or holding a
 role in `FLUXER_ALLOWED_ROLES` get an answer. Their messages go to a
-classifier first, as on Discord:
+classifier first:
 
 - A message that triage judges a homelab request opens a thread, and the agent
   answers there. Without a mention, triage must be at least
   `FLUXER_TRIAGE_THRESHOLD` sure (0.8 by default). With one, the most likely
   label decides, and a message triage cannot judge opens a thread anyway.
-- The thread is named as on Discord. Fluxer makes only the bot a member of a
-  thread it opens, so the bot adds the member, and Fluxer posts a line saying
-  so.
-- The bot's message shows the agent's current step, as on Discord.
+- The thread is named `blitzcrank: <title>`, with a title the
+  [helper model](#authentication-and-models) writes from the message. If the
+  helper fails, the message itself stands in. Fluxer makes only the bot a
+  member of a thread it opens, so the bot adds the member, and Fluxer posts a
+  line saying so.
+- While the agent works, the bot's one message in the thread shows the step it
+  is on, such as `🔍 Blitzcrank is checking Sonarr…`, at most one edit every
+  3 seconds. The host picks the line from the tool's name alone, never from
+  what the model passed to it. The reply then replaces the line.
 - An off-topic message gets a fixed denial line if it mentions the bot, and
   nothing otherwise. A reply to one of the bot's messages counts as a mention.
 - Later messages in a bot thread are follow-ups. They need no mention and skip
   triage.
 
-`FLUXER_ADMIN_USERS` and `FLUXER_ADMIN_ROLES` name admins as on Discord.
+Members listed by user id in `FLUXER_ADMIN_USERS` or holding a role in
+`FLUXER_ADMIN_ROLES` are admins. They get answers without an entry in the
+allowed lists, and only their requests can have media that plays fine removed
+or unmonitored. Each message counts for its own sender: an admin's earlier
+message in a thread does not cover a later member's request.
 
-`FLUXER_TRIAGE_MODEL` is required and names a classifier model. The models
-listed under [Connect Discord](#connect-discord) work here too. The host
-refuses to start if the model is unknown or its provider has no key.
+`FLUXER_TRIAGE_MODEL` is required and names a classifier model, not a chat
+model. TypeSafe's Jev is one: `opencode/jev-1.13` or `opencode/jev-1.13-free`
+with `OPENCODE_API_KEY`, `openrouter/~typesafe/jev-latest` with
+`OPENROUTER_API_KEY`, or `typesafe/jev-latest` with `TYPESAFE_API_KEY`. The
+host refuses to start if the model is unknown or its provider has no key.
 
 In the Fluxer web client, open **User Settings → Applications** and create an
 application. Fluxer creates the bot account with it and shows the bot token
@@ -398,19 +356,20 @@ echo '{"thread":"t1","text":"Crystal Lake ist ab Episode 6 falsch"}' |
 - A `step` line names each tool call as it starts and says whether the tool
   may write. It never shows the arguments. The full trace stays in
   `sessions/cli/<thread>.sqlite`.
-- `usage` covers every run of the thread so far, like the reply footer on
-  the other gateways. `costUsd` is null unless the provider bills per token.
+- `usage` covers every run of the thread so far, like the reply footer in a
+  Fluxer thread. `costUsd` is null unless the provider bills per token.
 - A run that ends without a message prints no `reply`. A failed run ends with
   `"status":"failed"` and its error, and the command exits 1. Bad input fails
   before `run.started`.
 - Host logs go to stderr.
 
 The command needs the host's environment: the model, the helper model, and
-the gate model, their credentials, and the MCP URL and token. It reads no gateway settings. Runs go through the same
-journal, runner, and tools as the service. The model's brief matches the chat
-gateways' without the platform name, so a run here behaves like one in a
-Discord or Fluxer thread. Whoever runs the command already holds every
-credential the run uses, so it checks no sender.
+the gate model, their credentials, and the MCP URL and token. It reads no
+`FLUXER_*` settings. Runs go through the same journal, runner, and tools as
+the service. The model's brief matches the Fluxer gateway's without the
+platform name, so a run here behaves like one in a Fluxer thread. Whoever runs
+the command already holds every credential the run uses, so it checks no
+sender.
 
 Give the command a data directory of its own. The journal admits one process
 at a time, so the command fails while the service holds the directory. A run
@@ -433,30 +392,32 @@ service refuses to start on a directory that holds such a run.
   reach internal services.
 
 Both processes answer an unauthenticated `GET /healthz`. It is the host's only
-HTTP endpoint: its gateways connect to their platforms themselves.
+HTTP endpoint: it connects to Fluxer itself.
 
-## Moving from Seerr and Jellyfin
+## Moving from Seerr, Jellyfin, and Discord
 
-Earlier versions took Seerr issue webhooks and read Jellyfin and Seerr. This
-one has neither: the Seerr gateway and the `jellyfin_*` and `seerr_*` tools are
-gone, and `BLITZCRANK_GATEWAYS` has no default.
+Earlier versions took Seerr issue webhooks and Discord messages and read
+Jellyfin and Seerr. This one has none of them: the Seerr and Discord gateways
+and the `jellyfin_*` and `seerr_*` tools are gone. The service always runs the
+Fluxer gateway, so `BLITZCRANK_GATEWAYS` and `services.blitzcrank.gateways`
+are gone too.
 
 At startup the host recovers every unfinished job and checks its sender again
-through the job's own gateway. A job of the removed Seerr gateway has no
-gateway to check it, so the new host refuses to start while one is
-unfinished. To switch:
+through the job's own gateway. A job of a removed gateway has no gateway to
+check it, so the new host refuses to start while one is unfinished. To switch:
 
 1. Stop new admission on the old version: turn off Seerr's webhook to
-   blitzcrank, and stop the chat gateways if you want them quiet too.
+   blitzcrank, and remove `discord` from `BLITZCRANK_GATEWAYS`.
 2. Let the runs in flight finish on the old version, so `jobs.sqlite` holds no
    unfinished job.
-3. Switch both processes: the host with `BLITZCRANK_GATEWAYS` set and the
-   `SEERR_*` and `BLITZCRANK_WEBHOOK_SECRET` settings removed, and the server
-   with `MATINEE_URL` and its tokens in place of the `JELLYFIN_*` and `SEERR_*`
-   pairs.
+3. Switch both processes: the host with the `FLUXER_*` settings in place and
+   `BLITZCRANK_GATEWAYS`, the `DISCORD_*` and `SEERR_*` settings, and
+   `BLITZCRANK_WEBHOOK_SECRET` removed, and the server with `MATINEE_URL` and
+   its tokens in place of the `JELLYFIN_*` and `SEERR_*` pairs. On NixOS,
+   drop `services.blitzcrank.gateways`.
 
-Finished Seerr threads stay in the journal and under `sessions/seerr/`; nothing
-reads them again.
+Finished Seerr and Discord threads stay in the journal and under
+`sessions/seerr/` and `sessions/discord/`; nothing reads them again.
 
 ## Logs and journals
 

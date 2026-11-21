@@ -2,7 +2,7 @@
   "name": "blitzcrank",
   "version": "0.1.0",
   "private": true,
-  "description": "Blitzcrank host: Discord and Fluxer gateways and the Pi Durable agent loop",
+  "description": "Blitzcrank host: the Fluxer gateway and the Pi Durable agent loop",
   "license": "MIT",
   "bin": {
     "blitzcrank": "./dist/cli.js"
@@ -16,9 +16,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@discordjs/core": "2.6.0",
-    "@discordjs/rest": "2.6.3",
-    "@discordjs/ws": "2.0.4",
     "@earendil-works/chord": "1.1.0",
     "@earendil-works/pi-ai": "1.1.0",
     "@earendil-works/pi-coding-agent": "1.1.0",

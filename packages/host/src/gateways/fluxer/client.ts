@@ -21,11 +21,10 @@ import {
 } from "../../services/http.ts"
 import type {
   ChatChannel,
-  ChatClient,
   ChatMember,
   ChatMessage,
   MessageKind,
-} from "../chat.ts"
+} from "./chat.ts"
 import {
   Channel,
   ChannelType,
@@ -151,7 +150,7 @@ type Written = Static<typeof Written>
  * Nothing is retried: repeating a post after a timeout can post it twice, and
  * Fluxer bans an address that keeps sending a rejected token.
  */
-export class FluxerClient implements ChatClient {
+export class FluxerClient {
   private readonly base: string
   private readonly authorization: string
 
@@ -171,6 +170,7 @@ export class FluxerClient implements ChatClient {
     )
   }
 
+  /** The member, or `undefined` once they have left the guild. */
   memberEffect(
     guildId: string,
     userId: string,
@@ -188,6 +188,7 @@ export class FluxerClient implements ChatClient {
     )
   }
 
+  /** Newest first. */
   recentMessagesEffect(
     channelId: string,
     limit: number,
@@ -258,6 +259,7 @@ export class FluxerClient implements ChatClient {
     ).pipe(Effect.asVoid)
   }
 
+  /** A message that is already gone counts as deleted. */
   deleteEffect(
     channelId: string,
     messageId: string,

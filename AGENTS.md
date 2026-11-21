@@ -1,8 +1,8 @@
 # blitzcrank
 
-blitzcrank is an agent for a private media homelab. A Discord or Fluxer
-message starts a Pi Durable run that investigates across Matinee, Sonarr,
-Radarr, and SABnzbd, applies narrow verified fixes, and replies in the thread.
+blitzcrank is an agent for a private media homelab. A Fluxer message starts a
+Pi Durable run that investigates across Matinee, Sonarr, Radarr, and SABnzbd,
+applies narrow verified fixes, and replies in the thread.
 `blitzcrank run` answers one event from stdin the same way, for debugging and
 benchmarks.
 

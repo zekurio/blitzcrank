@@ -128,7 +128,7 @@ let
 in
 {
   options.services.blitzcrank = {
-    enable = lib.mkEnableOption "blitzcrank, the agentic homelab helper for Discord and Fluxer";
+    enable = lib.mkEnableOption "blitzcrank, the agentic homelab helper for Fluxer";
 
     package = lib.mkOption {
       type = lib.types.package;
@@ -159,9 +159,9 @@ in
       example = "openai/gpt-5.4-mini:off";
       description = ''
         Required chat model for small jobs outside a run, such as naming a
-        Discord or Fluxer thread, as provider/model with an optional thinking
-        suffix. There is no default. Thinking defaults to medium; ":off"
-        suits these jobs. It authenticates like {option}`model`.
+        Fluxer thread, as provider/model with an optional thinking suffix.
+        There is no default. Thinking defaults to medium; ":off" suits these
+        jobs. It authenticates like {option}`model`.
       '';
     };
 
@@ -181,33 +181,6 @@ in
       type = lib.types.str;
       default = "German";
       description = "Fallback language for replies when no message of the reporter's shows one, and the language of the host's own notices.";
-    };
-
-    gateways = lib.mkOption {
-      type = lib.types.nonEmptyListOf (
-        lib.types.enum [
-          "discord"
-          "fluxer"
-        ]
-      );
-      example = [ "fluxer" ];
-      description = ''
-        Required gateways the host runs; there is no default. Each reads its own settings, and a listed
-        gateway without them stops the service at startup. Pending work for
-        a gateway that is no longer listed also stops it.
-
-        "discord" needs DISCORD_BOT_TOKEN in {option}`environmentFile`, the
-        triage provider's API key there or in the auth file, and
-        DISCORD_CHANNELS, at least one of DISCORD_ALLOWED_USERS,
-        DISCORD_ALLOWED_ROLES, DISCORD_ADMIN_USERS, or DISCORD_ADMIN_ROLES,
-        and DISCORD_TRIAGE_MODEL in {option}`settings`.
-
-        "fluxer" needs FLUXER_BOT_TOKEN in {option}`environmentFile`, the
-        triage provider's API key there or in the auth file, and
-        FLUXER_INSTANCE_URL, FLUXER_CHANNELS, at least one of
-        FLUXER_ALLOWED_USERS, FLUXER_ALLOWED_ROLES, FLUXER_ADMIN_USERS, or
-        FLUXER_ADMIN_ROLES, and FLUXER_TRIAGE_MODEL in {option}`settings`.
-      '';
     };
 
     webProvider = lib.mkOption {
@@ -262,8 +235,7 @@ in
       example = "/run/secrets/blitzcrank.env";
       description = ''
         Environment file with the host's secrets:
-        DISCORD_BOT_TOKEN (required for the discord gateway),
-        FLUXER_BOT_TOKEN (required for the fluxer gateway),
+        FLUXER_BOT_TOKEN (required),
         BLITZCRANK_MCP_TOKEN (required; must be the same token as in
         the MCP server's environment file),
         FIRECRAWL_API_KEY when {option}`webProvider` is "firecrawl", and
@@ -278,9 +250,19 @@ in
       type = lib.types.attrsOf lib.types.str;
       default = { };
       example = {
-        FLUXER_TRIAGE_THRESHOLD = "0.8";
+        FLUXER_INSTANCE_URL = "https://chat.example.com";
+        FLUXER_CHANNELS = "12345678901234567";
+        FLUXER_ALLOWED_ROLES = "23456789012345678";
+        FLUXER_TRIAGE_MODEL = "opencode/jev-1.13";
       };
-      description = "Extra non-secret environment variables.";
+      description = ''
+        Extra non-secret environment variables. The Fluxer gateway reads its
+        settings here: FLUXER_INSTANCE_URL, FLUXER_CHANNELS, at least one of
+        FLUXER_ALLOWED_USERS, FLUXER_ALLOWED_ROLES, FLUXER_ADMIN_USERS, or
+        FLUXER_ADMIN_ROLES, and FLUXER_TRIAGE_MODEL are required, and the
+        service stops at startup without them. The triage provider's API key
+        goes in {option}`environmentFile` or the auth file.
+      '';
     };
 
     mcpUrl = lib.mkOption {
@@ -322,7 +304,6 @@ in
         BLITZCRANK_HELPER_MODEL = cfg.helperModel;
         BLITZCRANK_GATE_MODEL = cfg.gateModel;
         BLITZCRANK_LANGUAGE = cfg.language;
-        BLITZCRANK_GATEWAYS = lib.concatStringsSep "," cfg.gateways;
         BLITZCRANK_DATA_DIR = stateDir;
         BLITZCRANK_AUTH_PATH = cfg.authFile;
         BLITZCRANK_WEB_PROVIDER = cfg.webProvider;

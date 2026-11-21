@@ -15,8 +15,8 @@ export type WebConfig =
   | { provider: "none" }
 
 /**
- * The host's own settings. A gateway reads its own in
- * `gateways/<name>/config.ts`, so none of them appear here.
+ * The host's own settings. The Fluxer gateway reads its own in
+ * `gateways/fluxer/config.ts`, so none of them appear here.
  */
 export interface Config {
   port: number
@@ -148,26 +148,6 @@ function web(): WebConfig {
     throw new Error(`FIRECRAWL_URL must be an http(s) URL, got "${url}"`)
   }
   return { provider, apiKey, url }
-}
-
-/**
- * The gateways the service runs, by name. Each reads its own settings, so a
- * deployment needs none for the others. There is no default: a service that
- * listens to nothing would answer no one. Only the service reads this; the
- * `run` command answers stdin and names no gateway.
- */
-export function gatewayNames(): readonly string[] {
-  const value = process.env.BLITZCRANK_GATEWAYS?.trim() ?? ""
-  const names = value
-    .split(",")
-    .map((name) => name.trim())
-    .filter((name) => name !== "")
-  if (names.length === 0) {
-    throw new Error(
-      "BLITZCRANK_GATEWAYS must name at least one gateway, such as discord or fluxer",
-    )
-  }
-  return [...new Set(names)]
 }
 
 export function loadConfig(): Config {
