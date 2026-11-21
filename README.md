@@ -394,31 +394,6 @@ service refuses to start on a directory that holds such a run.
 Both processes answer an unauthenticated `GET /healthz`. It is the host's only
 HTTP endpoint: it connects to Fluxer itself.
 
-## Moving from Seerr, Jellyfin, and Discord
-
-Earlier versions took Seerr issue webhooks and Discord messages and read
-Jellyfin and Seerr. This one has none of them: the Seerr and Discord gateways
-and the `jellyfin_*` and `seerr_*` tools are gone. The service always runs the
-Fluxer gateway, so `BLITZCRANK_GATEWAYS` and `services.blitzcrank.gateways`
-are gone too.
-
-At startup the host recovers every unfinished job and checks its sender again
-through the job's own gateway. A job of a removed gateway has no gateway to
-check it, so the new host refuses to start while one is unfinished. To switch:
-
-1. Stop new admission on the old version: turn off Seerr's webhook to
-   blitzcrank, and remove `discord` from `BLITZCRANK_GATEWAYS`.
-2. Let the runs in flight finish on the old version, so `jobs.sqlite` holds no
-   unfinished job.
-3. Switch both processes: the host with the `FLUXER_*` settings in place and
-   `BLITZCRANK_GATEWAYS`, the `DISCORD_*` and `SEERR_*` settings, and
-   `BLITZCRANK_WEBHOOK_SECRET` removed, and the server with `MATINEE_URL` and
-   its tokens in place of the `JELLYFIN_*` and `SEERR_*` pairs. On NixOS,
-   drop `services.blitzcrank.gateways`.
-
-Finished Seerr and Discord threads stay in the journal and under
-`sessions/seerr/` and `sessions/discord/`; nothing reads them again.
-
 ## Logs and journals
 
 The host writes JSON lifecycle records to stdout/stderr, captured by journald
