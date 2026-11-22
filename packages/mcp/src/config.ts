@@ -10,11 +10,10 @@ export interface Config {
   token: string
   host: string
   port: number
-  seerr: ServiceConfig | undefined
+  matinee: ServiceConfig | undefined
   sonarr: ServiceConfig | undefined
   radarr: ServiceConfig | undefined
   sabnzbd: ServiceConfig | undefined
-  jellyfin: ServiceConfig | undefined
   /** Absolute roots the media tools may read. Empty disables them. */
   mediaRoots: string[]
 }
@@ -26,19 +25,17 @@ export function loadConfig(env: Env = process.env): Config {
     token: requiredToken(env),
     host: env.BLITZCRANK_MCP_HOST?.trim() || "127.0.0.1",
     port: integer(env, "BLITZCRANK_MCP_PORT", 8485, 0, 65_535),
-    seerr: service(env, "SEERR"),
+    matinee: service(env, "MATINEE"),
     sonarr: service(env, "SONARR"),
     radarr: service(env, "RADARR"),
     sabnzbd: service(env, "SABNZBD"),
-    jellyfin: service(env, "JELLYFIN"),
     mediaRoots: mediaRoots(env),
   }
   const services = [
-    config.seerr,
+    config.matinee,
     config.sonarr,
     config.radarr,
     config.sabnzbd,
-    config.jellyfin,
   ].filter((entry) => entry !== undefined)
   if (services.length === 0 && config.mediaRoots.length === 0) {
     throw new Error(

@@ -28,7 +28,10 @@ export function radarrReads(arr: Arr) {
         "One tracked movie with its file summary. Pass tmdbId or movieId",
       params: Type.Object({
         tmdbId: Type.Optional(
-          Type.Integer({ minimum: 1, description: "TMDB id, as Seerr has it" }),
+          Type.Integer({
+            minimum: 1,
+            description: "TMDB id, as Matinee and TMDB have it",
+          }),
         ),
         movieId: Type.Optional(movieIdParam),
       }),

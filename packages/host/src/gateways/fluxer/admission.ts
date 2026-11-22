@@ -5,21 +5,22 @@ import {
   type Access,
   type Intake,
   type ThreadRef,
-} from "../gateway.ts"
-import type { Helper } from "../helper.ts"
-import { errorKind, logEvent } from "../log.ts"
-import type { ChatConfig } from "./chat-config.ts"
-import { threadNameEffect } from "./chat-title.ts"
+} from "../../gateway.ts"
+import type { Helper } from "../../helper.ts"
+import { errorKind, logEvent } from "../../log.ts"
 import {
   mentionsBot,
   messageText,
   type ChatArrival,
   type ChatChannel,
-  type ChatClient,
-  type ChatError,
-  type ChatPlatform,
 } from "./chat.ts"
+import { FluxerError, type FluxerClient } from "./client.ts"
+import type { FluxerConfig } from "./config.ts"
+import { threadNameEffect } from "./title.ts"
 import type { Triage } from "./triage.ts"
+
+/** The gateway's name: it tags threads and starts its log events. */
+export const NAME = "fluxer"
 
 /** What recovery needs to check a message's sender again. */
 export interface ChatSource {
@@ -30,7 +31,7 @@ export interface ChatSource {
 }
 
 export type Allowlist = Pick<
-  ChatConfig,
+  FluxerConfig,
   "users" | "roles" | "adminUsers" | "adminRoles"
 >
 
@@ -64,11 +65,11 @@ function listed(
  * not a denial.
  */
 export function memberAccessEffect(
-  client: ChatClient,
+  client: FluxerClient,
   config: Allowlist,
   guild: string,
   author: string,
-): Effect.Effect<Access, ChatError> {
+): Effect.Effect<Access, FluxerError> {
   return client
     .memberEffect(guild, author)
     .pipe(
@@ -95,18 +96,17 @@ export class Places {
   private readonly threads = new Map<string, string | null>()
 
   constructor(
-    private readonly client: ChatClient,
+    private readonly client: FluxerClient,
     private readonly watched: ReadonlySet<string>,
     private readonly botId: string,
   ) {}
 
-  /** Without `inThread`, only a lookup tells a thread from a channel. */
   placeEffect(
     channelId: string,
-    inThread: boolean | undefined,
-  ): Effect.Effect<Place | undefined, ChatError> {
+    inThread: boolean,
+  ): Effect.Effect<Place | undefined, FluxerError> {
     if (this.watched.has(channelId)) return Effect.succeed({ kind: "channel" })
-    if (inThread === false) return Effect.succeed(undefined)
+    if (!inThread) return Effect.succeed(undefined)
     const known = this.threads.get(channelId)
     if (known !== undefined) return Effect.succeed(threadPlace(known))
     return this.client.channelEffect(channelId).pipe(
@@ -137,9 +137,8 @@ function threadPlace(parent: string | null): Place | undefined {
 }
 
 export interface AdmissionDeps {
-  platform: ChatPlatform
-  config: ChatConfig
-  client: ChatClient
+  config: FluxerConfig
+  client: FluxerClient
   places: Places
   triage: Triage
   /** Names the threads admission opens. */
@@ -161,7 +160,6 @@ export function admitEffect(
   message: ChatArrival,
   deps: AdmissionDeps,
 ): Effect.Effect<void> {
-  const name = deps.platform.name
   return Effect.gen(function* () {
     // The socket opens before recovery. Until the host is ready, a message
     // only waits here, where closing the listener can still interrupt it.
@@ -175,8 +173,8 @@ export function admitEffect(
       message.inThread,
     )
     if (place === undefined) return
-    // A thread started from a message shares that message's id. The
-    // platform can echo the starter into the thread; it is not a follow-up.
+    // A thread started from a message shares that message's id. Fluxer can
+    // echo the starter into the thread; it is not a follow-up.
     if (place.kind === "thread" && message.id === message.channelId) return
 
     // A reply to the bot, such as to its denial, carries no mention in its
@@ -184,9 +182,9 @@ export function admitEffect(
     const mentioned =
       mentionsBot(message.content, deps.botId) ||
       message.referenced?.author.id === deps.botId
-    // The roles the event carries decide, admin status included. Both
-    // platforms attach the author's member to a guild message in their
-    // documented shape; a message without one is refused and logged as
+    // The roles the event carries decide, admin status included. Fluxer
+    // attaches the author's member to a guild message; a message without
+    // one is refused and logged as
     // `no_member`. A live lookup here would cost a REST call for every
     // stranger's chatter in a watched channel. The roles are as old as the
     // event, which a resumed socket may replay late. Past admission the
@@ -197,18 +195,14 @@ export function admitEffect(
     if (admission === "no_member" || admission === "not_allowed") {
       // Unlisted chatter in a watched channel is the normal case, not news.
       if (mentioned || place.kind === "thread")
-        logEvent(
-          `${name}.denied`,
-          { reason: admission, in: place.kind },
-          "warn",
-        )
+        logEvent("fluxer.denied", { reason: admission, in: place.kind }, "warn")
       return
     }
     const admin = admission === "admin"
     const text = messageText(message.content, message.mentions, deps.botId)
     // A bare mention or an image alone leaves nothing to triage or answer.
     if (!text) {
-      logEvent(`${name}.message_skipped`, {
+      logEvent("fluxer.message_skipped", {
         reason: "no_text",
         message: message.id,
         in: place.kind,
@@ -219,7 +213,7 @@ export function admitEffect(
 
     if (place.kind === "thread") {
       yield* deps.intake.submit({
-        thread: { gateway: name, id: message.channelId },
+        thread: { gateway: NAME, id: message.channelId },
         type: "MESSAGE_CREATE",
         reply: true,
         title: undefined,
@@ -232,7 +226,7 @@ export function admitEffect(
 
     const accepted = yield* acceptedEffect(message, text, mentioned, deps)
     if (accepted) {
-      const title = yield* threadNameEffect(deps.helper, deps.platform, text)
+      const title = yield* threadNameEffect(deps.helper, text)
       yield* openEffect(message, text, title, guild, admin, deps)
       return
     }
@@ -244,8 +238,8 @@ export function admitEffect(
     Effect.catchCause((cause) => {
       if (Cause.hasInterrupts(cause)) return Effect.interrupt
       logEvent(
-        `${name}.admission_failed`,
-        failureFields(deps.platform, Cause.squash(cause)),
+        "fluxer.admission_failed",
+        failureFields(Cause.squash(cause)),
         "warn",
       )
       return Effect.void
@@ -266,7 +260,6 @@ function acceptedEffect(
   deps: AdmissionDeps,
 ): Effect.Effect<boolean> {
   const fields = {
-    gateway: deps.platform.name,
     message: message.id,
     kind: message.kind,
     chars: text.length,
@@ -315,10 +308,10 @@ function admissionOf(
   return access === "denied" ? "not_allowed" : access
 }
 
-/** Kinds and codes only: provider and platform messages can echo the text. */
-function failureFields(platform: ChatPlatform, error: unknown) {
-  if (platform.isError(error))
-    return { error: platform.name, status: error.status, code: error.code }
+/** Kinds and codes only: provider and Fluxer messages can echo the text. */
+function failureFields(error: unknown) {
+  if (error instanceof FluxerError)
+    return { error: NAME, status: error.status, code: error.code }
   return { error: errorKind(error) }
 }
 
@@ -341,7 +334,7 @@ function openEffect(
       title,
     )
     deps.places.remember(opened.id, message.channelId)
-    const thread: ThreadRef = { gateway: deps.platform.name, id: opened.id }
+    const thread: ThreadRef = { gateway: NAME, id: opened.id }
     const result = yield* deps.intake.submit({
       thread,
       type: "MESSAGE_CREATE",
@@ -355,7 +348,7 @@ function openEffect(
         author: message.author.id,
       },
     })
-    logEvent(`${deps.platform.name}.thread_opened`, {
+    logEvent("fluxer.thread_opened", {
       thread: threadKey(thread),
       result,
     })
@@ -365,11 +358,8 @@ function openEffect(
       Effect.catch((error) =>
         Effect.sync(() => {
           logEvent(
-            `${deps.platform.name}.member_add_failed`,
-            {
-              thread: threadKey(thread),
-              ...failureFields(deps.platform, error),
-            },
+            "fluxer.member_add_failed",
+            { thread: threadKey(thread), ...failureFields(error) },
             "warn",
           )
         }),

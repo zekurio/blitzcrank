@@ -33,7 +33,10 @@ export function sonarrReads(arr: Arr) {
         "One tracked series with seasons and statistics. Pass tvdbId or seriesId",
       params: Type.Object({
         tvdbId: Type.Optional(
-          Type.Integer({ minimum: 1, description: "TVDB id, as Seerr has it" }),
+          Type.Integer({
+            minimum: 1,
+            description: "TVDB id, as Matinee and TheTVDB have it",
+          }),
         ),
         seriesId: Type.Optional(seriesIdParam),
       }),

@@ -36,7 +36,7 @@ const TIMEOUT = "15 seconds"
 // cinemas, and thanks from reading as one.
 const CRITERIA: Record<Label, string> = {
   stack:
-    "Wants something from this media server or says something is wrong with it, even as a short remark, complaint, or question: a movie or show they want added, whether or when a title or episode is on the server, an earlier request that has not shown up, something that will not play, buffers, stutters, or looks bad, wrong or missing subtitles or audio, a stuck or failed download, or Seerr, Sonarr, Radarr, SABnzbd, or Jellyfin misbehaving.",
+    "Wants something from this media server or says something is wrong with it, even as a short remark, complaint, or question: a movie or show they want added, whether or when a title or episode is on the server, an earlier request that has not shown up, something that will not play, buffers, stutters, or looks bad, wrong or missing subtitles or audio, a stuck or failed download, or Matinee, Sonarr, Radarr, or SABnzbd misbehaving.",
   chat: "Talks about movies, shows, or music, recommends or reviews them, or chats with other members, without wanting anything from the server or saying anything is wrong with it. Questions about cinemas, release dates, or other streaming services, thanks, and reports that something works again are chat.",
   other: "Anything else.",
 }
@@ -46,19 +46,11 @@ const CRITERIA: Record<Label, string> = {
  * answers with labels and probabilities and writes no text, so nothing it
  * returns can reach the chat. Resolving the model at startup turns a typo or a
  * missing key into a failed boot instead of a bot that ignores everyone.
- *
- * `naming.setting` is the env var that holds `spec`, named in those startup
- * errors. `naming.platform` is the chat platform the question says the
- * message was posted on.
  */
-export function createTriage(
-  runtime: ModelRuntime,
-  spec: string,
-  naming: { setting: string; platform: string },
-): Triage {
+export function createTriage(runtime: ModelRuntime, spec: string): Triage {
   const slash = spec.indexOf("/")
   if (slash <= 0 || slash === spec.length - 1) {
-    throw new Error(`${naming.setting} must be provider/model, got "${spec}"`)
+    throw new Error(`FLUXER_TRIAGE_MODEL must be provider/model, got "${spec}"`)
   }
   const provider = spec.slice(0, slash)
   const id = spec.slice(slash + 1)
@@ -66,18 +58,18 @@ export function createTriage(
   if (!model) {
     throw new Error(
       runtime.getModel(provider, id)
-        ? `${naming.setting} ${spec} is a chat model; triage needs a classifier such as opencode/jev-1.13`
+        ? `FLUXER_TRIAGE_MODEL ${spec} is a chat model; triage needs a classifier such as opencode/jev-1.13`
         : `Unknown classifier model: ${spec}`,
     )
   }
   if (!runtime.getProviderAuthStatus(provider).configured) {
     throw new Error(
-      `${naming.setting} ${spec} has no credentials; set the ${provider} API key or log in`,
+      `FLUXER_TRIAGE_MODEL ${spec} has no credentials; set the ${provider} API key or log in`,
     )
   }
   const topic: ClassifierChoiceQuestion = {
     type: "choice",
-    instructions: `A member posted this message in a ${naming.platform} channel where people can ask a bot for help with their private media server. Members write casually, in any language, often in lowercase, with typos, and without tagging the bot or asking a direct question. Decide what the message is.`,
+    instructions: `A member posted this message in a Fluxer channel where people can ask a bot for help with their private media server. Members write casually, in any language, often in lowercase, with typos, and without tagging the bot or asking a direct question. Decide what the message is.`,
     criteria: CRITERIA,
   }
   return (message) =>

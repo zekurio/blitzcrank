@@ -1,12 +1,12 @@
 import { Effect } from "effect"
 
-import type { Helper } from "../helper.ts"
-import { logEvent } from "../log.ts"
-import { fit, type ChatPlatform } from "./chat.ts"
+import type { Helper } from "../../helper.ts"
+import { logEvent } from "../../log.ts"
+import { fit } from "./chat.ts"
 
 /** Every thread the bot opens starts with this, then what it is about. */
 const PREFIX = "blitzcrank: "
-/** Both platforms take 100, but a shorter name reads whole in a channel list. */
+/** Fluxer takes 100, but a shorter name reads whole in a channel list. */
 const MAX_THREAD_NAME = 80
 /** A title of a few words, in any script. */
 const MAX_TITLE_TOKENS = 60
@@ -20,7 +20,6 @@ const INSTRUCTIONS = `A member of a private media server's help channel wrote th
  */
 export function threadNameEffect(
   helper: Helper,
-  platform: ChatPlatform,
   text: string,
 ): Effect.Effect<string> {
   return helper
@@ -33,11 +32,7 @@ export function threadNameEffect(
       Effect.map(cleanTitle),
       Effect.catch((error) =>
         Effect.sync(() => {
-          logEvent(
-            `${platform.name}.title_failed`,
-            { reason: error.reason },
-            "warn",
-          )
+          logEvent("fluxer.title_failed", { reason: error.reason }, "warn")
           return ""
         }),
       ),

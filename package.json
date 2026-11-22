@@ -2,7 +2,7 @@
   "name": "blitzcrank-workspace",
   "version": "0.1.0",
   "private": true,
-  "description": "Agentic webhook gateway for the Seerr/Arr/Jellyfin homelab stack, built on Pi Durable",
+  "description": "Agentic chat helper for the Matinee/Arr homelab stack, built on Pi Durable",
   "license": "MIT",
   "type": "module",
   "scripts": {

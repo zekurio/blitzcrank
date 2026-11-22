@@ -15,7 +15,7 @@ import type { JsonValue } from "./services/http.ts"
  * agent loop see threads, never the system behind them.
  */
 
-/** One conversation a gateway owns, such as a Seerr issue. */
+/** One conversation a gateway owns, such as a chat thread. */
 export interface ThreadRef {
   gateway: string
   /** Names the thread's files: letters, digits, `_`, and `-` only. */
@@ -121,8 +121,7 @@ export interface Intake {
   /**
    * Succeeds once recovered work is queued and shutdown owns admission. A
    * gateway that listens may connect before then, but acts on nothing it
-   * hears until this succeeds. A webhook needs no wait: the host serves HTTP
-   * only after recovery.
+   * hears until this succeeds.
    */
   readonly opened: Effect.Effect<void>
   submit(message: Inbound): Effect.Effect<"cancelling" | "queued", unknown>
@@ -146,24 +145,12 @@ export interface GatewayHost {
   helper: Helper
 }
 
-/** A gateway's endpoint at `POST /webhook/<name>`, for a platform that calls the host. */
-export interface Webhook {
-  /** Checked before the body is read. */
-  authorized(authorization: string | undefined): boolean
-  /** Handles one body and returns the JSON to answer with. */
-  handleEffect(
-    body: unknown,
-    intake: Intake,
-  ): Effect.Effect<Record<string, JsonValue>, unknown>
-}
-
 export interface Gateway {
   /**
-   * Tags this gateway's threads, names the directory their conversations are
-   * kept in, and routes its webhook.
+   * Tags this gateway's threads and names the directory their conversations
+   * are kept in.
    */
   readonly name: string
-  readonly webhook?: Webhook
   /**
    * For a platform the host connects to. Opens that connection and returns
    * once it is listening, which can be before `intake.opened` succeeds; what
@@ -191,10 +178,6 @@ export class Gateways {
     gateways: readonly Gateway[],
   ) {
     this.entries = new Map(gateways.map((gateway) => [gateway.name, gateway]))
-  }
-
-  find(name: string): Gateway | undefined {
-    return this.entries.get(name)
   }
 
   of(thread: ThreadRef): Gateway {

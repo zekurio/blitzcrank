@@ -22,27 +22,14 @@ import { resolveModel } from "./agent/session.ts"
 import { createWriteJudge } from "./agent/write-gate.ts"
 import { modelRuntimeOptions } from "./auth.ts"
 import { loadConfig, type Config } from "./config.ts"
-import {
-  Gateways,
-  type Gateway,
-  type GatewayHost,
-  type Intake,
-} from "./gateway.ts"
+import { Gateways, type GatewayHost, type Intake } from "./gateway.ts"
 import {
   createCliGateway,
   readMessageEffect,
   writeEvent,
 } from "./gateways/cli/gateway.ts"
-import {
-  createDiscordGateway,
-  loadDiscordConfig,
-} from "./gateways/discord/gateway.ts"
-import {
-  createFluxerGateway,
-  loadFluxerConfig,
-} from "./gateways/fluxer/gateway.ts"
-import { loadSeerrConfig } from "./gateways/seerr/config.ts"
-import { createSeerrGateway } from "./gateways/seerr/gateway.ts"
+import { loadFluxerConfig } from "./gateways/fluxer/config.ts"
+import { createFluxerGateway } from "./gateways/fluxer/gateway.ts"
 import { createHelper } from "./helper.ts"
 import { JobStore } from "./jobs.ts"
 import { connectMcpEffect } from "./mcp/client.ts"
@@ -55,50 +42,6 @@ import { ThreadWork } from "./thread-work.ts"
  * but a stuck run cannot keep the service in `deactivating` indefinitely.
  */
 const SHUTDOWN_GRACE_MS = 30_000
-
-type BuildGateway = (host: GatewayHost) => Gateway
-
-/**
- * Every gateway the host can run, under the name `BLITZCRANK_GATEWAYS` uses.
- * An entry reads the gateway's settings at once, so a missing one stops the
- * service before anything starts, and builds the gateway once the model
- * runtime exists. A new gateway is one more entry here.
- */
-const GATEWAYS = new Map<string, () => BuildGateway>([
-  [
-    "seerr",
-    () => {
-      const settings = loadSeerrConfig()
-      return () => createSeerrGateway(settings)
-    },
-  ],
-  [
-    "discord",
-    () => {
-      const settings = loadDiscordConfig()
-      return (host) => createDiscordGateway(settings, host)
-    },
-  ],
-  [
-    "fluxer",
-    () => {
-      const settings = loadFluxerConfig()
-      return (host) => createFluxerGateway(settings, host)
-    },
-  ],
-])
-
-function loadGateways(names: readonly string[]): BuildGateway[] {
-  return names.map((name) => {
-    const load = GATEWAYS.get(name)
-    if (!load) {
-      throw new Error(
-        `BLITZCRANK_GATEWAYS names unknown gateway "${name}"; known: ${[...GATEWAYS.keys()].join(", ")}`,
-      )
-    }
-    return load()
-  })
-}
 
 /**
  * The model runtime, with the run model and the write review's model
@@ -123,7 +66,9 @@ function modelRuntimeEffect(config: Config) {
 export function startServerEffect(): Effect.Effect<void, unknown> {
   return Effect.gen(function* () {
     const config = loadConfig()
-    const builds = loadGateways(config.gateways)
+    // Read before the model runtime exists, so a missing setting stops the
+    // service before anything starts.
+    const fluxer = loadFluxerConfig()
     const models = yield* modelRuntimeEffect(config)
     const runtime = models.runtime
     const judge = models.judge
@@ -132,10 +77,9 @@ export function startServerEffect(): Effect.Effect<void, unknown> {
       language: config.language,
       helper: createHelper(runtime, config.helperModel),
     }
-    const gateways = new Gateways(
-      config.dataDir,
-      builds.map((build) => build(host)),
-    )
+    const gateways = new Gateways(config.dataDir, [
+      createFluxerGateway(fluxer, host),
+    ])
     yield* checkMcpEffect(config)
     yield* storageIO(() => mkdir(config.dataDir, { recursive: true }))
     const jobs = new JobStore(path.join(config.dataDir, "jobs.sqlite"))
@@ -167,11 +111,7 @@ export function startServerEffect(): Effect.Effect<void, unknown> {
       yield* gateways.listenEffect(intake).pipe(Scope.provide(listening))
       yield* work.restoreEffect()
       const server = createServer(
-        createApp({
-          gateways,
-          intake,
-          stats: () => ({ queued: work.queue.size }),
-        }),
+        createApp({ stats: () => ({ queued: work.queue.size }) }),
       )
       server.listen(config.port)
       const stop = installShutdown(server, listening, work, jobs)
@@ -301,7 +241,7 @@ function installShutdown(
       const deadline = (yield* Clock.currentTimeMillis) + SHUTDOWN_GRACE_MS
       // Listening stops while the queue still takes work: a gateway that is
       // halfway through admitting a message, such as one that has opened its
-      // Discord thread, gets to queue its run.
+      // Fluxer thread, gets to queue its run.
       yield* withDeadline(
         Scope.close(listening, Exit.void),
         deadline,

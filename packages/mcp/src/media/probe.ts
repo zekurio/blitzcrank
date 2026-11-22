@@ -25,7 +25,7 @@ const PROBE_INPUT = Type.Object(
   {
     path: Type.String({
       description:
-        "Absolute file or release-directory path as a service reports it (Arr file path or queue outputPath, SABnzbd storage, or Jellyfin MediaSources Path)",
+        "Absolute file or release-directory path as this server sees it: an Arr file path or queue outputPath, SABnzbd storage, or a Matinee library folder joined with a file's relativePath. A path the media roots do not hold is rejected",
     }),
   },
   { additionalProperties: false },
@@ -38,14 +38,14 @@ const PROBE_INPUT = Type.Object(
  *
  * Sonarr/Radarr `languages` and quality names like `Bluray-1080p` are parsed
  * from the *release name* (a `MULTi`, `DL`, `German`, or `1080p` tag is a
- * claim, not a fact) and Jellyfin's real stream data only exists after import,
+ * claim, not a fact) and Matinee's probe of a file only exists after import,
  * which is too late for a grab decision. This tool answers "is that track
  * actually in the file?" and "is that video really 1080p?" before anything is
  * replaced.
  *
  * Read-only and root-constrained: the target is resolved through `realpath`
  * and must land inside a configured media root, so neither a symlink nor a
- * path pasted into an issue can reach outside the media directories.
+ * path pasted into a message can reach outside the media directories.
  */
 export function buildMediaProbeTool(roots: readonly string[]): ServerTool {
   return {

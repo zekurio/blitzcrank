@@ -76,10 +76,11 @@ in
       description = ''
         Environment file with the MCP server's secrets: BLITZCRANK_MCP_TOKEN
         (required; clients must use the same token), the
-        SONARR_/RADARR_/SABNZBD_/JELLYFIN_ URLs and API keys, and
-        SEERR_URL/SEERR_API_KEY for the server's Seerr reads. A service
-        without both its URL and API key is not served. At least one
-        service or media root must be configured.
+        SONARR_/RADARR_/SABNZBD_ URLs and API keys, and MATINEE_URL with
+        MATINEE_API_KEY, the API token of the bot's own Matinee account,
+        with only the permissions the server README lists. A service without
+        both its URL and API key is not served. At least one service or media
+        root must be configured.
       '';
     };
 
@@ -101,7 +102,7 @@ in
     ];
 
     systemd.services.blitzcrank-mcp = {
-      description = "blitzcrank MCP server for the Seerr/Arr/Jellyfin stack";
+      description = "blitzcrank MCP server for the Matinee/Arr stack";
       wantedBy = [ "multi-user.target" ];
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
