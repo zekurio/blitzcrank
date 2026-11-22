@@ -246,6 +246,19 @@ environment:
   whoever asks in a chat. Without the token the agent cannot request titles
   and sends people to Matinee's own request page.
 
+Make each token in Matinee under Settings → Account → API tokens, and give it
+only these permissions, never `all`:
+
+| Token                     | Permissions                                                                                                                                        |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MATINEE_API_KEY`         | `title.read`, `title.update`, `library.read`, `library.scan`, `media.read`, `catalog.read`, `adminRequest.read`, `adminRequest.update`, `job.read` |
+| `MATINEE_REQUEST_API_KEY` | `catalog.read`, `request.create`, and `request.autoApprove` if the group's members skip approval                                                   |
+
+A token narrows its account and never widens it, so the first account must
+hold those permissions and open every library the agent should see. An admin
+account does both. With the list above, a leaked `MATINEE_API_KEY` reaches no
+users, groups, sessions, settings, or library deletion.
+
 Matinee sends approved requests to Radarr and Sonarr itself, and its file
 watcher picks up their imports, so it needs no webhook from them. No Arr tool
 adds a title: a Matinee request is the only way the agent adds media, and

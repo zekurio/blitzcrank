@@ -79,7 +79,8 @@ in
         SONARR_/RADARR_/SABNZBD_ URLs and API keys, and MATINEE_URL with
         MATINEE_API_KEY, an admin account's token. MATINEE_REQUEST_API_KEY,
         an ordinary account's token, adds the tools that request titles. A
-        service without both its URL and API key is not served. At least one
+        Give each Matinee token only the permissions the server README
+        lists. A service without both its URL and API key is not served. At least one
         service or media root must be configured.
       '';
     };

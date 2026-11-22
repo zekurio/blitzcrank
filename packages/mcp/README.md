@@ -85,6 +85,18 @@ what a call may see and do from the account the token belongs to.
   entitlements, so the limit lives in which account this token belongs to.
   The same token as `MATINEE_API_KEY` is refused at startup.
 
+Give each token only the permissions its calls take, in Matinee under
+Settings → Account → API tokens. A token narrows its account, so the account
+must hold them too, and a token with `all` is the whole account.
+
+| Token                     | Permissions                                                                                                                                        |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MATINEE_API_KEY`         | `title.read`, `title.update`, `library.read`, `library.scan`, `media.read`, `catalog.read`, `adminRequest.read`, `adminRequest.update`, `job.read` |
+| `MATINEE_REQUEST_API_KEY` | `catalog.read`, `request.create`, and `request.autoApprove` if the group's members skip approval                                                   |
+
+Matinee answers 403 and names the permission when a token lacks one, and the
+tool reports that as its error.
+
 Every request the agent makes is the request account's. Neither token appears
 in a tool result or a log line. Matinee's live sessions, users, and groups have
 no tool: every run gets every read, and those name who watches what.
