@@ -48,13 +48,13 @@ const titleIdParam = uuidParam("A Matinee title id, from matinee_search")
 
 /** The title and its library, and the library's metadata provider. */
 function readTitleAndProvider(
-  admin: MatineeAccount,
+  account: MatineeAccount,
   titleId: string,
   signal: AbortSignal | undefined,
 ) {
   return Effect.gen(function* () {
-    const title = yield* readTitle(admin, titleId, signal)
-    const library = yield* readLibrary(admin, String(title.libraryId), signal)
+    const title = yield* readTitle(account, titleId, signal)
+    const library = yield* readLibrary(account, String(title.libraryId), signal)
     const provider = library.metadataProvider
     if (!isString(provider)) {
       return yield* toolFail(
@@ -87,12 +87,12 @@ function titleEffect(
 }
 
 function readBackTitle(
-  admin: MatineeAccount,
+  account: MatineeAccount,
   titleId: string,
   expected: (title: JsonObject) => boolean,
   confirmed: string,
 ): Effect.Effect<JsonValue, ToolFailure> {
-  return readTitle(admin, titleId, undefined).pipe(
+  return readTitle(account, titleId, undefined).pipe(
     Effect.map(
       (title): JsonValue =>
         expected(title)
@@ -106,7 +106,7 @@ function readBackTitle(
   )
 }
 
-export function matineeActions(admin: MatineeAccount) {
+export function matineeActions(account: MatineeAccount) {
   return {
     scan_library: action({
       // The same full scan of one library that the timed scan runs.
@@ -119,7 +119,7 @@ export function matineeActions(admin: MatineeAccount) {
       }),
       lock: (params) => `library:${params.libraryId}`,
       resolve: (params, signal) =>
-        readLibrary(admin, params.libraryId, signal).pipe(
+        readLibrary(account, params.libraryId, signal).pipe(
           Effect.map((library) => {
             const shown = compactLibrary(library)
             return {
@@ -145,14 +145,18 @@ export function matineeActions(admin: MatineeAccount) {
           }),
         ),
       write: (params) =>
-        matineeRequest(admin, `/libraries/${segment(params.libraryId)}/scan`, {
-          method: "POST",
-          body: {},
-        }).pipe(
+        matineeRequest(
+          account,
+          `/libraries/${segment(params.libraryId)}/scan`,
+          {
+            method: "POST",
+            body: {},
+          },
+        ).pipe(
           Effect.map((): JsonValue => ({ queued: "Matinee queued the scan" })),
         ),
       verify: (params) =>
-        readLibrary(admin, params.libraryId, undefined).pipe(
+        readLibrary(account, params.libraryId, undefined).pipe(
           Effect.map(
             (library): JsonValue => ({
               queued: true,
@@ -170,7 +174,7 @@ export function matineeActions(admin: MatineeAccount) {
       params: Type.Object({ titleId: titleIdParam }),
       lock: (params) => `title:${params.titleId}`,
       resolve: (params, signal) =>
-        readTitleAndProvider(admin, params.titleId, signal).pipe(
+        readTitleAndProvider(account, params.titleId, signal).pipe(
           Effect.map(({ title, library, provider }) => {
             const matched =
               title.provider === provider && isString(title.providerId)
@@ -205,7 +209,7 @@ export function matineeActions(admin: MatineeAccount) {
           }),
         ),
       write: (params) =>
-        matineeRequest(admin, `/titles/${segment(params.titleId)}/refresh`, {
+        matineeRequest(account, `/titles/${segment(params.titleId)}/refresh`, {
           method: "POST",
           body: {},
           timeoutMs: METADATA_TIMEOUT_MS,
@@ -217,7 +221,7 @@ export function matineeActions(admin: MatineeAccount) {
         ),
       verify: (params, _result, state) =>
         readBackTitle(
-          admin,
+          account,
           params.titleId,
           (title) =>
             isString(title.refreshedAt) &&
@@ -247,13 +251,13 @@ export function matineeActions(admin: MatineeAccount) {
       resolve: (params, signal) =>
         Effect.gen(function* () {
           const found = yield* readTitleAndProvider(
-            admin,
+            account,
             params.titleId,
             signal,
           )
           const title = found.title
           const provider = found.provider
-          const matches = yield* readMatches(admin, params, signal)
+          const matches = yield* readMatches(account, params, signal)
           const candidate = matches.find(
             (match) =>
               match.id === params.providerId && match.provider === provider,
@@ -291,7 +295,7 @@ export function matineeActions(admin: MatineeAccount) {
           }
         }),
       write: (params) =>
-        matineeRequest(admin, `/titles/${segment(params.titleId)}/identify`, {
+        matineeRequest(account, `/titles/${segment(params.titleId)}/identify`, {
           method: "POST",
           body: { providerId: params.providerId },
           timeoutMs: METADATA_TIMEOUT_MS,
@@ -303,7 +307,7 @@ export function matineeActions(admin: MatineeAccount) {
         ),
       verify: (params) =>
         readBackTitle(
-          admin,
+          account,
           params.titleId,
           (title) => title.providerId === params.providerId,
           `the title is matched to ${params.providerId}`,
@@ -318,7 +322,7 @@ export function matineeActions(admin: MatineeAccount) {
       lock: (params) => `request:${params.requestId}`,
       resolve: (params, signal) =>
         Effect.gen(function* () {
-          const search = yield* findRequest(admin, params.requestId, signal)
+          const search = yield* findRequest(account, params.requestId, signal)
           const entry = search.entries[0]
           if (!entry) {
             return yield* toolFail(
@@ -355,14 +359,14 @@ export function matineeActions(admin: MatineeAccount) {
           }
         }),
       write: (params) =>
-        matineeRequest(admin, "/admin/requests/retry", {
+        matineeRequest(account, "/admin/requests/retry", {
           method: "POST",
           body: { id: params.requestId },
         }).pipe(
           Effect.map((): JsonValue => ({ queued: "Matinee queued the send" })),
         ),
       verify: (params) =>
-        findRequest(admin, params.requestId, undefined).pipe(
+        findRequest(account, params.requestId, undefined).pipe(
           Effect.map((search): JsonValue => {
             const entry = search.entries[0]
             if (!entry) return { warning: "the request is gone from the queue" }
@@ -383,15 +387,15 @@ export function matineeActions(admin: MatineeAccount) {
 }
 
 /**
- * The one write the request account makes. Matinee applies that account's
- * group: whether it may request, whether a request waits for approval, and
- * its quota.
+ * Asking for a title. Matinee applies the account's group and the token's
+ * permissions: whether it may request, whether a request waits for approval,
+ * and its quota.
  */
-export function matineeRequestActions(requester: MatineeAccount) {
+export function matineeRequestActions(account: MatineeAccount) {
   return {
     ask: action({
       description:
-        "Request a title the server lacks, or seasons of a show it has, through the request account, as Matinee's own request button does. " +
+        "Request a title the server lacks, or seasons of a show it has, through the bot's Matinee account, as Matinee's own request button does. " +
         "For a show, seasons names the seasons to add and future adds the ones still to come; without seasons Matinee's default asks for every aired season and the ones to come. " +
         "libraryId picks the library, such as the one a show is in for its missing seasons",
       params: Type.Object({
@@ -421,7 +425,7 @@ export function matineeRequestActions(requester: MatineeAccount) {
             providerId: params.providerId,
           }
           const detail = yield* catalogDetails(
-            requester,
+            account,
             ref,
             params.libraryId,
             signal,
@@ -435,7 +439,7 @@ export function matineeRequestActions(requester: MatineeAccount) {
           )
         }),
       write: (_params, state) =>
-        matineeRequest(requester, "/requests/ask", {
+        matineeRequest(account, "/requests/ask", {
           method: "POST",
           body: {
             ref: {
@@ -461,7 +465,7 @@ export function matineeRequestActions(requester: MatineeAccount) {
           ),
         ),
       verify: (_params, _result, state) =>
-        catalogDetails(requester, state.ref, state.libraryId, undefined).pipe(
+        catalogDetails(account, state.ref, state.libraryId, undefined).pipe(
           Effect.map((detail): JsonValue => {
             const availability = compactAvailability(
               objectField(detail, "availability"),

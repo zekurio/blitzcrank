@@ -5,26 +5,12 @@ export interface ServiceConfig {
   apiKey: string
 }
 
-/**
- * Matinee with an admin account's token, for diagnosis and repairs, and
- * optionally an ordinary account's token, the only one that requests titles.
- */
-export interface MatineeConfig {
-  url: string
-  apiKey: string
-  /**
-   * Its Matinee group sets what may be requested, whether requests wait for
-   * approval, and the quota. Unset registers no tool that requests a title.
-   */
-  requestApiKey: string | undefined
-}
-
 export interface Config {
   /** Bearer token the host presents on every `/mcp` request. */
   token: string
   host: string
   port: number
-  matinee: MatineeConfig | undefined
+  matinee: ServiceConfig | undefined
   sonarr: ServiceConfig | undefined
   radarr: ServiceConfig | undefined
   sabnzbd: ServiceConfig | undefined
@@ -39,7 +25,7 @@ export function loadConfig(env: Env = process.env): Config {
     token: requiredToken(env),
     host: env.BLITZCRANK_MCP_HOST?.trim() || "127.0.0.1",
     port: integer(env, "BLITZCRANK_MCP_PORT", 8485, 0, 65_535),
-    matinee: matinee(env),
+    matinee: service(env, "MATINEE"),
     sonarr: service(env, "SONARR"),
     radarr: service(env, "RADARR"),
     sabnzbd: service(env, "SABNZBD"),
@@ -75,22 +61,6 @@ function service(env: Env, prefix: string): ServiceConfig | undefined {
     throw new Error(`${prefix}_URL must be an http(s) URL`)
   }
   return { url: url.replace(/\/+$/, ""), apiKey }
-}
-
-/**
- * The admin token makes the pair. The request token rides on it: without the
- * admin token nothing of Matinee is registered, the requests included.
- */
-function matinee(env: Env): MatineeConfig | undefined {
-  const admin = service(env, "MATINEE")
-  if (admin === undefined) return undefined
-  const requestApiKey = env.MATINEE_REQUEST_API_KEY?.trim() || undefined
-  if (requestApiKey === admin.apiKey) {
-    throw new Error(
-      "MATINEE_REQUEST_API_KEY must be an ordinary account's token, not MATINEE_API_KEY",
-    )
-  }
-  return { ...admin, requestApiKey }
 }
 
 /** A port that silently becomes NaN would bind nowhere useful. */

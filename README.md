@@ -62,8 +62,8 @@ is the host. Each service has its own `package` option and environment:
   `BLITZCRANK_MCP_TOKEN`.
   [`packages/host/.env.example`](packages/host/.env.example) documents all host
   settings.
-- The server's environment file holds the service URLs and API keys, the two
-  Matinee tokens among them (see [Connect Matinee](#connect-matinee)), and the
+- The server's environment file holds the service URLs and API keys, the
+  Matinee token among them (see [Connect Matinee](#connect-matinee)), and the
   same `BLITZCRANK_MCP_TOKEN`. `services.blitzcrank-mcp.mediaRoots` sets the
   media roots and adds ffmpeg to the server's path. The server runs as a
   dynamic user: `services.blitzcrank-mcp.supplementaryGroups` gives it group
@@ -232,32 +232,38 @@ For compiled local runs, use `pnpm build` at the root, then
 ## Connect Matinee
 
 The MCP server reaches [Matinee](https://github.com/zekurio/matinee) through
-its REST API under `/api/v1`, with two API tokens of Matinee accounts in its
-environment:
+its REST API under `/api/v1`, with `MATINEE_URL` and one API token,
+`MATINEE_API_KEY`. It needs a Matinee release after v0.0.9, with
+[matinee#97](https://github.com/zekurio/matinee/pull/97), where a token picks
+its permissions one by one.
 
-- `MATINEE_URL` and `MATINEE_API_KEY`, a token of an admin account. The agent
-  reads titles, files, tracks, libraries, jobs, and the request queue with it,
-  and scans libraries, refreshes and fixes matches, and retries failed
-  requests.
-- `MATINEE_REQUEST_API_KEY`, optional, a token of an ordinary account. Only it
-  requests titles. Put the account in a Matinee group whose access sets what
-  may be requested, whether requests wait for an admin's approval, and the
-  quota: that group is the policy for every request the agent makes, for
-  whoever asks in a chat. Without the token the agent cannot request titles
-  and sends people to Matinee's own request page.
+Give the bot an account of its own, not an admin's. In Matinee, make an
+account such as `blitzcrank` and put it in its own group with:
 
-Make each token in Matinee under Settings → Account → API tokens, and give it
-only these permissions, never `all`:
+- Libraries: all
+- Requests: Needs approval, with the limit you want
+- Request queue: Manage
+- Libraries: On
+- Metadata: On
+- Server settings: View
+- API tokens: On
 
-| Token                     | Permissions                                                                                                                                        |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MATINEE_API_KEY`         | `title.read`, `title.update`, `library.read`, `library.scan`, `media.read`, `catalog.read`, `adminRequest.read`, `adminRequest.update`, `job.read` |
-| `MATINEE_REQUEST_API_KEY` | `catalog.read`, `request.create`, and `request.autoApprove` if the group's members skip approval                                                   |
+Then sign in as that account and make one token under Settings → API tokens
+with exactly these permissions:
 
-A token narrows its account and never widens it, so the first account must
-hold those permissions and open every library the agent should see. An admin
-account does both. With the list above, a leaked `MATINEE_API_KEY` reaches no
-users, groups, sessions, settings, or library deletion.
+`title.read`, `title.update`, `library.read`, `library.scan`, `media.read`, `catalog.read`, `adminRequest.read`, `adminRequest.retry`, `job.read`, `request.create`
+
+Leave out `all`, `adminRequest.approve`, `adminRequest.decline`, and
+`request.autoApprove`. A token never exceeds its account and needs every
+permission it uses, the read ones included. With this list the agent reads
+titles, files, tracks, libraries, jobs, and the request queue, scans
+libraries, refreshes and fixes matches, retries a failed send, and requests
+titles. It cannot approve or decline anything, its own requests included,
+and what it requests always waits for approval. A leaked token reaches no
+users, groups, sessions, or settings.
+
+Every request made in a chat comes from this one account. The chat shares its
+quota, and Matinee does not show who asked.
 
 Matinee sends approved requests to Radarr and Sonarr itself, and its file
 watcher picks up their imports, so it needs no webhook from them. No Arr tool

@@ -48,11 +48,11 @@ export function sameRef(ref: JsonObject | undefined, wanted: CatalogRef) {
 }
 
 function readPage(
-  admin: MatineeAccount,
+  account: MatineeAccount,
   cursor: string | undefined,
   signal: Signal,
 ): Effect.Effect<JsonObject, ToolFailure> {
-  return matineeRequest(admin, "/admin/requests", {
+  return matineeRequest(account, "/admin/requests", {
     query: { limit: PAGE_SIZE, cursor },
     signal,
     timeoutMs: 60_000,
@@ -72,7 +72,7 @@ function readPage(
  * reaches its limit.
  */
 export function searchQueue(
-  admin: MatineeAccount,
+  account: MatineeAccount,
   matches: (item: JsonObject) => boolean,
   enough: (entries: readonly QueueEntry[]) => boolean,
   signal: Signal,
@@ -83,7 +83,7 @@ export function searchQueue(
     found: readonly QueueEntry[],
   ): Effect.Effect<QueueSearch, ToolFailure> =>
     Effect.gen(function* () {
-      const page = yield* readPage(admin, cursor, signal)
+      const page = yield* readPage(account, cursor, signal)
       const current: QueueEntry[] =
         pages === 0
           ? CURRENT_LISTS.flatMap((list) =>
@@ -114,12 +114,12 @@ export function searchQueue(
 
 /** One request by id, wherever it is in the queue. */
 export function findRequest(
-  admin: MatineeAccount,
+  account: MatineeAccount,
   requestId: string,
   signal: Signal,
 ): Effect.Effect<QueueSearch, ToolFailure> {
   return searchQueue(
-    admin,
+    account,
     (item) => item.id === requestId,
     (entries) => entries.length > 0,
     signal,

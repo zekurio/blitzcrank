@@ -55,8 +55,7 @@ and requires no agent host on that machine. See the
 | `BLITZCRANK_MCP_TOKEN`           | yes      | Bearer token the host presents.                                        |
 | `BLITZCRANK_MCP_HOST`            | no       | Bind address, default `127.0.0.1`.                                     |
 | `BLITZCRANK_MCP_PORT`            | no       | Listen port, default `8485`.                                           |
-| `MATINEE_URL`, `MATINEE_API_KEY` | no       | Enables `matinee_*` with an admin account's token.                     |
-| `MATINEE_REQUEST_API_KEY`        | no       | An ordinary account's token; adds the catalog reads and `matinee_ask`. |
+| `MATINEE_URL`, `MATINEE_API_KEY` | no       | Enables `matinee_*` with the bot account's API token.                  |
 | `SONARR_URL`, `SONARR_API_KEY`   | no       | Enables `sonarr_*`.                                                    |
 | `RADARR_URL`, `RADARR_API_KEY`   | no       | Enables `radarr_*`.                                                    |
 | `SABNZBD_URL`, `SABNZBD_API_KEY` | no       | Enables `sabnzbd_*`.                                                   |
@@ -66,40 +65,39 @@ A service whose pair is incomplete is not registered. Starting with no service
 and no media roots is an error, as is an empty token, a service URL that is
 not `http(s)`, or a media root that is relative or `/`.
 
-### Matinee's two tokens
+### Matinee's token
 
-The server sends both tokens as `Authorization: Bearer <token>`. Matinee works out
-what a call may see and do from the account the token belongs to.
+The server sends `MATINEE_API_KEY` as `Authorization: Bearer <token>` on every
+Matinee call. Matinee works out what a call may see and do from the token's
+permissions and the account it belongs to, and a call needs each permission
+from both. The root README's
+[Connect Matinee](../../README.md#connect-matinee) describes the account.
 
-- `MATINEE_API_KEY` belongs to an admin account. Every Matinee read and the
-  repairs go through it: scans, refreshes, matches, and retrying a failed
-  request. Without it nothing of Matinee is registered.
-- `MATINEE_REQUEST_API_KEY` belongs to an ordinary account. Its Matinee group
-  sets what may be requested, whether requests wait for an admin's approval,
-  and the quota. Only it makes requests (`matinee_ask`), and it also makes the
-  catalog reads that lead to one (`matinee_catalog_search`,
-  `matinee_catalog_details`), because Matinee computes destinations, limits,
-  and availability from the caller. Without it no tool that requests a title
-  is registered. An admin's token there would hand everyone in a chat the
-  admin's request policy, and the write review cannot know a person's Matinee
-  entitlements, so the limit lives in which account this token belongs to.
-  The same token as `MATINEE_API_KEY` is refused at startup.
+The token takes exactly these permissions:
 
-Give each token only the permissions its calls take, in Matinee under
-Settings → Account → API tokens. A token narrows its account, so the account
-must hold them too, and a token with `all` is the whole account.
+| Permission           | Used for                                                                      |
+| -------------------- | ----------------------------------------------------------------------------- |
+| `title.read`         | `matinee_search`, `matinee_title`, and the reads before a write               |
+| `title.update`       | `matinee_matches`, `matinee_refresh_title`, `matinee_identify_title`          |
+| `library.read`       | `matinee_libraries`, and the reads before a write                             |
+| `library.scan`       | `matinee_scan_library`                                                        |
+| `media.read`         | `matinee_files`, `matinee_tracks`                                             |
+| `catalog.read`       | `matinee_by_provider_id`, `matinee_catalog_search`, `matinee_catalog_details` |
+| `adminRequest.read`  | `matinee_requests`                                                            |
+| `adminRequest.retry` | `matinee_retry_request`                                                       |
+| `job.read`           | `matinee_jobs`                                                                |
+| `request.create`     | `matinee_ask`                                                                 |
 
-| Token                     | Permissions                                                                                                                                        |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MATINEE_API_KEY`         | `title.read`, `title.update`, `library.read`, `library.scan`, `media.read`, `catalog.read`, `adminRequest.read`, `adminRequest.update`, `job.read` |
-| `MATINEE_REQUEST_API_KEY` | `catalog.read`, `request.create`, and `request.autoApprove` if the group's members skip approval                                                   |
+It must not hold `all`, `adminRequest.approve`, `adminRequest.decline`, or
+`request.autoApprove`: without them it approves and declines nothing, and its
+own requests wait for approval. The server does not check the token's
+permissions. Matinee answers 403 and names the permission when one is
+missing, and the tool reports that as its error.
 
-Matinee answers 403 and names the permission when a token lacks one, and the
-tool reports that as its error.
-
-Every request the agent makes is the request account's. Neither token appears
-in a tool result or a log line. Matinee's live sessions, users, and groups have
-no tool: every run gets every read, and those name who watches what.
+Every request the agent makes is this account's, so a chat shares its quota
+and Matinee does not show who asked. The token never appears in a tool result
+or a log line. Matinee's live sessions, users, and groups have no tool: every
+run gets every read, and those name who watches what.
 
 ## Source
 

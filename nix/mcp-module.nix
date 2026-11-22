@@ -77,11 +77,10 @@ in
         Environment file with the MCP server's secrets: BLITZCRANK_MCP_TOKEN
         (required; clients must use the same token), the
         SONARR_/RADARR_/SABNZBD_ URLs and API keys, and MATINEE_URL with
-        MATINEE_API_KEY, an admin account's token. MATINEE_REQUEST_API_KEY,
-        an ordinary account's token, adds the tools that request titles. A
-        Give each Matinee token only the permissions the server README
-        lists. A service without both its URL and API key is not served. At least one
-        service or media root must be configured.
+        MATINEE_API_KEY, the API token of the bot's own Matinee account,
+        with only the permissions the server README lists. A service without
+        both its URL and API key is not served. At least one service or media
+        root must be configured.
       '';
     };
 

@@ -133,7 +133,7 @@ function exactlyOne(
 
 /** The title a link or an id names, and the season a link points at. */
 function titleTarget(
-  admin: MatineeAccount,
+  account: MatineeAccount,
   params: { titleId?: string | undefined; link?: string | undefined },
   signal: Signal,
 ): Effect.Effect<{ titleId: string; season: number | undefined }, ToolFailure> {
@@ -149,7 +149,7 @@ function titleTarget(
         `the link is Matinee's catalog page of ${target.ref.kind} ${target.ref.provider} ${target.ref.providerId}, which names a title at its provider, not one on the server: read matinee_by_provider_id with those values`,
       )
     }
-    const item = yield* readMediaItem(admin, target.itemId, signal)
+    const item = yield* readMediaItem(account, target.itemId, signal)
     const title = objectField(item, "title")
     if (!isString(title?.id)) {
       return yield* toolFail(
@@ -164,14 +164,14 @@ function titleTarget(
 }
 
 function titleItems(
-  admin: MatineeAccount,
+  account: MatineeAccount,
   titleId: string,
   season: number | null | undefined,
   signal: Signal,
 ): Effect.Effect<JsonObject[], ToolFailure> {
   return matineeList(
     "files",
-    matineeRequest(admin, `/titles/${segment(titleId)}/items`, {
+    matineeRequest(account, `/titles/${segment(titleId)}/items`, {
       method: "POST",
       body: season === undefined ? {} : { season },
       signal,
@@ -224,7 +224,7 @@ function requestMatcher(params: {
   return toolFail("pass requestId, or kind, provider, and providerId together")
 }
 
-export function matineeReads(admin: MatineeAccount) {
+export function matineeReads(account: MatineeAccount) {
   return {
     search: resource({
       description:
@@ -236,7 +236,7 @@ export function matineeReads(admin: MatineeAccount) {
         libraryId: Type.Optional(libraryIdParam),
       }),
       run: (params, signal) =>
-        matineeRequest(admin, "/titles/browse", {
+        matineeRequest(account, "/titles/browse", {
           method: "POST",
           body: {
             query: params.query,
@@ -281,13 +281,13 @@ export function matineeReads(admin: MatineeAccount) {
       }),
       run: (params, signal) =>
         Effect.gen(function* () {
-          const target = yield* titleTarget(admin, params, signal)
+          const target = yield* titleTarget(account, params, signal)
           const season =
             params.season === undefined ? target.season : params.season
           const [title, items] = yield* Effect.all(
             [
-              readTitle(admin, target.titleId, signal),
-              titleItems(admin, target.titleId, season, signal),
+              readTitle(account, target.titleId, signal),
+              titleItems(account, target.titleId, season, signal),
             ],
             { concurrency: "unbounded" },
           )
@@ -330,15 +330,15 @@ export function matineeReads(admin: MatineeAccount) {
           const path = `/media/${segment(itemId)}`
           const [item, audio, subtitles] = yield* Effect.all(
             [
-              readMediaItem(admin, itemId, signal),
+              readMediaItem(account, itemId, signal),
               matineeList(
                 "audio tracks",
-                matineeRequest(admin, `${path}/audio`, {
+                matineeRequest(account, `${path}/audio`, {
                   signal,
                   timeoutMs: 120_000,
                 }),
               ),
-              matineeRequest(admin, `${path}/subtitles`, {
+              matineeRequest(account, `${path}/subtitles`, {
                 signal,
                 timeoutMs: 120_000,
               }).pipe(
@@ -381,13 +381,13 @@ export function matineeReads(admin: MatineeAccount) {
             provider: params.provider,
             providerId: params.providerId,
           }
-          const detail = yield* catalogDetails(admin, ref, undefined, signal)
+          const detail = yield* catalogDetails(account, ref, undefined, signal)
           const availability = objectField(detail, "availability")
           const titleId = availability?.libraryTitleId
           const held = isString(titleId)
-            ? yield* readTitle(admin, titleId, signal).pipe(
+            ? yield* readTitle(account, titleId, signal).pipe(
                 Effect.flatMap((title) =>
-                  readLibrary(admin, String(title.libraryId), signal).pipe(
+                  readLibrary(account, String(title.libraryId), signal).pipe(
                     Effect.map((library) => ({ title, library })),
                   ),
                 ),
@@ -423,7 +423,7 @@ export function matineeReads(admin: MatineeAccount) {
       run: (_params, signal) =>
         matineeList(
           "libraries",
-          matineeRequest(admin, "/libraries", { signal }),
+          matineeRequest(account, "/libraries", { signal }),
         ).pipe(
           Effect.map((libraries) => listResult(libraries.map(compactLibrary))),
         ),
@@ -453,7 +453,7 @@ export function matineeReads(admin: MatineeAccount) {
       run: (params, signal) => {
         const offset = params.offset ?? 0
         return matineeRequest(
-          admin,
+          account,
           `/libraries/${segment(params.libraryId)}/media`,
           {
             query: {
@@ -495,7 +495,7 @@ export function matineeReads(admin: MatineeAccount) {
         Effect.gen(function* () {
           const matches = yield* requestMatcher(params)
           const search = yield* searchQueue(
-            admin,
+            account,
             matches,
             (entries) => params.requestId !== undefined && entries.length > 0,
             signal,
@@ -511,7 +511,7 @@ export function matineeReads(admin: MatineeAccount) {
         queue: Type.Optional(Type.Enum(JOB_QUEUES)),
       }),
       run: (params, signal) =>
-        matineeRecord(admin, "/admin/jobs", "job overview", signal).pipe(
+        matineeRecord(account, "/admin/jobs", "job overview", signal).pipe(
           Effect.map((overview) => ({
             queues: objectList(overview.queues)
               .filter(
@@ -539,8 +539,8 @@ export function matineeReads(admin: MatineeAccount) {
       run: (params, signal) =>
         Effect.all(
           [
-            readTitle(admin, params.titleId, signal),
-            readMatches(admin, params, signal),
+            readTitle(account, params.titleId, signal),
+            readMatches(account, params, signal),
           ],
           { concurrency: "unbounded" },
         ).pipe(
@@ -554,13 +554,13 @@ export function matineeReads(admin: MatineeAccount) {
 }
 
 export function readMatches(
-  admin: MatineeAccount,
+  account: MatineeAccount,
   params: { titleId: string; query: string; year?: number | undefined },
   signal: Signal,
 ): Effect.Effect<JsonObject[], ToolFailure> {
   return matineeList(
     "match candidates",
-    matineeRequest(admin, `/titles/${segment(params.titleId)}/matches`, {
+    matineeRequest(account, `/titles/${segment(params.titleId)}/matches`, {
       query: { query: params.query, year: params.year },
       signal,
       timeoutMs: 45_000,
@@ -569,21 +569,21 @@ export function readMatches(
 }
 
 /**
- * Reads through the request account, whose group decides what it may ask
- * for, where a request goes, and how much of its quota is left.
+ * The catalog as a request sees it. The account's group decides what it may
+ * ask for, where a request goes, and how much of its quota is left.
  */
-export function matineeCatalogReads(requester: MatineeAccount) {
+export function matineeCatalogReads(account: MatineeAccount) {
   return {
     catalog_search: resource({
       description:
-        "Titles at the metadata provider for a name, with what the request account may do with each: here, already requested, or open to a request",
+        "Titles at the metadata provider for a name, with what the bot's Matinee account may do with each: here, already requested, or open to a request",
       params: Type.Object({
         query: Type.String({ minLength: 1, maxLength: 256 }),
         kind: Type.Optional(Type.Enum(TITLE_KINDS)),
         page: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
       }),
       run: (params, signal) =>
-        matineeRequest(requester, "/catalog/search", {
+        matineeRequest(account, "/catalog/search", {
           query: { query: params.query, kind: params.kind, page: params.page },
           signal,
           timeoutMs: 45_000,
@@ -603,7 +603,7 @@ export function matineeCatalogReads(requester: MatineeAccount) {
     }),
     catalog_details: resource({
       description:
-        "One title at its provider as a request would see it: the library a request goes to, its other choices, every season with what is here and what is asked for, the default seasons, and the request account's quota",
+        "One title at its provider as a request would see it: the library a request goes to, its other choices, every season with what is here and what is asked for, the default seasons, and the quota of the bot's Matinee account, which every request in a chat shares",
       params: Type.Object({
         ...refParams,
         libraryId: Type.Optional(
@@ -614,7 +614,7 @@ export function matineeCatalogReads(requester: MatineeAccount) {
       }),
       run: (params, signal) =>
         catalogDetails(
-          requester,
+          account,
           {
             kind: params.kind,
             provider: params.provider,

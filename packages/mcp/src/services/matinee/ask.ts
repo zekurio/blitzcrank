@@ -31,7 +31,7 @@ export interface AskInput {
 const OPEN = new Set(["ask", "add"])
 const REQUESTED = new Set(["asked", "coming", "release"])
 
-/** Why Matinee offers the request account no request, in its own terms. */
+/** Why Matinee offers the bot's account no request, in its own terms. */
 function refusal(availability: JsonObject | undefined, what: string): string {
   const reason = availability?.disabledReason
   const limit = objectField(availability, "limit")
@@ -39,13 +39,13 @@ function refusal(availability: JsonObject | undefined, what: string): string {
     return `an admin declined ${what}; nobody can request it until an admin allows it again`
   }
   if (reason === "off") {
-    return `the request account's group may not request ${what}`
+    return `the bot's Matinee account may not request ${what}`
   }
   if (reason === "limit") {
-    return `the request account has used its request quota; it frees up at ${String(limit?.resetsAt ?? "an unknown time")}`
+    return `the bot's Matinee account has used its request quota; it frees up at ${String(limit?.resetsAt ?? "an unknown time")}`
   }
   if (reason === "noDestination") {
-    return `no library takes requests for ${what} from the request account`
+    return `no library takes requests for ${what} from the bot's Matinee account`
   }
   const state = String(availability?.state ?? "unknown")
   if (state === "here") return `${what} is here already`
@@ -152,7 +152,7 @@ function planShow(
 }
 
 /**
- * Checks an ask against what Matinee offers the request account, before
+ * Checks an ask against what Matinee offers the bot's account, before
  * anything is sent: the destination library, the seasons, and what a
  * request already covers. Throws when Matinee would refuse, or the ask
  * would add nothing.
@@ -171,7 +171,7 @@ export function planAsk(
   )
   if (!destination || !isString(destination.id)) {
     throw new Error(
-      `no library takes requests for ${label} from the request account. Nothing was written`,
+      `no library takes requests for ${label} from the bot's Matinee account. Nothing was written`,
     )
   }
   const limit = objectField(availability, "limit")
@@ -180,7 +180,7 @@ export function planAsk(
     "the library's Matinee connection picks the download manager, quality profile, and folder",
     ...(limit
       ? [
-          `the request account has ${String(limit.left)} requests left until ${String(limit.resetsAt)}`,
+          `the bot's Matinee account has ${String(limit.left)} requests left until ${String(limit.resetsAt)}`,
         ]
       : []),
   ]
