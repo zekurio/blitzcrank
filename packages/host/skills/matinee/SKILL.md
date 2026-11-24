@@ -14,7 +14,7 @@ reports come from the conversation.
 
 Load the tools you need with `tool_search`, then call them directly. Put
 independent reads in one response. Every read and write goes through one
-Matinee account, the bot's own.
+Matinee API token and the account it belongs to.
 
 - Search: `matinee_search` with `query`, optional `kind` (`movie`, `show`)
   and `libraryId`. With `libraryId` the query matches folder paths too.
@@ -49,7 +49,7 @@ Matinee account, the bot's own.
   `year`, next to the title's current match.
 - Catalog: `matinee_catalog_search` with `query`, optional `kind` and
   `page`, and `matinee_catalog_details` with `kind`, `provider`,
-  `providerId`, optional `libraryId`. Both answer as the bot's account:
+  `providerId`, optional `libraryId`. Both answer as the token's account:
   each title's `availability` (`here`, `asked`, `coming`, `release`,
   `unavailable`, or `none`) and its `action` (`ask` waits for approval, `add`
   is approved at once, `null` with a `disabledReason`), and in the details
@@ -187,9 +187,9 @@ page to request it themselves.
 
 ## Limits
 
-- Every request is the bot's account's, whoever asked in the conversation.
-  Its group decides what may be requested and the quota, which everyone in
-  the chat shares, and Matinee does not show who asked. A request waits for
+- Every request comes from the token's account, whoever asked in the
+  conversation. Its group decides what may be requested and the quota,
+  which everyone in the chat shares, and Matinee does not show who asked. A request waits for
   an admin's approval; no tool approves or declines one. No tool requests as
   a person.
 - There is no per-person view: the tools cannot say what one person can see,

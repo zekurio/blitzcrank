@@ -395,7 +395,7 @@ export function matineeRequestActions(account: MatineeAccount) {
   return {
     ask: action({
       description:
-        "Request a title the server lacks, or seasons of a show it has, through the bot's Matinee account, as Matinee's own request button does. " +
+        "Request a title the server lacks, or seasons of a show it has, through the token's Matinee account, as Matinee's own request button does. " +
         "For a show, seasons names the seasons to add and future adds the ones still to come; without seasons Matinee's default asks for every aired season and the ones to come. " +
         "libraryId picks the library, such as the one a show is in for its missing seasons",
       params: Type.Object({

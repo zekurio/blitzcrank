@@ -55,7 +55,7 @@ and requires no agent host on that machine. See the
 | `BLITZCRANK_MCP_TOKEN`           | yes      | Bearer token the host presents.                                        |
 | `BLITZCRANK_MCP_HOST`            | no       | Bind address, default `127.0.0.1`.                                     |
 | `BLITZCRANK_MCP_PORT`            | no       | Listen port, default `8485`.                                           |
-| `MATINEE_URL`, `MATINEE_API_KEY` | no       | Enables `matinee_*` with the bot account's API token.                  |
+| `MATINEE_URL`, `MATINEE_API_KEY` | no       | Enables `matinee_*` with a scoped Matinee API token.                   |
 | `SONARR_URL`, `SONARR_API_KEY`   | no       | Enables `sonarr_*`.                                                    |
 | `RADARR_URL`, `RADARR_API_KEY`   | no       | Enables `radarr_*`.                                                    |
 | `SABNZBD_URL`, `SABNZBD_API_KEY` | no       | Enables `sabnzbd_*`.                                                   |
@@ -71,7 +71,7 @@ The server sends `MATINEE_API_KEY` as `Authorization: Bearer <token>` on every
 Matinee call. Matinee works out what a call may see and do from the token's
 permissions and the account it belongs to, and a call needs each permission
 from both. The root README's
-[Connect Matinee](../../README.md#connect-matinee) describes the account.
+[Connect Matinee](../../README.md#connect-matinee) describes the setup.
 
 The token takes exactly these permissions:
 
@@ -94,9 +94,9 @@ own requests wait for approval. The server does not check the token's
 permissions. Matinee answers 403 and names the permission when one is
 missing, and the tool reports that as its error.
 
-Every request the agent makes is this account's, so a chat shares its quota
-and Matinee does not show who asked. The token never appears in a tool result
-or a log line. Matinee's live sessions, users, and groups have no tool: every
+Every request the agent makes comes from the token's account, so a chat shares
+that account's quota and Matinee does not show who asked. The token never
+appears in a tool result or a log line. Matinee's live sessions, users, and groups have no tool: every
 run gets every read, and those name who watches what.
 
 ## Source

@@ -576,7 +576,7 @@ export function matineeCatalogReads(account: MatineeAccount) {
   return {
     catalog_search: resource({
       description:
-        "Titles at the metadata provider for a name, with what the bot's Matinee account may do with each: here, already requested, or open to a request",
+        "Titles at the metadata provider for a name, with what the token's Matinee account may do with each: here, already requested, or open to a request",
       params: Type.Object({
         query: Type.String({ minLength: 1, maxLength: 256 }),
         kind: Type.Optional(Type.Enum(TITLE_KINDS)),
@@ -603,7 +603,7 @@ export function matineeCatalogReads(account: MatineeAccount) {
     }),
     catalog_details: resource({
       description:
-        "One title at its provider as a request would see it: the library a request goes to, its other choices, every season with what is here and what is asked for, the default seasons, and the quota of the bot's Matinee account, which every request in a chat shares",
+        "One title at its provider as a request would see it: the library a request goes to, its other choices, every season with what is here and what is asked for, the default seasons, and the quota of the token's Matinee account, which every request in a chat shares",
       params: Type.Object({
         ...refParams,
         libraryId: Type.Optional(
