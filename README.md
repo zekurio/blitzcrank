@@ -237,33 +237,26 @@ its REST API under `/api/v1`, with `MATINEE_URL` and one API token,
 [matinee#97](https://github.com/zekurio/matinee/pull/97), where a token picks
 its permissions one by one.
 
-Give the bot an account of its own, not an admin's. In Matinee, make an
-account such as `blitzcrank` and put it in its own group with:
-
-- Libraries: all
-- Requests: Needs approval, with the limit you want
-- Request queue: Manage
-- Libraries: On
-- Metadata: On
-- Server settings: View
-- API tokens: On
-
-Then sign in as that account and make one token under Settings → API tokens
+Any account that holds these permissions can make the token, including your
+own admin account. Sign in, open Settings → API tokens, and make one token
 with exactly these permissions:
 
 `title.read`, `title.update`, `library.read`, `library.scan`, `media.read`, `catalog.read`, `adminRequest.read`, `adminRequest.retry`, `job.read`, `request.create`
 
 Leave out `all`, `adminRequest.approve`, `adminRequest.decline`, and
-`request.autoApprove`. A token never exceeds its account and needs every
-permission it uses, the read ones included. With this list the agent reads
-titles, files, tracks, libraries, jobs, and the request queue, scans
-libraries, refreshes and fixes matches, retries a failed send, and requests
-titles. It cannot approve or decline anything, its own requests included,
-and what it requests always waits for approval. A leaked token reaches no
-users, groups, sessions, or settings.
+`request.autoApprove`. Matinee checks every call against both the token and
+its account, so the token does only what it lists, even on an admin account.
+It needs every permission it uses, the read ones included. With this list the
+agent reads titles, files, tracks, libraries, jobs, and the request queue,
+scans libraries, refreshes and fixes matches, retries a failed send, and
+requests titles. It cannot approve or decline anything, its own requests
+included, and what it requests always waits for approval. A leaked token
+reaches no users, groups, sessions, or settings.
 
-Every request made in a chat comes from this one account. The chat shares its
-quota, and Matinee does not show who asked.
+The account's group decides which libraries the agent sees and its request
+quota. Every request made in a chat comes from that account, so the chat
+shares its quota, and Matinee does not show who asked. To keep the agent's
+requests and quota apart from a person's, make it an account of its own.
 
 Matinee sends approved requests to Radarr and Sonarr itself, and its file
 watcher picks up their imports, so it needs no webhook from them. No Arr tool
