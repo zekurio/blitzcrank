@@ -194,7 +194,7 @@ in
         "firecrawl" grants the read-only web_search and web_extract tools
         through Firecrawl's hosted API and needs FIRECRAWL_API_KEY in
         {option}`environmentFile`. FIRECRAWL_URL there can name another
-        endpoint; the README explains the risk. "none" grants no external
+        endpoint; docs/tools.md explains the risk. "none" grants no external
         web tools.
       '';
     };

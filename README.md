@@ -2,451 +2,74 @@
 
 # blitzcrank
 
-An agent for a private media homelab. Fluxer messages start durable
-investigations across Matinee, the media server people watch on and
-request titles from, and Sonarr, Radarr, and SABnzbd behind it.
+blitzcrank is a chat agent for a private media homelab. Someone posts
+`Crystal Lake ist ab Episode 6 falsch` in a Fluxer channel. blitzcrank opens a
+thread, looks through Matinee, Sonarr, Radarr, and SABnzbd, fixes what the
+evidence supports, and answers in the thread.
 
-It runs as two processes:
+Matinee is the media server people watch on and request titles from. Sonarr,
+Radarr, and SABnzbd sit behind it and fetch the files.
 
-- The host (`packages/host`, command `blitzcrank`) takes Fluxer messages, runs
-  the agent, and posts its final message in the chat thread. The host holds
-  the model credentials and the Fluxer bot token. The agent loop only sees
-  threads, never the gateway behind them.
-- The MCP server (`packages/mcp`, command `blitzcrank-mcp`) holds the service
-  API keys and the media mounts. Every read and write the agent makes goes
-  through it, one tool per operation.
+## How it works
 
-The server's [service tables](packages/mcp/src/services) define the available
-reads and writes. The agent starts each run with a handful of host tools and
-loads the service tools it needs with `tool_search`. The
-[server README](packages/mcp/README.md) covers operation.
+blitzcrank runs as two processes that share no code.
 
-Built on [Pi Durable](https://www.npmjs.com/package/@earendil-works/pi-durable)
-as an SDK dependency. Blitzcrank does not package or launch the Pi app.
-
-## Deploy on NixOS
-
-Add `github:zekurio/blitzcrank` as a flake input, then:
-
-```nix
-{
-  imports = [ inputs.blitzcrank.nixosModules.default ];
-  services.blitzcrank = {
-    enable = true;
-    model = "openai/gpt-6-astra:medium"; # choose a model your account can use
-    helperModel = "openai/gpt-5.4-mini:off"; # a small, fast model for side jobs
-    gateModel = "anthropic/claude-haiku-5-5:high"; # reviews destructive writes
-    mcpUrl = "http://127.0.0.1:8485/mcp";
-    settings = {
-      FLUXER_INSTANCE_URL = "https://chat.example.com";
-      FLUXER_CHANNELS = "12345678901234567";
-      FLUXER_ALLOWED_ROLES = "23456789012345678";
-      FLUXER_TRIAGE_MODEL = "opencode/jev-1.13";
-    };
-    environmentFile = "/run/secrets/blitzcrank.env";
-  };
-  services.blitzcrank-mcp = {
-    enable = true;
-    environmentFile = "/run/secrets/blitzcrank-mcp.env";
-    mediaRoots = [ "/mnt/media" "/mnt/downloads/complete" ]; # optional
-  };
-}
+```mermaid
+flowchart TD
+    F[Fluxer channel] --> H[host: blitzcrank]
+    H --> P[model providers]
+    H --> S[MCP server: blitzcrank-mcp]
+    S --> M[Matinee]
+    S --> A[Sonarr and Radarr]
+    S --> Z[SABnzbd]
+    S --> D[media files, read-only]
 ```
 
-The two services are enabled independently and use separate packages:
-`packages.<system>.blitzcrank` and `packages.<system>.blitzcrank-mcp`. Each
-package contains its own command and runtime dependencies. The default package
-is the host. Each service has its own `package` option and environment:
-
-- The host's environment file holds `FLUXER_BOT_TOKEN` and
-  `BLITZCRANK_MCP_TOKEN`.
-  [`packages/host/.env.example`](packages/host/.env.example) documents all host
-  settings.
-- The server's environment file holds the service URLs and API keys, the
-  Matinee token among them (see [Connect Matinee](#connect-matinee)), and the
-  same `BLITZCRANK_MCP_TOKEN`. `services.blitzcrank-mcp.mediaRoots` sets the
-  media roots and adds ffmpeg to the server's path. The server runs as a
-  dynamic user: `services.blitzcrank-mcp.supplementaryGroups` gives it group
-  access to roots that are closed to others. The
-  [server README](packages/mcp/README.md#environment) documents its settings.
-
-The server binds to `127.0.0.1` on `services.blitzcrank-mcp.port` (8485 by
-default). The host requires `services.blitzcrank.mcpUrl`, including when both
-run on the same machine. Set it to the server's endpoint if you change the
-port. With both enabled on one machine, the host starts after the server and
-stops before it.
-
-For separate machines, import `nixosModules.blitzcrank` on the agent host and
-`nixosModules.blitzcrank-mcp` on the media server, enabling only the respective
-service. Set the host's `mcpUrl` to the remote endpoint. On the media server,
-set `services.blitzcrank-mcp.host` to a private interface address, or keep
-loopback and put a TLS reverse proxy in front. Configure network access
-separately; the module does not open firewall ports. The server needs no model
-or agent authentication settings.
-
-[`nix/module.nix`](nix/module.nix) and
-[`nix/mcp-module.nix`](nix/mcp-module.nix) describe the service options.
-
-The shared dependency hash in [`nix/package.nix`](nix/package.nix) must
-match `pnpm-lock.yaml`. After a lockfile change, build once on Linux and copy
-the hash Nix reports.
-
-The module installs the `blitzcrank` command. For subscription authentication:
-
-```sh
-sudo blitzcrank auth login openai
-sudo blitzcrank auth status
-```
-
-On NixOS, auth commands run as the service user with its configured environment
-and credential path. The launcher temporarily stops the service and restores its
-previous running or stopped state afterward. Run it in an interactive terminal,
-including over SSH.
-
-State lives in `/var/lib/blitzcrank`. Back it up with the service stopped, or use
-SQLite-aware backups including committed WAL data. Only one host process may
-own this directory. The server keeps nothing on disk.
-
-## Authentication and models
-
-API keys use provider environment variables such as `OPENAI_API_KEY` or
-`ANTHROPIC_API_KEY`; no login command is needed. OAuth uses the main CLI:
-
-```sh
-blitzcrank auth login openai
-blitzcrank auth status
-blitzcrank auth logout openai
-```
-
-`openai` supports **Sign in with ChatGPT**. Follow the browser
-URL, then complete the callback or paste the final redirect URL into the
-terminal.
-Other OAuth-capable providers use the same `auth login <provider>` command.
-Auth commands do not need service credentials or a model selection.
-
-Credentials default to `<BLITZCRANK_DATA_DIR>/auth.json`, or `data/auth.json`
-locally. Set `BLITZCRANK_AUTH_PATH` to override this. Keep the file writable:
-the SDK refreshes and saves OAuth tokens. The adjacent `.device-id` file holds
-a stable installation UUID for login. No ambient Pi auth or models config is
-loaded; custom providers require an explicit `BLITZCRANK_MODELS_PATH`.
-
-On NixOS, `services.blitzcrank.authSeedFile` can seed credentials from a secret.
-It copies the seed only when missing or changed, preserving refreshed tokens
-across ordinary rebuilds.
-
-**Choose a model explicitly.** `BLITZCRANK_MODEL` is required and has no default.
-Use `provider/model[:thinking]`, for example `openai/gpt-6-astra:medium`.
-
-`BLITZCRANK_HELPER_MODEL` is required too, also without a default. It names a
-second chat model, in the same form, for small jobs outside a run, such as
-naming the threads the Fluxer gateway opens. Each job gets one instruction
-and one input, with no tools. Pick a small, fast model. Thinking
-defaults to medium as for `BLITZCRANK_MODEL`, so add `:off`, for example
-`openai/gpt-5.4-mini:off`. The host refuses to start if the model is unknown
-or its provider has no key.
-
-`BLITZCRANK_GATE_MODEL` is required as well. It names the chat model that
-reviews writes, for example `anthropic/claude-haiku-5-5:high`; see
-[Write review](#write-review).
-
-## Write review
-
-The agent applies the fix the evidence supports without asking first. The
-host decides what it may not do, in the manner of Claude Code's auto mode:
-before any write that can remove or change media runs, the gate model
-reviews it.
-
-- Reviewed writes are every server write not marked `destructiveHint: false`.
-  Arr refreshes and rescans, a Matinee library scan, and retrying, pausing,
-  resuming, or reprioritizing a download run unreviewed. Searches are
-  reviewed, since they can replace files, and so are Matinee title refreshes,
-  match fixes, request retries, and new requests. A grab of a release the
-  server never listed fails outright.
-- The gate model sees the prompt the run answers, earlier prompts and
-  replies of the thread, the writes it decided earlier in the run, and for
-  each pending write its arguments, the agent's one-sentence `reason`, and
-  the server's `write_preview` of what it would touch. It sees no other tool
-  result and none of the agent's reasoning, so content the agent read cannot
-  argue with it directly.
-- It decides all writes of one model response in one request. It allows
-  fixes on the reported media, such as replacing files that lack the
-  reported subtitles, and holds writes nobody asked for, writes beyond the
-  report's scope (a season pack for a few episodes counts), removing media
-  with no defect for a sender who is not an admin, writes whose target it
-  cannot see or the conversation leaves ambiguous, and deleting a file that
-  still plays before its replacement's grab has succeeded. The review hears
-  each allowed call's outcome, so a grab in the same response, or one that
-  failed, does not count.
-- A held write never runs and is never journaled, so it leaves nothing
-  uncertain. The agent gets the reason as an error result and says in its
-  reply what it left undone. After 3 held writes in a row or 10 in a run,
-  every further write of that run is held.
-- A review that fails, times out, or answers without a verdict holds the
-  write.
-- `blitzcrank run` prints a `review` line per decision with the tool, whether
-  it was allowed, and the rule. Logs carry the same as `review.decided`, and
-  each gate model request as `review.judged` with its tokens and cost, which
-  the reply footer does not include.
-
-## Develop locally
-
-The standalone [devenv](https://devenv.sh) environment supplies Node, pnpm 11,
-ffmpeg, and ffprobe. The flake remains responsible for deployment packages.
-
-The repository is a pnpm workspace. Install once at the root, then run each
-package from its own directory with its own `.env`, in two terminals. Start
-the server first; the host connects to it at the start of every run.
-
-```sh
-# Terminal 1: the MCP server
-devenv shell
-pnpm install --frozen-lockfile
-cd packages/mcp
-# Write .env from the Environment table in README.md: BLITZCRANK_MCP_TOKEN
-# plus the service URLs and API keys.
-pnpm exec tsx watch --env-file=.env src/cli.ts
-```
-
-```sh
-# Terminal 2: the host
-devenv shell
-cd packages/host
-cp .env.example .env
-# Fill in the three models, the FLUXER_* settings, the same
-# BLITZCRANK_MCP_TOKEN, and BLITZCRANK_MCP_URL=http://127.0.0.1:8485/mcp.
-# `blitzcrank run` needs no FLUXER_* settings.
-pnpm exec tsx --env-file=.env src/cli.ts auth login openai
-pnpm exec tsx watch --env-file=.env src/cli.ts
-```
-
-Skip login if using an API key. With direnv, `direnv allow` activates the shell
-on `cd`; nothing loads `.env`. The root scripts `pnpm dev`, `pnpm dev:mcp`,
-`pnpm start`, `pnpm start:mcp`, and `pnpm auth` use the caller's exported
-environment. With exported configuration, `pnpm auth login openai` is the local
-shortcut. Auth and host commands must use the same data directory/auth path.
-
-Without devenv, supply Node >= 24, pnpm 11, and ffmpeg/ffprobe yourself.
-For compiled local runs, use `pnpm build` at the root, then
-`node --env-file=.env dist/cli.js` in each package.
-
-## Connect Matinee
-
-The MCP server reaches [Matinee](https://github.com/zekurio/matinee) through
-its REST API under `/api/v1`, with `MATINEE_URL` and one API token,
-`MATINEE_API_KEY`. It needs a Matinee release after v0.0.9, with
-[matinee#97](https://github.com/zekurio/matinee/pull/97), where a token picks
-its permissions one by one.
-
-Any account that holds these permissions can make the token, including your
-own admin account. Sign in, open Settings → API tokens, and make one token
-with exactly these permissions:
-
-`title.read`, `title.update`, `library.read`, `library.scan`, `media.read`, `catalog.read`, `adminRequest.read`, `adminRequest.retry`, `job.read`, `request.create`
-
-Leave out `all`, `adminRequest.approve`, `adminRequest.decline`, and
-`request.autoApprove`. Matinee checks every call against both the token and
-its account, so the token does only what it lists, even on an admin account.
-It needs every permission it uses, the read ones included. With this list the
-agent reads titles, files, tracks, libraries, jobs, and the request queue,
-scans libraries, refreshes and fixes matches, retries a failed send, and
-requests titles. It cannot approve or decline anything, its own requests
-included, and what it requests always waits for approval. A leaked token
-reaches no users, groups, sessions, or settings.
-
-The account's group decides which libraries the agent sees and its request
-quota. Every request made in a chat comes from that account, so the chat
-shares its quota, and Matinee does not show who asked. To keep the agent's
-requests and quota apart from a person's, make it an account of its own.
-
-Matinee sends approved requests to Radarr and Sonarr itself, and its file
-watcher picks up their imports, so it needs no webhook from them. No Arr tool
-adds a title: a Matinee request is the only way the agent adds media, and
-Matinee's connection rules choose the quality profile and folder.
-
-The agent never sees Matinee's live sessions, users, or groups.
-
-## Connect Fluxer
-
-[Fluxer](https://fluxer.app) is an open-source chat platform, hosted at
-fluxer.app or on your own server. It is the one chat platform the service
-listens to.
-
-Set `FLUXER_INSTANCE_URL` to the instance origin, such as `https://fluxer.app`
-or `https://chat.example.com`. The host reads the instance's API and gateway
-addresses from `/.well-known/fluxer` there, so the origin is the only address
-you set.
-
-The bot watches the channels in `FLUXER_CHANNELS` and nothing else, DMs
-included. Only members listed by user id in `FLUXER_ALLOWED_USERS` or holding a
-role in `FLUXER_ALLOWED_ROLES` get an answer. Their messages go to a
-classifier first:
-
-- A message that triage judges a homelab request opens a thread, and the agent
-  answers there. Without a mention, triage must be at least
-  `FLUXER_TRIAGE_THRESHOLD` sure (0.8 by default). With one, the most likely
-  label decides, and a message triage cannot judge opens a thread anyway.
-- The thread is named `blitzcrank: <title>`, with a title the
-  [helper model](#authentication-and-models) writes from the message. If the
-  helper fails, the message itself stands in. Fluxer makes only the bot a
-  member of a thread it opens, so the bot adds the member, and Fluxer posts a
-  line saying so.
-- While the agent works, the bot's one message in the thread shows the step it
-  is on, such as `🔍 Blitzcrank is checking Sonarr…`, at most one edit every
-  3 seconds. The host picks the line from the tool's name alone, never from
-  what the model passed to it. The reply then replaces the line.
-- An off-topic message gets a fixed denial line if it mentions the bot, and
-  nothing otherwise. A reply to one of the bot's messages counts as a mention.
-- Later messages in a bot thread are follow-ups. They need no mention and skip
-  triage.
-
-Members listed by user id in `FLUXER_ADMIN_USERS` or holding a role in
-`FLUXER_ADMIN_ROLES` are admins. They get answers without an entry in the
-allowed lists, and only their requests can have media that plays fine removed
-or unmonitored. Each message counts for its own sender: an admin's earlier
-message in a thread does not cover a later member's request.
-
-`FLUXER_TRIAGE_MODEL` is required and names a classifier model, not a chat
-model. TypeSafe's Jev is one: `opencode/jev-1.13` or `opencode/jev-1.13-free`
-with `OPENCODE_API_KEY`, `openrouter/~typesafe/jev-latest` with
-`OPENROUTER_API_KEY`, or `typesafe/jev-latest` with `TYPESAFE_API_KEY`. The
-host refuses to start if the model is unknown or its provider has no key.
-
-In the Fluxer web client, open **User Settings → Applications** and create an
-application. Fluxer creates the bot account with it and shows the bot token
-once. Copy the token, which looks like `<application id>.<secret>`, into
-`FLUXER_BOT_TOKEN`. **Regenerate bot token** replaces it and disconnects the
-running bot. Your account must be claimed, with a password or an SSO link,
-before it can create an application. For a homelab, leave **Public bot** and
-**Require OAuth2 code grant** off and add no redirect URIs.
-
-Install the bot with the application's **Bot invite** URL builder, or open
-`/oauth2/authorize?client_id=<application id>&scope=bot&permissions=309237713920`
-on your instance's web app. It asks for View Channel, Send Messages, Read
-Message History, Create Public Threads, and Send Messages in Threads. Whoever
-installs the bot needs Administrator in the guild, or Manage Guild plus every
-permission they grant. Consent creates a role named after the application with
-exactly those permissions and gives it to the bot. Fluxer feature-gates the two thread permissions, so the
-role may come without them. If it does, grant them on the role in the guild
-settings. At startup the host checks its permissions in each watched channel
-and refuses to start if one is missing, if a watched channel is in no guild it
-can see, or if no guild state arrives within 30 seconds of the connection being
-ready.
-
-Fluxer has no gateway intents, so message content always arrives. The host
-connects to the instance itself and needs no inbound port for it. If Fluxer
-closes that connection for good, such as after the token is regenerated, the
-host stops with a failure and systemd restarts it. Messages sent while the host
-is down are not picked up later.
-
-## Run one event from a terminal
-
-`blitzcrank run` answers one message without a chat platform, for debugging or
-a test harness. It reads one JSON object on stdin and writes the run to stdout,
-one JSON object per line:
-
-```sh
-echo '{"thread":"t1","text":"Crystal Lake ist ab Episode 6 falsch"}' |
-  BLITZCRANK_DATA_DIR=/tmp/blitzcrank-debug blitzcrank run
-```
-
-```jsonl
-{"type":"run.started","runId":"36cef7c0-…","thread":"t1"}
-{"type":"step","tool":"tool_search","write":false}
-{"type":"step","tool":"sonarr_episodes","write":false}
-{"type":"reply","text":"…"}
-{"type":"usage","inputTokens":21400,"outputTokens":800,"costUsd":0.08}
-{"type":"run.finished","runId":"36cef7c0-…","status":"completed"}
-```
-
-- `thread` is 1 to 64 letters, digits, `_`, or `-`. Run the command again with
-  the same thread and data directory to continue the conversation, one
-  invocation per message.
-- `"admin": true` makes the message an admin's, so the agent may remove or
-  unmonitor media that plays fine. Without it, the message is a member's, and
-  the agent leaves that decision to an admin. Each invocation sets it for its
-  own message only.
-- A `step` line names each tool call as it starts and says whether the tool
-  may write. It never shows the arguments. The full trace stays in
-  `sessions/cli/<thread>.sqlite`.
-- `usage` covers every run of the thread so far, like the reply footer in a
-  Fluxer thread. `costUsd` is null unless the provider bills per token.
-- A run that ends without a message prints no `reply`. A failed run ends with
-  `"status":"failed"` and its error, and the command exits 1. Bad input fails
-  before `run.started`.
-- Host logs go to stderr.
-
-The command needs the host's environment: the model, the helper model, and
-the gate model, their credentials, and the MCP URL and token. It reads no
-`FLUXER_*` settings. Runs go through the same journal, runner, and tools as
-the service. The model's brief matches the Fluxer gateway's without the
-platform name, so a run here behaves like one in a Fluxer thread. Whoever runs
-the command already holds every credential the run uses, so it checks no
-sender.
-
-Give the command a data directory of its own. The journal admits one process
-at a time, so the command fails while the service holds the directory. A run
-killed partway, by Ctrl-C or a timeout, stays unfinished in the journal
-because a write may be uncertain. Its thread takes no further runs, and the
-service refuses to start on a directory that holds such a run.
-
-## Optional features
-
-- **Media inspection** is configured on the server. `BLITZCRANK_MEDIA_ROOTS`
-  in the server's environment permits read-only ffprobe inspection of paths
-  inside the roots, as the server sees them. Frame extraction also needs
-  ffmpeg on the server and an image-capable model.
-- **Web** stays on the host. `BLITZCRANK_WEB_PROVIDER=firecrawl` plus
-  `FIRECRAWL_API_KEY` enables read-only search/extraction through hosted
-  Firecrawl. Off by default. `FIRECRAWL_URL` points the tools at another
-  Firecrawl-compatible endpoint, such as a fake one in tests. Firecrawl
-  fetches pages itself, so blitzcrank can't check which address it reaches.
-  A self-hosted instance inside your network would let a URL from any message
-  reach internal services.
-
-Both processes answer an unauthenticated `GET /healthz`. It is the host's only
-HTTP endpoint: it connects to Fluxer itself.
-
-## Logs and journals
-
-The host writes JSON lifecycle records to stdout/stderr, captured by journald
-on NixOS. They include job admission and recovery, queue time, run duration,
-model requests and token/cache/reasoning counts, tool starts and outcomes, and
-reply publication. Filter by `runId` to follow a run across both processes.
-`run.admitted` maps that ID to its `thread`, such as `fluxer:1234567890`.
-
-```sh
-sudo journalctl -u blitzcrank -u blitzcrank-mcp --since today -o cat
-sudo journalctl -u blitzcrank -u blitzcrank-mcp -o cat |
-  jq -R 'fromjson? | select(.runId == "RUN_ID")'
-```
-
-`tool.completed` with `status: "error"` is a tool result the model can handle.
-An MCP `unknown` outcome or a host `review_required` rejection stops a write
-for review. `model.completed` records provider attempts, including failures;
-these log counts are diagnostic, not the durable usage ledger. The
-`threadInputTokens` and `threadOutputTokens` on `run.answer` are conversation
-totals, not per-run totals.
-
-Operational records omit arguments, result bodies, prompts, replies, user
-identities, and error messages that might contain private data. Full details
-remain in the existing SQLite journals under `BLITZCRANK_DATA_DIR`:
-`jobs.sqlite` records admission, status, publication intents/results, and
-failures; `sessions/<gateway>/<thread>.sqlite` holds the Durable transcript,
-tool outcomes, and usage ledger. These files contain private data. Use the run
-ID to find the job and its matching Durable submission. No second transcript
-or model-writable memory is kept. A completed action replay is logged as
-`action.replayed`, not as another publication.
-
-## Checks
-
-```sh
-devenv shell -- pnpm verify
-devenv shell -- pnpm build
-nix flake check
-```
-
-[AGENTS.md](AGENTS.md) records the host invariants and contribution rules.
-[`packages/host/skills/`](packages/host/skills) contains service-specific
-knowledge. The [service tables](packages/mcp/src/services) define the tools.
+The host lives in `packages/host` and installs the `blitzcrank` command. It
+takes Fluxer messages, runs the agent on
+[Pi Durable](https://www.npmjs.com/package/@earendil-works/pi-durable), and
+posts the agent's final message in the thread. It holds the model credentials
+and the Fluxer bot token. It has no service API keys and no media mounts.
+
+The MCP server lives in `packages/mcp` and installs `blitzcrank-mcp`. It holds
+the service API keys and the media mounts. Each read or write the agent can
+make is one tool on this server, defined in the
+[service tables](packages/mcp/src/services).
+
+A run starts with a few host tools and loads server tools with `tool_search`
+as it needs them. Before any write that can remove or change media, a second
+model reviews it and can hold it. A thread never has two runs at once, and
+nothing runs on a timer.
+
+blitzcrank uses Pi Durable as an SDK dependency. It does not package or launch
+the Pi app.
+
+## Setting up
+
+Work through these in order.
+
+1. [Deploy on NixOS](docs/deploy.md) with both services, on one machine or
+   two.
+2. [Pick the models](docs/models.md) and sign in to their providers.
+3. [Make a Matinee token](docs/matinee.md) with exactly the permissions the
+   agent uses.
+4. [Create the Fluxer bot](docs/fluxer.md) and choose who it answers.
+5. Send a test message, or [run one from a terminal](docs/run.md), and
+   [read the logs](docs/operations.md).
+
+## Reference
+
+| Page                                         | What's in it                                          |
+| -------------------------------------------- | ----------------------------------------------------- |
+| [Write review](docs/write-review.md)         | Which writes the gate model checks and what it holds  |
+| [Tools](docs/tools.md)                       | Host tools, media inspection, and optional web search |
+| [Logs and journals](docs/operations.md)      | Log records, SQLite journals, backups, health checks  |
+| [Develop locally](docs/development.md)       | devenv, running both processes, checks                |
+| [MCP server](packages/mcp/README.md)         | Server settings, Matinee permissions, write semantics |
+| [`.env.example`](packages/host/.env.example) | Every host and Fluxer setting                         |
+| [AGENTS.md](AGENTS.md)                       | Invariants and contribution rules                     |
+| [Skills](packages/host/skills)               | What the agent knows about each service               |
+
+## License
 
 [MIT](LICENSE)
